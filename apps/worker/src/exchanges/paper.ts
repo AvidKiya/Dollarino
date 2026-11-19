@@ -5,12 +5,12 @@ import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } fro
 
 const FALLBACK_PRICES: Record<string, number> = {
   BTCUSDT: 63000,
-  ETHUSDT: 1850,
-  SOLUSDT: 145,
-  BNBUSDT: 580,
-  XRPUSDT: 0.58,
-  TONUSDT: 4.8,
-  DOGEUSDT: 0.14,
+  ETHUSDT: 3120,
+  SOLUSDT: 198,
+  BNBUSDT: 640,
+  XRPUSDT: 1.48,
+  TONUSDT: 1.78,
+  DOGEUSDT: 0.24,
   ADAUSDT: 0.45,
   AVAXUSDT: 28,
 };
@@ -251,7 +251,7 @@ export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 2
   try {
     const res = await fetch(
       `https://fapi.binance.com/fapi/v1/klines?symbol=${clean}&interval=${tf}&limit=${limit}`,
-      { signal: AbortSignal.timeout(5000) }
+      { signal: AbortSignal.timeout(4000) }
     );
     if (res.ok) {
       const rows = await res.json() as Array<[number, string, string, string, string, string]>;
@@ -268,7 +268,46 @@ export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 2
     }
   } catch { /* fall through */ }
 
-  const base = FALLBACK_PRICES[clean] ?? 100;
+  // Verified Bitget USDT-Futures fallback (guard exact symbol match via ticker check)
+  try {
+    const tkRes = await fetch(
+      `https://api.bitget.com/api/v2/mix/market/ticker?symbol=${clean}&productType=USDT-FUTURES`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    if (tkRes.ok) {
+      const tkJson = (await tkRes.json()) as { data?: Array<{ symbol?: string }> };
+      if (tkJson.data?.[0]?.symbol?.toUpperCase() === clean) {
+        const bgTfMap: Record<string, string> = {
+          '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m',
+          '30m': '30m', '1h': '1H', '2h': '2H', '4h': '4H', '1d': '1D',
+        };
+        const gran = bgTfMap[tf] ?? '15m';
+        const klRes = await fetch(
+          `https://api.bitget.com/api/v2/mix/market/candles?symbol=${clean}&productType=USDT-FUTURES&granularity=${gran}&limit=${Math.min(1000, limit)}`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (klRes.ok) {
+          const klJson = (await klRes.json()) as { data?: Array<[string, string, string, string, string, string, string?]> };
+          const rows = Array.isArray(klJson.data) ? klJson.data : [];
+          if (rows.length > 5) {
+            return rows
+              .map((r) => ({
+                timestamp: Number(r[0]),
+                open: Number(r[1]),
+                high: Number(r[2]),
+                low: Number(r[3]),
+                close: Number(r[4]),
+                volume: Number(r[6] ?? r[5] ?? 0),
+              }))
+              .sort((a, b) => a.timestamp - b.timestamp);
+          }
+        }
+      }
+    }
+  } catch { /* fall through */ }
+
+  const spec = await findMarketSpec('paper', clean, proxyConfig).catch(() => undefined);
+  const base = spec && Number(spec.lastPrice) > 0 ? Number(spec.lastPrice) : (FALLBACK_PRICES[clean] ?? 100);
   const stepMs = tfToMs(tf);
   const now = Math.floor(Date.now() / stepMs) * stepMs;
   const candles: Candle[] = [];

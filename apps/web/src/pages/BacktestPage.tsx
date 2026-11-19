@@ -68,6 +68,7 @@ export function BacktestPage({
   const [kbosOverlays, setKbosOverlays] = useState<KbosChartOverlays | undefined>(undefined);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [compareResult, setCompareResult] = useState<BacktestResult | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const higherTimeframeFor = (ltf: Timeframe): Timeframe => {
     const map: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
@@ -76,6 +77,7 @@ export function BacktestPage({
 
   const executeBacktest = async (withCompare = false) => {
     setRunning(true);
+    setErrorMsg(null);
     try {
       const htf = higherTimeframeFor(tf);
       const [ltfRes, htfRes] = await Promise.all([
@@ -129,6 +131,8 @@ export function BacktestPage({
       } else {
         setCompareResult(null);
       }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Backtest failed');
     } finally {
       setRunning(false);
     }
@@ -285,6 +289,8 @@ export function BacktestPage({
           </div>
         )}
       </div>
+
+      {errorMsg && <div className="surface-card p-4 text-xs text-loss font-bold">{errorMsg}</div>}
 
       {result && (
         <div className="space-y-5">

@@ -252,6 +252,7 @@ connectionRoutes.post('/exchanges/test-order', async (c) => {
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id);
   const price = Number(await adapter.getTickerPrice(symbol));
   const risk = price * 0.01;
+  const dp = price >= 1000 ? 2 : price >= 1 ? 4 : price >= 0.01 ? 5 : 8;
 
   const res = await executeSignalForUser(
     c.env,
@@ -261,11 +262,11 @@ connectionRoutes.post('/exchanges/test-order', async (c) => {
       direction,
       timeframe: '15m',
       price: String(price),
-      stopLoss: String((direction === 'LONG' ? price - risk : price + risk).toFixed(2)),
+      stopLoss: String((direction === 'LONG' ? price - risk : price + risk).toFixed(dp)),
       leverage: 5,
-      tp1: String((direction === 'LONG' ? price + risk * 2 : price - risk * 2).toFixed(2)),
-      tp2: String((direction === 'LONG' ? price + risk * 3 : price - risk * 3).toFixed(2)),
-      tp3: String((direction === 'LONG' ? price + risk * 4 : price - risk * 4).toFixed(2)),
+      tp1: String((direction === 'LONG' ? price + risk * 2 : price - risk * 2).toFixed(dp)),
+      tp2: String((direction === 'LONG' ? price + risk * 3 : price - risk * 3).toFixed(dp)),
+      tp3: String((direction === 'LONG' ? price + risk * 4 : price - risk * 4).toFixed(dp)),
       reason: 'Dollarino Select (Dorna V1) 1-shot guarded diagnostic order',
     },
     { forceBypassState: true, strategyKey: 'test_strategy' }

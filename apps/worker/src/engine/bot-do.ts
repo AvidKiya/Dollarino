@@ -12,7 +12,7 @@ import { runAutonomousAITrader } from '../ai/providers.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
-import { getExchangeMarkets } from '../exchanges/markets.js';
+import { getExchangeMarkets, MAJOR_LIQUID_COINS } from '../exchanges/markets.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -20,13 +20,6 @@ import {
   reconcileOpenPositionsForUser,
   type UserBotConfigRow,
 } from './executor.js';
-
-const MAJOR_LIQUID_COINS = [
-  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
-  'DOGEUSDT', 'AVAXUSDT', 'SUIUSDT', 'TONUSDT', 'LINKUSDT',
-  'ADAUSDT', 'NEARUSDT', 'ARBUSDT', 'PEPEUSDT', 'TRXUSDT',
-  'OPUSDT', 'LTCUSDT', 'INJUSDT', 'APTUSDT', 'WIFUSDT',
-];
 
 export class TradingBotCoordinator implements DurableObject {
   constructor(
@@ -129,16 +122,18 @@ export class TradingBotCoordinator implements DurableObject {
         cfg.symbol,
         ...openSymbols,
         ...watchlist,
-        ...(universe.length ? universe : MAJOR_LIQUID_COINS),
+        ...MAJOR_LIQUID_COINS,
+        ...universe,
       ])
     );
 
-    // Rotate 6 symbols per 15s tick while always monitoring open positions & primary symbol
-    const priority = Array.from(new Set([cfg.symbol, ...openSymbols])).slice(0, 3);
+    // Rotate 10 symbols per 15s tick (12 on first sweep) while always monitoring open positions & primary symbol
+    const priority = Array.from(new Set([cfg.symbol, ...openSymbols])).slice(0, 4);
     const others = pool.filter((s) => !priority.includes(s));
-    const batchSize = Math.max(2, 6 - priority.length);
     const cursorKey = `scan_cursor_${userId}`;
     const cursor = (await this.state.storage.get<number>(cursorKey)) ?? 0;
+    const targetTotal = cursor === 0 ? 16 : 12;
+    const batchSize = Math.max(4, targetTotal - priority.length);
 
     const picked: string[] = [...priority];
     if (others.length > 0) {
@@ -189,24 +184,37 @@ export class TradingBotCoordinator implements DurableObject {
     for (const r of openRows.results) {
       if (!openBySymbol.has(r.symbol)) openBySymbol.set(r.symbol, r);
     }
-    const openCount = openRows.results.length;
+    let liveOpenCount = openRows.results.length;
     const openSymbols = new Set(openBySymbol.keys());
 
     const symbolsToScan = await this.buildScanBatchForUser(userId, cfg, adapter, openSymbols);
 
-    for (const scanSymbol of symbolsToScan) {
-      const existingOnSymbol = openBySymbol.get(scanSymbol) ?? null;
-      await this.evaluateSymbolForUser(
-        userId,
-        cfg,
-        adapter,
-        scanSymbol,
-        existingOnSymbol,
-        openCount
-      ).catch(async (err) => {
-        const msg = err instanceof Error ? err.message : 'Scan error';
-        await logAudit(this.env.DB, userId, 'SIGNAL', 'WARN', `خطا در بررسی ${scanSymbol}: ${msg}`, scanSymbol).catch(() => {});
-      });
+    // Evaluate symbols in parallel chunks of 4 so a 12-coin initial sweep finishes in ~1.2s
+    for (let i = 0; i < symbolsToScan.length; i += 4) {
+      const chunk = symbolsToScan.slice(i, i + 4);
+      const results = await Promise.all(
+        chunk.map((scanSymbol) => {
+          const existingOnSymbol = openBySymbol.get(scanSymbol) ?? null;
+          if (!existingOnSymbol && liveOpenCount >= cfg.max_open_positions) {
+            return Promise.resolve(false);
+          }
+          return this.evaluateSymbolForUser(
+            userId,
+            cfg,
+            adapter,
+            scanSymbol,
+            existingOnSymbol,
+            liveOpenCount
+          ).catch(async (err) => {
+            const msg = err instanceof Error ? err.message : 'Scan error';
+            await logAudit(this.env.DB, userId, 'SIGNAL', 'WARN', `خطا در بررسی ${scanSymbol}: ${msg}`, scanSymbol).catch(() => {});
+            return false;
+          });
+        })
+      );
+      for (const opened of results) {
+        if (opened) liveOpenCount++;
+      }
     }
 
     const hbKey = `last_scan_hb_${userId}`;
@@ -298,10 +306,10 @@ export class TradingBotCoordinator implements DurableObject {
       mode: string;
     } | null,
     openCount: number
-  ) {
+  ): Promise<boolean> {
     // If max open positions reached and we don't hold this symbol (nor allow flip/exit), skip heavy API calls
     if (!openOnSymbol && openCount >= cfg.max_open_positions) {
-      return;
+      return false;
     }
 
     const [ltfRaw, htfRaw] = await Promise.all([
@@ -312,7 +320,7 @@ export class TradingBotCoordinator implements DurableObject {
     const now = Date.now();
     const ltfClosed = selectClosedCandles(ltfRaw, cfg.entry_timeframe, now);
     const htfClosed = selectClosedCandles(htfRaw, cfg.higher_timeframe, now);
-    if (ltfClosed.length < 40) return;
+    if (ltfClosed.length < 40) return false;
 
     let kbosParams = mergeKbosParams();
     try {
@@ -339,7 +347,7 @@ export class TradingBotCoordinator implements DurableObject {
       const latestBarTs = ltfClosed[ltfClosed.length - 1]!.timestamp;
       const aiBarKey = `last_ai_bar_ts_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
       const lastAiTs = await this.state.storage.get<number>(aiBarKey);
-      if (lastAiTs === latestBarTs) return;
+      if (lastAiTs === latestBarTs) return false;
       await this.state.storage.put(aiBarKey, latestBarTs);
 
       const [orderBook, market24h] = await Promise.all([
@@ -383,7 +391,7 @@ export class TradingBotCoordinator implements DurableObject {
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'AI Trader error';
         await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `Dollarino AI error on ${scanSymbol}: ${msg}`, scanSymbol);
-        return;
+        return false;
       }
 
       await logAudit(
@@ -396,23 +404,23 @@ export class TradingBotCoordinator implements DurableObject {
         decision
       );
 
-      if (!decision.ok) return;
+      if (!decision.ok) return false;
 
       if (decision.action === 'CLOSE' && openOnSymbol) {
         await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'AI_EXIT');
-        return;
+        return false;
       }
 
       if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 65)) {
         if (openOnSymbol) {
           if (openOnSymbol.direction === decision.action && !(cfg.allow_pyramiding ?? 0)) {
-            return;
+            return false;
           }
           if (openOnSymbol.direction !== decision.action) {
             if (cfg.allow_auto_flip ?? 1) {
               await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'AI_EXIT');
             } else {
-              return;
+              return false;
             }
           }
         }
@@ -424,7 +432,7 @@ export class TradingBotCoordinator implements DurableObject {
           if (lastClosed?.closed_at) {
             const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
             const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
-            if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) return;
+            if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) return false;
           }
         }
 
@@ -468,9 +476,10 @@ export class TradingBotCoordinator implements DurableObject {
         });
         if (execRes.ok) {
           await this.env.DB.prepare(`UPDATE signals SET status = 'EXECUTED' WHERE id = ?`).bind(sigId).run();
+          return true;
         }
       }
-      return;
+      return false;
     }
 
     // 2B. Dollarino Select Strategy (Dorna V1 & Quant strategies)
@@ -488,25 +497,36 @@ export class TradingBotCoordinator implements DurableObject {
     );
     const lastBarKey = `last_signal_ts_${userId}_${scanSymbol}`;
     const lastProcessed = await this.state.storage.get<number>(lastBarKey);
+    const currentClose = ltfClosed[ltfClosed.length - 1]!.close;
 
     let latest = outputs[outputs.length - 1];
-    if ((!latest || latest.signal === 'NONE') && !lastProcessed && outputs.length >= 2) {
-      const prev = outputs[outputs.length - 2];
-      if (prev && prev.signal !== 'NONE') latest = prev;
+    if ((!latest || latest.signal === 'NONE') && !lastProcessed && outputs.length >= 6) {
+      for (let lookback = 2; lookback <= 6; lookback++) {
+        const cand = outputs[outputs.length - lookback];
+        if (cand && cand.signal !== 'NONE' && cand.price > 0 && cand.stopLoss && cand.tp1) {
+          const driftPct = Math.abs(currentClose - cand.price) / cand.price;
+          const slValid = cand.signal === 'LONG' ? currentClose > cand.stopLoss : currentClose < cand.stopLoss;
+          const tp1NotHit = cand.signal === 'LONG' ? currentClose < cand.tp1 : currentClose > cand.tp1;
+          if (driftPct <= 0.015 && slValid && tp1NotHit) {
+            latest = cand;
+            break;
+          }
+        }
+      }
     }
-    if (!latest || latest.signal === 'NONE') return;
+    if (!latest || latest.signal === 'NONE') return false;
 
-    if (lastProcessed === latest.timestamp) return;
+    if (lastProcessed === latest.timestamp) return false;
 
     if (openOnSymbol) {
       if (openOnSymbol.direction === latest.signal && !(cfg.allow_pyramiding ?? 0)) {
-        return;
+        return false;
       }
       if (openOnSymbol.direction !== latest.signal) {
         if (cfg.allow_auto_flip ?? 1) {
           await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'STRATEGY_FLIP');
         } else {
-          return;
+          return false;
         }
       }
     }
@@ -519,7 +539,7 @@ export class TradingBotCoordinator implements DurableObject {
         const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
         const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
         if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) {
-          return;
+          return false;
         }
       }
     }
@@ -532,9 +552,10 @@ export class TradingBotCoordinator implements DurableObject {
       latest,
       cfg.signal_channel_handle
     );
-    if (!sig) return;
+    if (!sig) return false;
 
-    await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `Strategy ${cfg.strategy_key} emitted ${sig.direction} ${sig.symbol}`, sig.symbol);
-    await executeSignalForUser(this.env, userId, sig, { strategyKey: cfg.strategy_key });
+    await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `سیگنال ${sig.direction} روی ${sig.symbol} شناسایی شد (${cfg.strategy_key})`, sig.symbol);
+    const exec = await executeSignalForUser(this.env, userId, sig, { strategyKey: cfg.strategy_key });
+    return exec.ok;
   }
 }

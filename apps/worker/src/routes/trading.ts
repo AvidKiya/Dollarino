@@ -11,6 +11,7 @@ import {
   mergeKbosParams,
   parseDollarinoSignal,
   rsi,
+  selectClosedCandles,
   strategyOutputToDollarinoSignal,
   type Direction,
   type MarginMode,
@@ -30,7 +31,7 @@ import {
 } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
-import { getExchangeMarkets, normalizeCanonicalSymbol } from '../exchanges/markets.js';
+import { getExchangeMarkets, MAJOR_LIQUID_COINS, normalizeCanonicalSymbol } from '../exchanges/markets.js';
 import type { ExchangeProviderId } from '@dollarino/core';
 
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -555,7 +556,7 @@ tradingRoutes.post('/bot/start', async (c) => {
   } catch {
     void runTick;
   }
-  await Promise.race([runTick, new Promise((resolve) => setTimeout(resolve, 2500))]);
+  await Promise.race([runTick, new Promise((resolve) => setTimeout(resolve, 4500))]);
 
   return c.json({ ok: true, bot_state: nextState, strategy_key: targetStrategy });
 });
@@ -787,18 +788,26 @@ tradingRoutes.post('/orders/manual', async (c) => {
   }>();
 
   if (body.orderType === 'LIMIT' && body.limitPrice && Number(body.limitPrice) > 0) {
-    const cfg = await c.env.DB.prepare('SELECT trading_mode, margin_pct, paper_balance FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ trading_mode: string; margin_pct: number; paper_balance: string }>();
+    const [cfg, activeRow] = await Promise.all([
+      c.env.DB.prepare('SELECT trading_mode, margin_pct, paper_balance FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ trading_mode: string; margin_pct: number; paper_balance: string }>(),
+      c.env.DB.prepare(
+        `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+      ).bind(user.id).first<{ provider: ExchangeProviderId }>(),
+    ]);
     const bal = Number(cfg?.paper_balance ?? 10000);
-    const qty = (((bal * ((cfg?.margin_pct ?? 10) / 100)) * body.leverage) / Number(body.limitPrice)).toFixed(4);
+    const rawQty = ((bal * ((cfg?.margin_pct ?? 10) / 100)) * body.leverage) / Number(body.limitPrice);
+    const qty = rawQty >= 100 ? rawQty.toFixed(1) : rawQty >= 1 ? rawQty.toFixed(3) : rawQty.toFixed(5);
+    const exProvider = cfg?.trading_mode === 'PAPER' ? 'paper' : (activeRow?.provider || 'paper');
     const id = randomId('ord');
     await c.env.DB.prepare(
       `INSERT INTO pending_orders (id, user_id, mode, exchange_provider, symbol, strategy_key, direction, order_type, price, quantity, leverage, stop_loss, tp1, tp2, tp3)
-       VALUES (?, ?, ?, 'paper', ?, 'manual_limit', ?, 'LIMIT', ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, 'manual_limit', ?, 'LIMIT', ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       id,
       user.id,
       cfg?.trading_mode ?? 'PAPER',
+      exProvider,
       body.symbol.toUpperCase(),
       body.direction,
       body.limitPrice,
@@ -841,18 +850,20 @@ tradingRoutes.delete('/pending/:id', async (c) => {
 
 tradingRoutes.post('/signals/execute', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json<{ rawText?: string; signal?: Record<string, unknown>; executeNow?: boolean }>();
+  const body = await c.req.json<{ rawText?: string; signal?: Record<string, unknown>; executeNow?: boolean; source?: 'copytrade' | 'scanner' }>();
   const parsed = parseDollarinoSignal(body.signal ?? body.rawText ?? '');
   if (!parsed) return c.json({ error: 'Could not parse valid Dollarino signal' }, 400);
 
   const formatted = formatDollarinoSignal(parsed);
   const sigId = randomId('sig');
+  const sigSource = body.source === 'scanner' ? 'strategy_scanner' : 'manual_test';
   await c.env.DB.prepare(
     `INSERT INTO signals (id, user_id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, sl_pct, tp1_pct, tp2_pct, tp3_pct, raw_text, status)
-     VALUES (?, ?, 'manual_test', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW')`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW')`
   ).bind(
     sigId,
     user.id,
+    sigSource,
     parsed.symbol,
     parsed.direction,
     parsed.timeframe,
@@ -874,7 +885,10 @@ tradingRoutes.post('/signals/execute', async (c) => {
   }
 
   const ent = await resolveUserEntitlement(c.env.DB, user);
-  if (!ent.allowCopyTrade) {
+  const cfgMode = await c.env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ trading_mode: string }>();
+  const isScannerPaper = body.source === 'scanner' && (cfgMode?.trading_mode ?? 'PAPER') === 'PAPER';
+  if (!isScannerPaper && !ent.allowCopyTrade) {
     return c.json(
       {
         error: 'Active Pro or VIP subscription required to execute Telegram Copy-Trade signals.',
@@ -887,7 +901,7 @@ tradingRoutes.post('/signals/execute', async (c) => {
   const execRes = await executeSignalForUser(c.env, user.id, parsed, {
     signalId: sigId,
     forceBypassState: true,
-    strategyKey: 'manual_signal',
+    strategyKey: isScannerPaper ? 'scanner_signal' : 'manual_signal',
   });
 
   if (execRes.ok) {
@@ -1085,49 +1099,76 @@ tradingRoutes.post('/scanner', async (c) => {
       ? { proxyUrl: c.env.TOOBIT_PROXY_URL, proxySecret: c.env.EXCHANGE_PROXY_SECRET }
       : undefined;
     const allMarkets = await getExchangeMarkets(provider, proxyConfig);
-    const count = Math.min(18, Math.max(6, body.limit ?? 12));
-    symbols = allMarkets.slice(0, count).map((m) => m.symbol);
+    const count = Math.min(20, Math.max(6, body.limit ?? 14));
+    const orderedPool = Array.from(new Set([...MAJOR_LIQUID_COINS, ...allMarkets.map((m) => m.symbol)]));
+    symbols = orderedPool.slice(0, count);
   }
 
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
+  const now = Date.now();
 
   const results = await Promise.all(
     symbols.map(async (sym) => {
-      const [candles, htfCandles] = await Promise.all([
+      const [candlesRaw, htfRaw] = await Promise.all([
         adapter.getKlines(sym, tf, 360),
         adapter.getKlines(sym, htfTf, 140),
       ]);
+      const candles = selectClosedCandles(candlesRaw, tf, now);
+      const htfCandles = selectClosedCandles(htfRaw, htfTf, now);
+      const evalLtf = candles.length >= 40 ? candles : candlesRaw;
+      const evalHtf = htfCandles.length >= 25 ? htfCandles : htfRaw;
+
       const outputs = computeStrategySignals(
         strategyKey,
-        candles,
-        htfCandles,
+        evalLtf,
+        evalHtf,
         tf,
         htfTf,
         { kbosParams, mixerWeights, mixerThreshold }
       );
-      const latest = outputs[outputs.length - 1];
-      let realHtfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = latest?.trend ?? 'NEUTRAL';
-      if (htfCandles.length >= 25) {
-        const hc = htfCandles.map((k) => k.close);
+      const currentClose = evalLtf[evalLtf.length - 1]?.close ?? 0;
+      let chosen = outputs[outputs.length - 1];
+      let barsAgo = 0;
+
+      if ((!chosen || chosen.signal === 'NONE') && outputs.length >= 6) {
+        for (let lb = 2; lb <= 6; lb++) {
+          const cand = outputs[outputs.length - lb];
+          if (cand && cand.signal !== 'NONE' && cand.price > 0 && currentClose > 0 && cand.stopLoss && cand.tp1) {
+            const driftPct = Math.abs(currentClose - cand.price) / cand.price;
+            const slValid = cand.signal === 'LONG' ? currentClose > cand.stopLoss : currentClose < cand.stopLoss;
+            const tp1NotHit = cand.signal === 'LONG' ? currentClose < cand.tp1 : currentClose > cand.tp1;
+            if (driftPct <= 0.015 && slValid && tp1NotHit) {
+              chosen = cand;
+              barsAgo = lb - 1;
+              break;
+            }
+          }
+        }
+      }
+
+      let realHtfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = chosen?.trend ?? 'NEUTRAL';
+      if (evalHtf.length >= 25) {
+        const hc = evalHtf.map((k) => k.close);
         const h20 = ema(hc, 20);
         const h50 = ema(hc, 50);
-        const f = h20[htfCandles.length - 1];
-        const s = h50[htfCandles.length - 1];
+        const f = h20[evalHtf.length - 1];
+        const s = h50[evalHtf.length - 1];
         if (Number.isFinite(f) && Number.isFinite(s)) {
           realHtfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
         }
       }
-      const mix = evaluateSignalMixerAtBar(candles, candles.length - 1, realHtfTrend, mixerWeights, mixerThreshold);
-      const signalCard = latest && latest.signal !== 'NONE'
-        ? strategyOutputToDollarinoSignal(sym, tf, Math.max(1, cfgRow?.max_leverage ?? 5), latest)
+      const mix = evaluateSignalMixerAtBar(evalLtf, evalLtf.length - 1, realHtfTrend, mixerWeights, mixerThreshold);
+      const signalCard = chosen && chosen.signal !== 'NONE'
+        ? strategyOutputToDollarinoSignal(sym, tf, Math.max(1, cfgRow?.max_leverage ?? 5), chosen)
         : null;
       return {
         symbol: sym,
-        price: candles[candles.length - 1]?.close ?? 0,
+        price: currentClose,
         trend: realHtfTrend,
-        rsi: Number((latest?.rsi ?? 50).toFixed(1)),
+        rsi: Number((chosen?.rsi ?? 50).toFixed(1)),
         mixerConfidence: mix.confidence,
         mixerDirection: mix.direction,
+        barsAgo: signalCard ? barsAgo : null,
         signal: signalCard,
         formatted: signalCard ? formatDollarinoSignal(signalCard) : null,
       };

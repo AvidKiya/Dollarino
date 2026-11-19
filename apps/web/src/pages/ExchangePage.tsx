@@ -45,17 +45,22 @@ export function ExchangePage({
   const [marketFilter, setMarketFilter] = useState('');
   const [marketSort, setMarketSort] = useState<'volume' | 'gainers' | 'losers'>('volume');
 
+  const applyAutoLevels = (px: number, dir: 'LONG' | 'SHORT') => {
+    if (!Number.isFinite(px) || px <= 0) return;
+    const dec = px >= 1000 ? 2 : px >= 1 ? 4 : px >= 0.01 ? 5 : 8;
+    setStopLoss((dir === 'LONG' ? px * 0.99 : px * 1.01).toFixed(dec));
+    setTp1((dir === 'LONG' ? px * 1.012 : px * 0.988).toFixed(dec));
+    setTp2((dir === 'LONG' ? px * 1.022 : px * 0.978).toFixed(dec));
+    setTp3((dir === 'LONG' ? px * 1.035 : px * 0.965).toFixed(dec));
+  };
+
   const loadBook = async (forceReset = false) => {
     const res = await apiFetch<MarketSnapshot>(`/api/trading/market/overview?symbol=${symbol}&timeframe=15m`).catch(() => null);
     if (res) {
       setSnap(res);
       const px = Number(res.market24h.lastPrice);
-      const dec = px >= 100 ? 2 : px >= 1 ? 4 : 6;
       if (forceReset || !stopLoss) {
-        setStopLoss((direction === 'LONG' ? px * 0.99 : px * 1.01).toFixed(dec));
-        setTp1((direction === 'LONG' ? px * 1.012 : px * 0.988).toFixed(dec));
-        setTp2((direction === 'LONG' ? px * 1.022 : px * 0.978).toFixed(dec));
-        setTp3((direction === 'LONG' ? px * 1.035 : px * 0.965).toFixed(dec));
+        applyAutoLevels(px, direction);
       }
     }
   };
@@ -65,6 +70,12 @@ export function ExchangePage({
     const t = setInterval(() => void loadBook(false), 9000);
     return () => clearInterval(t);
   }, [symbol]);
+
+  const changeDirection = (nextDir: 'LONG' | 'SHORT') => {
+    setDirection(nextDir);
+    const px = Number(snap?.market24h.lastPrice ?? 0);
+    if (px > 0) applyAutoLevels(px, nextDir);
+  };
 
   const filteredMarkets = useMemo(() => {
     const q = marketFilter.trim().toUpperCase();
@@ -80,30 +91,34 @@ export function ExchangePage({
   const submitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    const res = await apiFetch<{ ok?: boolean; error?: string; tradeId?: string; pendingOrderId?: string }>('/api/trading/orders/manual', {
-      method: 'POST',
-      body: JSON.stringify({
-        symbol,
-        direction,
-        orderType,
-        marginMode,
-        limitPrice: orderType === 'LIMIT' ? limitPrice : snap?.market24h.lastPrice,
-        leverage,
-        stopLoss,
-        tp1,
-        tp2: tp2 || undefined,
-        tp3: tp3 || undefined,
-        timeframe: '15m',
-      }),
-    });
-    setMsg(
-      res.pendingOrderId
-        ? `Limit Order queued (${res.pendingOrderId})`
-        : res.ok
-          ? `Executed on ${activeExchange.provider.toUpperCase()} (${res.tradeId})`
-          : res.error || 'Rejected'
-    );
-    await onExecuted();
+    try {
+      const res = await apiFetch<{ ok?: boolean; error?: string; tradeId?: string; pendingOrderId?: string }>('/api/trading/orders/manual', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol,
+          direction,
+          orderType,
+          marginMode,
+          limitPrice: orderType === 'LIMIT' ? limitPrice : snap?.market24h.lastPrice,
+          leverage,
+          stopLoss,
+          tp1,
+          tp2: tp2 || undefined,
+          tp3: tp3 || undefined,
+          timeframe: '15m',
+        }),
+      });
+      setMsg(
+        res.pendingOrderId
+          ? `Limit Order queued (${res.pendingOrderId})`
+          : res.ok
+            ? `Executed on ${activeExchange.provider.toUpperCase()} (${res.tradeId})`
+            : res.error || 'Rejected'
+      );
+      await onExecuted();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Order failed');
+    }
   };
 
   const kcexPair = symbol.endsWith('USDT') ? `${symbol.slice(0, -4)}_USDT` : `${symbol}_USDT`;
@@ -236,10 +251,10 @@ export function ExchangePage({
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setDirection('LONG')} className={`py-2 rounded-xl font-extrabold inline-flex items-center justify-center gap-1 ${direction === 'LONG' ? 'btn-emerald' : 'surface-soft text-sub'}`}>
+            <button type="button" onClick={() => changeDirection('LONG')} className={`py-2 rounded-xl font-extrabold inline-flex items-center justify-center gap-1 ${direction === 'LONG' ? 'btn-emerald' : 'surface-soft text-sub'}`}>
               <ArrowUpRight className="w-4 h-4" /> LONG
             </button>
-            <button type="button" onClick={() => setDirection('SHORT')} className={`py-2 rounded-xl font-extrabold inline-flex items-center justify-center gap-1 ${direction === 'SHORT' ? 'bg-rose-500 text-white' : 'surface-soft text-sub'}`}>
+            <button type="button" onClick={() => changeDirection('SHORT')} className={`py-2 rounded-xl font-extrabold inline-flex items-center justify-center gap-1 ${direction === 'SHORT' ? 'bg-rose-500 text-white' : 'surface-soft text-sub'}`}>
               <ArrowDownRight className="w-4 h-4" /> SHORT
             </button>
           </div>

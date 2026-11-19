@@ -1,6 +1,13 @@
 import type { Candle, ExchangeProviderId, Timeframe } from '@dollarino/core';
 import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
 
+export const MAJOR_LIQUID_COINS = [
+  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
+  'DOGEUSDT', 'AVAXUSDT', 'SUIUSDT', 'TONUSDT', 'LINKUSDT',
+  'ADAUSDT', 'NEARUSDT', 'ARBUSDT', 'PEPEUSDT', 'TRXUSDT',
+  'OPUSDT', 'LTCUSDT', 'INJUSDT', 'APTUSDT', 'WIFUSDT',
+];
+
 export interface ExchangeMarketInfo {
   symbol: string; // Canonical e.g. BTCUSDT
   exchangeSymbol: string; // Native e.g. BTC-SWAP-USDT (Toobit), BTC_USDT (KCEX), BTCUSDT (Bitunix)

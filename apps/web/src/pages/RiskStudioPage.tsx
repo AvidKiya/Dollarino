@@ -32,7 +32,7 @@ export function RiskStudioPage({
     trade_execution_mode: String(config.trade_execution_mode ?? 'AUTO'),
     margin_mode: String(config.margin_mode ?? 'ISOLATED'),
     symbol: String(config.symbol ?? 'BTCUSDT'),
-    strategy_key: String(config.strategy_key ?? 'kbos_v11'),
+    strategy_key: String(config.strategy_key ?? 'dollarino_v01'),
     entry_timeframe: String(config.entry_timeframe ?? '15m'),
     higher_timeframe: String(config.higher_timeframe ?? '1h'),
     margin_pct: Number(config.margin_pct ?? 50),
@@ -101,32 +101,36 @@ export function RiskStudioPage({
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavedMsg(null);
-    await apiFetch('/api/trading/config', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        ...form,
-        use_signal_leverage: form.use_signal_leverage ? 1 : 0,
-        auto_breakeven_on_tp1: form.auto_breakeven_on_tp1 ? 1 : 0,
-        move_sl_to_tp1_on_tp2: form.move_sl_to_tp1_on_tp2 ? 1 : 0,
-        trailing_stop_enabled: form.trailing_stop_enabled ? 1 : 0,
-        trail_after_tp1: form.trail_after_tp1 ? 1 : 0,
-        block_weekends: form.block_weekends ? 1 : 0,
-        macro_blackout: form.macro_blackout ? 1 : 0,
-        ai_gate_enabled: form.ai_gate_enabled ? 1 : 0,
-        risk_profile_json: {
-          preset,
-          marketBias,
-          preferredSession,
-          entryStyle,
-          maxSpread,
-          cooldownMinutes,
-          trailingStop: form.trailing_stop_enabled,
-          trailingDistance: form.trailing_stop_pct,
-        },
-      }),
-    });
-    await refresh();
-    setSavedMsg(lang === 'fa' ? 'پروفایل ریسک و قوانین خروج ۳ تارگت ذخیره شد!' : 'Risk profile & 3-TP rules saved!');
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ...form,
+          use_signal_leverage: form.use_signal_leverage ? 1 : 0,
+          auto_breakeven_on_tp1: form.auto_breakeven_on_tp1 ? 1 : 0,
+          move_sl_to_tp1_on_tp2: form.move_sl_to_tp1_on_tp2 ? 1 : 0,
+          trailing_stop_enabled: form.trailing_stop_enabled ? 1 : 0,
+          trail_after_tp1: form.trail_after_tp1 ? 1 : 0,
+          block_weekends: form.block_weekends ? 1 : 0,
+          macro_blackout: form.macro_blackout ? 1 : 0,
+          ai_gate_enabled: form.ai_gate_enabled ? 1 : 0,
+          risk_profile_json: {
+            preset,
+            marketBias,
+            preferredSession,
+            entryStyle,
+            maxSpread,
+            cooldownMinutes,
+            trailingStop: form.trailing_stop_enabled,
+            trailingDistance: form.trailing_stop_pct,
+          },
+        }),
+      });
+      await refresh();
+      setSavedMsg(lang === 'fa' ? 'پروفایل ریسک و قوانین خروج ۳ تارگت ذخیره شد!' : 'Risk profile & 3-TP rules saved!');
+    } catch (err) {
+      setSavedMsg(err instanceof Error ? err.message : 'Failed to save risk profile');
+    }
   };
 
   return (

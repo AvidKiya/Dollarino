@@ -19,7 +19,10 @@ export function LogsPage({ lang }: { lang: Lang }) {
   const [query, setQuery] = useState('');
 
   const load = async () => {
-    const path = category === 'ALL' ? '/api/trading/logs' : `/api/trading/logs?category=${category}`;
+    const path =
+      category === 'ALL' || category === 'AI'
+        ? '/api/trading/logs'
+        : `/api/trading/logs?category=${category}`;
     const res = await apiFetch<{ logs: AuditLog[] }>(path);
     setLogs(res.logs);
   };
@@ -29,6 +32,7 @@ export function LogsPage({ lang }: { lang: Lang }) {
   }, [category]);
 
   const filtered = logs.filter((l) => {
+    if (category === 'AI' && l.category !== 'AI' && l.category !== 'AI_AGENT') return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return l.message.toLowerCase().includes(q) || (l.symbol ?? '').toLowerCase().includes(q) || l.category.toLowerCase().includes(q);
@@ -38,7 +42,7 @@ export function LogsPage({ lang }: { lang: Lang }) {
     <div className="surface-card p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {['ALL', 'ORDER', 'RISK', 'AI', 'SYSTEM', 'TELEGRAM'].map((cat) => (
+          {['ALL', 'ORDER', 'SIGNAL', 'RISK', 'AI', 'AI_AGENT', 'SYSTEM', 'TELEGRAM'].map((cat) => (
             <button
               key={cat}
               onClick={() => setCategory(cat)}
@@ -62,14 +66,16 @@ export function LogsPage({ lang }: { lang: Lang }) {
             />
           </div>
           <button onClick={load} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl surface-soft border text-main font-bold">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            <RefreshCw className="w-3.5 h-3.5" /> {lang === 'fa' ? 'بروزرسانی' : 'Refresh'}
           </button>
         </div>
       </div>
 
       <div className="space-y-2 max-h-[600px] overflow-y-auto text-xs font-mono-num">
         {filtered.length === 0 ? (
-          <div className="py-10 text-center text-dim">No audit events recorded yet.</div>
+          <div className="py-10 text-center text-dim">
+            {lang === 'fa' ? 'هنوز رویدادی در این بخش ثبت نشده است.' : 'No audit events recorded yet.'}
+          </div>
         ) : (
           filtered.map((l) => (
             <div key={l.id} className="p-3.5 rounded-2xl surface-soft border space-y-1">

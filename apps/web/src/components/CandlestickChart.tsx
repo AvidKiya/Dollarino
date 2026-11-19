@@ -76,8 +76,19 @@ export function CandlestickChart({
     const el = containerRef.current;
     if (!el) return;
 
+    const dedupAsc = <T extends { time: number | Time }>(arr: T[]): T[] => {
+      const m = new Map<number, T>();
+      for (const item of arr) {
+        const t = Number(item.time);
+        if (Number.isFinite(t)) m.set(t, item);
+      }
+      return Array.from(m.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([, v]) => v);
+    };
+
     const chart = createChart(el, {
-      width: el.clientWidth,
+      width: Math.max(280, el.clientWidth || 600),
       height,
       layout: {
         background: { type: ColorType.Solid, color: isLight ? '#ffffff' : '#060c1c' },
@@ -109,14 +120,18 @@ export function CandlestickChart({
     });
 
     if (candles.length > 0) {
-      series.setData(
+      const sortedCandles = dedupAsc(
         candles.map((c) => ({
           time: Math.floor(c.timestamp / 1000) as Time,
           open: c.open,
           high: c.high,
           low: c.low,
           close: c.close,
+          volume: c.volume,
         }))
+      );
+      series.setData(
+        sortedCandles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }))
       );
 
       if (showVolume) {
@@ -126,8 +141,8 @@ export function CandlestickChart({
         });
         volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
         volSeries.setData(
-          candles.map((c) => ({
-            time: Math.floor(c.timestamp / 1000) as Time,
+          sortedCandles.map((c) => ({
+            time: c.time,
             value: c.volume,
             color: c.close >= c.open ? 'rgba(16, 216, 86, 0.24)' : 'rgba(244, 63, 94, 0.24)',
           }))
@@ -135,13 +150,15 @@ export function CandlestickChart({
       }
 
       if (showMarkers && kbosOverlays?.markers?.length) {
-        const markers: SeriesMarker<Time>[] = kbosOverlays.markers.map((m) => ({
-          time: m.time as Time,
-          position: m.position,
-          color: m.color,
-          shape: m.shape,
-          text: m.text,
-        }));
+        const markers: SeriesMarker<Time>[] = dedupAsc(
+          kbosOverlays.markers.map((m) => ({
+            time: m.time as Time,
+            position: m.position,
+            color: m.color,
+            shape: m.shape,
+            text: m.text,
+          }))
+        );
         series.setMarkers(markers);
       }
 
@@ -151,33 +168,35 @@ export function CandlestickChart({
     if (showEmas || (!kbosOverlays && overlays)) {
       if (overlays?.ema20?.length) {
         const s20 = chart.addLineSeries({ color: '#1464F6', lineWidth: 1, priceLineVisible: false });
-        s20.setData(overlays.ema20.map((p) => ({ time: p.time as Time, value: p.value })));
+        s20.setData(dedupAsc(overlays.ema20.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
       if (overlays?.ema50?.length) {
         const s50 = chart.addLineSeries({ color: '#FF8A00', lineWidth: 1, priceLineVisible: false });
-        s50.setData(overlays.ema50.map((p) => ({ time: p.time as Time, value: p.value })));
+        s50.setData(dedupAsc(overlays.ema50.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
       if (overlays?.ema200?.length) {
         const s200 = chart.addLineSeries({ color: '#8b5cf6', lineWidth: 2, priceLineVisible: false });
-        s200.setData(overlays.ema200.map((p) => ({ time: p.time as Time, value: p.value })));
+        s200.setData(dedupAsc(overlays.ema200.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
     }
 
     if (showKbosHtf && kbosOverlays?.closeSeriesAlt?.length && kbosOverlays?.openSeriesAlt?.length) {
       const cLine = chart.addLineSeries({ color: '#10D856', lineWidth: 2, priceLineVisible: false, title: 'KBOs Close' });
-      cLine.setData(kbosOverlays.closeSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value })));
+      cLine.setData(dedupAsc(kbosOverlays.closeSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value }))));
       const oLine = chart.addLineSeries({ color: '#f43f5e', lineWidth: 2, priceLineVisible: false, title: 'KBOs Open' });
-      oLine.setData(kbosOverlays.openSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value })));
+      oLine.setData(dedupAsc(kbosOverlays.openSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value }))));
     }
 
     if (showDemaAtr && kbosOverlays?.demaAtr?.length) {
       const daLine = chart.addLineSeries({ lineWidth: 2, priceLineVisible: false, title: 'DEMA ATR' });
       daLine.setData(
-        kbosOverlays.demaAtr.map((p) => ({
-          time: p.time as Time,
-          value: p.value,
-          color: p.trend === 'BULL' ? '#10D856' : '#f43f5e',
-        }))
+        dedupAsc(
+          kbosOverlays.demaAtr.map((p) => ({
+            time: p.time as Time,
+            value: p.value,
+            color: p.trend === 'BULL' ? '#10D856' : '#f43f5e',
+          }))
+        )
       );
     }
 
@@ -185,7 +204,7 @@ export function CandlestickChart({
       for (const band of kbosOverlays.almaRibbon.bands) {
         if (!band.points.length) continue;
         const bSeries = chart.addLineSeries({ color: band.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        bSeries.setData(band.points.map((p) => ({ time: p.time as Time, value: p.value })));
+        bSeries.setData(dedupAsc(band.points.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
     }
 
@@ -205,13 +224,13 @@ export function CandlestickChart({
     }
 
     const ro = new ResizeObserver(() => {
-      if (el) chart.applyOptions({ width: el.clientWidth });
+      if (el && el.clientWidth > 0) chart.applyOptions({ width: el.clientWidth });
     });
     ro.observe(el);
 
     return () => {
       ro.disconnect();
-      chart.remove();
+      try { chart.remove(); } catch { /* ignore */ }
     };
   }, [candles, levels, overlays, kbosOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showMarkers, isLight]);
 

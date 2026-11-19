@@ -35,6 +35,7 @@ interface ScanResult {
   rsi: number;
   mixerConfidence: number;
   mixerDirection: string;
+  barsAgo?: number | null;
   signal: DollarinoSignal | null;
 }
 
@@ -94,21 +95,25 @@ export function StrategyFlowPage({
 
   const saveFlow = async () => {
     setSavedMsg('');
-    await apiFetch('/api/trading/config', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        strategy_key: selectedStrategy,
-        mixer_threshold: threshold,
-        mixer_weights_json: weights,
-        kbos_params_json: kbos,
-        trailing_stop_enabled: kbos.useTrail ? 1 : 0,
-        trailing_stop_pct: kbos.trailPct,
-        trail_after_tp1: kbos.trailAfterTp1 ? 1 : 0,
-        strategy_flow_json: { strategyKey: selectedStrategy, threshold, weights, kbos, updatedAt: new Date().toISOString() },
-      }),
-    });
-    await onRefresh();
-    setSavedMsg(lang === 'fa' ? 'فلو استراتژی منتخب دلارینو و میکسر ذخیره شد!' : 'Dollarino Select Strategy Flow & Mixer saved!');
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          strategy_key: selectedStrategy,
+          mixer_threshold: threshold,
+          mixer_weights_json: weights,
+          kbos_params_json: kbos,
+          trailing_stop_enabled: kbos.useTrail ? 1 : 0,
+          trailing_stop_pct: kbos.trailPct,
+          trail_after_tp1: kbos.trailAfterTp1 ? 1 : 0,
+          strategy_flow_json: { strategyKey: selectedStrategy, threshold, weights, kbos, updatedAt: new Date().toISOString() },
+        }),
+      });
+      await onRefresh();
+      setSavedMsg(lang === 'fa' ? 'فلو استراتژی منتخب دلارینو و میکسر ذخیره شد!' : 'Dollarino Select Strategy Flow & Mixer saved!');
+    } catch (err) {
+      setSavedMsg(err instanceof Error ? err.message : 'Failed to save strategy flow');
+    }
   };
 
   const runScanner = async () => {
@@ -118,14 +123,16 @@ export function StrategyFlowPage({
       const customSymbols = q
         ? markets
             .filter((m) => m.symbol.includes(q) || m.base.includes(q) || q.split(/[\s,]+/).some((tok) => tok && m.symbol.includes(tok)))
-            .slice(0, 12)
+            .slice(0, 14)
             .map((m) => m.symbol)
         : undefined;
       const res = await apiFetch<{ results: ScanResult[] }>('/api/trading/scanner', {
         method: 'POST',
-        body: JSON.stringify({ strategyKey: selectedStrategy, timeframe: scanTf, symbols: customSymbols?.length ? customSymbols : undefined, limit: 12 }),
+        body: JSON.stringify({ strategyKey: selectedStrategy, timeframe: scanTf, symbols: customSymbols?.length ? customSymbols : undefined, limit: 14 }),
       });
       setScanResults(res.results);
+    } catch (err) {
+      setSavedMsg(err instanceof Error ? err.message : 'Scanner error');
     } finally {
       setScanning(false);
     }
@@ -388,19 +395,35 @@ export function StrategyFlowPage({
               {r.signal ? (
                 <button
                   onClick={async () => {
-                    await apiFetch('/api/trading/signals/execute', {
-                      method: 'POST',
-                      body: JSON.stringify({ signal: r.signal, executeNow: true }),
-                    });
-                    await onRefresh();
+                    setSavedMsg('');
+                    try {
+                      const res = await apiFetch<{ ok: boolean; tradeId?: string; error?: string }>('/api/trading/signals/execute', {
+                        method: 'POST',
+                        body: JSON.stringify({ signal: r.signal, executeNow: true, source: 'scanner' }),
+                      });
+                      setSavedMsg(
+                        res.ok
+                          ? (lang === 'fa' ? `معامله ${r.symbol} باز شد (${res.tradeId})` : `Opened ${r.symbol} (${res.tradeId})`)
+                          : res.error || 'Rejected'
+                      );
+                      await onRefresh();
+                    } catch (err) {
+                      setSavedMsg(err instanceof Error ? err.message : 'Execution failed');
+                    }
                   }}
-                  className="w-full py-2 rounded-xl btn-emerald font-extrabold flex items-center justify-center gap-1"
+                  className="w-full py-2 rounded-xl btn-emerald font-extrabold flex items-center justify-center gap-1.5"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Execute {r.signal.direction}</span>
+                  <span>
+                    {lang === 'fa'
+                      ? `اجرای ${r.signal.direction} (${r.barsAgo ? `${r.barsAgo} کندل پیش` : 'هم‌اکنون'})`
+                      : `Execute ${r.signal.direction} (${r.barsAgo ? `${r.barsAgo}b ago` : 'Live'})`}
+                  </span>
                 </button>
               ) : (
-                <div className="text-[11px] text-dim italic">No active entry candle yet</div>
+                <div className="text-[11px] text-dim italic">
+                  {lang === 'fa' ? 'در حال رصد نقطه ورود مطمئن...' : 'Monitoring for clean entry...'}
+                </div>
               )}
             </div>
           ))}

@@ -107,19 +107,23 @@ export function CopyTradePage({
 
   const saveChannelSettings = async (nextMode: 'AUTO' | 'MANUAL_CONFIRM') => {
     setMode(nextMode);
-    await apiFetch('/api/trading/config', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        trade_execution_mode: nextMode,
-        signal_channel_handle: tgChannel.trim() || '@Dollarinoofficial',
-      }),
-    });
-    setStatusMsg(
-      nextMode === 'AUTO'
-        ? isFa ? 'حالت کپی‌ترید خودکار (AUTO) فعال شد.' : 'Auto Copy-Trade enabled.'
-        : isFa ? 'حالت تایید دستی در تلگرام فعال شد.' : 'Manual Telegram Confirm enabled.'
-    );
-    await onExecuted();
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          trade_execution_mode: nextMode,
+          signal_channel_handle: tgChannel.trim() || '@Dollarinoofficial',
+        }),
+      });
+      setStatusMsg(
+        nextMode === 'AUTO'
+          ? isFa ? 'حالت کپی‌ترید خودکار (AUTO) فعال شد.' : 'Auto Copy-Trade enabled.'
+          : isFa ? 'حالت تایید دستی در تلگرام فعال شد.' : 'Manual Telegram Confirm enabled.'
+      );
+      await onExecuted();
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Failed to save mode');
+    }
   };
 
   const connectTgBot = async (e: React.FormEvent) => {
@@ -172,7 +176,16 @@ export function CopyTradePage({
         setStatusMsg(isFa ? 'فرمت سیگنال با موفقیت شناسایی و پارس شد!' : 'Signal parsed cleanly!');
       }
     } catch (err) {
-      setStatusMsg(err instanceof Error ? err.message : 'Could not parse signal format');
+      const m = err instanceof Error ? err.message : 'Could not parse signal format';
+      if (m.includes('subscription') || m.includes('Pro') || m.includes('VIP')) {
+        setStatusMsg(
+          isFa
+            ? 'برای اجرای زنده کپی ترید دلارینو، اشتراک Pro یا VIP لازم است. می‌توانید ابتدا دکمه «پیش‌نمایش پارس سیگنال» را بزنید یا اشتراک خود را فعال کنید.'
+            : m
+        );
+      } else {
+        setStatusMsg(m);
+      }
     } finally {
       setLoading(false);
     }

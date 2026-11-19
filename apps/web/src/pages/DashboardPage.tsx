@@ -330,6 +330,8 @@ export function DashboardPage({
 
   // Trader Freedom Controls
   const [traderFreedomOpen, setTraderFreedomOpen] = useState(false);
+  const [draftMaxOpen, setDraftMaxOpen] = useState<number | null>(null);
+  const [draftMaxLev, setDraftMaxLev] = useState<number | null>(null);
 
   const [busyAction, setBusyAction] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -707,12 +709,17 @@ export function DashboardPage({
   const saveSlTp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editPos) return;
-    await apiFetch(`/api/trading/positions/${editPos.id}/tpsl`, {
-      method: 'PATCH',
-      body: JSON.stringify({ stopLoss: editSlVal, tp1: editTp1Val }),
-    });
-    setEditPos(null);
-    onRefresh();
+    try {
+      await apiFetch(`/api/trading/positions/${editPos.id}/tpsl`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stopLoss: editSlVal, tp1: editTp1Val }),
+      });
+      setEditPos(null);
+      showToast(isFa ? 'حد سود و ضرر معامله بروزرسانی شد ✅' : 'SL/TP updated ✅');
+      onRefresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update SL/TP', true);
+    }
   };
 
   const placeManualOrder = async (e: React.FormEvent) => {
@@ -721,8 +728,9 @@ export function DashboardPage({
     setTicketMsg(null);
     try {
       const refPrice = orderType === 'LIMIT' && limitPrice ? Number(limitPrice) : Number(overview?.market24h.lastPrice ?? 0);
-      const sl = slInput || (refPrice > 0 ? (side === 'LONG' ? refPrice * 0.985 : refPrice * 1.015).toFixed(2) : '');
-      const tp1 = tp1Input || (refPrice > 0 ? (side === 'LONG' ? refPrice * 1.02 : refPrice * 0.98).toFixed(2) : '');
+      const pxDec = refPrice >= 1000 ? 2 : refPrice >= 1 ? 4 : refPrice >= 0.01 ? 5 : 8;
+      const sl = slInput || (refPrice > 0 ? (side === 'LONG' ? refPrice * 0.985 : refPrice * 1.015).toFixed(pxDec) : '');
+      const tp1 = tp1Input || (refPrice > 0 ? (side === 'LONG' ? refPrice * 1.02 : refPrice * 0.98).toFixed(pxDec) : '');
       const res = await apiFetch<{ ok: boolean; error?: string; pendingOrderId?: string }>('/api/trading/orders/manual', {
         method: 'POST',
         body: JSON.stringify({
@@ -762,7 +770,6 @@ export function DashboardPage({
       ema20: overview.indicators.ema20,
       ema50: overview.indicators.ema50,
       ema200: overview.indicators.ema200,
-      kbos: overview.kbosOverlays,
     };
   }, [overview]);
 
@@ -1315,40 +1322,76 @@ export function DashboardPage({
             <div className="surface-soft rounded-2xl p-4 space-y-3 text-xs border">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-black text-main">
-                  {isFa ? `تعداد معاملات همزمان روی ارزهای مختلف: ${maxOpenPos} ارز` : `Max Simultaneous Coins: ${maxOpenPos}`}
+                  {isFa
+                    ? `تعداد معاملات همزمان روی ارزهای مختلف: ${draftMaxOpen ?? maxOpenPos} ارز`
+                    : `Max Simultaneous Coins: ${draftMaxOpen ?? maxOpenPos}`}
                 </span>
                 <input
                   type="range"
                   min={1}
                   max={20}
-                  value={maxOpenPos}
-                  onChange={(e) =>
-                    void updateTraderFreedom(
-                      { max_open_positions: Number(e.target.value) },
-                      `حداکثر معاملات همزمان روی ${e.target.value} ارز تنظیم شد`,
-                      `Max simultaneous positions set to ${e.target.value}`
-                    )
-                  }
+                  value={draftMaxOpen ?? maxOpenPos}
+                  onChange={(e) => setDraftMaxOpen(Number(e.target.value))}
+                  onPointerUp={() => {
+                    if (draftMaxOpen !== null && draftMaxOpen !== maxOpenPos) {
+                      const val = draftMaxOpen;
+                      setDraftMaxOpen(null);
+                      void updateTraderFreedom(
+                        { max_open_positions: val },
+                        `حداکثر معاملات همزمان روی ${val} ارز تنظیم شد`,
+                        `Max simultaneous positions set to ${val}`
+                      );
+                    }
+                  }}
+                  onKeyUp={() => {
+                    if (draftMaxOpen !== null && draftMaxOpen !== maxOpenPos) {
+                      const val = draftMaxOpen;
+                      setDraftMaxOpen(null);
+                      void updateTraderFreedom(
+                        { max_open_positions: val },
+                        `حداکثر معاملات همزمان روی ${val} ارز تنظیم شد`,
+                        `Max simultaneous positions set to ${val}`
+                      );
+                    }
+                  }}
                   className="w-40 accent-[#1464F6]"
                 />
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-black text-main">
-                  {isFa ? `حداکثر اهرم آزاد ربات: ${data.config.max_leverage}x` : `Max Bot Leverage: ${data.config.max_leverage}x`}
+                  {isFa
+                    ? `حداکثر اهرم آزاد ربات: ${draftMaxLev ?? data.config.max_leverage}x`
+                    : `Max Bot Leverage: ${draftMaxLev ?? data.config.max_leverage}x`}
                 </span>
                 <input
                   type="range"
                   min={1}
                   max={50}
-                  value={data.config.max_leverage}
-                  onChange={(e) =>
-                    void updateTraderFreedom(
-                      { max_leverage: Number(e.target.value) },
-                      `حداکثر اهرم روی ${e.target.value}x تنظیم شد`,
-                      `Max leverage set to ${e.target.value}x`
-                    )
-                  }
+                  value={draftMaxLev ?? data.config.max_leverage}
+                  onChange={(e) => setDraftMaxLev(Number(e.target.value))}
+                  onPointerUp={() => {
+                    if (draftMaxLev !== null && draftMaxLev !== data.config.max_leverage) {
+                      const val = draftMaxLev;
+                      setDraftMaxLev(null);
+                      void updateTraderFreedom(
+                        { max_leverage: val },
+                        `حداکثر اهرم روی ${val}x تنظیم شد`,
+                        `Max leverage set to ${val}x`
+                      );
+                    }
+                  }}
+                  onKeyUp={() => {
+                    if (draftMaxLev !== null && draftMaxLev !== data.config.max_leverage) {
+                      const val = draftMaxLev;
+                      setDraftMaxLev(null);
+                      void updateTraderFreedom(
+                        { max_leverage: val },
+                        `حداکثر اهرم روی ${val}x تنظیم شد`,
+                        `Max leverage set to ${val}x`
+                      );
+                    }
+                  }}
                   className="w-40 accent-[#1464F6]"
                 />
               </div>
@@ -1820,6 +1863,7 @@ export function DashboardPage({
                 <CandlestickChart
                   candles={overview.candles}
                   overlays={chartOverlays}
+                  kbosOverlays={overview.kbosOverlays}
                   levels={chartLevels}
                   height={380}
                 />

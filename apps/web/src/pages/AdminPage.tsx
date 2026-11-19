@@ -196,55 +196,75 @@ export function AdminPage({
   const updateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    await apiFetch('/api/auth/profile', { method: 'PATCH', body: JSON.stringify({ username }) });
-    setMsg(isFa ? 'نام کاربری ذخیره شد.' : 'Username updated.');
-    onUserUpdated();
+    try {
+      await apiFetch('/api/auth/profile', { method: 'PATCH', body: JSON.stringify({ username }) });
+      setMsg(isFa ? 'نام کاربری ذخیره شد.' : 'Username updated.');
+      onUserUpdated();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Profile update failed');
+    }
   };
 
   const updatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    await apiFetch('/api/auth/password', {
-      method: 'PATCH',
-      body: JSON.stringify({ currentPassword, newPassword }),
-    });
-    setCurrentPassword('');
-    setNewPassword('');
-    setMsg(isFa ? 'رمز عبور با موفقیت تغییر یافت.' : 'Password updated securely.');
+    try {
+      await apiFetch('/api/auth/password', {
+        method: 'PATCH',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setMsg(isFa ? 'رمز عبور با موفقیت تغییر یافت.' : 'Password updated securely.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Password update failed');
+    }
   };
 
   const reviewOrder = async (orderId: string, decision: 'APPROVE' | 'REJECT') => {
     setMsg(null);
-    await apiFetch(`/api/subscriptions/admin/orders/${orderId}/review`, {
-      method: 'POST',
-      body: JSON.stringify({ decision }),
-    });
-    setMsg(decision === 'APPROVE' ? 'Subscription approved & activated!' : 'Order rejected.');
-    await load();
-    onUserUpdated();
+    try {
+      await apiFetch(`/api/subscriptions/admin/orders/${orderId}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ decision }),
+      });
+      setMsg(decision === 'APPROVE' ? 'Subscription approved & activated!' : 'Order rejected.');
+      await load();
+      onUserUpdated();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Order review failed');
+    }
   };
 
   const grantSubscription = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    const res = await apiFetch<{ email: string; days: number }>('/api/subscriptions/admin/grant', {
-      method: 'POST',
-      body: JSON.stringify({ emailOrUserId: grantEmail, planCode: grantPlan, days: grantDays }),
-    });
-    setGrantEmail('');
-    setMsg(`Granted ${res.days}d ${grantPlan} to ${res.email}!`);
-    await load();
+    try {
+      const res = await apiFetch<{ email: string; days: number }>('/api/subscriptions/admin/grant', {
+        method: 'POST',
+        body: JSON.stringify({ emailOrUserId: grantEmail, planCode: grantPlan, days: grantDays }),
+      });
+      setGrantEmail('');
+      setMsg(`Granted ${res.days}d ${grantPlan} to ${res.email}!`);
+      await load();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Grant subscription failed');
+    }
   };
 
   const savePayConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    await apiFetch('/api/subscriptions/admin/config', {
-      method: 'PATCH',
-      body: JSON.stringify(payCfg),
-    });
-    setMsg(isFa ? 'تنظیمات پرداخت و تعرفه اشتراک‌ها ذخیره شد.' : 'Subscription payment & pricing settings saved.');
-    await load();
+    try {
+      await apiFetch('/api/subscriptions/admin/config', {
+        method: 'PATCH',
+        body: JSON.stringify(payCfg),
+      });
+      setMsg(isFa ? 'تنظیمات پرداخت و تعرفه اشتراک‌ها ذخیره شد.' : 'Subscription payment & pricing settings saved.');
+      await load();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to save payment config');
+    }
   };
 
   const savePlatformAiEngine = async (e: React.FormEvent) => {
@@ -266,16 +286,20 @@ export function AdminPage({
 
   const saveConsensusConfig = async () => {
     setMsg(null);
-    await apiFetch('/api/admin/settings', {
-      method: 'PUT',
-      body: JSON.stringify({
-        ai_consensus_mode: consensusMode,
-        ai_cache_ttl_sec: String(cacheTtlSec),
-      }),
-    });
-    setMsg(isFa ? 'حالت ترکیب مدل‌های هوش مصنوعی و زمان کش ذخیره شد.' : 'AI Consensus mode & cache TTL updated.');
-    await load();
-    onUserUpdated();
+    try {
+      await apiFetch('/api/admin/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          ai_consensus_mode: consensusMode,
+          ai_cache_ttl_sec: String(cacheTtlSec),
+        }),
+      });
+      setMsg(isFa ? 'حالت ترکیب مدل‌های هوش مصنوعی و زمان کش ذخیره شد.' : 'AI Consensus mode & cache TTL updated.');
+      await load();
+      onUserUpdated();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to save consensus config');
+    }
   };
 
   const testPlatformEngines = async () => {

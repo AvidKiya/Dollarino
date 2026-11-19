@@ -287,11 +287,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   if (text.startsWith('/link ')) {
     const code = text.slice(6).trim().toUpperCase();
     const webUser = await env.DB.prepare(
-      `SELECT id, username FROM users WHERE telegram_link_code = ?`
-    ).bind(code).first<{ id: string; username: string }>();
+      `SELECT id, username, telegram_link_expires_at FROM users WHERE telegram_link_code = ?`
+    ).bind(code).first<{ id: string; username: string; telegram_link_expires_at: string | null }>();
 
     if (!webUser) {
       await bot.sendMessage(chatId, '❌ کد اتصال نامعتبر است. لطفاً از پنل وب یک کد جدید بسازید.');
+      return { ok: true };
+    }
+    if (webUser.telegram_link_expires_at && Date.parse(webUser.telegram_link_expires_at) < Date.now()) {
+      await bot.sendMessage(chatId, '⏰ اعتبار این کد اتصال منقضی شده است. لطفاً از پنل وب یک کد جدید بسازید.');
       return { ok: true };
     }
 
@@ -561,7 +565,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await setState({ step: 'AWAIT_BROADCAST' });
     await bot.sendMessage(
       chatId,
-      `💼 پنل مدیریت دلارینو (نسخه اوپن‌سورس):\n\n👥 کل کاربران: ${uCount?.cnt ?? 0}\n📈 کل معاملات ثبت‌شده: ${tCount?.cnt ?? 0}\n\nاگر می‌خواهید پیام همگانی به همه کاربران تلگرام ارسال کنید، متن پیام را بفرستید (یا «بازگشت به صفحه قبل 🔙» را بزنید).`
+      `💼 پنل مدیریت دلارینو:\n\n👥 کل کاربران: ${uCount?.cnt ?? 0}\n📈 کل معاملات ثبت‌شده: ${tCount?.cnt ?? 0}\n\nاگر می‌خواهید پیام همگانی به همه کاربران تلگرام ارسال کنید، متن پیام را بفرستید (یا «بازگشت به صفحه قبل 🔙» را بزنید).`
     );
     return { ok: true };
   }

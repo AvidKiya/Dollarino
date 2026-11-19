@@ -151,8 +151,12 @@ export function App() {
     ) {
       return;
     }
-    await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
-    await loadSessionAndDashboard();
+    try {
+      await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
+      await loadSessionAndDashboard();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Kill switch failed');
+    }
   };
 
   if (!authChecked) {
