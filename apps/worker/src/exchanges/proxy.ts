@@ -48,7 +48,7 @@ export function formatToobitHttpError(status: number, rawBody: string, proxied: 
     ) {
       return proxied
         ? 'Toobit Geo-Block (HTTP 403): Your Relay Proxy IP is also in a Toobit-restricted region (e.g. US/UK/SG/CN). Deploy apps/relay to Frankfurt (fra1) or Tokyo/non-restricted VPS.'
-        : 'Toobit Geo-Block (HTTP 403): Toobit blocks Cloudflare Workers egress IP (2a06:98c0:3600::103). Add a non-US Toobit Relay URL (apps/relay on Vercel fra1 or VPS) in Connections, or switch to Bitunix Futures.';
+        : 'Toobit Geo-Block (HTTP 403): Toobit blocks Cloudflare Workers egress IP. Add a non-US Toobit Relay URL (apps/relay on Vercel fra1 or VPS) in Connections, or switch to KCEX Futures.';
     }
     const stripped = trimmed
       .replace(/<style[\s\S]*?<\/style>/gi, ' ')

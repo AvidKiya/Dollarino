@@ -9,7 +9,7 @@ import {
   type Timeframe,
   type TradingMode,
 } from '@dollarino/core';
-import { callBYOAI, resolveUserActiveAI } from '../ai/providers.js';
+import { callBYOAI, resolveAIEnsemble } from '../ai/providers.js';
 import { decryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
@@ -50,6 +50,7 @@ export interface UserBotConfigRow {
   trailing_stop_enabled?: number;
   trailing_stop_pct?: number;
   trail_after_tp1?: number;
+  auto_scan_top?: number;
   started_at?: string | null;
 }
 
@@ -211,7 +212,8 @@ export async function executeSignalForUser(
   let aiConfidence: number | null = options?.aiConfidence ?? null;
   let aiReasoning: string | null = options?.aiReasoning ?? null;
   if (botConfig.aiGateEnabled && aiConfidence === null) {
-    const ai = await resolveUserActiveAI(env, userId).catch(() => null);
+    const ensemble = await resolveAIEnsemble(env, userId).catch(() => ({ engines: [], source: 'PLATFORM' as const, consensusMode: 'SINGLE' as const, cacheTtlSec: 180 }));
+    const ai = ensemble.engines[0];
     if (ai) {
       try {
         const resp = await callBYOAI(

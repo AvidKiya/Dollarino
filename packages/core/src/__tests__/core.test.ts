@@ -475,4 +475,57 @@ describe('@dollarino/core causal backtester', () => {
     expect(decision.approved).toBe(true);
     expect(decision.marginUsed).toBe('200');
   });
+
+  it('evaluates Dollarino V0.1 unified multi-pillar master strategy cleanly', () => {
+    const start = Date.UTC(2026, 3, 1);
+    const candles: Candle[] = [];
+    let price = 60_000;
+    for (let i = 0; i < 220; i++) {
+      const wave = Math.sin(i / 8) * 320 + (i > 40 ? 45 : -10);
+      const open = price;
+      const close = Math.max(5000, open + wave * 0.22);
+      candles.push({
+        timestamp: start + i * 900_000,
+        open,
+        high: Math.max(open, close) + 95,
+        low: Math.min(open, close) - 95,
+        close,
+        volume: 900 + (i % 12) * 110,
+      });
+      price = close;
+    }
+
+    const signals = computeStrategySignals('dollarino_v01', candles, [], '15m', '1h');
+    expect(signals.length).toBe(candles.length);
+    for (const s of signals.filter((x) => x.signal !== 'NONE')) {
+      expect(s.reason).toContain('Dollarino V0.1');
+      if (s.signal === 'LONG') {
+        expect(s.stopLoss!).toBeLessThan(s.price);
+        expect(s.tp1!).toBeGreaterThan(s.price);
+        expect(s.tp2!).toBeGreaterThan(s.tp1!);
+        expect(s.tp3!).toBeGreaterThan(s.tp2!);
+      } else {
+        expect(s.stopLoss!).toBeGreaterThan(s.price);
+        expect(s.tp1!).toBeLessThan(s.price);
+        expect(s.tp2!).toBeLessThan(s.tp1!);
+        expect(s.tp3!).toBeLessThan(s.tp2!);
+      }
+    }
+
+    const bt = runBacktest(candles, [], {
+      symbol: 'BTCUSDT',
+      strategyKey: 'dollarino_v01',
+      timeframe: '15m',
+      initialBalance: 10_000,
+      marginPct: 5,
+      leverage: 5,
+      tp1ClosePct: 40,
+      tp2ClosePct: 30,
+      tp3ClosePct: 30,
+      autoBreakevenOnTp1: true,
+      moveSlToTp1OnTp2: true,
+    });
+    expect(bt.equityCurve.length).toBe(candles.length);
+    expect(Number.isFinite(bt.metrics.finalEquity)).toBe(true);
+  });
 });

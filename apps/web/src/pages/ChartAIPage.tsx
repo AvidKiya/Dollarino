@@ -19,12 +19,6 @@ interface ChartAIResult {
   rrRatio?: number;
   supports?: number[];
   resistances?: number[];
-  telemetry?: {
-    htfTrend?: string;
-    rsi14?: number;
-    demaAtrTrend?: string;
-    mixerConfidence?: number;
-  };
 }
 
 function fmtPx(v?: number): string {
@@ -68,9 +62,7 @@ export function ChartAIPage({
 
   const loadMarket = async () => {
     const [res, chats] = await Promise.all([
-      apiFetch<{ candles: Candle[]; kbosOverlays?: KbosChartOverlays }>(
-        `/api/trading/market/overview?symbol=${symbol}&timeframe=${tf}`
-      ),
+      apiFetch<{ candles: Candle[]; kbosOverlays?: KbosChartOverlays }>(`/api/trading/market/overview?symbol=${symbol}&timeframe=${tf}`),
       apiFetch<{ chats: Array<{ id: string; title: string; symbol: string; timeframe: string }> }>('/api/chart-ai/chats').catch(() => ({
         chats: [],
       })),
@@ -141,7 +133,7 @@ export function ChartAIPage({
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-      <div className="xl:col-span-8 card-tt p-4 space-y-3">
+      <div className="xl:col-span-8 surface-card p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <SymbolPicker lang={lang} value={symbol} markets={markets} provider={provider} onChange={setSymbol} compact />
@@ -149,55 +141,50 @@ export function ChartAIPage({
               <button
                 key={x}
                 onClick={() => setTf(x)}
-                className={`px-2.5 py-1.5 rounded-lg font-medium ${tf === x ? 'bg-[#4b73f5] text-white' : 'bg-[#11151c] text-[#6c7689]'}`}
+                className={`px-2.5 py-1.5 rounded-xl font-bold ${tf === x ? 'btn-cobalt' : 'surface-soft text-sub'}`}
               >
                 {x}
               </button>
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
-            {actionableDir && analysis?.entry && analysis?.stopLoss && analysis?.tp1 && (
-              <button
-                onClick={deployAiSetup}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#27cd86] hover:bg-[#22b878] text-[#080a0e] text-xs font-bold"
-              >
-                <Play className="w-3.5 h-3.5" />
-                <span>{lang === 'fa' ? `اجرای مستقیم ${actionableDir}` : `Execute ${actionableDir} Setup`}</span>
-              </button>
-            )}
-          </div>
+          {actionableDir && analysis?.entry && analysis?.stopLoss && analysis?.tp1 && (
+            <button onClick={deployAiSetup} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl btn-emerald text-xs font-extrabold">
+              <Play className="w-3.5 h-3.5" />
+              <span>{lang === 'fa' ? `اجرای مستقیم ${actionableDir}` : `Execute ${actionableDir}`}</span>
+            </button>
+          )}
         </div>
 
-        {deployMsg && <div className="text-xs px-3 py-2 rounded-xl bg-[#27cd86]/15 border border-[#27cd86]/35 text-[#27cd86]">{deployMsg}</div>}
+        {deployMsg && <div className="text-xs px-3 py-2 rounded-xl bg-[#10D856]/15 text-signal font-bold">{deployMsg}</div>}
 
         {analysis && (actionableDir || (analysis.supports?.length ?? 0) > 0) && (
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-[#080a0e] border border-[#1c2028] rounded-xl p-2.5 text-[11px]">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 surface-soft border rounded-2xl p-3 text-[11px]">
             <div>
-              <div className="text-[#6c7689] flex items-center gap-1"><Target className="w-3 h-3" /> Bias</div>
-              <div className={`font-bold font-mono-num ${actionableDir === 'LONG' ? 'text-[#27cd86]' : actionableDir === 'SHORT' ? 'text-[#eb493d]' : 'text-[#f2a900]'}`}>
+              <div className="text-dim flex items-center gap-1"><Target className="w-3 h-3" /> Bias</div>
+              <div className={`font-black font-mono-num ${actionableDir === 'LONG' ? 'text-signal' : actionableDir === 'SHORT' ? 'text-loss' : 'text-flame'}`}>
                 {actionableDir ?? analysis.bias ?? 'NEUTRAL'} {analysis.rrRatio ? `(1:${analysis.rrRatio})` : ''}
               </div>
             </div>
             <div>
-              <div className="text-[#6c7689]">Entry</div>
-              <div className="text-white font-mono-num">{fmtPx(analysis.entry)}</div>
+              <div className="text-dim">Entry</div>
+              <div className="text-main font-bold font-mono-num">{fmtPx(analysis.entry)}</div>
             </div>
             <div>
-              <div className="text-[#6c7689]">Stop Loss</div>
-              <div className="text-[#eb493d] font-mono-num">{fmtPx(analysis.stopLoss)}</div>
+              <div className="text-dim">Stop Loss</div>
+              <div className="text-loss font-bold font-mono-num">{fmtPx(analysis.stopLoss)}</div>
             </div>
             <div>
-              <div className="text-[#6c7689]">TP1</div>
-              <div className="text-[#27cd86] font-mono-num">{fmtPx(analysis.tp1)}</div>
+              <div className="text-dim">TP1</div>
+              <div className="text-signal font-bold font-mono-num">{fmtPx(analysis.tp1)}</div>
             </div>
             <div>
-              <div className="text-[#6c7689]">TP2 / TP3</div>
-              <div className="text-[#27cd86] font-mono-num">{fmtPx(analysis.tp2)} / {fmtPx(analysis.tp3)}</div>
+              <div className="text-dim">TP2 / TP3</div>
+              <div className="text-signal font-bold font-mono-num">{fmtPx(analysis.tp2)} / {fmtPx(analysis.tp3)}</div>
             </div>
             <div>
-              <div className="text-[#6c7689]">S / R</div>
-              <div className="text-[#9aa5b5] font-mono-num truncate" title={`S: ${analysis.supports?.map(fmtPx).join(', ')} | R: ${analysis.resistances?.map(fmtPx).join(', ')}`}>
+              <div className="text-dim">S / R</div>
+              <div className="text-sub font-mono-num truncate">
                 {fmtPx(analysis.supports?.[0])} / {fmtPx(analysis.resistances?.[0])}
               </div>
             </div>
@@ -207,15 +194,15 @@ export function ChartAIPage({
         <CandlestickChart candles={candles} levels={levels} kbosOverlays={kbosOverlays} height={510} />
       </div>
 
-      <div className="xl:col-span-4 card-tt p-4 flex flex-col justify-between space-y-3">
+      <div className="xl:col-span-4 surface-card p-4 flex flex-col justify-between space-y-3">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <BrainCircuit className="w-5 h-5 text-[#8e4cf0]" />
-              <h3 className="font-bold text-sm text-white">{lang === 'fa' ? 'دستیار چارت AI (BYO Key)' : 'Chart AI Co-Pilot'}</h3>
+              <BrainCircuit className="w-5 h-5 text-brand" />
+              <h3 className="font-black text-sm text-main">{lang === 'fa' ? 'دستیار چارت AI' : 'Chart AI Co-Pilot'}</h3>
             </div>
             {analysis?.confidence !== undefined && (
-              <span className="text-[11px] px-2 py-0.5 rounded bg-[#8e4cf0]/20 text-[#c9a8ff] font-mono-num">
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full banner-cobalt-soft text-brand font-mono-num font-bold">
                 Conf: {analysis.confidence}%
               </span>
             )}
@@ -223,9 +210,9 @@ export function ChartAIPage({
 
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             {[
-              lang === 'fa' ? 'ستاپ KBOs v11 و ریبون ALMA' : 'Evaluate KBOs v11 + DEMA ATR',
-              lang === 'fa' ? 'حمایت/مقاومت کلیدی' : 'Key S/R & Order Blocks',
-              lang === 'fa' ? 'بهترین R:R برای لانگ/شورت' : '3-TP R:R Setup',
+              lang === 'fa' ? 'ستاپ دلارینو V0.1 و ریبون' : 'Dollarino V0.1 + DEMA ATR',
+              lang === 'fa' ? 'حمایت/مقاومت کلیدی' : 'Key S/R Levels',
+              lang === 'fa' ? 'بهترین R:R برای ورود' : '3-TP R:R Setup',
             ].map((chip) => (
               <button
                 key={chip}
@@ -233,7 +220,7 @@ export function ChartAIPage({
                   setPrompt(chip);
                   void askAI(chip);
                 }}
-                className="px-2.5 py-1 rounded-lg bg-[#11151c] hover:bg-[#1a1e26] border border-[#1c2028] text-[#d5dce6]"
+                className="px-2.5 py-1 rounded-xl surface-soft border text-main font-semibold"
               >
                 {chip}
               </button>
@@ -242,17 +229,17 @@ export function ChartAIPage({
 
           <div className="space-y-2 max-h-[300px] overflow-y-auto text-xs">
             {messages.length === 0 && (
-              <p className="text-[#6c7689] leading-relaxed">
+              <p className="text-sub leading-relaxed">
                 {lang === 'fa'
-                  ? 'تحلیلگر کوانت دلارینو به صورت داخلی با EMA/RSI/ATR/KBOs/SignalMixer فعال است؛ با اتصال کلید OpenAI، Claude یا Gemini در Connections تحلیل هوشمند ترکیبی هم فعال می‌شود.'
-                  : 'Built-in Dollarino Quant analysis (EMA/RSI/ATR/KBOs/SignalMixer) is active; connect OpenAI, Claude, or Gemini in Connections to enable hybrid LLM reasoning.'}
+                  ? 'تحلیلگر کوانت دلارینو همراه با کلید AI شما سطوح دقیق ورود، استاپ و تارگت‌ها را روی چارت رسم می‌کند.'
+                  : 'Quant + AI chart reasoning plots exact Entry, SL, TP1-TP3 and S/R levels directly onto the chart.'}
               </p>
             )}
             {messages.map((m, idx) => (
               <div
                 key={idx}
-                className={`p-3 rounded-xl leading-relaxed whitespace-pre-wrap ${
-                  m.role === 'user' ? 'bg-[#4b73f5]/15 border border-[#4b73f5]/35 text-white' : 'bg-[#11151c] border border-[#1c2028] text-[#d5dce6]'
+                className={`p-3 rounded-2xl leading-relaxed whitespace-pre-wrap border ${
+                  m.role === 'user' ? 'banner-cobalt-soft text-main font-semibold' : 'surface-soft text-sub'
                 }`}
               >
                 {m.content}
@@ -261,8 +248,8 @@ export function ChartAIPage({
           </div>
 
           {chatHistory.length > 0 && (
-            <div className="border-t border-[#1c2028] pt-2">
-              <div className="text-[11px] text-[#6c7689] flex items-center gap-1 mb-1">
+            <div className="border-t pt-2">
+              <div className="text-[11px] text-dim flex items-center gap-1 mb-1">
                 <History className="w-3 h-3" /> Recent Chats
               </div>
               <div className="flex flex-wrap gap-1">
@@ -275,7 +262,7 @@ export function ChartAIPage({
                       setMessages(JSON.parse(d.chat.messages_json));
                       setAnalysis(JSON.parse(d.chat.annotations_json));
                     }}
-                    className="text-[10px] px-2 py-1 rounded bg-[#11151c] border border-[#1c2028] text-[#9aa5b5] hover:text-white"
+                    className="text-[10px] px-2 py-1 rounded-lg surface-soft border text-sub hover:text-main"
                   >
                     {c.symbol} {c.timeframe}
                   </button>
@@ -285,18 +272,9 @@ export function ChartAIPage({
           )}
         </div>
 
-        <div className="space-y-2 pt-2 border-t border-[#1c2028]">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={2}
-            className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl p-2.5 text-xs"
-          />
-          <button
-            disabled={loading}
-            onClick={() => askAI()}
-            className="w-full py-2.5 rounded-xl bg-[#8e4cf0] hover:bg-[#7b3ce0] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5"
-          >
+        <div className="space-y-2 pt-2 border-t">
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} className="w-full surface-input rounded-xl p-2.5 text-xs" />
+          <button disabled={loading} onClick={() => askAI()} className="w-full py-2.5 rounded-xl btn-cobalt text-xs font-extrabold inline-flex items-center justify-center gap-1.5">
             <Send className="w-3.5 h-3.5" />
             <span>{loading ? '...' : lang === 'fa' ? 'تحلیل هوشمند چارت' : 'Analyze Chart with AI'}</span>
           </button>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { DollarinoBrandMark } from './components/BrandGraphics';
 import { Layout, type NavTab } from './components/Layout';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
@@ -42,6 +43,13 @@ type FullDashboard = DashboardPayload & {
   }>;
 };
 
+function applyThemeToRoot(t: 'dark' | 'light') {
+  const root = document.documentElement;
+  root.classList.toggle('theme-light', t === 'light');
+  root.classList.toggle('dark', t === 'dark');
+  root.style.colorScheme = t;
+}
+
 export function App() {
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('dollarino_lang') === 'en' ? 'en' : 'fa'));
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
@@ -57,6 +65,10 @@ export function App() {
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
 
+  useEffect(() => {
+    applyThemeToRoot(theme);
+  }, [theme]);
+
   const handleSetLang = (l: Lang) => {
     setLang(l);
     localStorage.setItem('dollarino_lang', l);
@@ -65,6 +77,7 @@ export function App() {
   const handleSetTheme = (t: 'dark' | 'light') => {
     setTheme(t);
     localStorage.setItem('dollarino_theme', t);
+    applyThemeToRoot(t);
   };
 
   const loadSessionAndDashboard = useCallback(async () => {
@@ -113,14 +126,13 @@ export function App() {
         setActiveTab('subscription');
         window.alert(
           lang === 'fa'
-            ? 'برای فعال‌سازی ترید هوشمند AI یا معاملات لایو Toobit / KCEX، ابتدا اشتراک Pro یا VIP تهیه کنید.'
+            ? 'برای استفاده از هوش مصنوعی مرکزی یا معامله واقعی صرافی، ابتدا اشتراک Pro را فعال کنید. استراتژی دلارینو V0.1 در دمو رایگان است!'
             : msg
         );
-      } else if (msg.includes('AI API key') || msg.includes('NO_ACTIVE_AI_KEY')) {
-        setActiveTab('connections');
+      } else if (msg.includes('NO_ACTIVE_AI_KEY') || msg.includes('موتور هوش مصنوعی مرکزی')) {
         window.alert(
           lang === 'fa'
-            ? 'برای فعال‌سازی ترید هوشمند، ابتدا کلید DeepSeek / Claude / GPT / Gemini خود را در صفحه اتصالات ثبت کنید.'
+            ? 'موتور هوش مصنوعی مرکزی در حال تنظیم توسط مدیریت است. همین الان می‌توانید با استراتژی رایگان «دلارینو V0.1» شروع کنید!'
             : msg
         );
       } else {
@@ -145,8 +157,9 @@ export function App() {
 
   if (!authChecked) {
     return (
-      <div className={`min-h-screen bg-[#080a0e] flex items-center justify-center text-sm text-[#6c7689] ${theme === 'light' ? 'theme-light' : ''}`}>
-        Loading Dollarino (دلارینو)...
+      <div className="min-h-screen app-shell flex flex-col items-center justify-center gap-3 text-sm text-sub">
+        <DollarinoBrandMark size={64} glow />
+        <span className="font-bold">Loading Dollarino...</span>
       </div>
     );
   }

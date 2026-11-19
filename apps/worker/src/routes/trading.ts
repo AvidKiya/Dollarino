@@ -19,7 +19,7 @@ import {
   type Timeframe,
 } from '@dollarino/core';
 import { requireAuth, type AppVariables } from '../auth.js';
-import { runAutonomousAITrader } from '../ai/providers.js';
+import { getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
 import { decryptVaultJson, randomId } from '../crypto.js';
 import { resolveUserEntitlement } from './subscriptions.js';
 import {
@@ -65,7 +65,7 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
 
-  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement] = await Promise.all([
+  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement, platformAI] = await Promise.all([
     adapter.getBalance().catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC`).bind(user.id).all<{
       id: string;
@@ -127,6 +127,7 @@ tradingRoutes.get('/dashboard', async (c) => {
       `SELECT id, level, symbol, message, details_json, created_at FROM audit_logs WHERE user_id = ? AND category = 'AI_AGENT' ORDER BY created_at DESC LIMIT 12`
     ).bind(user.id).all().catch(() => ({ results: [] })),
     resolveUserEntitlement(c.env.DB, user),
+    getPlatformAISummary(c.env),
   ]);
 
   const totalEq = Math.max(1, Number(balance.total) || Number(cfg?.paper_balance ?? 10000));
@@ -261,6 +262,7 @@ tradingRoutes.get('/dashboard', async (c) => {
     riskProfile,
     activeExchange: { provider, label },
     activeAI: aiRow || null,
+    platformAI,
     entitlement,
     balance,
     openTrades,
@@ -323,6 +325,19 @@ tradingRoutes.post('/wallet/topup', async (c) => {
   return c.json({ ok: true, balanceAfter: nextBal });
 });
 
+tradingRoutes.post('/wallet/reset', async (c) => {
+  const user = c.get('user');
+  const targetBal = 10000;
+  await c.env.DB.prepare(`UPDATE bot_configs SET paper_balance = '10000.00', updated_at = datetime('now') WHERE user_id = ?`)
+    .bind(user.id).run();
+  await c.env.DB.prepare(
+    `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+     VALUES (?, ?, 'PAPER', 'TOPUP', ?, ?, 'Reset Paper Demo Balance to $10,000')`
+  ).bind(randomId('wl'), user.id, targetBal, targetBal).run().catch(() => {});
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'Paper Demo balance reset to $10,000.00');
+  return c.json({ ok: true, balanceAfter: targetBal });
+});
+
 tradingRoutes.patch('/config', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<Record<string, unknown>>();
@@ -333,6 +348,7 @@ tradingRoutes.patch('/config', async (c) => {
     margin_mode: 'margin_mode',
     notifications_enabled: 'notifications_enabled',
     symbol: 'symbol',
+    auto_scan_top: 'auto_scan_top',
     strategy_key: 'strategy_key',
     entry_timeframe: 'entry_timeframe',
     higher_timeframe: 'higher_timeframe',
@@ -371,6 +387,15 @@ tradingRoutes.patch('/config', async (c) => {
         code: 'SUBSCRIPTION_REQUIRED',
       }, 402);
     }
+    const liveEx = await c.env.DB.prepare(
+      `SELECT id FROM exchange_connections WHERE user_id = ? AND provider IN ('toobit', 'kcex') LIMIT 1`
+    ).bind(user.id).first();
+    if (!liveEx) {
+      return c.json({
+        error: 'ابتدا در صفحه «صرافی»، حساب Toobit یا KCEX خود را متصل کنید تا بتوانید معامله واقعی را روشن کنید.',
+        code: 'NO_LIVE_EXCHANGE',
+      }, 400);
+    }
   }
   for (const [k, col] of Object.entries(allowedFields)) {
     if (body[k] !== undefined) {
@@ -393,22 +418,24 @@ tradingRoutes.post('/bot/start', async (c) => {
   const body = await c.req.json<{
     marginPct?: number;
     strategyKey?: StrategyKey;
+    symbol?: string;
+    autoScanTop?: boolean;
     riskPreset?: string;
     maxLeverage?: number;
+    dailyMaxLossPct?: number;
     trailingStopEnabled?: boolean;
     trailingStopPct?: number;
     allocatedAmount?: number;
   }>().catch(() => ({} as Record<string, unknown>));
 
-  const [cfg, activeAI, entitlement] = await Promise.all([
+  const [cfg, ensemble, entitlement] = await Promise.all([
     c.env.DB.prepare('SELECT trading_mode, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
       .bind(user.id).first<{ trading_mode: string; strategy_key: string; risk_profile_json?: string }>(),
-    c.env.DB.prepare('SELECT id, provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1')
-      .bind(user.id).first<{ id: string; provider: string; model: string }>(),
+    resolveAIEnsemble(c.env, user.id),
     resolveUserEntitlement(c.env.DB, user),
   ]);
 
-  const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'ai_autonomous_agent');
+  const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'dollarino_v01');
   if (cfg?.trading_mode === 'LIVE' && !entitlement.allowLiveTrading) {
     return c.json({
       error: 'Active paid subscription required for Live Trading (Toobit / KCEX). Please upgrade or test in Paper Demo.',
@@ -417,13 +444,13 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   if (targetStrategy === 'ai_autonomous_agent' && !entitlement.allowAiTrading) {
     return c.json({
-      error: 'Active Pro or VIP subscription required for Autonomous AI Trading. You can test CodexBot strategies in Paper Demo or upgrade your plan.',
+      error: 'برای ترید با هوش مصنوعی مرکزی دلارینو، اشتراک Pro یا VIP لازم است. می‌توانید با استراتژی رایگان دلارینو V0.1 در دمو تست کنید.',
       code: 'SUBSCRIPTION_REQUIRED',
     }, 402);
   }
-  if (targetStrategy === 'ai_autonomous_agent' && !activeAI) {
+  if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0) {
     return c.json({
-      error: 'No active AI API key found. Connect DeepSeek, Claude, OpenAI, or Gemini in Connections -> AI Engine first.',
+      error: 'موتور هوش مصنوعی مرکزی هنوز توسط مدیریت پلتفرم فعال نشده است. تا فعال‌سازی از استراتژی دلارینو V0.1 استفاده کنید.',
       code: 'NO_ACTIVE_AI_KEY',
     }, 400);
   }
@@ -441,9 +468,21 @@ tradingRoutes.post('/bot/start', async (c) => {
     sets.push(`strategy_key = ?`);
     vals.push(body.strategyKey);
   }
+  if (typeof body.symbol === 'string' && body.symbol.trim()) {
+    sets.push(`symbol = ?`);
+    vals.push(normalizeCanonicalSymbol(body.symbol));
+  }
+  if (typeof body.autoScanTop === 'boolean') {
+    sets.push(`auto_scan_top = ?`);
+    vals.push(body.autoScanTop ? 1 : 0);
+  }
   if (typeof body.maxLeverage === 'number') {
     sets.push(`max_leverage = ?`);
     vals.push(body.maxLeverage);
+  }
+  if (typeof body.dailyMaxLossPct === 'number') {
+    sets.push(`daily_max_loss_pct = ?`);
+    vals.push(body.dailyMaxLossPct);
   }
   if (typeof body.trailingStopEnabled === 'boolean') {
     sets.push(`trailing_stop_enabled = ?`);
@@ -541,7 +580,8 @@ tradingRoutes.post('/bot/stop', async (c) => {
   await c.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`)
     .bind(user.id).run();
 
-  const durationSec = cfg?.started_at ? Math.max(0, Math.floor((Date.now() - Date.parse(cfg.started_at + 'Z')) / 1000)) : 0;
+  const startedIso = cfg?.started_at ? (cfg.started_at.includes('T') ? cfg.started_at : cfg.started_at.replace(' ', 'T')) + 'Z' : '';
+  const durationSec = startedIso ? Math.max(0, Math.floor((Date.now() - Date.parse(startedIso)) / 1000)) : 0;
 
   if (closedOnStop > 0 || (sessionStats?.pnl ?? 0) !== 0) {
     await c.env.DB.prepare(

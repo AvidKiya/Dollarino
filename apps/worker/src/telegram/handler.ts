@@ -1,4 +1,5 @@
 import { formatDollarinoSignal, parseDollarinoSignal } from '@dollarino/core';
+import { getPlatformAISummary } from '../ai/providers.js';
 import { ensureUserDefaults } from '../auth.js';
 import { encryptVaultJson, hashPassword, maskSecret, randomId } from '../crypto.js';
 import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
@@ -526,14 +527,24 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   if (text === 'ربات و هوش مصنوعی من 🤖') {
-    const bots = await env.DB.prepare('SELECT COUNT(*) as cnt FROM telegram_bots WHERE user_id = ?').bind(user.id).first<{ cnt: number }>();
-    const ais = await env.DB.prepare('SELECT provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1').bind(user.id).first<{ provider: string; model: string }>();
+    const [bots, aiSummary, cfg] = await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) as cnt FROM telegram_bots WHERE user_id = ?').bind(user.id).first<{ cnt: number }>(),
+      getPlatformAISummary(env),
+      env.DB.prepare('SELECT strategy_key FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ strategy_key: string }>(),
+    ]);
+    const stratName =
+      cfg?.strategy_key === 'ai_autonomous_agent'
+        ? 'هوش مصنوعی مرکزی دلارینو'
+        : cfg?.strategy_key === 'dollarino_v01'
+          ? 'استراتژی جامع دلارینو V0.1'
+          : cfg?.strategy_key || 'دلارینو V0.1';
     await bot.sendMessage(
       chatId,
-      `🤖 وضعیت ربات شخصی و هوش مصنوعی شما:\n\n` +
-      `🔹 ربات‌های تلگرام متصل در پنل وب: ${bots?.cnt ?? 0}\n` +
-      `🔹 هوش مصنوعی فعال: ${ais ? `${ais.provider} (${ais.model})` : 'پیش‌فرض تکنیکال (کلید Claude/OpenAI/Gemini در پنل وب قابل اتصال است)'}\n\n` +
-      `برای ثبت توکن ربات شخصی، دریافت لینک Webhook تریدینگ‌ویو و دریافت کد /link، وارد پنل وب دلارینو بخش Connections شوید.`
+      `🤖 وضعیت ربات و هوش مصنوعی دلارینو:\n\n` +
+      `🔹 استراتژی انتخاب‌شده: ${stratName}\n` +
+      `🔹 موتور هوش مصنوعی مرکزی: ${aiSummary.effectiveModeLabelFa}\n` +
+      `🔹 ربات‌های کپی‌ترید متصل: ${bots?.cnt ?? 0}\n\n` +
+      `شما بدون نیاز به خرید API هوش مصنوعی، مستقیماً از پنل وب می‌توانید ربات را با یک دکمه روشن کنید.`
     );
     return { ok: true };
   }

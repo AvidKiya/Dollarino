@@ -26,9 +26,11 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '4.0.0',
+    version: '5.0.0',
     openSource: false,
     paidSubscriptions: true,
+    centralMultiAI: true,
+    primaryStrategy: 'dollarino_v01',
     aiProviders: ['deepseek', 'anthropic', 'openai', 'gemini', 'openai_compatible'],
     exchanges: {
       toobit: 'LIVE_FUTURES_SUPPORTED',

@@ -35,6 +35,7 @@ export interface DollarinoSignal {
 }
 
 export type StrategyKey =
+  | 'dollarino_v01'
   | 'ai_autonomous_agent'
   | 'kbos_v11'
   | 'sp2l'

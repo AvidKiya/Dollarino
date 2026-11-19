@@ -35,15 +35,15 @@ export function LogsPage({ lang }: { lang: Lang }) {
   });
 
   return (
-    <div className="bg-[#0e131d] border border-slate-800 rounded-2xl p-5 space-y-4">
+    <div className="surface-card p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
           {['ALL', 'ORDER', 'RISK', 'AI', 'SYSTEM', 'TELEGRAM'].map((cat) => (
             <button
               key={cat}
               onClick={() => setCategory(cat)}
-              className={`px-3 py-1.5 rounded-lg font-medium ${
-                category === cat ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'
+              className={`px-3 py-1.5 rounded-xl font-bold transition ${
+                category === cat ? 'btn-cobalt' : 'surface-soft text-sub hover:text-main'
               }`}
             >
               {cat}
@@ -53,15 +53,15 @@ export function LogsPage({ lang }: { lang: Lang }) {
 
         <div className="flex items-center gap-2 text-xs">
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute start-2.5 top-2.5" />
+            <Search className="w-3.5 h-3.5 text-dim absolute start-2.5 top-2.5" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={lang === 'fa' ? 'جستجو در لاگ‌ها...' : 'Filter logs...'}
-              className="bg-slate-950 border border-slate-800 rounded-xl ps-8 pe-3 py-1.5"
+              className="surface-input rounded-xl ps-8 pe-3 py-1.5"
             />
           </div>
-          <button onClick={load} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200">
+          <button onClick={load} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl surface-soft border text-main font-bold">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
         </div>
@@ -69,29 +69,29 @@ export function LogsPage({ lang }: { lang: Lang }) {
 
       <div className="space-y-2 max-h-[600px] overflow-y-auto text-xs font-mono-num">
         {filtered.length === 0 ? (
-          <div className="py-10 text-center text-slate-500">No audit events recorded yet.</div>
+          <div className="py-10 text-center text-dim">No audit events recorded yet.</div>
         ) : (
           filtered.map((l) => (
-            <div key={l.id} className="p-3 rounded-xl bg-slate-950/90 border border-slate-800/80 space-y-1">
+            <div key={l.id} className="p-3.5 rounded-2xl surface-soft border space-y-1">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
                       l.level === 'ERROR'
-                        ? 'bg-rose-500/20 text-rose-300'
+                        ? 'bg-rose-500/15 text-loss'
                         : l.level === 'WARN'
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-emerald-500/15 text-emerald-300'
+                          ? 'bg-[#FF8A00]/15 text-flame'
+                          : 'bg-[#10D856]/15 text-signal'
                     }`}
                   >
                     {l.level}
                   </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">{l.category}</span>
-                  {l.symbol && <span className="text-cyan-300 font-bold">{l.symbol}</span>}
+                  <span className="px-2 py-0.5 rounded-lg surface-card text-sub text-[10px] font-bold">{l.category}</span>
+                  {l.symbol && <span className="text-brand font-bold">{l.symbol}</span>}
                 </div>
-                <span className="text-slate-500 text-[10px]">{l.created_at}</span>
+                <span className="text-dim text-[10px]">{l.created_at}</span>
               </div>
-              <div className="text-slate-200">{l.message}</div>
+              <div className="text-main">{l.message}</div>
             </div>
           ))
         )}

@@ -28,22 +28,18 @@ export function SetupWizardModal({
   onCompleted: () => void;
 }) {
   const [tab, setTab] = useState<'agent' | 'vault'>('agent');
-  const [step, setStep] = useState(0); // 0: Amount, 1: Risk, 2: Strategy, 3: Review
+  const [step, setStep] = useState(0);
 
-  // Agent Wizard state (exact timetrade.live 4-step flow)
   const safeAvail = Math.max(100, availableBalance);
   const [allocatedAmount, setAllocatedAmount] = useState<number>(Math.round(safeAvail * 0.5));
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
-  const [strategyType, setStrategyType] = useState<'ai_autonomous_agent' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'>('ai_autonomous_agent');
+  const [strategyType, setStrategyType] = useState<'dollarino_v01' | 'ai_autonomous_agent' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'>('dollarino_v01');
 
-  // Vault connection state
   const [exProvider, setExProvider] = useState<'paper' | 'toobit' | 'kcex'>('toobit');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [proxyUrl, setProxyUrl] = useState('');
   const [kcexSession, setKcexSession] = useState('');
-  const [aiProvider, setAiProvider] = useState<'deepseek' | 'openai' | 'anthropic' | 'gemini'>('deepseek');
-  const [aiKey, setAiKey] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -58,7 +54,7 @@ export function SetupWizardModal({
       dailyLoss: 3.0,
       trailingPct: 1.5,
       detail: lang === 'fa' ? 'اهرم ۳x، تریلینگ استاپ ۱.۵٪، حد ضرر روزانه ۳٪' : 'Max 3x leverage · 1.5% Trailing SL · 3% daily cap',
-      color: 'text-[#27cd86]',
+      color: 'text-signal',
     },
     {
       id: 'medium' as const,
@@ -68,7 +64,7 @@ export function SetupWizardModal({
       dailyLoss: 5.0,
       trailingPct: 2.0,
       detail: lang === 'fa' ? 'اهرم ۵x، تریلینگ ۲٪ + ریسک‌فری خودکار TP1' : 'Max 5x leverage · 2.0% Trailing SL + Auto Risk-Free',
-      color: 'text-[#4b73f5]',
+      color: 'text-brand',
     },
     {
       id: 'high' as const,
@@ -76,54 +72,63 @@ export function SetupWizardModal({
       maxLev: 10,
       dailyLoss: 8.0,
       trailingPct: 2.8,
-      detail: lang === 'fa' ? 'اهرم ۱۰x، ریسک‌پذیری بالا برای نوسان‌گیری سریع' : 'Max 10x leverage · Wider trailing SL · Higher ROI target',
-      color: 'text-[#f59f14]',
+      detail: lang === 'fa' ? 'اهرم ۱۰x، ریسک‌پذیری بالا برای نوسان‌گیری سریع' : 'Max 10x leverage · Higher ROI target',
+      color: 'text-flame',
     },
   ];
 
   const strategyOptions = [
     {
-      id: 'ai_autonomous_agent' as const,
-      title: lang === 'fa' ? 'عامل هوشمند مستقل (DeepSeek / Claude / GPT)' : 'Autonomous AI Agent (DeepSeek / Claude / GPT)',
+      id: 'dollarino_v01' as const,
+      title: lang === 'fa' ? 'استراتژی اختصاصی دلارینو V0.1' : 'Dollarino V0.1 Master Strategy',
       recommended: true,
-      badge: '100% AI-Driven',
+      badge: 'V0.1',
       detail:
         lang === 'fa'
-          ? 'هوش مصنوعی (دیپ‌سیک / کلود) شخصاً کندل‌ها، تایم‌فریم‌ها و اردربوک را تحلیل کرده و معاملات را باز و مدیریت می‌کند'
-          : 'Real LLM reasoning directly analyzes live candles, HTF structure & orderbook to decide LONG / SHORT / HOLD / CLOSE',
+          ? 'بهترین ترکیب تمام استراتژی‌های دلارینو در یک موتور جامع و دقیق'
+          : 'Unifies all Dollarino strategies into one non-repainting engine',
+    },
+    {
+      id: 'ai_autonomous_agent' as const,
+      title: lang === 'fa' ? 'هوش مصنوعی مرکزی دلارینو' : 'Dollarino Central AI',
+      badge: '100% AI',
+      detail:
+        lang === 'fa'
+          ? 'تحلیل توسط موتور هوش مصنوعی مرکزی (بدون نیاز به API شخصی)'
+          : 'Powered by central multi-AI brain — zero API setup needed',
     },
     {
       id: 'kbos_v11' as const,
-      title: 'CodexBot Super v11 (Quant Hybrid)',
-      badge: 'ALMA + DEMA ATR',
+      title: 'KBOs Super v11',
+      badge: 'ALMA + ATR',
       detail:
         lang === 'fa'
-          ? 'استراتژی کوانت غیرریپینت تایم‌فریم بالا با ۳ تارگت (۱.۵/۳/۴.۵٪) و تریلینگ ۲٪'
-          : 'Non-repainting HTF ALMA crossover + DEMA ATR + 8-band Golden ALMA ribbon & 3-TP Trailing',
+          ? 'استراتژی کوانت غیرریپینت با ۳ تارگت و تریلینگ استاپ هوشمند'
+          : 'Non-repainting HTF ALMA crossover + DEMA ATR & 3-TP Trailing',
     },
     {
       id: 'sp2l' as const,
-      title: lang === 'fa' ? 'رشد پایدار (Steady Growth · SP2L)' : 'Steady Growth (SP2L Liquidity)',
-      badge: '3-TP Risk-Free',
-      detail: lang === 'fa' ? 'شکار نقدینگی و شکست جعلی به همراه ریسک‌فری خودکار' : 'Liquidity sweep reversal with 50/25/25 TP split & BE on TP1',
+      title: lang === 'fa' ? 'شکار نقدینگی (SP2L)' : 'Steady Growth (SP2L)',
+      badge: '3-TP',
+      detail: lang === 'fa' ? 'شکار نقدینگی و شکست جعلی به همراه ریسک‌فری خودکار' : 'Liquidity sweep reversal with BE on TP1',
     },
     {
       id: 'ema_trend_pullback' as const,
-      title: lang === 'fa' ? 'مومنتوم روند (Momentum EMA)' : 'Momentum (EMA 20/50 Pullback)',
-      badge: 'Trend Rider',
+      title: lang === 'fa' ? 'مومنتوم روند (Momentum EMA)' : 'Momentum (EMA 20/50)',
+      badge: 'Trend',
       detail: lang === 'fa' ? 'ورود روی پولبک EMA در جهت روند تایم بالاتر' : 'HTF-aligned EMA pullback continuation',
     },
     {
       id: 'signal_mixer' as const,
-      title: lang === 'fa' ? 'میکسر ۸ کاناله (Quant + AI Gate)' : '8-Channel Mixer + AI Gate',
-      badge: '8-Channel Quant',
-      detail: lang === 'fa' ? 'اجماع ۸ کانال تکنیکال + دروازه تایید BYO AI' : '8-channel composite scoring + BYO AI confirmation gate',
+      title: lang === 'fa' ? 'میکسر ۸ کاناله (Quant + AI)' : '8-Channel Mixer',
+      badge: '8-Ch',
+      detail: lang === 'fa' ? 'اجماع ۸ کانال تکنیکال + تایید AI' : '8-channel scoring + AI confirmation',
     },
     {
       id: 'high_20x' as const,
-      title: lang === 'fa' ? 'اهرم بالا ۲۰x (VIP Momentum)' : 'High ×20 Leverage',
-      badge: '20x Turbo',
-      detail: lang === 'fa' ? 'ترکیب KBOs v11 با اهرم تا ۲۰x برای تریدرهای حرفه‌ای' : 'KBOs v11 paired with 20x leverage & tight trailing stops',
+      title: lang === 'fa' ? 'اهرم بالا ۲۰x' : 'High ×20 Leverage',
+      badge: '20x',
+      detail: lang === 'fa' ? 'ترکیب KBOs v11 با اهرم تا ۲۰x' : 'KBOs v11 paired with 20x leverage',
     },
   ];
 
@@ -175,12 +180,11 @@ export function SetupWizardModal({
       onClose();
     } catch (e) {
       const errText = e instanceof Error ? e.message : 'Failed to start AI Agent';
-      if (errText.includes('AI API key') || errText.includes('NO_ACTIVE_AI_KEY')) {
-        setTab('vault');
+      if (errText.includes('NO_ACTIVE_AI_KEY') || errText.includes('موتور هوش مصنوعی مرکزی')) {
         setMsg(
           lang === 'fa'
-            ? 'ابتدا کلید DeepSeek (یا Claude/GPT/Gemini) خود را در بخش پایین وارد و ذخیره کنید، سپس ربات را استارت بزنید.'
-            : 'Paste & save your DeepSeek (or Claude/GPT/Gemini) API key below first, then launch the AI Agent.'
+            ? 'موتور هوش مصنوعی مرکزی هنوز توسط مدیریت فعال نشده است؛ می‌توانید از استراتژی «دلارینو V0.1» استفاده کنید.'
+            : 'Central AI is awaiting admin setup; try Dollarino V0.1 in the meantime.'
         );
       } else {
         setMsg(errText);
@@ -194,11 +198,7 @@ export function SetupWizardModal({
     setSaving(true);
     setMsg('');
     try {
-      const res = await apiFetch<{
-        test: { ok: boolean; message: string };
-        activated?: boolean;
-        requiresSubscription?: boolean;
-      }>('/api/connections/exchanges', {
+      const res = await apiFetch<{ test: { message: string }; activated?: boolean; requiresSubscription?: boolean }>('/api/connections/exchanges', {
         method: 'POST',
         body: JSON.stringify({
           provider: exProvider,
@@ -211,7 +211,7 @@ export function SetupWizardModal({
       if (res.requiresSubscription && !res.activated) {
         setMsg(
           lang === 'fa'
-            ? 'کلید ذخیره شد (حالت Standby). برای فعال‌سازی معامله واقعی روی Toobit / KCEX ابتدا اشتراک تهیه کنید.'
+            ? 'کلید ذخیره شد (Standby). برای فعال‌سازی معامله لایو روی Toobit / KCEX ابتدا اشتراک تهیه کنید.'
             : 'Saved in Standby. Upgrade to Pro/VIP to activate live Toobit or KCEX trading.'
         );
       } else {
@@ -225,98 +225,71 @@ export function SetupWizardModal({
     }
   };
 
-  const saveAi = async () => {
-    if (!aiKey.trim()) return;
-    setSaving(true);
-    try {
-      const modelMap = {
-        deepseek: 'deepseek-flash',
-        openai: 'gpt-4o-mini',
-        anthropic: 'claude-3-5-sonnet-latest',
-        gemini: 'gemini-2.0-flash',
-      };
-      await apiFetch('/api/connections/ai', {
-        method: 'POST',
-        body: JSON.stringify({ provider: aiProvider, model: modelMap[aiProvider], apiKey: aiKey.trim() }),
-      });
-      setMsg(`Saved ${aiProvider.toUpperCase()} AI key!`);
-      onCompleted();
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const stepLabels = [
     lang === 'fa' ? 'مبلغ سرمایه' : 'Amount',
     lang === 'fa' ? 'سطح ریسک' : 'Risk',
     lang === 'fa' ? 'استراتژی' : 'Strategy',
-    lang === 'fa' ? 'بررسی و شروع' : 'Review',
+    lang === 'fa' ? 'شروع' : 'Review',
   ];
 
   return (
-    <div dir={lang === 'fa' ? 'rtl' : 'ltr'} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 overflow-y-auto">
-      <div className="bg-[#0f1218] border border-[#1c2028] rounded-2xl w-full max-w-xl p-5 sm:p-6 space-y-5 shadow-[0_24px_80px_rgba(0,0,0,0.75)] my-auto">
+    <div dir={lang === 'fa' ? 'rtl' : 'ltr'} className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-3 overflow-y-auto">
+      <div className="surface-card w-full max-w-xl p-6 space-y-5 shadow-2xl my-auto">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#4b73f5]/15 border border-[#4b73f5]/35 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-[#4b73f5]" />
+            <div className="w-10 h-10 rounded-2xl banner-cobalt-soft flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-brand" />
             </div>
             <div>
-              <h3 className="font-bold text-white text-sm sm:text-base">
-                {lang === 'fa' ? 'راه‌اندازی ربات تریدر هوش مصنوعی' : 'AI Agent Trading Setup'}
+              <h3 className="font-black text-main text-base">
+                {lang === 'fa' ? 'راه‌اندازی ربات تریدر دلارینو' : 'Dollarino Bot Setup Wizard'}
               </h3>
-              <p className="text-[11px] text-[#6c7689]">
-                {lang === 'fa' ? 'پیکربندی دقیق در ۴ مرحله + اتصال صرافی و AI' : '4-step allocation, risk & KBOs v11 strategy deployment'}
+              <p className="text-[11px] text-sub">
+                {lang === 'fa' ? 'پیکربندی سریع سرمایه، ریسک و استراتژی' : '4-step allocation, risk & strategy deployment'}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg bg-[#1a1e26] text-[#9aa5b5] hover:text-white">
+          <button onClick={onClose} className="p-2 rounded-xl surface-soft text-sub hover:text-main">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Mode Switcher */}
-        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[#080a0e] border border-[#1c2028] text-xs">
+        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl surface-soft text-xs">
           <button
             onClick={() => setTab('agent')}
-            className={`py-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition ${
-              tab === 'agent' ? 'bg-[#4b73f5] text-white' : 'text-[#6c7689] hover:text-white'
+            className={`py-2 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
+              tab === 'agent' ? 'btn-cobalt' : 'text-sub hover:text-main'
             }`}
           >
             <Bot className="w-3.5 h-3.5" />
-            <span>{lang === 'fa' ? 'تنظیم ربات (۴ مرحله)' : 'AI Agent Wizard (4 Steps)'}</span>
+            <span>{lang === 'fa' ? 'تنظیم ربات (۴ مرحله)' : 'Setup Wizard'}</span>
           </button>
           <button
             onClick={() => setTab('vault')}
-            className={`py-2 rounded-lg font-semibold flex items-center justify-center gap-1.5 transition ${
-              tab === 'vault' ? 'bg-[#4b73f5] text-white' : 'text-[#6c7689] hover:text-white'
+            className={`py-2 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
+              tab === 'vault' ? 'btn-cobalt' : 'text-sub hover:text-main'
             }`}
           >
             <KeyRound className="w-3.5 h-3.5" />
-            <span>{lang === 'fa' ? 'اتصال صرافی و هوش مصنوعی' : 'Exchange & AI Keys'}</span>
+            <span>{lang === 'fa' ? 'اتصال صرافی و AI' : 'Exchange & AI Keys'}</span>
           </button>
         </div>
 
-        {msg && (
-          <div className="text-xs px-3 py-2 rounded-xl bg-[#4b73f5]/15 border border-[#4b73f5]/35 text-[#9eb7ff]">
-            {msg}
-          </div>
-        )}
+        {msg && <div className="text-xs px-3.5 py-2.5 rounded-xl banner-cobalt-soft text-brand font-bold">{msg}</div>}
 
         {tab === 'agent' ? (
           <>
-            {/* 4-Step Progress Bar */}
-            <div className="grid grid-cols-4 gap-2 text-[10px]">
+            <div className="grid grid-cols-4 gap-2 text-[11px]">
               {stepLabels.map((lbl, idx) => (
                 <button
                   key={lbl}
                   onClick={() => setStep(idx)}
-                  className={`py-2 px-1.5 rounded-lg border font-medium text-center transition ${
+                  className={`py-2 px-1.5 rounded-xl border font-bold text-center transition ${
                     step === idx
-                      ? 'border-[#4b73f5] bg-[#4b73f5]/15 text-white'
+                      ? 'btn-cobalt'
                       : idx < step
-                        ? 'border-[#27cd86]/40 bg-[#27cd86]/10 text-[#27cd86]'
-                        : 'border-[#1c2028] bg-[#11151c] text-[#6c7689]'
+                        ? 'bg-[#10D856]/15 border-[#10D856]/40 text-signal'
+                        : 'surface-soft text-dim'
                   }`}
                 >
                   {idx + 1}. {lbl}
@@ -327,15 +300,15 @@ export function SetupWizardModal({
             {step === 0 && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-[#9aa5b5] flex items-center gap-1.5">
-                    <Wallet className="w-3.5 h-3.5 text-[#4b73f5]" />
+                  <span className="text-sub flex items-center gap-1.5 font-semibold">
+                    <Wallet className="w-3.5 h-3.5 text-brand" />
                     <span>{lang === 'fa' ? 'موجودی قابل تخصیص:' : 'Available Balance:'}</span>
                   </span>
-                  <span className="font-mono-num font-bold text-[#27cd86]">${safeAvail.toLocaleString()}</span>
+                  <span className="font-mono-num font-black text-signal">${safeAvail.toLocaleString()}</span>
                 </div>
 
                 <div>
-                  <label className="text-[11px] text-[#6c7689] block mb-1.5">
+                  <label className="text-xs text-sub font-semibold block mb-1.5">
                     {lang === 'fa' ? 'مبلغ سرمایه تخصیصی (USDT)' : 'Allocated Capital (USDT)'}
                   </label>
                   <input
@@ -344,7 +317,7 @@ export function SetupWizardModal({
                     max={safeAvail}
                     value={allocatedAmount}
                     onChange={(e) => setAllocatedAmount(Math.max(10, Math.min(safeAvail, Number(e.target.value) || 0)))}
-                    className="w-full bg-[#080a0e] border border-[#262b36] focus:border-[#4b73f5] rounded-xl px-4 py-3 text-lg font-mono-num font-bold text-white outline-none"
+                    className="w-full surface-input rounded-2xl px-4 py-3 text-lg font-mono-num font-black outline-none focus:border-brand"
                   />
                 </div>
 
@@ -357,10 +330,8 @@ export function SetupWizardModal({
                         key={pct}
                         type="button"
                         onClick={() => setAllocatedAmount(val)}
-                        className={`py-2.5 rounded-xl border font-mono-num font-semibold transition ${
-                          active
-                            ? 'border-[#4b73f5] bg-[#4b73f5]/15 text-white'
-                            : 'border-[#1c2028] bg-[#11151c] text-[#9aa5b5] hover:border-[#262b36]'
+                        className={`py-2.5 rounded-xl border font-mono-num font-bold transition ${
+                          active ? 'btn-cobalt' : 'surface-soft text-sub'
                         }`}
                       >
                         {Math.round(pct * 100)}%
@@ -368,11 +339,6 @@ export function SetupWizardModal({
                     );
                   })}
                 </div>
-                <p className="text-[11px] text-[#6c7689]">
-                  {lang === 'fa'
-                    ? `سهم مارجین هر پوزیشن معادل ${marginPct}% از کل موجودی آزاد محاسبه می‌شود.`
-                    : `Position sizing allocates ${marginPct}% of available margin ($${allocatedAmount.toLocaleString()}) with automatic Risk-Free protection.`}
-                </p>
               </div>
             )}
 
@@ -383,24 +349,20 @@ export function SetupWizardModal({
                     key={r.id}
                     type="button"
                     onClick={() => setRiskLevel(r.id)}
-                    className={`w-full p-3.5 rounded-xl border text-start transition ${
-                      riskLevel === r.id
-                        ? 'border-[#4b73f5] bg-[#4b73f5]/10'
-                        : 'border-[#1c2028] bg-[#11151c] hover:border-[#262b36]'
+                    className={`w-full p-4 rounded-2xl border text-start transition ${
+                      riskLevel === r.id ? 'surface-card ring-2 ring-[#1464F6]' : 'surface-soft'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className={`font-bold text-xs sm:text-sm flex items-center gap-1.5 ${r.color}`}>
+                      <span className={`font-black text-xs sm:text-sm flex items-center gap-1.5 ${r.color}`}>
                         <ShieldCheck className="w-4 h-4" />
                         <span>{r.title}</span>
                       </span>
                       {r.recommended && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-[#4b73f5]/15 border border-[#4b73f5]/30 px-2 py-0.5 text-[10px] font-semibold text-[#4b73f5]">
-                          ★ Recommended
-                        </span>
+                        <span className="rounded-full banner-cobalt-soft px-2.5 py-0.5 text-[10px] font-bold text-brand">★ Recommended</span>
                       )}
                     </div>
-                    <p className="text-[11px] text-[#9aa5b5] mt-1">{r.detail}</p>
+                    <p className="text-xs text-sub mt-1">{r.detail}</p>
                   </button>
                 ))}
               </div>
@@ -413,68 +375,52 @@ export function SetupWizardModal({
                     key={s.id}
                     type="button"
                     onClick={() => setStrategyType(s.id)}
-                    className={`w-full p-3 rounded-xl border text-start transition ${
-                      strategyType === s.id
-                        ? 'border-[#4b73f5] bg-[#4b73f5]/10'
-                        : 'border-[#1c2028] bg-[#11151c] hover:border-[#262b36]'
+                    className={`w-full p-3.5 rounded-2xl border text-start transition ${
+                      strategyType === s.id ? 'surface-card ring-2 ring-[#1464F6]' : 'surface-soft'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-xs text-white flex items-center gap-1.5">
-                        <TrendingUp className="w-3.5 h-3.5 text-[#27cd86]" />
+                      <span className="font-extrabold text-xs text-main flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5 text-signal" />
                         <span>{s.title}</span>
                       </span>
-                      <div className="flex items-center gap-1.5">
-                        {s.recommended && (
-                          <span className="rounded-full bg-[#4b73f5]/15 border border-[#4b73f5]/30 px-2 py-0.5 text-[9px] font-semibold text-[#4b73f5]">
-                            ★ Recommended
-                          </span>
-                        )}
-                        <span className="rounded bg-[#1a1e26] px-1.5 py-0.5 text-[9px] text-[#9aa5b5] font-mono-num">
-                          {s.badge}
-                        </span>
-                      </div>
+                      <span className="rounded-lg banner-cobalt-soft px-2 py-0.5 text-[10px] text-brand font-mono-num font-bold">
+                        {s.badge}
+                      </span>
                     </div>
-                    <p className="text-[11px] text-[#6c7689] mt-1">{s.detail}</p>
+                    <p className="text-[11px] text-sub mt-1">{s.detail}</p>
                   </button>
                 ))}
               </div>
             )}
 
             {step === 3 && (
-              <div className="space-y-3">
-                <div className="rounded-xl border border-[#1c2028] bg-[#080a0e] divide-y divide-[#1c2028] text-xs">
-                  <div className="flex items-center justify-between p-3.5">
-                    <span className="text-[#6c7689]">{lang === 'fa' ? 'سرمایه تخصیصی' : 'Allocated Capital'}</span>
-                    <span className="font-mono-num font-bold text-white">${allocatedAmount.toLocaleString()} ({marginPct}%)</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3.5">
-                    <span className="text-[#6c7689]">{lang === 'fa' ? 'پروفایل ریسک' : 'Risk Level'}</span>
-                    <span className={`font-bold ${selectedRisk.color}`}>{selectedRisk.title}</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3.5">
-                    <span className="text-[#6c7689]">{lang === 'fa' ? 'سبک معاملاتی' : 'Trading Strategy'}</span>
-                    <span className="font-semibold text-white">{selectedStrat.title}</span>
-                  </div>
-                  <div className="flex items-center justify-between p-3.5">
-                    <span className="text-[#6c7689]">{lang === 'fa' ? 'حفاظت خروج' : 'Exit Protection'}</span>
-                    <span className="font-mono-num text-[#27cd86]">3-TP + {selectedRisk.trailingPct}% Trailing SL</span>
-                  </div>
+              <div className="surface-soft rounded-2xl border divide-y text-xs">
+                <div className="flex items-center justify-between p-3.5">
+                  <span className="text-sub">{lang === 'fa' ? 'سرمایه تخصیصی' : 'Allocated Capital'}</span>
+                  <span className="font-mono-num font-black text-main">${allocatedAmount.toLocaleString()} ({marginPct}%)</span>
                 </div>
-                <p className="text-[10px] text-[#6c7689] text-center leading-relaxed">
-                  {lang === 'fa'
-                    ? 'ربات با تایید کندل بسته بدون ریپینت و مدیریت ریسک روزانه اجرا خواهد شد.'
-                    : 'Non-repainting closed-candle execution with UTC daily loss protection and automatic Risk-Free BE on TP1.'}
-                </p>
+                <div className="flex items-center justify-between p-3.5">
+                  <span className="text-sub">{lang === 'fa' ? 'پروفایل ریسک' : 'Risk Level'}</span>
+                  <span className={`font-extrabold ${selectedRisk.color}`}>{selectedRisk.title}</span>
+                </div>
+                <div className="flex items-center justify-between p-3.5">
+                  <span className="text-sub">{lang === 'fa' ? 'استراتژی' : 'Strategy'}</span>
+                  <span className="font-bold text-main">{selectedStrat.title}</span>
+                </div>
+                <div className="flex items-center justify-between p-3.5">
+                  <span className="text-sub">{lang === 'fa' ? 'حفاظت خروج' : 'Exit Protection'}</span>
+                  <span className="font-mono-num font-bold text-signal">3-TP + {selectedRisk.trailingPct}% Trailing SL</span>
+                </div>
               </div>
             )}
 
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#1c2028]">
+            <div className="flex items-center justify-between gap-2 pt-2 border-t">
               {step > 0 ? (
                 <button
                   type="button"
                   onClick={() => setStep((s) => Math.max(0, s - 1))}
-                  className="px-4 py-2.5 rounded-xl bg-[#1a1e26] text-[#d5dce6] text-xs font-semibold inline-flex items-center gap-1.5"
+                  className="px-4 py-2.5 rounded-xl surface-soft border text-main text-xs font-bold inline-flex items-center gap-1.5"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>{lang === 'fa' ? 'قبلی' : 'Back'}</span>
@@ -487,7 +433,7 @@ export function SetupWizardModal({
                 <button
                   type="button"
                   onClick={() => setStep((s) => Math.min(3, s + 1))}
-                  className="px-5 py-2.5 rounded-xl bg-[#4b73f5] hover:bg-[#3d63e0] text-white text-xs font-bold inline-flex items-center gap-1.5"
+                  className="px-5 py-2.5 rounded-xl btn-cobalt text-xs font-extrabold inline-flex items-center gap-1.5"
                 >
                   <span>{lang === 'fa' ? 'مرحله بعد' : 'Continue'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -497,10 +443,10 @@ export function SetupWizardModal({
                   type="button"
                   disabled={saving}
                   onClick={startAiAgent}
-                  className="px-5 py-2.5 rounded-xl bg-[#27cd86] hover:bg-[#22b878] text-[#080a0e] text-xs font-bold inline-flex items-center gap-1.5 glow-success"
+                  className="px-5 py-2.5 rounded-xl btn-emerald text-xs font-black inline-flex items-center gap-1.5"
                 >
                   <Rocket className="w-4 h-4" />
-                  <span>{saving ? '...' : lang === 'fa' ? 'شروع معامله هوشمند' : 'Start AI Trading'}</span>
+                  <span>{saving ? '...' : lang === 'fa' ? 'شروع معامله هوشمند' : 'Start Trading'}</span>
                 </button>
               )}
             </div>
@@ -516,8 +462,8 @@ export function SetupWizardModal({
                 <button
                   key={p.id}
                   onClick={() => setExProvider(p.id as typeof exProvider)}
-                  className={`p-2.5 rounded-xl border font-semibold ${
-                    exProvider === p.id ? 'border-[#4b73f5] bg-[#4b73f5]/15 text-white' : 'border-[#1c2028] bg-[#11151c] text-[#9aa5b5]'
+                  className={`p-2.5 rounded-xl border font-bold ${
+                    exProvider === p.id ? 'btn-cobalt' : 'surface-soft text-sub'
                   }`}
                 >
                   {p.name}
@@ -528,79 +474,29 @@ export function SetupWizardModal({
             {exProvider === 'toobit' && (
               <div className="space-y-2">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="API Key"
-                    className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                  />
-                  <input
-                    type="password"
-                    value={apiSecret}
-                    onChange={(e) => setApiSecret(e.target.value)}
-                    placeholder="API Secret"
-                    className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                  />
+                  <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="API Key" className="surface-input rounded-xl px-3 py-2 font-mono-num" />
+                  <input type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} placeholder="API Secret" className="surface-input rounded-xl px-3 py-2 font-mono-num" />
                 </div>
-                <input
-                  value={proxyUrl}
-                  onChange={(e) => setProxyUrl(e.target.value)}
-                  placeholder="Optional Relay Proxy URL (e.g. https://relay.vercel.app for CF geo-bypass)"
-                  className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                />
+                <input value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} placeholder="Optional Relay URL" className="w-full surface-input rounded-xl px-3 py-2 font-mono-num" />
               </div>
             )}
 
             {exProvider === 'kcex' && (
-              <input
-                type="password"
-                value={kcexSession}
-                onChange={(e) => setKcexSession(e.target.value)}
-                placeholder="Optional KCEX Cookie/Auth Token"
-                className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-              />
+              <input type="password" value={kcexSession} onChange={(e) => setKcexSession(e.target.value)} placeholder="Optional KCEX Token" className="w-full surface-input rounded-xl px-3 py-2 font-mono-num" />
             )}
 
-            <button
-              disabled={saving}
-              onClick={saveExchange}
-              className="w-full py-2.5 rounded-xl bg-[#4b73f5] hover:bg-[#3d63e0] text-white font-bold inline-flex items-center justify-center gap-1.5"
-            >
+            <button disabled={saving} onClick={saveExchange} className="w-full py-2.5 rounded-xl btn-cobalt font-extrabold inline-flex items-center justify-center gap-1.5">
               <CheckCircle2 className="w-4 h-4" />
               <span>{saving ? '...' : lang === 'fa' ? 'ذخیره و تست اتصال صرافی' : 'Save & Activate Exchange'}</span>
             </button>
 
-            <div className="pt-3 border-t border-[#1c2028] space-y-2">
-              <div className="font-semibold text-white flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-[#8e4cf0]" />
-                <span>{lang === 'fa' ? 'اتصال کلید هوش مصنوعی شخصی (BYO AI)' : 'Connect Personal AI Key (Optional)'}</span>
-              </div>
-              <div className="flex gap-2">
-                <select
-                  value={aiProvider}
-                  onChange={(e) => setAiProvider(e.target.value as typeof aiProvider)}
-                  className="bg-[#080a0e] border border-[#262b36] rounded-xl px-2.5 py-2"
-                >
-                  <option value="deepseek">DeepSeek (Flash / V4-Pro)</option>
-                  <option value="anthropic">Claude</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="gemini">Gemini</option>
-                </select>
-                <input
-                  type="password"
-                  value={aiKey}
-                  onChange={(e) => setAiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className="flex-1 bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                />
-                <button
-                  disabled={saving || !aiKey.trim()}
-                  onClick={saveAi}
-                  className="px-4 py-2 rounded-xl bg-[#8e4cf0] hover:bg-[#7d3ce0] text-white font-semibold"
-                >
-                  Save
-                </button>
-              </div>
+            <div className="pt-3 border-t text-xs text-sub flex items-center gap-2">
+              <Zap className="w-4 h-4 text-brand shrink-0" />
+              <span>
+                {lang === 'fa'
+                  ? 'هوش مصنوعی مرکزی دلارینو روی سرور متصل است و نیازی به وارد کردن کلید API توسط شما ندارد.'
+                  : 'Dollarino Central AI is managed on the platform — no personal AI key required.'}
+              </span>
             </div>
           </div>
         )}

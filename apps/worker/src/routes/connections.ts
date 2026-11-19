@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { callBYOAI, resolveUserActiveAI } from '../ai/providers.js';
+import { callBYOAI, getPlatformAISummary, resolveUserActiveAI } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { decryptVaultJson, encryptVaultJson, maskSecret, randomId } from '../crypto.js';
 import { executeSignalForUser } from '../engine/executor.js';
@@ -11,6 +11,11 @@ import { resolveUserEntitlement } from './subscriptions.js';
 
 export const connectionRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 connectionRoutes.use('*', requireAuth);
+
+connectionRoutes.get('/platform-ai', async (c) => {
+  const summary = await getPlatformAISummary(c.env);
+  return c.json({ platformAI: summary });
+});
 
 connectionRoutes.get('/exchanges', async (c) => {
   const user = c.get('user');
@@ -164,7 +169,7 @@ connectionRoutes.patch('/exchanges/:id/proxy', async (c) => {
   const body = await c.req.json<{ proxyUrl?: string; proxySecret?: string }>();
   const row = await c.env.DB.prepare(
     `SELECT id, provider, encrypted_credentials FROM exchange_connections WHERE id = ? AND user_id = ?`
-  ).bind(id, user.id).first<{ id: string; provider: 'paper' | 'toobit' | 'bitunix' | 'kcex'; encrypted_credentials: string }>();
+  ).bind(id, user.id).first<{ id: string; provider: 'paper' | 'toobit' | 'kcex'; encrypted_credentials: string }>();
   if (!row) return c.json({ error: 'Connection not found' }, 404);
 
   let normalizedProxy: string | undefined;
@@ -228,7 +233,7 @@ connectionRoutes.post('/exchanges/:id/test', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const row = await c.env.DB.prepare('SELECT provider FROM exchange_connections WHERE id = ? AND user_id = ?')
-    .bind(id, user.id).first<{ provider: 'paper' | 'toobit' | 'bitunix' | 'kcex' }>();
+    .bind(id, user.id).first<{ provider: 'paper' | 'toobit' | 'kcex' }>();
   if (!row) return c.json({ error: 'Not found' }, 404);
 
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, row.provider);

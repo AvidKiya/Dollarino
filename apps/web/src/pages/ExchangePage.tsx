@@ -111,7 +111,6 @@ export function ExchangePage({
 
   return (
     <div className="space-y-5">
-      {/* Exchange Matrix Banner (Strictly Toobit, KCEX & Paper Demo) */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
         {[
           {
@@ -124,7 +123,7 @@ export function ExchangePage({
           },
           {
             name: 'KCEX Futures',
-            badge: '0% MAKER MIRROR + DEEP-LINK',
+            badge: '0% MAKER MIRROR',
             pair: kcexPair,
             fee: 'Maker 0.00% / Taker 0.01%',
             active: activeExchange.provider === 'kcex',
@@ -139,20 +138,15 @@ export function ExchangePage({
             href: '',
           },
         ].map((ex) => (
-          <div
-            key={ex.name}
-            className={`p-4 rounded-2xl border ${
-              ex.active ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-slate-800 bg-[#0e131d]'
-            }`}
-          >
+          <div key={ex.name} className={`p-4 rounded-2xl border ${ex.active ? 'surface-card ring-2 ring-[#10D856]' : 'surface-soft'}`}>
             <div className="flex items-center justify-between">
-              <span className="font-bold text-white">{ex.name}</span>
-              {ex.active && <ShieldCheck className="w-4 h-4 text-emerald-400" />}
+              <span className="font-black text-main">{ex.name}</span>
+              {ex.active && <ShieldCheck className="w-4 h-4 text-signal" />}
             </div>
-            <div className="text-[10px] text-cyan-300 mt-1 font-mono-num">{ex.badge}</div>
-            <div className="text-[11px] text-slate-400 mt-1">{ex.fee} · {ex.pair}</div>
+            <div className="text-[10px] text-brand mt-1 font-mono-num font-bold">{ex.badge}</div>
+            <div className="text-[11px] text-sub mt-1">{ex.fee} · {ex.pair}</div>
             {ex.href && (
-              <a href={ex.href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-2 text-[11px] text-blue-300 hover:underline">
+              <a href={ex.href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-2 text-[11px] text-brand font-bold hover:underline">
                 <span>{lang === 'fa' ? 'باز کردن ترمینال وب' : 'Open Web Terminal'}</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
@@ -161,38 +155,26 @@ export function ExchangePage({
         ))}
       </div>
 
-      {/* All Exchange Markets Live Screener */}
-      <div className="bg-[#0e131d] border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 text-xs">
+      <div className="surface-card p-5 space-y-3 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-white">
+            <h3 className="text-sm font-black text-main">
               {lang === 'fa'
-                ? `لیست کامل ارزهای صرافی ${activeExchange.provider.toUpperCase()} (${markets.length} جفت‌ارز زنده)`
-                : `All ${activeExchange.provider.toUpperCase()} Perpetual Contracts (${markets.length} live pairs)`}
+                ? `لیست کامل ارزهای صرافی ${activeExchange.provider.toUpperCase()} (${markets.length} جفت‌ارز)`
+                : `All ${activeExchange.provider.toUpperCase()} Perpetual Contracts (${markets.length})`}
             </h3>
-            <p className="text-[11px] text-slate-400">
-              {lang === 'fa' ? 'روی هر ارز کلیک کنید تا دفتر سفارش و پنل ثبت معامله آن باز شود.' : 'Click any contract to load its live order book and 3-TP trade ticket.'}
+            <p className="text-[11px] text-sub">
+              {lang === 'fa' ? 'روی هر ارز کلیک کنید تا دفتر سفارش و پنل معامله باز شود.' : 'Click any contract to load its live order book.'}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-500 absolute start-2.5 top-2.5" />
-              <input
-                value={marketFilter}
-                onChange={(e) => setMarketFilter(e.target.value)}
-                placeholder={lang === 'fa' ? 'جستجو ارز...' : 'Search coin...'}
-                className="bg-slate-950 border border-slate-800 rounded-xl ps-8 pe-3 py-1.5 w-44"
-              />
+              <Search className="w-3.5 h-3.5 text-dim absolute start-2.5 top-2.5" />
+              <input value={marketFilter} onChange={(e) => setMarketFilter(e.target.value)} placeholder={lang === 'fa' ? 'جستجو ارز...' : 'Search coin...'} className="surface-input rounded-xl ps-8 pe-3 py-1.5 w-44" />
             </div>
             {(['volume', 'gainers', 'losers'] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setMarketSort(s)}
-                className={`px-2.5 py-1.5 rounded-lg capitalize ${
-                  marketSort === s ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-900 text-slate-400'
-                }`}
-              >
+              <button key={s} onClick={() => setMarketSort(s)} className={`px-2.5 py-1.5 rounded-xl capitalize font-bold ${marketSort === s ? 'btn-emerald' : 'surface-soft text-sub'}`}>
                 {s}
               </button>
             ))}
@@ -210,16 +192,14 @@ export function ExchangePage({
                   setSymbol(m.symbol);
                   setStopLoss('');
                 }}
-                className={`p-2.5 rounded-xl border text-start transition ${
-                  selected ? 'bg-emerald-500/15 border-emerald-500/50' : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
-                }`}
+                className={`p-2.5 rounded-xl border text-start transition ${selected ? 'surface-card ring-2 ring-[#1464F6]' : 'surface-soft'}`}
               >
                 <div className="flex items-center justify-between gap-1">
-                  <span className="font-bold text-white truncate">{m.base}</span>
-                  <span className="text-[10px] font-mono-num text-slate-400">{m.maxLeverage}x</span>
+                  <span className="font-black text-main truncate">{m.base}</span>
+                  <span className="text-[10px] font-mono-num text-dim">{m.maxLeverage}x</span>
                 </div>
-                <div className="font-mono-num text-[11px] text-slate-200 mt-1">${m.lastPrice}</div>
-                <div className={`font-mono-num text-[10px] ${pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <div className="font-mono-num text-[11px] text-main font-bold mt-1">${m.lastPrice}</div>
+                <div className={`font-mono-num text-[10px] font-bold ${pct >= 0 ? 'text-signal' : 'text-loss'}`}>
                   {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
                 </div>
               </button>
@@ -228,17 +208,14 @@ export function ExchangePage({
         </div>
       </div>
 
-      {/* Order Ticket + Order Book */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <form onSubmit={submitOrder} className="lg:col-span-5 bg-[#0e131d] border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 text-xs">
+        <form onSubmit={submitOrder} className="lg:col-span-5 surface-card p-5 space-y-3 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-bold text-white">
-              {lang === 'fa' ? 'ثبت دستی سفارش (Market / Limit)' : 'Manual Futures Order Ticket'}
-            </h3>
-            <span className="font-mono-num text-emerald-400 font-bold">${snap?.market24h.lastPrice ?? '—'}</span>
+            <h3 className="text-sm font-black text-main">{lang === 'fa' ? 'ثبت دستی سفارش (Market / Limit)' : 'Manual Futures Order'}</h3>
+            <span className="font-mono-num text-signal font-black">${snap?.market24h.lastPrice ?? '—'}</span>
           </div>
 
-          {msg && <div className="p-2.5 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-200">{msg}</div>}
+          {msg && <div className="p-2.5 rounded-xl banner-cobalt-soft text-brand font-bold">{msg}</div>}
 
           <div className="flex flex-wrap items-center gap-2">
             <SymbolPicker
@@ -252,116 +229,85 @@ export function ExchangePage({
               }}
               compact
             />
-            <select
-              value={marginMode}
-              onChange={(e) => setMarginMode(e.target.value as 'ISOLATED' | 'CROSS')}
-              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5"
-            >
+            <select value={marginMode} onChange={(e) => setMarginMode(e.target.value as 'ISOLATED' | 'CROSS')} className="surface-input rounded-xl px-3 py-1.5">
               <option value="ISOLATED">ISOLATED</option>
               <option value="CROSS">CROSS</option>
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setDirection('LONG')}
-              className={`py-2 rounded-xl font-bold inline-flex items-center justify-center gap-1 ${
-                direction === 'LONG' ? 'bg-emerald-500 text-slate-950' : 'bg-slate-900 border border-slate-800 text-slate-400'
-              }`}
-            >
+            <button type="button" onClick={() => setDirection('LONG')} className={`py-2 rounded-xl font-extrabold inline-flex items-center justify-center gap-1 ${direction === 'LONG' ? 'btn-emerald' : 'surface-soft text-sub'}`}>
               <ArrowUpRight className="w-4 h-4" /> LONG
             </button>
-            <button
-              type="button"
-              onClick={() => setDirection('SHORT')}
-              className={`py-2 rounded-xl font-bold inline-flex items-center justify-center gap-1 ${
-                direction === 'SHORT' ? 'bg-rose-500 text-white' : 'bg-slate-900 border border-slate-800 text-slate-400'
-              }`}
-            >
+            <button type="button" onClick={() => setDirection('SHORT')} className={`py-2 rounded-xl font-extrabold inline-flex items-center justify-center gap-1 ${direction === 'SHORT' ? 'bg-rose-500 text-white' : 'surface-soft text-sub'}`}>
               <ArrowDownRight className="w-4 h-4" /> SHORT
             </button>
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            <select value={orderType} onChange={(e) => setOrderType(e.target.value as 'MARKET' | 'LIMIT')} className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2">
+            <select value={orderType} onChange={(e) => setOrderType(e.target.value as 'MARKET' | 'LIMIT')} className="surface-input rounded-xl px-2.5 py-2">
               <option value="MARKET">MARKET</option>
               <option value="LIMIT">LIMIT</option>
             </select>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={leverage}
-              onChange={(e) => setLeverage(Number(e.target.value))}
-              className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 font-mono-num"
-            />
-            <input
-              value={limitPrice}
-              disabled={orderType === 'MARKET'}
-              onChange={(e) => setLimitPrice(e.target.value)}
-              placeholder={orderType === 'MARKET' ? 'Market' : 'Limit Px'}
-              className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 font-mono-num disabled:opacity-40"
-            />
+            <input type="number" min={1} max={100} value={leverage} onChange={(e) => setLeverage(Number(e.target.value))} className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
+            <input value={limitPrice} disabled={orderType === 'MARKET'} onChange={(e) => setLimitPrice(e.target.value)} placeholder={orderType === 'MARKET' ? 'Market' : 'Limit Px'} className="surface-input rounded-xl px-2.5 py-2 font-mono-num disabled:opacity-40" />
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-rose-400 block mb-1">Stop Loss</label>
-              <input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 font-mono-num" />
+              <label className="text-loss font-bold block mb-1">Stop Loss</label>
+              <input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num" />
             </div>
             <div>
-              <label className="text-emerald-400 block mb-1">TP1 (50%)</label>
-              <input value={tp1} onChange={(e) => setTp1(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 font-mono-num" />
+              <label className="text-signal font-bold block mb-1">TP1 (50%)</label>
+              <input value={tp1} onChange={(e) => setTp1(e.target.value)} className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num" />
             </div>
             <div>
-              <label className="text-amber-400 block mb-1">TP2 (25%)</label>
-              <input value={tp2} onChange={(e) => setTp2(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 font-mono-num" />
+              <label className="text-flame font-bold block mb-1">TP2 (25%)</label>
+              <input value={tp2} onChange={(e) => setTp2(e.target.value)} className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num" />
             </div>
             <div>
-              <label className="text-orange-400 block mb-1">TP3 (25%)</label>
-              <input value={tp3} onChange={(e) => setTp3(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 font-mono-num" />
+              <label className="text-brand font-bold block mb-1">TP3 (25%)</label>
+              <input value={tp3} onChange={(e) => setTp3(e.target.value)} className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num" />
             </div>
           </div>
 
-          <button type="submit" className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold inline-flex items-center justify-center gap-1.5">
+          <button type="submit" className="w-full py-2.5 rounded-xl btn-cobalt font-extrabold inline-flex items-center justify-center gap-1.5">
             <Play className="w-4 h-4" />
             <span>{lang === 'fa' ? 'اجرای سفارش در صرافی فعال' : 'Submit Order to Exchange'}</span>
           </button>
         </form>
 
-        <div className="lg:col-span-7 bg-[#0e131d] border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+        <div className="lg:col-span-7 surface-card p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <div>
-              <h3 className="text-sm font-bold text-white">
-                {lang === 'fa' ? `عمق بازار زنده (${symbol})` : `Live Order Book Depth (${symbol})`}
-              </h3>
-              <p className="text-slate-400 mt-0.5">
+              <h3 className="text-sm font-black text-main">{lang === 'fa' ? `عمق بازار زنده (${symbol})` : `Live Order Book (${symbol})`}</h3>
+              <p className="text-sub mt-0.5">
                 Funding: {snap?.market24h.fundingRate ?? '0.01'}% · Spread: {snap?.spreadPct ?? '0.01'}% · Imbalance: {snap?.imbalancePct ?? '0'}%
               </p>
             </div>
-            <span className="font-mono-num text-base font-bold text-emerald-400">${snap?.market24h.lastPrice ?? '—'}</span>
+            <span className="font-mono-num text-base font-black text-signal">${snap?.market24h.lastPrice ?? '—'}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:gap-4 text-xs font-mono-num">
             <div>
-              <div className="text-emerald-400 font-semibold mb-2">Bids (Buy)</div>
+              <div className="text-signal font-bold mb-2">Bids (Buy)</div>
               <div className="space-y-1">
                 {(snap?.orderBook.bids ?? []).slice(0, 12).map(([p, q], i) => (
-                  <div key={i} className="flex justify-between px-2 py-1 rounded-lg bg-emerald-500/10">
-                    <span className="text-emerald-300">{p}</span>
-                    <span className="text-slate-400">{Number(q).toFixed(2)}</span>
+                  <div key={i} className="flex justify-between px-2.5 py-1 rounded-xl bg-[#10D856]/10">
+                    <span className="text-signal font-bold">{p}</span>
+                    <span className="text-sub">{Number(q).toFixed(2)}</span>
                   </div>
                 ))}
               </div>
             </div>
             <div>
-              <div className="text-rose-400 font-semibold mb-2">Asks (Sell)</div>
+              <div className="text-loss font-bold mb-2">Asks (Sell)</div>
               <div className="space-y-1">
                 {(snap?.orderBook.asks ?? []).slice(0, 12).map(([p, q], i) => (
-                  <div key={i} className="flex justify-between px-2 py-1 rounded-lg bg-rose-500/10">
-                    <span className="text-rose-300">{p}</span>
-                    <span className="text-slate-400">{Number(q).toFixed(2)}</span>
+                  <div key={i} className="flex justify-between px-2.5 py-1 rounded-xl bg-rose-500/10">
+                    <span className="text-loss font-bold">{p}</span>
+                    <span className="text-sub">{Number(q).toFixed(2)}</span>
                   </div>
                 ))}
               </div>

@@ -121,7 +121,7 @@ export function SubscriptionPage({
       setPayerNote('');
       setMsg(
         isFa
-          ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر (چند دقیقه)، اشتراک شما فوراً فعال می‌شود.'
+          ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر، اشتراک شما فوراً فعال می‌شود.'
           : 'Subscription order submitted! Once verified by admin, your Pro/VIP license activates immediately.'
       );
       await loadData();
@@ -135,71 +135,65 @@ export function SubscriptionPage({
 
   return (
     <div className="space-y-6">
-      {/* Current License Status Banner */}
-      <div className="card-tt p-5 sm:p-6 bg-gradient-to-br from-[#0f1628] to-[#0a0f1d] border-[#2563eb]/35 flex flex-wrap items-center justify-between gap-4">
+      {/* Hero License Banner */}
+      <div className="hero-cobalt p-6 text-white flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-[#2563eb]/15 border border-[#2563eb]/40 flex items-center justify-center shrink-0">
-            <Crown className={`w-6 h-6 ${entitlement?.hasPaidPlan ? 'text-[#27cd86]' : 'text-[#4b73f5]'}`} />
+          <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+            <Crown className={`w-6 h-6 ${entitlement?.hasPaidPlan ? 'text-[#55ff94]' : 'text-[#fde047]'}`} />
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-base sm:text-lg font-bold text-white">
+              <h1 className="text-lg font-black">
                 {isFa ? entitlement?.planNameFa || 'وضعیت اشتراک' : entitlement?.planNameEn || 'Subscription Status'}
               </h1>
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                  entitlement?.hasPaidPlan
-                    ? 'bg-[#27cd86]/15 text-[#27cd86] border-[#27cd86]/35'
-                    : 'bg-[#f59f14]/15 text-[#f59f14] border-[#f59f14]/35'
-                }`}
-              >
+              <span className="px-3 py-0.5 rounded-full text-[11px] font-bold bg-white/15">
                 {entitlement?.hasPaidPlan
                   ? isFa
-                    ? `فعال · ${entitlement.daysRemaining} روز باقی‌مانده`
-                    : `ACTIVE · ${entitlement.daysRemaining}d left`
+                    ? `فعال · ${entitlement.daysRemaining} روز`
+                    : `ACTIVE · ${entitlement.daysRemaining}d`
                   : isFa
-                    ? 'حساب تست دمو (محدود)'
+                    ? 'حساب دمو رایگان'
                     : 'Paper Demo Tier'}
               </span>
             </div>
-            <p className="text-xs text-[#8f99aa] mt-1">
+            <p className="text-xs text-white/80 mt-1">
               {entitlement?.hasPaidPlan
                 ? isFa
-                  ? 'دسترسی کامل به ترید هوش مصنوعی، استراتژی‌های CodexBot، کپی‌ترید تلگرام و صرافی‌های Toobit و KCEX فعال است.'
-                  : 'Full access unlocked: AI Trading, CodexBot Strategies, Telegram Copy-Trade & Live Toobit / KCEX.'
+                  ? 'دسترسی کامل به هوش مصنوعی مرکزی، دلارینو V0.1، کپی‌ترید و صرافی‌های Toobit و KCEX فعال است.'
+                  : 'Full access unlocked: Central AI, Dollarino V0.1, Copy-Trade & Live Toobit/KCEX.'
                 : isFa
-                  ? 'حساب دمو (Paper) برای تست رایگان باز است. برای اتصال لایو Toobit / KCEX، ترید هوشمند AI و کپی‌ترید تلگرام، اشتراک تهیه کنید.'
-                  : 'Paper Demo testing is free. Purchase Pro or VIP to unlock AI Auto-Trading, Telegram Copy-Trade & Live Toobit/KCEX.'}
+                  ? 'دمو رایگان باز است. با خرید اشتراک Pro، ترید لایو Toobit / KCEX و کپی‌ترید تلگرام را فعال کنید.'
+                  : 'Paper Demo is free. Upgrade to Pro or VIP for AI Auto-Trading, Copy-Trade & Live Toobit/KCEX.'}
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 text-[11px]">
+        <div className="flex flex-wrap gap-2 text-xs">
           {[
-            { ok: true, label: isFa ? 'حساب دمو' : 'Paper Demo' },
+            { ok: true, label: isFa ? 'دمو رایگان' : 'Paper Demo' },
             { ok: entitlement?.allowAiTrading, label: isFa ? 'ترید AI' : 'AI Trading' },
             { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی‌ترید تلگرام' : 'Copy-Trade' },
             { ok: entitlement?.allowLiveTrading, label: 'Toobit & KCEX' },
           ].map((e) => (
             <span
               key={e.label}
-              className={`px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 ${
-                e.ok ? 'bg-[#27cd86]/10 border-[#27cd86]/30 text-[#27cd86]' : 'bg-[#151a24] border-[#222836] text-[#6c7689]'
+              className={`px-3 py-1 rounded-xl inline-flex items-center gap-1 font-bold ${
+                e.ok ? 'bg-[#16E664]/25 text-[#baffd3]' : 'bg-white/10 text-white/60'
               }`}
             >
-              <CheckCircle2 className="w-3 h-3" /> {e.label}
+              <CheckCircle2 className="w-3.5 h-3.5" /> {e.label}
             </span>
           ))}
         </div>
       </div>
 
       {msg && (
-        <div className="p-3.5 rounded-xl bg-[#4b73f5]/15 border border-[#4b73f5]/35 text-xs text-[#d6e2ff]">
+        <div className="surface-card p-4 border-brand text-xs text-main font-semibold">
           {msg}
         </div>
       )}
 
-      {/* 3 Plan Cards (kifpool-style clean rounded cards) */}
+      {/* 3 Plan Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {plans.map((p) => {
           let feats: string[] = [];
@@ -214,46 +208,48 @@ export function SubscriptionPage({
           return (
             <div
               key={p.code}
-              className={`card-tt p-5 flex flex-col justify-between gap-4 transition ${
-                p.is_popular
-                  ? 'border-[#4b73f5]/60 ring-1 ring-[#4b73f5]/25'
-                  : isSelected
-                    ? 'border-[#27cd86]/60'
-                    : ''
-              }`}
+              className={`p-6 rounded-3xl flex flex-col justify-between gap-4 transition ${
+                p.is_popular ? 'hero-cobalt text-white' : 'surface-card'
+              } ${isSelected && !p.is_popular ? 'ring-2 ring-[#1464F6]' : ''}`}
             >
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-sm text-white">{isFa ? p.name_fa : p.name_en}</span>
+                  <span className={`font-black text-base ${p.is_popular ? 'text-white' : 'text-main'}`}>
+                    {isFa ? p.name_fa : p.name_en}
+                  </span>
                   {p.is_popular ? (
-                    <span className="px-2 py-0.5 rounded-full bg-[#4b73f5]/20 text-[#9eb7ff] border border-[#4b73f5]/40 text-[10px] font-bold">
-                      {isFa ? 'پرفروش‌ترین' : 'MOST POPULAR'}
+                    <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-black">
+                      {isFa ? 'محبوب‌ترین' : 'POPULAR'}
                     </span>
                   ) : null}
                 </div>
 
                 <div>
                   <div className="flex items-baseline gap-2 font-mono-num">
-                    <span className="text-2xl font-extrabold text-white">
+                    <span className={`text-3xl font-black ${p.is_popular ? 'text-white' : 'text-main'}`}>
                       {p.price_usd === 0 ? (isFa ? 'رایگان' : 'Free') : `$${p.price_usd}`}
                     </span>
                     {p.price_usd > 0 && (
-                      <span className="text-xs text-[#6c7689]">/ {p.duration_days} {isFa ? 'روز' : 'days'}</span>
+                      <span className={`text-xs ${p.is_popular ? 'text-white/75' : 'text-dim'}`}>
+                        / {p.duration_days} {isFa ? 'روز' : 'days'}
+                      </span>
                     )}
                   </div>
                   {p.price_toman > 0 && (
-                    <p className="text-xs text-[#27cd86] font-semibold mt-0.5">
+                    <p className={`text-xs font-extrabold mt-1 ${p.is_popular ? 'text-[#7dffb0]' : 'text-signal'}`}>
                       {p.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}
                     </p>
                   )}
                 </div>
 
-                <p className="text-xs text-[#8f99aa] leading-relaxed">{isFa ? p.description_fa : p.description_en}</p>
+                <p className={`text-xs leading-relaxed ${p.is_popular ? 'text-white/85' : 'text-sub'}`}>
+                  {isFa ? p.description_fa : p.description_en}
+                </p>
 
-                <ul className="space-y-2 pt-2 border-t border-[#181d28] text-xs">
+                <ul className={`space-y-2 pt-3 border-t text-xs ${p.is_popular ? 'border-white/20' : ''}`}>
                   {feats.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[#c8d0dc]">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-[#27cd86] shrink-0 mt-0.5" />
+                    <li key={i} className={`flex items-start gap-2 ${p.is_popular ? 'text-white' : 'text-sub'}`}>
+                      <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${p.is_popular ? 'text-[#55ff94]' : 'text-signal'}`} />
                       <span>{f}</span>
                     </li>
                   ))}
@@ -261,21 +257,23 @@ export function SubscriptionPage({
               </div>
 
               {p.price_usd === 0 ? (
-                <div className="py-2.5 text-center rounded-xl bg-[#131823] text-xs font-semibold text-[#8f99aa]">
-                  {isCurrent ? (isFa ? 'فعال روی حساب دمو' : 'Active for Paper Testing') : (isFa ? 'همیشه رایگان برای تست' : 'Always Free for Demo')}
+                <div className="py-2.5 text-center rounded-xl surface-soft text-xs font-bold text-sub">
+                  {isCurrent ? (isFa ? 'فعال روی حساب دمو' : 'Active for Demo') : (isFa ? 'همیشه رایگان برای تست' : 'Always Free')}
                 </div>
               ) : (
                 <button
                   onClick={() => setSelectedPlan(p)}
-                  className={`w-full py-2.5 rounded-xl font-bold text-xs transition ${
-                    isSelected
-                      ? 'bg-[#27cd86] text-[#080a0e]'
-                      : 'bg-[#4b73f5] hover:bg-[#3d63e0] text-white'
+                  className={`w-full py-3 rounded-2xl font-extrabold text-xs transition ${
+                    p.is_popular
+                      ? 'bg-[#16E664] hover:bg-[#12cc56] text-[#042310]'
+                      : isSelected
+                        ? 'btn-emerald'
+                        : 'btn-cobalt'
                   }`}
                 >
                   {isSelected
-                    ? isFa ? 'انتخاب‌شده برای پرداخت ↓' : 'Selected for Checkout ↓'
-                    : isFa ? 'خرید و فعال‌سازی اشتراک' : 'Select & Upgrade'}
+                    ? isFa ? 'انتخاب‌شده برای پرداخت ↓' : 'Selected ↓'
+                    : isFa ? 'خرید و فعال‌سازی اشتراک' : 'Select Plan'}
                 </button>
               )}
             </div>
@@ -285,18 +283,18 @@ export function SubscriptionPage({
 
       {/* Checkout Panel */}
       {selectedPlan && selectedPlan.price_usd > 0 && (
-        <div className="card-tt p-5 sm:p-6 space-y-5 border-[#4b73f5]/40">
+        <div className="surface-card p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#4b73f5]" />
+            <h2 className="text-base font-black text-main flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-brand" />
               <span>
                 {isFa
                   ? `پرداخت و فعال‌سازی: ${selectedPlan.name_fa} ($${selectedPlan.price_usd})`
                   : `Checkout: ${selectedPlan.name_en} ($${selectedPlan.price_usd})`}
               </span>
             </h2>
-            <span className="text-xs text-[#6c7689]">
-              {isFa ? `پشتیبانی تلگرام: ${payCfg.telegram_support || '@Dollarino_admin'}` : `Support: ${payCfg.telegram_support || '@Dollarino_admin'}`}
+            <span className="text-xs text-sub font-semibold">
+              {isFa ? `پشتیبانی: ${payCfg.telegram_support || '@Dollarino_admin'}` : `Support: ${payCfg.telegram_support || '@Dollarino_admin'}`}
             </span>
           </div>
 
@@ -304,51 +302,46 @@ export function SubscriptionPage({
             <button
               type="button"
               onClick={() => setPaymentMethod('USDT_TRC20')}
-              className={`p-3.5 rounded-xl border text-start flex items-center gap-3 transition ${
-                paymentMethod === 'USDT_TRC20'
-                  ? 'border-[#27cd86] bg-[#27cd86]/10 text-white'
-                  : 'border-[#1d222e] bg-[#0b0e14] text-[#8f99aa]'
+              className={`p-4 rounded-2xl border text-start flex items-center gap-3 transition ${
+                paymentMethod === 'USDT_TRC20' ? 'btn-emerald' : 'surface-soft text-sub'
               }`}
             >
-              <Wallet className="w-5 h-5 text-[#27cd86] shrink-0" />
+              <Wallet className="w-5 h-5 shrink-0" />
               <div>
-                <div className="font-bold">{isFa ? 'پرداخت با تتر (USDT · شبکه TRC20)' : 'Tether USDT (TRC20 Network)'}</div>
-                <div className="text-[11px] opacity-80">${selectedPlan.price_usd} USDT</div>
+                <div className="font-extrabold">{isFa ? 'پرداخت با تتر (USDT · TRC20)' : 'Tether USDT (TRC20)'}</div>
+                <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT</div>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => setPaymentMethod('CARD_TO_CARD')}
-              className={`p-3.5 rounded-xl border text-start flex items-center gap-3 transition ${
-                paymentMethod === 'CARD_TO_CARD'
-                  ? 'border-[#4b73f5] bg-[#4b73f5]/10 text-white'
-                  : 'border-[#1d222e] bg-[#0b0e14] text-[#8f99aa]'
+              className={`p-4 rounded-2xl border text-start flex items-center gap-3 transition ${
+                paymentMethod === 'CARD_TO_CARD' ? 'btn-cobalt' : 'surface-soft text-sub'
               }`}
             >
-              <CreditCard className="w-5 h-5 text-[#4b73f5] shrink-0" />
+              <CreditCard className="w-5 h-5 shrink-0" />
               <div>
-                <div className="font-bold">{isFa ? 'پرداخت کارت به کارت (تومانی)' : 'Card-to-Card (IRR / Toman)'}</div>
-                <div className="text-[11px] opacity-80">{selectedPlan.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}</div>
+                <div className="font-extrabold">{isFa ? 'پرداخت کارت به کارت (تومانی)' : 'Card-to-Card (Toman)'}</div>
+                <div className="text-[11px] opacity-90">{selectedPlan.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}</div>
               </div>
             </button>
           </div>
 
-          {/* Payment Destination Box */}
-          <div className="p-4 rounded-xl bg-[#0b0e15] border border-[#1d2433] flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="p-4 rounded-2xl surface-soft border flex flex-wrap items-center justify-between gap-3 text-xs">
             {paymentMethod === 'USDT_TRC20' ? (
               <div className="space-y-1 min-w-0">
-                <div className="text-[#8f99aa]">{isFa ? 'آدرس کیف‌پول تتر (شبکه TRC20):' : 'USDT TRC20 Deposit Address:'}</div>
-                <div className="font-mono-num text-sm font-bold text-white break-all">
-                  {payCfg.usdt_trc20_wallet || 'TYourTRC20WalletAddressHereSetInAdminPanel'}
+                <div className="text-sub">{isFa ? 'آدرس کیف‌پول تتر (TRC20):' : 'USDT TRC20 Address:'}</div>
+                <div className="font-mono-num text-sm font-black text-main break-all">
+                  {payCfg.usdt_trc20_wallet || 'Set USDT wallet in Admin Panel'}
                 </div>
               </div>
             ) : (
               <div className="space-y-1 min-w-0">
-                <div className="text-[#8f99aa]">
+                <div className="text-sub">
                   {isFa ? `شماره کارت (${payCfg.iran_card_holder || 'مدیریت دلارینو'}):` : `Bank Card (${payCfg.iran_card_holder || 'Admin'}):`}
                 </div>
-                <div className="font-mono-num text-sm font-bold text-white" dir="ltr">
+                <div className="font-mono-num text-sm font-black text-main" dir="ltr">
                   {payCfg.iran_card_number || '6037-9975-0000-0000'}
                 </div>
               </div>
@@ -361,9 +354,9 @@ export function SubscriptionPage({
                   'addr'
                 )
               }
-              className="px-3 py-1.5 rounded-lg bg-[#161b26] hover:bg-[#1e2536] text-white inline-flex items-center gap-1.5 shrink-0"
+              className="px-3.5 py-2 rounded-xl surface-card border text-main font-bold inline-flex items-center gap-1.5 shrink-0"
             >
-              <Copy className="w-3.5 h-3.5 text-[#4b73f5]" />
+              <Copy className="w-3.5 h-3.5 text-brand" />
               <span>{copied === 'addr' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'کپی' : 'Copy'}</span>
             </button>
           </div>
@@ -375,21 +368,21 @@ export function SubscriptionPage({
               onChange={(e) => setPaymentRef(e.target.value)}
               placeholder={
                 paymentMethod === 'USDT_TRC20'
-                  ? isFa ? 'هش تراکنش (TXID) را وارد کنید...' : 'Paste USDT TRC20 TXID...'
+                  ? isFa ? 'هش تراکنش (TXID)...' : 'Paste USDT TRC20 TXID...'
                   : isFa ? 'شماره پیگیری / ۴ رقم آخر کارت...' : 'Paste tracking code...'
               }
-              className="bg-[#080a0e] border border-[#222836] rounded-xl px-3.5 py-2.5 font-mono-num text-white"
+              className="surface-input rounded-xl px-3.5 py-2.5 font-mono-num"
             />
             <input
               value={payerNote}
               onChange={(e) => setPayerNote(e.target.value)}
-              placeholder={isFa ? 'آیدی تلگرام یا توضیحات (اختیاری)' : 'Telegram @handle or note (optional)'}
-              className="bg-[#080a0e] border border-[#222836] rounded-xl px-3.5 py-2.5 text-white"
+              placeholder={isFa ? 'آیدی تلگرام یا توضیحات (اختیاری)' : 'Telegram @handle (optional)'}
+              className="surface-input rounded-xl px-3.5 py-2.5"
             />
             <button
               disabled={submitting}
               type="submit"
-              className="px-5 py-2.5 rounded-xl bg-[#27cd86] hover:bg-[#22b878] text-[#080a0e] font-bold flex items-center justify-center gap-2 transition"
+              className="px-5 py-2.5 rounded-xl btn-emerald font-extrabold flex items-center justify-center gap-2"
             >
               <ShieldCheck className="w-4 h-4" />
               <span>{submitting ? '...' : isFa ? 'ثبت پرداخت و ارسال برای تایید' : 'Submit Payment Reference'}</span>
@@ -398,44 +391,43 @@ export function SubscriptionPage({
         </div>
       )}
 
-      {/* Order History */}
       {orders.length > 0 && (
-        <div className="card-tt p-5 space-y-3 text-xs">
-          <h3 className="font-bold text-sm text-white flex items-center gap-2">
-            <Clock className="w-4 h-4 text-[#4b73f5]" />
-            <span>{isFa ? 'سوابق سفارش اشتراک شما' : 'Your Subscription Orders'}</span>
+        <div className="surface-card p-5 space-y-3 text-xs">
+          <h3 className="font-black text-sm text-main flex items-center gap-2">
+            <Clock className="w-4 h-4 text-brand" />
+            <span>{isFa ? 'سوابق سفارش اشتراک' : 'Subscription Orders'}</span>
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="text-[11px] text-[#6c7689] border-b border-[#181d28]">
+              <thead className="text-[11px] text-dim border-b">
                 <tr>
                   <th className="py-2 text-start">{isFa ? 'پلن' : 'Plan'}</th>
                   <th className="py-2 text-start">{isFa ? 'روش' : 'Method'}</th>
-                  <th className="py-2 text-start">{isFa ? 'کد پیگیری / TXID' : 'Reference'}</th>
+                  <th className="py-2 text-start">{isFa ? 'کد پیگیری' : 'Reference'}</th>
                   <th className="py-2 text-start">{isFa ? 'وضعیت' : 'Status'}</th>
                   <th className="py-2 text-end">{isFa ? 'تاریخ' : 'Date'}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#151a24] font-mono-num">
+              <tbody className="divide-y font-mono-num">
                 {orders.map((o) => (
                   <tr key={o.id}>
-                    <td className="py-2.5 font-sans font-semibold text-white">{isFa ? o.name_fa || o.plan_code : o.name_en || o.plan_code}</td>
-                    <td className="py-2.5 text-[#9aa5b5]">{o.payment_method}</td>
-                    <td className="py-2.5 text-[#c5cede] max-w-[200px] truncate">{o.payment_reference || '-'}</td>
+                    <td className="py-2.5 font-sans font-bold text-main">{isFa ? o.name_fa || o.plan_code : o.name_en || o.plan_code}</td>
+                    <td className="py-2.5 text-sub">{o.payment_method}</td>
+                    <td className="py-2.5 text-sub max-w-[200px] truncate">{o.payment_reference || '-'}</td>
                     <td className="py-2.5">
                       <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-sans font-semibold ${
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-sans font-bold ${
                           o.status === 'ACTIVE'
-                            ? 'bg-[#27cd86]/15 text-[#27cd86]'
+                            ? 'bg-[#10D856]/15 text-signal'
                             : o.status === 'PENDING_REVIEW'
-                              ? 'bg-[#f59f14]/15 text-[#f59f14]'
-                              : 'bg-[#eb493d]/15 text-[#eb493d]'
+                              ? 'bg-[#FF8A00]/15 text-flame'
+                              : 'bg-rose-500/15 text-loss'
                         }`}
                       >
                         {o.status}
                       </span>
                     </td>
-                    <td className="py-2.5 text-end text-[#6c7689]">{o.created_at.slice(0, 16)}</td>
+                    <td className="py-2.5 text-end text-dim">{o.created_at.slice(0, 16)}</td>
                   </tr>
                 ))}
               </tbody>

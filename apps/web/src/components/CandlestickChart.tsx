@@ -57,11 +57,20 @@ export function CandlestickChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
+  const [isLight, setIsLight] = useState(() => document.documentElement.classList.contains('theme-light'));
   const [showKbosHtf, setShowKbosHtf] = useState(true);
   const [showDemaAtr, setShowDemaAtr] = useState(true);
   const [showAlmaRibbon, setShowAlmaRibbon] = useState(true);
   const [showEmas, setShowEmas] = useState(false);
   const [showMarkers, setShowMarkers] = useState(true);
+
+  useEffect(() => {
+    const obs = new MutationObserver(() => {
+      setIsLight(document.documentElement.classList.contains('theme-light'));
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -71,34 +80,32 @@ export function CandlestickChart({
       width: el.clientWidth,
       height,
       layout: {
-        background: { type: ColorType.Solid, color: '#090c12' },
-        textColor: '#8d98ab',
+        background: { type: ColorType.Solid, color: isLight ? '#ffffff' : '#060c1c' },
+        textColor: isLight ? '#4b6491' : '#96a9cf',
       },
       grid: {
-        vertLines: { color: 'rgba(148, 163, 184, 0.04)' },
-        horzLines: { color: 'rgba(148, 163, 184, 0.04)' },
+        vertLines: { color: isLight ? 'rgba(12, 68, 200, 0.06)' : 'rgba(120, 165, 255, 0.06)' },
+        horzLines: { color: isLight ? 'rgba(12, 68, 200, 0.06)' : 'rgba(120, 165, 255, 0.06)' },
       },
-      crosshair: {
-        mode: 1,
-      },
+      crosshair: { mode: 1 },
       timeScale: {
         timeVisible: true,
-        borderColor: 'rgba(148, 163, 184, 0.14)',
+        borderColor: isLight ? 'rgba(12, 68, 200, 0.14)' : 'rgba(120, 165, 255, 0.14)',
       },
       rightPriceScale: {
-        borderColor: 'rgba(148, 163, 184, 0.14)',
+        borderColor: isLight ? 'rgba(12, 68, 200, 0.14)' : 'rgba(120, 165, 255, 0.14)',
         scaleMargins: { top: 0.08, bottom: showVolume ? 0.2 : 0.08 },
       },
     });
     chartRef.current = chart;
 
     const series = chart.addCandlestickSeries({
-      upColor: '#27cd86',
-      downColor: '#eb493d',
-      borderUpColor: '#27cd86',
-      borderDownColor: '#eb493d',
-      wickUpColor: '#27cd86',
-      wickDownColor: '#eb493d',
+      upColor: '#10D856',
+      downColor: '#f43f5e',
+      borderUpColor: '#10D856',
+      borderDownColor: '#f43f5e',
+      wickUpColor: '#10D856',
+      wickDownColor: '#f43f5e',
     });
 
     if (candles.length > 0) {
@@ -117,14 +124,12 @@ export function CandlestickChart({
           priceFormat: { type: 'volume' },
           priceScaleId: '',
         });
-        volSeries.priceScale().applyOptions({
-          scaleMargins: { top: 0.84, bottom: 0 },
-        });
+        volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
         volSeries.setData(
           candles.map((c) => ({
             time: Math.floor(c.timestamp / 1000) as Time,
             value: c.volume,
-            color: c.close >= c.open ? 'rgba(39, 205, 134, 0.22)' : 'rgba(235, 73, 61, 0.22)',
+            color: c.close >= c.open ? 'rgba(16, 216, 86, 0.24)' : 'rgba(244, 63, 94, 0.24)',
           }))
         );
       }
@@ -143,80 +148,60 @@ export function CandlestickChart({
       chart.timeScale().fitContent();
     }
 
-    // Standard EMA overlays
     if (showEmas || (!kbosOverlays && overlays)) {
       if (overlays?.ema20?.length) {
-        const s20 = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1, priceLineVisible: false });
+        const s20 = chart.addLineSeries({ color: '#1464F6', lineWidth: 1, priceLineVisible: false });
         s20.setData(overlays.ema20.map((p) => ({ time: p.time as Time, value: p.value })));
       }
       if (overlays?.ema50?.length) {
-        const s50 = chart.addLineSeries({ color: '#f59f14', lineWidth: 1, priceLineVisible: false });
+        const s50 = chart.addLineSeries({ color: '#FF8A00', lineWidth: 1, priceLineVisible: false });
         s50.setData(overlays.ema50.map((p) => ({ time: p.time as Time, value: p.value })));
       }
       if (overlays?.ema200?.length) {
-        const s200 = chart.addLineSeries({ color: '#a855f7', lineWidth: 2, priceLineVisible: false });
+        const s200 = chart.addLineSeries({ color: '#8b5cf6', lineWidth: 2, priceLineVisible: false });
         s200.setData(overlays.ema200.map((p) => ({ time: p.time as Time, value: p.value })));
       }
     }
 
-    // KBOs v11 Non-repainting HTF Cross Lines
     if (showKbosHtf && kbosOverlays?.closeSeriesAlt?.length && kbosOverlays?.openSeriesAlt?.length) {
-      const cLine = chart.addLineSeries({ color: '#27cd86', lineWidth: 2, priceLineVisible: false, title: 'KBOs Close' });
+      const cLine = chart.addLineSeries({ color: '#10D856', lineWidth: 2, priceLineVisible: false, title: 'KBOs Close' });
       cLine.setData(kbosOverlays.closeSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value })));
-      const oLine = chart.addLineSeries({ color: '#eb493d', lineWidth: 2, priceLineVisible: false, title: 'KBOs Open' });
+      const oLine = chart.addLineSeries({ color: '#f43f5e', lineWidth: 2, priceLineVisible: false, title: 'KBOs Open' });
       oLine.setData(kbosOverlays.openSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value })));
     }
 
-    // DEMA ATR [BackQuant]
     if (showDemaAtr && kbosOverlays?.demaAtr?.length) {
-      const daLine = chart.addLineSeries({
-        lineWidth: 2,
-        priceLineVisible: false,
-        title: 'DEMA ATR',
-      });
+      const daLine = chart.addLineSeries({ lineWidth: 2, priceLineVisible: false, title: 'DEMA ATR' });
       daLine.setData(
         kbosOverlays.demaAtr.map((p) => ({
           time: p.time as Time,
           value: p.value,
-          color: p.trend === 'BULL' ? '#00ffbb' : '#ff1100',
+          color: p.trend === 'BULL' ? '#10D856' : '#f43f5e',
         }))
       );
     }
 
-    // RLA MA 8-Band Golden Ratio ALMA Ribbon
     if (showAlmaRibbon && kbosOverlays?.almaRibbon?.bands?.length) {
       for (const band of kbosOverlays.almaRibbon.bands) {
         if (!band.points.length) continue;
-        const bSeries = chart.addLineSeries({
-          color: band.color,
-          lineWidth: 1,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        });
+        const bSeries = chart.addLineSeries({ color: band.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
         bSeries.setData(band.points.map((p) => ({ time: p.time as Time, value: p.value })));
       }
     }
 
     const addLevel = (price: number | undefined, title: string, color: string) => {
       if (!price || !Number.isFinite(price)) return;
-      series.createPriceLine({
-        price,
-        color,
-        lineWidth: 2,
-        lineStyle: 2,
-        axisLabelVisible: true,
-        title,
-      });
+      series.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title });
     };
 
     if (levels) {
-      addLevel(levels.entry, 'ENTRY', '#4b73f5');
-      addLevel(levels.stopLoss, 'STOP LOSS', '#eb493d');
-      addLevel(levels.tp1, 'TP1 (30%)', '#27cd86');
-      addLevel(levels.tp2, 'TP2 (30%)', '#f59f14');
-      addLevel(levels.tp3, 'TP3 (40%)', '#f97316');
-      levels.supports?.forEach((s, idx) => addLevel(s, `S${idx + 1}`, '#22d3ee'));
-      levels.resistances?.forEach((r, idx) => addLevel(r, `R${idx + 1}`, '#a855f7'));
+      addLevel(levels.entry, 'ENTRY', '#1464F6');
+      addLevel(levels.stopLoss, 'STOP LOSS', '#f43f5e');
+      addLevel(levels.tp1, 'TP1', '#10D856');
+      addLevel(levels.tp2, 'TP2', '#FF8A00');
+      addLevel(levels.tp3, 'TP3', '#f97316');
+      levels.supports?.forEach((s, idx) => addLevel(s, `S${idx + 1}`, '#06b6d4'));
+      levels.resistances?.forEach((r, idx) => addLevel(r, `R${idx + 1}`, '#8b5cf6'));
     }
 
     const ro = new ResizeObserver(() => {
@@ -228,7 +213,7 @@ export function CandlestickChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [candles, levels, overlays, kbosOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showMarkers]);
+  }, [candles, levels, overlays, kbosOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showMarkers, isLight]);
 
   return (
     <div className="space-y-2">
@@ -237,36 +222,28 @@ export function CandlestickChart({
           <button
             type="button"
             onClick={() => setShowKbosHtf((v) => !v)}
-            className={`px-2 py-1 rounded-md border font-medium transition ${
-              showKbosHtf ? 'bg-[#27cd86]/15 border-[#27cd86]/40 text-[#27cd86]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
-            }`}
+            className={`px-2.5 py-1 rounded-lg border font-bold transition ${showKbosHtf ? 'btn-emerald' : 'surface-soft text-dim'}`}
           >
             KBOs HTF
           </button>
           <button
             type="button"
             onClick={() => setShowDemaAtr((v) => !v)}
-            className={`px-2 py-1 rounded-md border font-medium transition ${
-              showDemaAtr ? 'bg-[#00ffbb]/15 border-[#00ffbb]/40 text-[#00ffbb]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
-            }`}
+            className={`px-2.5 py-1 rounded-lg border font-bold transition ${showDemaAtr ? 'btn-cobalt' : 'surface-soft text-dim'}`}
           >
             DEMA ATR
           </button>
           <button
             type="button"
             onClick={() => setShowAlmaRibbon((v) => !v)}
-            className={`px-2 py-1 rounded-md border font-medium transition ${
-              showAlmaRibbon ? 'bg-[#8e4cf0]/15 border-[#8e4cf0]/40 text-[#b48af8]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
-            }`}
+            className={`px-2.5 py-1 rounded-lg border font-bold transition ${showAlmaRibbon ? 'banner-cobalt-soft text-brand' : 'surface-soft text-dim'}`}
           >
-            RLA MA Ribbon (8×ALMA)
+            RLA MA Ribbon
           </button>
           <button
             type="button"
             onClick={() => setShowMarkers((v) => !v)}
-            className={`px-2 py-1 rounded-md border font-medium transition ${
-              showMarkers ? 'bg-[#4b73f5]/15 border-[#4b73f5]/40 text-[#4b73f5]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
-            }`}
+            className={`px-2.5 py-1 rounded-lg border font-bold transition ${showMarkers ? 'btn-cobalt' : 'surface-soft text-dim'}`}
           >
             BUY/SELL Arrows
           </button>
@@ -274,16 +251,14 @@ export function CandlestickChart({
             <button
               type="button"
               onClick={() => setShowEmas((v) => !v)}
-              className={`px-2 py-1 rounded-md border font-medium transition ${
-                showEmas ? 'bg-[#f59f14]/15 border-[#f59f14]/40 text-[#f59f14]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
-              }`}
+              className={`px-2.5 py-1 rounded-lg border font-bold transition ${showEmas ? 'bg-[#FF8A00]/15 text-flame border-[#FF8A00]/40' : 'surface-soft text-dim'}`}
             >
               EMA 20/50/200
             </button>
           )}
         </div>
       )}
-      <div ref={containerRef} className="w-full rounded-xl overflow-hidden border border-[#1c2028]" />
+      <div ref={containerRef} className="w-full rounded-2xl overflow-hidden border" />
     </div>
   );
 }

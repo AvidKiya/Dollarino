@@ -14,6 +14,8 @@ import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { executeSignalForUser, logAudit, reconcileOpenPositionsForUser, type UserBotConfigRow } from './executor.js';
 
+const TOP_SCAN_COINS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+
 export class TradingBotCoordinator implements DurableObject {
   constructor(
     private state: DurableObjectState,
@@ -84,9 +86,24 @@ export class TradingBotCoordinator implements DurableObject {
       cfg.trading_mode === 'PAPER' ? 'paper' : undefined
     );
 
+    const symbolsToScan = cfg.auto_scan_top
+      ? Array.from(new Set([cfg.symbol, ...TOP_SCAN_COINS])).slice(0, 3)
+      : [cfg.symbol];
+
+    for (const scanSymbol of symbolsToScan) {
+      await this.evaluateSymbolForUser(userId, cfg, adapter, scanSymbol).catch(() => {});
+    }
+  }
+
+  private async evaluateSymbolForUser(
+    userId: string,
+    cfg: UserBotConfigRow,
+    adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
+    scanSymbol: string
+  ) {
     const [ltfRaw, htfRaw] = await Promise.all([
-      adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 450),
-      adapter.getKlines(cfg.symbol, cfg.higher_timeframe, 200),
+      adapter.getKlines(scanSymbol, cfg.entry_timeframe, 450),
+      adapter.getKlines(scanSymbol, cfg.higher_timeframe, 200),
     ]);
 
     const now = Date.now();
@@ -114,20 +131,20 @@ export class TradingBotCoordinator implements DurableObject {
       }
     } catch { /* fallback */ }
 
-    // 2A. Autonomous AI Trader Engine (DeepSeek / Claude / GPT / Gemini)
+    // 2A. Centralized Multi-AI Consensus Trader
     if (cfg.strategy_key === 'ai_autonomous_agent') {
       const latestBarTs = ltfClosed[ltfClosed.length - 1]!.timestamp;
-      const aiBarKey = `last_ai_bar_ts_${userId}_${cfg.symbol}_${cfg.entry_timeframe}`;
+      const aiBarKey = `last_ai_bar_ts_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
       const lastAiTs = await this.state.storage.get<number>(aiBarKey);
       if (lastAiTs === latestBarTs) return;
       await this.state.storage.put(aiBarKey, latestBarTs);
 
       const [orderBook, market24h, openOnSymbol] = await Promise.all([
-        adapter.getOrderBook(cfg.symbol, 15).catch(() => ({ bids: [], asks: [] })),
-        adapter.getMarket24h(cfg.symbol).catch(() => null),
+        adapter.getOrderBook(scanSymbol, 15).catch(() => ({ bids: [], asks: [] })),
+        adapter.getMarket24h(scanSymbol).catch(() => null),
         this.env.DB.prepare(
           `SELECT id, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode FROM trades WHERE user_id = ? AND symbol = ? AND status = 'OPEN' LIMIT 1`
-        ).bind(userId, cfg.symbol).first<{
+        ).bind(userId, scanSymbol).first<{
           id: string;
           direction: Direction;
           entry_price: string;
@@ -150,7 +167,7 @@ export class TradingBotCoordinator implements DurableObject {
       let decision;
       try {
         decision = await runAutonomousAITrader(this.env, userId, {
-          symbol: cfg.symbol,
+          symbol: scanSymbol,
           timeframe: cfg.entry_timeframe,
           higherTimeframe: cfg.higher_timeframe,
           candles: ltfClosed,
@@ -175,7 +192,7 @@ export class TradingBotCoordinator implements DurableObject {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'AI Trader error';
-        await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `AI Trader failed on ${cfg.symbol}: ${msg}`, cfg.symbol);
+        await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `AI Trader failed on ${scanSymbol}: ${msg}`, scanSymbol);
         return;
       }
 
@@ -184,8 +201,8 @@ export class TradingBotCoordinator implements DurableObject {
         userId,
         'AI_AGENT',
         decision.ok ? 'INFO' : 'WARN',
-        `[${(decision.provider || 'AI').toUpperCase()} · ${decision.model || ''}] ${decision.action} ${cfg.symbol} (${decision.confidence}% conf) — ${decision.thesis}`,
-        cfg.symbol,
+        `[Central AI · ${decision.modelCount || 1}x] ${decision.action} ${scanSymbol} (${decision.confidence}% conf) — ${decision.thesis}`,
+        scanSymbol,
         decision
       );
 
@@ -193,7 +210,7 @@ export class TradingBotCoordinator implements DurableObject {
 
       if (decision.action === 'CLOSE' && openOnSymbol) {
         const cls = await adapter.closePositionPartialOrFull(
-          cfg.symbol,
+          scanSymbol,
           openOnSymbol.direction,
           openOnSymbol.remaining_quantity,
           `ai_exit_${Date.now()}`
@@ -218,7 +235,7 @@ export class TradingBotCoordinator implements DurableObject {
         if (cooldownMinutes > 0) {
           const lastClosed = await this.env.DB.prepare(
             `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
-          ).bind(userId, cfg.symbol).first<{ closed_at: string; exit_reason: string | null }>();
+          ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
           if (lastClosed?.closed_at) {
             const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
             const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
@@ -227,7 +244,7 @@ export class TradingBotCoordinator implements DurableObject {
         }
 
         const sig = {
-          symbol: cfg.symbol,
+          symbol: scanSymbol,
           direction: decision.action,
           timeframe: cfg.entry_timeframe,
           price: String(decision.entry),
@@ -271,7 +288,7 @@ export class TradingBotCoordinator implements DurableObject {
       return;
     }
 
-    // 2B. Classic Quantitative Strategy Engine (optional hybrid/quant modes)
+    // 2B. Proprietary Strategy Engine (Dollarino V0.1 & Quant strategies)
     const outputs = computeStrategySignals(
       cfg.strategy_key,
       ltfClosed,
@@ -287,14 +304,14 @@ export class TradingBotCoordinator implements DurableObject {
     const latest = outputs[outputs.length - 1];
     if (!latest || latest.signal === 'NONE') return;
 
-    const lastBarKey = `last_signal_ts_${userId}_${cfg.symbol}`;
+    const lastBarKey = `last_signal_ts_${userId}_${scanSymbol}`;
     const lastProcessed = await this.state.storage.get<number>(lastBarKey);
     if (lastProcessed === latest.timestamp) return;
 
     if (cooldownMinutes > 0) {
       const lastClosed = await this.env.DB.prepare(
         `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
-      ).bind(userId, cfg.symbol).first<{ closed_at: string; exit_reason: string | null }>();
+      ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
       if (lastClosed?.closed_at) {
         const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
         const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
@@ -306,7 +323,7 @@ export class TradingBotCoordinator implements DurableObject {
 
     await this.state.storage.put(lastBarKey, latest.timestamp);
     const sig = strategyOutputToDollarinoSignal(
-      cfg.symbol,
+      scanSymbol,
       cfg.entry_timeframe,
       Math.max(1, cfg.max_leverage),
       latest,

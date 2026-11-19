@@ -314,6 +314,10 @@ export function computeStrategySignals(
           return f! > s! ? ('BULLISH' as const) : f! < s! ? ('BEARISH' as const) : ('NEUTRAL' as const);
         });
 
+  const kbosDetailed = strategyKey === 'dollarino_v01'
+    ? computeKbosV11Detailed(ltfCandles, timeframe, params.kbosParams ?? (params as Partial<KbosParams>))
+    : null;
+
   const outputs: StrategySignalOutput[] = [];
   let testFired = false;
   let lastSignalBar = -10;
@@ -338,7 +342,101 @@ export function computeStrategySignals(
     let riskDist = a * 1.8;
     let entryLegs: StrategySignalOutput['entryLegs'];
 
-    if (strategyKey === 'test_strategy') {
+    if (strategyKey === 'dollarino_v01' && i >= 35 && i - lastSignalBar >= 5) {
+      // Dollarino V0.1 — Proprietary Multi-Pillar Master Strategy combining ALL engines:
+      // 1) KBOs Super v11 + DEMA-ATR + 8-Band Golden-Ratio ALMA Ribbon
+      // 2) SP2L Liquidity Sweep & Spike-2Leg Reclaim
+      // 3) EMA 20/50/200 Pullback & Donchian Breakout + BB Mean Reversion
+      // 4) 8-Channel Weighted Signal Mixer
+      const kOut = kbosDetailed?.outputs[i];
+      const demaTrend = kbosDetailed?.demaAtr[i]?.trend ?? 'NEUTRAL';
+      const ribFast = kbosDetailed?.almaRibbon.series[7]?.[i];
+      const ribMid = kbosDetailed?.almaRibbon.series[3]?.[i];
+      const medVol = Math.max(1e-9, median(ltfCandles.slice(i - 20, i).map((x) => x.volume)));
+      const volOk = c.volume >= medVol * 0.85;
+      const atrPct = (a / Math.max(1e-9, c.close)) * 100;
+      const healthyVolRegime = atrPct >= 0.12 && atrPct <= 3.5;
+
+      const weights = params.mixerWeights ?? DEFAULT_MIXER_WEIGHTS;
+      const mix = evaluateSignalMixerAtBar(ltfCandles, i, trend, weights, 55);
+
+      const swLow = swings.confirmedLows[i - 1];
+      const swHigh = swings.confirmedHighs[i - 1];
+      const bullSweep = Number.isFinite(swLow) && c.low < swLow! && c.close > swLow! && c.close > c.open;
+      const bearSweep = Number.isFinite(swHigh) && c.high > swHigh! && c.close < swHigh! && c.close < c.open;
+
+      const lowerBb = bb.lower[i];
+      const upperBb = bb.upper[i];
+      const bullPullback =
+        (Math.min(c.low, prev.low) <= f20 * 1.002 && c.close > f20 && c.close > c.open && closePos >= 0.55) ||
+        (Number.isFinite(lowerBb) && Math.min(c.low, prev.low) <= lowerBb! * 1.002 && c.close > c.open && r <= 50);
+      const bearPullback =
+        (Math.max(c.high, prev.high) >= f20 * 0.998 && c.close < f20 && c.close < c.open && closePos <= 0.45) ||
+        (Number.isFinite(upperBb) && Math.max(c.high, prev.high) >= upperBb! * 0.998 && c.close < c.open && r >= 50);
+
+      const high20 = Math.max(...ltfCandles.slice(i - 20, i).map((x) => x.high));
+      const low20 = Math.min(...ltfCandles.slice(i - 20, i).map((x) => x.low));
+      const bullBreak = c.close > high20 && prev.close <= high20 && c.volume >= medVol * 1.15 && closePos >= 0.6;
+      const bearBreak = c.close < low20 && prev.close >= low20 && c.volume >= medVol * 1.15 && closePos <= 0.4;
+
+      const macroBull = !Number.isFinite(f200) || c.close >= f200! * 0.994;
+      const macroBear = !Number.isFinite(f200) || c.close <= f200! * 1.006;
+      const ribbonBull = Number.isFinite(ribFast) && Number.isFinite(ribMid) ? ribFast! >= ribMid! * 0.999 : f20 > f50;
+      const ribbonBear = Number.isFinite(ribFast) && Number.isFinite(ribMid) ? ribFast! <= ribMid! * 1.001 : f20 < f50;
+
+      let bullScore = 0;
+      const bullTags: string[] = [];
+      if (trend === 'BULLISH') { bullScore += 20; bullTags.push('HTF'); }
+      if (demaTrend === 'BULL' && ribbonBull) { bullScore += 18; bullTags.push('DEMA-Ribbon'); }
+      if (kOut?.signal === 'LONG') { bullScore += 28; bullTags.push('KBOs-v11'); }
+      if (bullSweep) { bullScore += 24; bullTags.push('SP2L-Sweep'); }
+      if (bullPullback) { bullScore += 20; bullTags.push('EMA/BB-Bounce'); }
+      if (bullBreak) { bullScore += 18; bullTags.push('Breakout'); }
+      if (mix.compositeScore >= 45) { bullScore += 20; bullTags.push(`Mixer(${mix.confidence}%)`); }
+
+      let bearScore = 0;
+      const bearTags: string[] = [];
+      if (trend === 'BEARISH') { bearScore += 20; bearTags.push('HTF'); }
+      if (demaTrend === 'BEAR' && ribbonBear) { bearScore += 18; bearTags.push('DEMA-Ribbon'); }
+      if (kOut?.signal === 'SHORT') { bearScore += 28; bearTags.push('KBOs-v11'); }
+      if (bearSweep) { bearScore += 24; bearTags.push('SP2L-Sweep'); }
+      if (bearPullback) { bearScore += 20; bearTags.push('EMA/BB-Reject'); }
+      if (bearBreak) { bearScore += 18; bearTags.push('Breakdown'); }
+      if (mix.compositeScore <= -45) { bearScore += 20; bearTags.push(`Mixer(${mix.confidence}%)`); }
+
+      const notOverExtendedLong = c.close - f20 <= a * 1.85 && r >= 34 && r <= 69;
+      const notOverExtendedShort = f20 - c.close <= a * 1.85 && r >= 31 && r <= 66;
+
+      if (
+        healthyVolRegime &&
+        volOk &&
+        adx >= 17 &&
+        macroBull &&
+        bullScore >= 62 &&
+        bullScore > bearScore + 20 &&
+        notOverExtendedLong &&
+        (bullPullback || bullSweep || bullBreak || kOut?.signal === 'LONG' || mix.direction === 'LONG')
+      ) {
+        signal = 'LONG';
+        const swingStop = Number.isFinite(swLow) && c.close - swLow! <= a * 3.2 ? c.close - swLow! + a * 0.35 : 0;
+        riskDist = Math.max(a * 1.9, swingStop);
+        reason = `Dollarino V0.1 (${bullScore}pts: ${bullTags.join(' + ')})`;
+      } else if (
+        healthyVolRegime &&
+        volOk &&
+        adx >= 17 &&
+        macroBear &&
+        bearScore >= 62 &&
+        bearScore > bullScore + 20 &&
+        notOverExtendedShort &&
+        (bearPullback || bearSweep || bearBreak || kOut?.signal === 'SHORT' || mix.direction === 'SHORT')
+      ) {
+        signal = 'SHORT';
+        const swingStop = Number.isFinite(swHigh) && swHigh! - c.close <= a * 3.2 ? swHigh! - c.close + a * 0.35 : 0;
+        riskDist = Math.max(a * 1.9, swingStop);
+        reason = `Dollarino V0.1 (${bearScore}pts: ${bearTags.join(' + ')})`;
+      }
+    } else if (strategyKey === 'test_strategy') {
       if (i >= 20 && !testFired) {
         signal = params.testDirection === -1 ? 'SHORT' : 'LONG';
         reason = 'TestStrategy diagnostic 1-shot verified signal';
