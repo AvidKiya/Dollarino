@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrainCircuit, History, Play, Send } from 'lucide-react';
 import type { Candle, Timeframe } from '@dollarino/core';
-import { CandlestickChart, type ChartLevels } from '../components/CandlestickChart';
+import { CandlestickChart, type ChartLevels, type KbosChartOverlays } from '../components/CandlestickChart';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
@@ -33,6 +33,7 @@ export function ChartAIPage({
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [tf, setTf] = useState<Timeframe>('15m');
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [kbosOverlays, setKbosOverlays] = useState<KbosChartOverlays | undefined>(undefined);
   const [prompt, setPrompt] = useState(
     lang === 'fa'
       ? 'روند، نواحی حمایت/مقاومت، و ستاپ ورود به همراه استاپ و ۳ تارگت را روی چارت رسم کن.'
@@ -47,10 +48,15 @@ export function ChartAIPage({
 
   const loadMarket = async () => {
     const [res, chats] = await Promise.all([
-      apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${symbol}&timeframe=${tf}&limit=160`),
-      apiFetch<{ chats: Array<{ id: string; title: string; symbol: string; timeframe: string }> }>('/api/chart-ai/chats').catch(() => ({ chats: [] })),
+      apiFetch<{ candles: Candle[]; kbosOverlays?: KbosChartOverlays }>(
+        `/api/trading/market/overview?symbol=${symbol}&timeframe=${tf}`
+      ),
+      apiFetch<{ chats: Array<{ id: string; title: string; symbol: string; timeframe: string }> }>('/api/chart-ai/chats').catch(() => ({
+        chats: [],
+      })),
     ]);
     setCandles(res.candles);
+    setKbosOverlays(res.kbosOverlays);
     setChatHistory(chats.chats);
   };
 
@@ -115,22 +121,15 @@ export function ChartAIPage({
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-      <div className="xl:col-span-8 bg-[#0e131d] border border-slate-800 rounded-2xl p-4 space-y-3">
+      <div className="xl:col-span-8 card-tt p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <SymbolPicker
-              lang={lang}
-              value={symbol}
-              markets={markets}
-              provider={provider}
-              onChange={setSymbol}
-              compact
-            />
-            {(['5m', '15m', '1h', '4h'] as Timeframe[]).map((x) => (
+            <SymbolPicker lang={lang} value={symbol} markets={markets} provider={provider} onChange={setSymbol} compact />
+            {(['5m', '15m', '30m', '1h', '4h'] as Timeframe[]).map((x) => (
               <button
                 key={x}
                 onClick={() => setTf(x)}
-                className={`px-2.5 py-1.5 rounded-lg font-medium ${tf === x ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400'}`}
+                className={`px-2.5 py-1.5 rounded-lg font-medium ${tf === x ? 'bg-[#4b73f5] text-white' : 'bg-[#11151c] text-[#6c7689]'}`}
               >
                 {x}
               </button>
@@ -141,7 +140,7 @@ export function ChartAIPage({
             {analysis?.direction && analysis.entry && analysis.stopLoss && analysis.tp1 && (
               <button
                 onClick={deployAiSetup}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#27cd86] hover:bg-[#22b878] text-[#080a0e] text-xs font-bold"
               >
                 <Play className="w-3.5 h-3.5" />
                 <span>{lang === 'fa' ? 'اجرای مستقیم ستاپ AI' : 'Execute AI Setup'}</span>
@@ -150,20 +149,20 @@ export function ChartAIPage({
           </div>
         </div>
 
-        {deployMsg && <div className="text-xs px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">{deployMsg}</div>}
+        {deployMsg && <div className="text-xs px-3 py-2 rounded-xl bg-[#27cd86]/15 border border-[#27cd86]/35 text-[#27cd86]">{deployMsg}</div>}
 
-        <CandlestickChart candles={candles} levels={levels} height={510} />
+        <CandlestickChart candles={candles} levels={levels} kbosOverlays={kbosOverlays} height={510} />
       </div>
 
-      <div className="xl:col-span-4 bg-[#0e131d] border border-slate-800 rounded-2xl p-4 flex flex-col justify-between space-y-3">
+      <div className="xl:col-span-4 card-tt p-4 flex flex-col justify-between space-y-3">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <BrainCircuit className="w-5 h-5 text-purple-400" />
-              <h3 className="font-bold text-sm">{lang === 'fa' ? 'دستیار چارت AI (BYO Key)' : 'Chart AI Co-Pilot'}</h3>
+              <BrainCircuit className="w-5 h-5 text-[#8e4cf0]" />
+              <h3 className="font-bold text-sm text-white">{lang === 'fa' ? 'دستیار چارت AI (BYO Key)' : 'Chart AI Co-Pilot'}</h3>
             </div>
             {analysis?.confidence && (
-              <span className="text-[11px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono-num">
+              <span className="text-[11px] px-2 py-0.5 rounded bg-[#8e4cf0]/20 text-[#c9a8ff] font-mono-num">
                 Conf: {analysis.confidence}%
               </span>
             )}
@@ -171,7 +170,7 @@ export function ChartAIPage({
 
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             {[
-              lang === 'fa' ? 'ستاپ ورود SP2L' : 'Evaluate SP2L Sweep',
+              lang === 'fa' ? 'ستاپ KBOs v11 و ریبون ALMA' : 'Evaluate KBOs v11 + DEMA ATR',
               lang === 'fa' ? 'حمایت/مقاومت کلیدی' : 'Key S/R & Order Blocks',
               lang === 'fa' ? 'بهترین R:R برای لانگ/شورت' : '3-TP R:R Setup',
             ].map((chip) => (
@@ -181,7 +180,7 @@ export function ChartAIPage({
                   setPrompt(chip);
                   void askAI(chip);
                 }}
-                className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300"
+                className="px-2.5 py-1 rounded-lg bg-[#11151c] hover:bg-[#1a1e26] border border-[#1c2028] text-[#d5dce6]"
               >
                 {chip}
               </button>
@@ -190,17 +189,17 @@ export function ChartAIPage({
 
           <div className="space-y-2 max-h-[300px] overflow-y-auto text-xs">
             {messages.length === 0 && (
-              <p className="text-slate-400 leading-relaxed">
+              <p className="text-[#6c7689] leading-relaxed">
                 {lang === 'fa'
-                  ? 'کلید OpenAI، Claude یا Gemini خود را در تب اتصالات متصل کنید و سطوح هوشمند چارت را دریافت کنید.'
-                  : 'Connect your OpenAI, Claude, or Gemini API key in Connections to draw AI levels directly onto the chart.'}
+                  ? 'کلید OpenAI، Claude یا Gemini خود را متصل کنید و تحلیل AI را روی چارت زنده KBOs v11 مشاهده کنید.'
+                  : 'Connect your OpenAI, Claude, or Gemini key in Connections to overlay AI S/R & trade levels onto the KBOs v11 chart.'}
               </p>
             )}
             {messages.map((m, idx) => (
               <div
                 key={idx}
                 className={`p-3 rounded-xl leading-relaxed whitespace-pre-wrap ${
-                  m.role === 'user' ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100' : 'bg-slate-900/90 border border-slate-800 text-slate-200'
+                  m.role === 'user' ? 'bg-[#4b73f5]/15 border border-[#4b73f5]/35 text-white' : 'bg-[#11151c] border border-[#1c2028] text-[#d5dce6]'
                 }`}
               >
                 {m.content}
@@ -209,8 +208,8 @@ export function ChartAIPage({
           </div>
 
           {chatHistory.length > 0 && (
-            <div className="border-t border-slate-800 pt-2">
-              <div className="text-[11px] text-slate-400 flex items-center gap-1 mb-1">
+            <div className="border-t border-[#1c2028] pt-2">
+              <div className="text-[11px] text-[#6c7689] flex items-center gap-1 mb-1">
                 <History className="w-3 h-3" /> Recent Chats
               </div>
               <div className="flex flex-wrap gap-1">
@@ -223,7 +222,7 @@ export function ChartAIPage({
                       setMessages(JSON.parse(d.chat.messages_json));
                       setAnalysis(JSON.parse(d.chat.annotations_json));
                     }}
-                    className="text-[10px] px-2 py-1 rounded bg-slate-900 border border-slate-800 text-slate-300 hover:text-white"
+                    className="text-[10px] px-2 py-1 rounded bg-[#11151c] border border-[#1c2028] text-[#9aa5b5] hover:text-white"
                   >
                     {c.symbol} {c.timeframe}
                   </button>
@@ -233,17 +232,17 @@ export function ChartAIPage({
           )}
         </div>
 
-        <div className="space-y-2 pt-2 border-t border-slate-800">
+        <div className="space-y-2 pt-2 border-t border-[#1c2028]">
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             rows={2}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs"
+            className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl p-2.5 text-xs"
           />
           <button
             disabled={loading}
             onClick={() => askAI()}
-            className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5"
+            className="w-full py-2.5 rounded-xl bg-[#8e4cf0] hover:bg-[#7b3ce0] text-white text-xs font-bold inline-flex items-center justify-center gap-1.5"
           >
             <Send className="w-3.5 h-3.5" />
             <span>{loading ? '...' : lang === 'fa' ? 'تحلیل هوشمند چارت' : 'Analyze Chart with AI'}</span>

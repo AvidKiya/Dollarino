@@ -35,6 +35,7 @@ export interface DollarinoSignal {
 }
 
 export type StrategyKey =
+  | 'kbos_v11'
   | 'sp2l'
   | 'grid_strategy'
   | 'ema_trend_pullback'
@@ -43,6 +44,54 @@ export type StrategyKey =
   | 'signal_mixer'
   | 'test_strategy'
   | 'dollarino_tv_hybrid';
+
+export type MaVariantKind =
+  | 'SMA'
+  | 'EMA'
+  | 'DEMA'
+  | 'TEMA'
+  | 'WMA'
+  | 'VWMA'
+  | 'SMMA'
+  | 'HullMA'
+  | 'LSMA'
+  | 'ALMA'
+  | 'TMA'
+  | 'SSMA';
+
+export interface KbosParams {
+  basisType: MaVariantKind;
+  basisLen: number;
+  useRes: boolean;
+  intRes: number;
+  offsetSigma: number;
+  offsetALMA: number;
+  delayOffset: number;
+  tradeType: 'LONG' | 'SHORT' | 'BOTH' | 'NONE';
+  useAtr1: boolean;
+  useAtr2: boolean;
+  useVol: boolean;
+  useEmaRsi: boolean;
+  useEma200: boolean;
+  useAdx: boolean;
+  adxVariant: 'ORIGINAL' | 'MASANAKAMURA';
+  adxThreshold: number;
+  useRsiCustom: boolean;
+  useBb: boolean;
+  useDemaAtr: boolean;
+  haCandles: boolean;
+  periodDema: number;
+  periodAtr: number;
+  factorAtr: number;
+  tp1Pct: number;
+  tp2Pct: number;
+  tp3Pct: number;
+  useTrail: boolean;
+  trailPct: number;
+  trailAfterTp1: boolean;
+  beAfterTp1: boolean;
+  mainRibbonLen: number;
+}
 
 export interface SignalMixerWeights {
   trend: number;
@@ -85,6 +134,9 @@ export interface BotConfig {
   tp3ClosePct: number;
   autoBreakevenOnTp1: boolean;
   moveSlToTp1OnTp2: boolean;
+  trailingStopEnabled?: boolean;
+  trailingStopPct?: number;
+  trailAfterTp1?: boolean;
   dailyMaxLossPct: number;
   maxOpenPositions: number;
   blockWeekends: boolean;
@@ -94,6 +146,7 @@ export interface BotConfig {
   signalChannelHandle: string;
   mixerThreshold?: number;
   mixerWeights?: SignalMixerWeights;
+  kbosParams?: Partial<KbosParams>;
 }
 
 export interface InstrumentSpec {
@@ -152,6 +205,7 @@ export interface BacktestTrade {
   tp2Hit: boolean;
   tp3Hit: boolean;
   riskFreeTriggered: boolean;
+  trailingTriggered?: boolean;
 }
 
 export interface BacktestMetrics {
@@ -160,10 +214,16 @@ export interface BacktestMetrics {
   netReturnUsd: number;
   netReturnPct: number;
   totalTrades: number;
+  winCount: number;
+  lossCount: number;
   winRatePct: number;
   profitFactor: number;
+  grossProfitUsd: number;
+  grossLossUsd: number;
   maxDrawdownUsd: number;
   maxDrawdownPct: number;
+  maxRunupUsd: number;
+  maxRunupPct: number;
   expectancyUsd: number;
   avgWinUsd: number;
   avgLossUsd: number;
@@ -176,8 +236,29 @@ export interface BacktestMetrics {
   sharpeEstimate: number;
 }
 
+export interface MonthlyPerformanceRow {
+  year: number;
+  months: Record<number, number>; // 1..12 -> % return
+  yearPct: number;
+}
+
+export interface DayOfWeekStat {
+  dayIndex: number; // 0=Sun..6=Sat
+  dayName: string;
+  openedTotal: number;
+  openedWins: number;
+  openedLosses: number;
+  openedWinRate: number;
+  closedTotal: number;
+  closedWins: number;
+  closedLosses: number;
+  closedWinRate: number;
+}
+
 export interface BacktestResult {
   metrics: BacktestMetrics;
   trades: BacktestTrade[];
   equityCurve: Array<{ time: number; equity: number; drawdownPct: number }>;
+  monthlyBreakdown: MonthlyPerformanceRow[];
+  dayOfWeekStats: DayOfWeekStat[];
 }

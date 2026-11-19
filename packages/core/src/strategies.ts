@@ -1,7 +1,9 @@
 import { atr, bollingerBands, causalSwingLevels, ema, getCustomIndicator, rsi } from './indicators.js';
+import { computeKbosV11Detailed } from './kiya-bot.js';
 import type {
   Candle,
   DollarinoSignal,
+  KbosParams,
   SignalMixerChannelScore,
   SignalMixerResult,
   SignalMixerWeights,
@@ -186,19 +188,28 @@ export function evaluateSignalMixerAtBar(
   return { compositeScore, confidence, direction, channels };
 }
 
+export interface StrategyParams {
+  kbosParams?: Partial<KbosParams>;
+  [key: string]: number | Partial<KbosParams> | undefined;
+}
+
 export function computeStrategySignals(
   strategyKey: StrategyKey,
   ltfCandles: Candle[],
   htfCandles: Candle[] = [],
   timeframe: Timeframe = '15m',
   higherTimeframe: Timeframe = '1h',
-  params: Record<string, number> = {}
+  params: StrategyParams = {}
 ): StrategySignalOutput[] {
   if (ltfCandles.length < 30) return [];
 
+  if (strategyKey === 'kbos_v11') {
+    return computeKbosV11Detailed(ltfCandles, timeframe, params.kbosParams ?? params).outputs;
+  }
+
   const custom = getCustomIndicator(strategyKey);
   if (custom) {
-    return custom.compute(ltfCandles, params);
+    return custom.compute(ltfCandles, params as Record<string, number>);
   }
 
   const closes = ltfCandles.map((c) => c.close);
@@ -206,8 +217,8 @@ export function computeStrategySignals(
   const ema50 = ema(closes, 50);
   const ema60 = ema(closes, 60);
   const ema200 = ema(closes, 200);
-  const rsiVals = rsi(closes, params.rsiPeriod ?? 14);
-  const atrVals = atr(ltfCandles, params.atrPeriod ?? 14);
+  const rsiVals = rsi(closes, Number(params.rsiPeriod ?? 14));
+  const atrVals = atr(ltfCandles, Number(params.atrPeriod ?? 14));
   const swings = causalSwingLevels(ltfCandles, 3, 2);
 
   const ltfMs = timeframeToMs(timeframe);
@@ -359,7 +370,7 @@ export function computeStrategySignals(
         reason = '4H momentum candle confirmation bearish';
       }
     } else if (strategyKey === 'signal_mixer' && i >= 30) {
-      const mix = evaluateSignalMixerAtBar(ltfCandles, i, trend, DEFAULT_MIXER_WEIGHTS, params.mixerThreshold ?? 65);
+      const mix = evaluateSignalMixerAtBar(ltfCandles, i, trend, DEFAULT_MIXER_WEIGHTS, Number(params.mixerThreshold ?? 65));
       if (mix.direction !== 'NONE') {
         signal = mix.direction;
         reason = `Weighted Signal Mixer (${mix.confidence}% confidence)`;

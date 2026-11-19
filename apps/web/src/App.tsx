@@ -104,7 +104,7 @@ export function App() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen bg-[#07090f] flex items-center justify-center text-sm text-slate-400">
+      <div className="min-h-screen bg-[#080a0e] flex items-center justify-center text-sm text-[#6c7689]">
         Loading Dollarino (دلارینو)...
       </div>
     );
@@ -191,6 +191,7 @@ export function App() {
       {wizardOpen && (
         <SetupWizardModal
           lang={lang}
+          availableBalance={Number(dashboard.balance.free || 10000)}
           onClose={() => setWizardOpen(false)}
           onCompleted={() => void loadSessionAndDashboard()}
         />

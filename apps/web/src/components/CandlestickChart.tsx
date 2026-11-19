@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { createChart, ColorType, type IChartApi, type Time } from 'lightweight-charts';
+import { useEffect, useRef, useState } from 'react';
+import { createChart, ColorType, type IChartApi, type SeriesMarker, type Time } from 'lightweight-charts';
 import type { Candle } from '@dollarino/core';
 
 export interface ChartLevels {
@@ -17,6 +17,22 @@ export interface IndicatorPoint {
   value: number;
 }
 
+export interface KbosChartOverlays {
+  closeSeriesAlt?: IndicatorPoint[];
+  openSeriesAlt?: IndicatorPoint[];
+  demaAtr?: Array<{ time: number; value: number; trend: 'BULL' | 'BEAR' }>;
+  almaRibbon?: {
+    bands: Array<{ label: string; color: string; points: IndicatorPoint[] }>;
+  };
+  markers?: Array<{
+    time: number;
+    position: 'belowBar' | 'aboveBar';
+    color: string;
+    shape: 'arrowUp' | 'arrowDown';
+    text: string;
+  }>;
+}
+
 export interface ChartOverlays {
   ema20?: IndicatorPoint[];
   ema50?: IndicatorPoint[];
@@ -27,17 +43,25 @@ export function CandlestickChart({
   candles,
   levels,
   overlays,
+  kbosOverlays,
   showVolume = true,
   height = 420,
 }: {
   candles: Candle[];
   levels?: ChartLevels;
   overlays?: ChartOverlays;
+  kbosOverlays?: KbosChartOverlays;
   showVolume?: boolean;
   height?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+
+  const [showKbosHtf, setShowKbosHtf] = useState(true);
+  const [showDemaAtr, setShowDemaAtr] = useState(true);
+  const [showAlmaRibbon, setShowAlmaRibbon] = useState(true);
+  const [showEmas, setShowEmas] = useState(false);
+  const [showMarkers, setShowMarkers] = useState(true);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -47,12 +71,12 @@ export function CandlestickChart({
       width: el.clientWidth,
       height,
       layout: {
-        background: { type: ColorType.Solid, color: '#090c13' },
-        textColor: '#94a3b8',
+        background: { type: ColorType.Solid, color: '#090c12' },
+        textColor: '#8d98ab',
       },
       grid: {
-        vertLines: { color: 'rgba(148, 163, 184, 0.05)' },
-        horzLines: { color: 'rgba(148, 163, 184, 0.05)' },
+        vertLines: { color: 'rgba(148, 163, 184, 0.04)' },
+        horzLines: { color: 'rgba(148, 163, 184, 0.04)' },
       },
       crosshair: {
         mode: 1,
@@ -69,12 +93,12 @@ export function CandlestickChart({
     chartRef.current = chart;
 
     const series = chart.addCandlestickSeries({
-      upColor: '#10b981',
-      downColor: '#ef4444',
-      borderUpColor: '#10b981',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#10b981',
-      wickDownColor: '#ef4444',
+      upColor: '#27cd86',
+      downColor: '#eb493d',
+      borderUpColor: '#27cd86',
+      borderDownColor: '#eb493d',
+      wickUpColor: '#27cd86',
+      wickDownColor: '#eb493d',
     });
 
     if (candles.length > 0) {
@@ -100,25 +124,77 @@ export function CandlestickChart({
           candles.map((c) => ({
             time: Math.floor(c.timestamp / 1000) as Time,
             value: c.volume,
-            color: c.close >= c.open ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)',
+            color: c.close >= c.open ? 'rgba(39, 205, 134, 0.22)' : 'rgba(235, 73, 61, 0.22)',
           }))
         );
+      }
+
+      if (showMarkers && kbosOverlays?.markers?.length) {
+        const markers: SeriesMarker<Time>[] = kbosOverlays.markers.map((m) => ({
+          time: m.time as Time,
+          position: m.position,
+          color: m.color,
+          shape: m.shape,
+          text: m.text,
+        }));
+        series.setMarkers(markers);
       }
 
       chart.timeScale().fitContent();
     }
 
-    if (overlays?.ema20?.length) {
-      const s20 = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1, priceLineVisible: false });
-      s20.setData(overlays.ema20.map((p) => ({ time: p.time as Time, value: p.value })));
+    // Standard EMA overlays
+    if (showEmas || (!kbosOverlays && overlays)) {
+      if (overlays?.ema20?.length) {
+        const s20 = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1, priceLineVisible: false });
+        s20.setData(overlays.ema20.map((p) => ({ time: p.time as Time, value: p.value })));
+      }
+      if (overlays?.ema50?.length) {
+        const s50 = chart.addLineSeries({ color: '#f59f14', lineWidth: 1, priceLineVisible: false });
+        s50.setData(overlays.ema50.map((p) => ({ time: p.time as Time, value: p.value })));
+      }
+      if (overlays?.ema200?.length) {
+        const s200 = chart.addLineSeries({ color: '#a855f7', lineWidth: 2, priceLineVisible: false });
+        s200.setData(overlays.ema200.map((p) => ({ time: p.time as Time, value: p.value })));
+      }
     }
-    if (overlays?.ema50?.length) {
-      const s50 = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1, priceLineVisible: false });
-      s50.setData(overlays.ema50.map((p) => ({ time: p.time as Time, value: p.value })));
+
+    // KBOs v11 Non-repainting HTF Cross Lines
+    if (showKbosHtf && kbosOverlays?.closeSeriesAlt?.length && kbosOverlays?.openSeriesAlt?.length) {
+      const cLine = chart.addLineSeries({ color: '#27cd86', lineWidth: 2, priceLineVisible: false, title: 'KBOs Close' });
+      cLine.setData(kbosOverlays.closeSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value })));
+      const oLine = chart.addLineSeries({ color: '#eb493d', lineWidth: 2, priceLineVisible: false, title: 'KBOs Open' });
+      oLine.setData(kbosOverlays.openSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value })));
     }
-    if (overlays?.ema200?.length) {
-      const s200 = chart.addLineSeries({ color: '#a855f7', lineWidth: 2, priceLineVisible: false });
-      s200.setData(overlays.ema200.map((p) => ({ time: p.time as Time, value: p.value })));
+
+    // DEMA ATR [BackQuant]
+    if (showDemaAtr && kbosOverlays?.demaAtr?.length) {
+      const daLine = chart.addLineSeries({
+        lineWidth: 2,
+        priceLineVisible: false,
+        title: 'DEMA ATR',
+      });
+      daLine.setData(
+        kbosOverlays.demaAtr.map((p) => ({
+          time: p.time as Time,
+          value: p.value,
+          color: p.trend === 'BULL' ? '#00ffbb' : '#ff1100',
+        }))
+      );
+    }
+
+    // RLA MA 8-Band Golden Ratio ALMA Ribbon
+    if (showAlmaRibbon && kbosOverlays?.almaRibbon?.bands?.length) {
+      for (const band of kbosOverlays.almaRibbon.bands) {
+        if (!band.points.length) continue;
+        const bSeries = chart.addLineSeries({
+          color: band.color,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        bSeries.setData(band.points.map((p) => ({ time: p.time as Time, value: p.value })));
+      }
     }
 
     const addLevel = (price: number | undefined, title: string, color: string) => {
@@ -134,13 +210,13 @@ export function CandlestickChart({
     };
 
     if (levels) {
-      addLevel(levels.entry, 'ENTRY', '#3b82f6');
-      addLevel(levels.stopLoss, 'STOP LOSS', '#ef4444');
-      addLevel(levels.tp1, 'TP1 (50%)', '#10b981');
-      addLevel(levels.tp2, 'TP2 (25%)', '#eab308');
-      addLevel(levels.tp3, 'TP3 (25%)', '#f97316');
+      addLevel(levels.entry, 'ENTRY', '#4b73f5');
+      addLevel(levels.stopLoss, 'STOP LOSS', '#eb493d');
+      addLevel(levels.tp1, 'TP1 (30%)', '#27cd86');
+      addLevel(levels.tp2, 'TP2 (30%)', '#f59f14');
+      addLevel(levels.tp3, 'TP3 (40%)', '#f97316');
       levels.supports?.forEach((s, idx) => addLevel(s, `S${idx + 1}`, '#22d3ee'));
-      levels.resistances?.forEach((r, idx) => addLevel(r, `R${idx + 1}`, '#c084fc'));
+      levels.resistances?.forEach((r, idx) => addLevel(r, `R${idx + 1}`, '#a855f7'));
     }
 
     const ro = new ResizeObserver(() => {
@@ -152,7 +228,62 @@ export function CandlestickChart({
       ro.disconnect();
       chart.remove();
     };
-  }, [candles, levels, overlays, showVolume, height]);
+  }, [candles, levels, overlays, kbosOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showMarkers]);
 
-  return <div ref={containerRef} className="w-full rounded-xl overflow-hidden border border-slate-800/80" />;
+  return (
+    <div className="space-y-2">
+      {kbosOverlays && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+          <button
+            type="button"
+            onClick={() => setShowKbosHtf((v) => !v)}
+            className={`px-2 py-1 rounded-md border font-medium transition ${
+              showKbosHtf ? 'bg-[#27cd86]/15 border-[#27cd86]/40 text-[#27cd86]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
+            }`}
+          >
+            KBOs HTF
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDemaAtr((v) => !v)}
+            className={`px-2 py-1 rounded-md border font-medium transition ${
+              showDemaAtr ? 'bg-[#00ffbb]/15 border-[#00ffbb]/40 text-[#00ffbb]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
+            }`}
+          >
+            DEMA ATR
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAlmaRibbon((v) => !v)}
+            className={`px-2 py-1 rounded-md border font-medium transition ${
+              showAlmaRibbon ? 'bg-[#8e4cf0]/15 border-[#8e4cf0]/40 text-[#b48af8]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
+            }`}
+          >
+            RLA MA Ribbon (8×ALMA)
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMarkers((v) => !v)}
+            className={`px-2 py-1 rounded-md border font-medium transition ${
+              showMarkers ? 'bg-[#4b73f5]/15 border-[#4b73f5]/40 text-[#4b73f5]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
+            }`}
+          >
+            BUY/SELL Arrows
+          </button>
+          {overlays && (
+            <button
+              type="button"
+              onClick={() => setShowEmas((v) => !v)}
+              className={`px-2 py-1 rounded-md border font-medium transition ${
+                showEmas ? 'bg-[#f59f14]/15 border-[#f59f14]/40 text-[#f59f14]' : 'bg-[#11151c] border-[#1c2028] text-[#6c7689]'
+              }`}
+            >
+              EMA 20/50/200
+            </button>
+          )}
+        </div>
+      )}
+      <div ref={containerRef} className="w-full rounded-xl overflow-hidden border border-[#1c2028]" />
+    </div>
+  );
 }

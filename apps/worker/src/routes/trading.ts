@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
 import {
   atr,
+  computeKbosV11Detailed,
   computeStrategySignals,
+  DEFAULT_KBOS_PARAMS,
   DEFAULT_MIXER_WEIGHTS,
   ema,
   evaluateSignalMixerAtBar,
   formatDollarinoSignal,
+  mergeKbosParams,
   parseDollarinoSignal,
   rsi,
   strategyOutputToDollarinoSignal,
@@ -39,6 +42,12 @@ tradingRoutes.get('/dashboard', async (c) => {
       mixer_threshold?: number;
       mixer_weights_json?: string;
       strategy_flow_json?: string;
+      kbos_params_json?: string;
+      risk_profile_json?: string;
+      trailing_stop_enabled?: number;
+      trailing_stop_pct?: number;
+      trail_after_tp1?: number;
+      started_at?: string | null;
     }>();
 
   const activeRow = await c.env.DB.prepare(
@@ -54,7 +63,7 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
 
-  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, aiRow] = await Promise.all([
+  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow] = await Promise.all([
     adapter.getBalance().catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC`).bind(user.id).all<{
       id: string;
@@ -71,9 +80,11 @@ tradingRoutes.get('/dashboard', async (c) => {
       tp1_hit: number;
       tp2_hit: number;
       risk_free_active: number;
+      trailing_active?: number;
       realized_pnl: string;
       mode: string;
       exchange_provider: string;
+      opened_at: string;
     }>(),
     c.env.DB.prepare(`SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC`).bind(user.id).all(),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 60`).bind(user.id).all(),
@@ -95,22 +106,48 @@ tradingRoutes.get('/dashboard', async (c) => {
       gross_losses: number;
       today_pnl: number;
     }>(),
+    c.env.DB.prepare(
+      `SELECT
+        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-24 hours') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_24h_pnl,
+        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-7 days') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_7d_pnl
+       FROM trades WHERE user_id = ? AND status = 'CLOSED'`
+    ).bind(user.id).first<{ last_24h_pnl: number; last_7d_pnl: number }>(),
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(CASE WHEN event_type IN ('DEPOSIT','TOPUP') THEN amount_usd ELSE 0 END), 0) as deposited
+       FROM wallet_ledger WHERE user_id = ? AND mode = ?`
+    ).bind(user.id, cfg?.trading_mode ?? 'PAPER').first<{ deposited: number }>().catch(() => ({ deposited: 0 })),
+    c.env.DB.prepare(
+      `SELECT * FROM wallet_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
+    ).bind(user.id).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(`SELECT provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`)
       .bind(user.id).first<{ provider: string; model: string }>(),
   ]);
 
-  // Enrich open positions with live mark price & unrealized PnL
+  const totalEq = Math.max(1, Number(balance.total) || Number(cfg?.paper_balance ?? 10000));
+
+  // Enrich open positions with live mark price, ROE %, sparkline, and unrealized PnL
   const priceCache = new Map<string, number>();
+  const sparkCache = new Map<string, number[]>();
   const openTrades = [];
+  let totalUnrealizedPnl = 0;
+
   for (const pos of openTradesRaw.results) {
     let mark = priceCache.get(pos.symbol);
+    let spark = sparkCache.get(pos.symbol);
     if (mark === undefined) {
-      mark = Number(await adapter.getTickerPrice(pos.symbol).catch(() => pos.entry_price));
+      const k = await adapter.getKlines(pos.symbol, '5m', 24).catch(() => []);
+      mark = k.length ? k[k.length - 1]!.close : Number(await adapter.getTickerPrice(pos.symbol).catch(() => pos.entry_price));
+      spark = k.length ? k.map((c) => c.close) : [Number(pos.entry_price), mark];
       priceCache.set(pos.symbol, mark);
+      sparkCache.set(pos.symbol, spark);
     }
     const entry = Number(pos.entry_price);
     const qty = Number(pos.remaining_quantity);
+    const margin = Math.max(0.01, Number(pos.margin_used));
     const uPnl = pos.direction === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+    totalUnrealizedPnl += uPnl;
+    const roePct = (uPnl / margin) * 100;
+    const capitalPct = (margin / totalEq) * 100;
     const liqEst = pos.direction === 'LONG'
       ? entry * (1 - 0.9 / Math.max(1, pos.leverage))
       : entry * (1 + 0.9 / Math.max(1, pos.leverage));
@@ -118,21 +155,25 @@ tradingRoutes.get('/dashboard', async (c) => {
       ...pos,
       mark_price: mark.toFixed(mark >= 100 ? 2 : 4),
       unrealized_pnl: uPnl.toFixed(2),
+      roe_pct: Number(roePct.toFixed(2)),
+      capital_pct: Number(capitalPct.toFixed(1)),
+      funding_usd: Number((-(margin * pos.leverage * 0.0001)).toFixed(3)),
       liq_price_est: liqEst.toFixed(liqEst >= 100 ? 2 : 4),
+      sparkline: spark ?? [entry, mark],
     });
   }
 
-  // Hourly & Daily PnL + 7-day weekly breakdown
+  // Hourly, Daily (30d cumulative), & 7-day weekly breakdown
   const [hourlyAgg, dailyAgg, weeklyAgg] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT substr(closed_at, 1, 13) || ':00' as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl
+      `SELECT substr(closed_at, 1, 13) || ':00' as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl, COUNT(*) as trades
        FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
        GROUP BY bucket ORDER BY bucket DESC LIMIT 24`
-    ).bind(user.id).all<{ bucket: string; pnl: number }>(),
+    ).bind(user.id).all<{ bucket: string; pnl: number; trades: number }>(),
     c.env.DB.prepare(
       `SELECT date(closed_at) as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
-       GROUP BY bucket ORDER BY bucket DESC LIMIT 14`
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at >= date('now', '-30 days') AND closed_at IS NOT NULL
+       GROUP BY bucket ORDER BY bucket ASC`
     ).bind(user.id).all<{ bucket: string; pnl: number }>(),
     c.env.DB.prepare(
       `SELECT date(closed_at) as day, COUNT(*) as count,
@@ -142,6 +183,12 @@ tradingRoutes.get('/dashboard', async (c) => {
        GROUP BY day ORDER BY day ASC`
     ).bind(user.id).all<{ day: string; count: number; wins: number; pnl: number }>(),
   ]);
+
+  let runningCum = 0;
+  const cumulative30d = dailyAgg.results.map((d) => {
+    runningCum += Number(d.pnl || 0);
+    return { date: d.bucket, dailyPnl: Number(d.pnl || 0), cumulativePnl: Number(runningCum.toFixed(2)) };
+  });
 
   // Live 8-channel Signal Mixer snapshot on active symbol
   let mixerSnapshot = null;
@@ -162,8 +209,36 @@ tradingRoutes.get('/dashboard', async (c) => {
         ? 99
         : 0;
 
+  let kbosParams = DEFAULT_KBOS_PARAMS;
+  try {
+    if (cfg?.kbos_params_json) kbosParams = mergeKbosParams(JSON.parse(cfg.kbos_params_json));
+  } catch { /* default */ }
+
+  let riskProfile: Record<string, unknown> = {
+    preset: 'balanced',
+    marketBias: 'neutral',
+    preferredSession: 'automatic',
+    entryStyle: 'balanced',
+    maxSpread: 0.5,
+    cooldownMinutes: 10,
+    trailingStop: true,
+    trailingDistance: 2.0,
+    allocatedAmount: Math.round(totalEq * ((cfg?.margin_pct ?? 50) / 100)),
+  };
+  try {
+    if (cfg?.risk_profile_json) riskProfile = { ...riskProfile, ...JSON.parse(cfg.risk_profile_json) };
+  } catch { /* default */ }
+
+  const totalDeposited = (walletRow?.deposited ?? 0) > 0 ? walletRow!.deposited : 10000;
+  const totalPnl = stats?.total_pnl ?? 0;
+  const tfSecs: Record<string, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400 };
+  const cyclePeriod = tfSecs[cfg?.entry_timeframe ?? '15m'] ?? 900;
+  const nextCycleInSec = cyclePeriod - (Math.floor(Date.now() / 1000) % cyclePeriod);
+
   return c.json({
     config: cfg,
+    kbosParams,
+    riskProfile,
     activeExchange: { provider, label },
     activeAI: aiRow || null,
     balance,
@@ -171,20 +246,59 @@ tradingRoutes.get('/dashboard', async (c) => {
     pendingOrders: pendingOrders.results,
     closedTrades: closedTrades.results,
     recentSignals: recentSignals.results,
+    walletLedger: ledgerRows.results,
+    nextCycleInSec,
     stats: {
       totalTrades: stats?.total_trades ?? 0,
       winRate: stats?.total_trades ? (stats.wins / stats.total_trades) * 100 : 0,
-      totalPnl: stats?.total_pnl ?? 0,
+      totalPnl,
       todayPnl: stats?.today_pnl ?? 0,
+      last24hPnl: periodStats?.last_24h_pnl ?? 0,
+      last7dPnl: periodStats?.last_7d_pnl ?? 0,
+      unrealizedPnl: Number(totalUnrealizedPnl.toFixed(2)),
+      allTimePct: totalDeposited > 0 ? Number(((totalPnl / totalDeposited) * 100).toFixed(2)) : 0,
+      totalDeposited,
       profitFactor,
     },
     charts: {
       hourlyPnl: [...hourlyAgg.results].reverse(),
-      dailyPnl: [...dailyAgg.results].reverse(),
+      dailyPnl: [...dailyAgg.results],
+      cumulative30d,
       weeklyResults: weeklyAgg.results,
     },
     mixerSnapshot,
   });
+});
+
+tradingRoutes.get('/wallet/ledger', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM wallet_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`
+  ).bind(user.id).all();
+  return c.json({ ledger: rows.results });
+});
+
+tradingRoutes.post('/wallet/topup', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ amountUsd?: number; note?: string }>();
+  const amount = Number(body.amountUsd ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
+    return c.json({ error: 'Amount must be between $1 and $1,000,000' }, 400);
+  }
+  const cfg = await c.env.DB.prepare('SELECT trading_mode, paper_balance FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ trading_mode: string; paper_balance: string }>();
+
+  const nextBal = Number(cfg?.paper_balance ?? 10000) + amount;
+  await c.env.DB.prepare('UPDATE bot_configs SET paper_balance = ?, updated_at = datetime(\'now\') WHERE user_id = ?')
+    .bind(nextBal.toFixed(2), user.id).run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+     VALUES (?, ?, ?, 'TOPUP', ?, ?, ?)`
+  ).bind(randomId('wl'), user.id, cfg?.trading_mode ?? 'PAPER', amount, nextBal, body.note ?? 'Instant Paper Credit Top-Up').run();
+
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Wallet topped up +$${amount.toFixed(2)} (Balance: $${nextBal.toFixed(2)})`);
+  return c.json({ ok: true, balanceAfter: nextBal });
 });
 
 tradingRoutes.patch('/config', async (c) => {
@@ -218,6 +332,11 @@ tradingRoutes.patch('/config', async (c) => {
     mixer_threshold: 'mixer_threshold',
     mixer_weights_json: 'mixer_weights_json',
     strategy_flow_json: 'strategy_flow_json',
+    kbos_params_json: 'kbos_params_json',
+    risk_profile_json: 'risk_profile_json',
+    trailing_stop_enabled: 'trailing_stop_enabled',
+    trailing_stop_pct: 'trailing_stop_pct',
+    trail_after_tp1: 'trail_after_tp1',
   };
 
   const sets: string[] = [];
@@ -240,11 +359,54 @@ tradingRoutes.patch('/config', async (c) => {
 
 tradingRoutes.post('/bot/start', async (c) => {
   const user = c.get('user');
-  const cfg = await c.env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?')
-    .bind(user.id).first<{ trading_mode: string }>();
+  const body = await c.req.json<{
+    marginPct?: number;
+    strategyKey?: StrategyKey;
+    riskPreset?: string;
+    maxLeverage?: number;
+    trailingStopEnabled?: boolean;
+    trailingStopPct?: number;
+    allocatedAmount?: number;
+  }>().catch(() => ({} as Record<string, unknown>));
+
+  const cfg = await c.env.DB.prepare('SELECT trading_mode, risk_profile_json FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ trading_mode: string; risk_profile_json?: string }>();
   const nextState = cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
-  await c.env.DB.prepare('UPDATE bot_configs SET bot_state = ?, updated_at = datetime(\'now\') WHERE user_id = ?')
-    .bind(nextState, user.id).run();
+
+  const sets = [`bot_state = ?`, `started_at = datetime('now')`, `updated_at = datetime('now')`];
+  const vals: unknown[] = [nextState];
+
+  if (typeof body.marginPct === 'number') {
+    sets.push(`margin_pct = ?`);
+    vals.push(body.marginPct);
+  }
+  if (typeof body.strategyKey === 'string') {
+    sets.push(`strategy_key = ?`);
+    vals.push(body.strategyKey);
+  }
+  if (typeof body.maxLeverage === 'number') {
+    sets.push(`max_leverage = ?`);
+    vals.push(body.maxLeverage);
+  }
+  if (typeof body.trailingStopEnabled === 'boolean') {
+    sets.push(`trailing_stop_enabled = ?`);
+    vals.push(body.trailingStopEnabled ? 1 : 0);
+  }
+  if (typeof body.trailingStopPct === 'number') {
+    sets.push(`trailing_stop_pct = ?`);
+    vals.push(body.trailingStopPct);
+  }
+  if (body.riskPreset || body.allocatedAmount) {
+    let rp: Record<string, unknown> = {};
+    try { rp = cfg?.risk_profile_json ? JSON.parse(cfg.risk_profile_json) : {}; } catch { rp = {}; }
+    if (body.riskPreset) rp.preset = body.riskPreset;
+    if (body.allocatedAmount) rp.allocatedAmount = body.allocatedAmount;
+    sets.push(`risk_profile_json = ?`);
+    vals.push(JSON.stringify(rp));
+  }
+
+  vals.push(user.id);
+  await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
 
   const id = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
   const stub = c.env.TRADING_BOT_DO.get(id);
@@ -256,10 +418,92 @@ tradingRoutes.post('/bot/start', async (c) => {
 
 tradingRoutes.post('/bot/stop', async (c) => {
   const user = c.get('user');
+  const body = await c.req.json<{ settleOpen?: boolean }>().catch(() => ({ settleOpen: false }));
+  const cfg = await c.env.DB.prepare('SELECT started_at, paper_balance, trading_mode FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ started_at: string | null; paper_balance: string; trading_mode: string }>();
+
+  let closedOnStop = 0;
+  let stopPnl = 0;
+  if (body.settleOpen) {
+    const openTrades = await c.env.DB.prepare(
+      `SELECT id, mode, symbol, direction, entry_price, initial_quantity, remaining_quantity, margin_used, realized_pnl FROM trades WHERE user_id = ? AND status = 'OPEN'`
+    ).bind(user.id).all<{
+      id: string;
+      mode: string;
+      symbol: string;
+      direction: Direction;
+      entry_price: string;
+      initial_quantity: string;
+      remaining_quantity: string;
+      margin_used: string;
+      realized_pnl: string;
+    }>();
+
+    for (const t of openTrades.results) {
+      const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, t.mode === 'PAPER' ? 'paper' : undefined);
+      const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `stop_settle_${Date.now()}`);
+      const exitPx = Number(cls.filledPrice);
+      const entryPx = Number(t.entry_price);
+      const qty = Number(t.remaining_quantity);
+      const pnl = t.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
+      const totalRealized = Number(t.realized_pnl) + pnl - Number(cls.fee);
+      stopPnl += pnl - Number(cls.fee);
+
+      if (t.mode === 'PAPER') {
+        const curCfg = await c.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
+          .bind(user.id).first<{ paper_balance: string }>();
+        const remMargin = Number(t.margin_used) * (qty / Math.max(1e-9, Number(t.initial_quantity)));
+        const restored = Number(curCfg?.paper_balance ?? 0) + remMargin + pnl - Number(cls.fee);
+        await c.env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?')
+          .bind(restored.toFixed(2), user.id).run();
+      }
+      await c.env.DB.prepare(
+        `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'BOT_STOP_SETTLE', closed_at = datetime('now') WHERE id = ?`
+      ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+      closedOnStop++;
+    }
+  }
+
+  const sessionStats = cfg?.started_at
+    ? await c.env.DB.prepare(
+        `SELECT COUNT(*) as cnt, COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as pnl FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at >= ?`
+      ).bind(user.id, cfg.started_at).first<{ cnt: number; pnl: number }>()
+    : { cnt: closedOnStop, pnl: stopPnl };
+
+  const afterCfg = await c.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ paper_balance: string }>();
+
   await c.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`)
     .bind(user.id).run();
+
+  const durationSec = cfg?.started_at ? Math.max(0, Math.floor((Date.now() - Date.parse(cfg.started_at + 'Z')) / 1000)) : 0;
+
+  if (closedOnStop > 0 || (sessionStats?.pnl ?? 0) !== 0) {
+    await c.env.DB.prepare(
+      `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+       VALUES (?, ?, ?, 'STOP_SETTLE', ?, ?, ?)`
+    ).bind(
+      randomId('wl'),
+      user.id,
+      cfg?.trading_mode ?? 'PAPER',
+      sessionStats?.pnl ?? stopPnl,
+      Number(afterCfg?.paper_balance ?? 0),
+      `Session stop settlement (${closedOnStop} settled)`
+    ).run().catch(() => {});
+  }
+
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'Bot stopped by user');
-  return c.json({ ok: true, bot_state: 'STOPPED' });
+  return c.json({
+    ok: true,
+    bot_state: 'STOPPED',
+    settlement: {
+      durationSec,
+      tradesClosed: sessionStats?.cnt ?? closedOnStop,
+      positionsSettledOnStop: closedOnStop,
+      netSessionPnl: Number((sessionStats?.pnl ?? stopPnl).toFixed(2)),
+      finalBalance: Number(afterCfg?.paper_balance ?? 0),
+    },
+  });
 });
 
 tradingRoutes.post('/bot/kill-switch', async (c) => {
@@ -521,9 +765,15 @@ tradingRoutes.get('/market/overview', async (c) => {
     adapter.getKlines(symbol, '4h', 80),
     adapter.getMarket24h(symbol),
     adapter.getOrderBook(symbol, 15),
-    c.env.DB.prepare('SELECT mixer_weights_json, mixer_threshold FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ mixer_weights_json?: string; mixer_threshold?: number }>(),
+    c.env.DB.prepare('SELECT mixer_weights_json, mixer_threshold, kbos_params_json FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ mixer_weights_json?: string; mixer_threshold?: number; kbos_params_json?: string }>(),
   ]);
+
+  let parsedKbos = DEFAULT_KBOS_PARAMS;
+  try {
+    if (cfg?.kbos_params_json) parsedKbos = mergeKbosParams(JSON.parse(cfg.kbos_params_json));
+  } catch { /* default */ }
+  const kbosDetailed = computeKbosV11Detailed(candles, timeframe, parsedKbos);
 
   const closes = candles.map((x) => x.close);
   const e20 = ema(closes, 20);
@@ -570,6 +820,14 @@ tradingRoutes.get('/market/overview', async (c) => {
       ema200: e200.map((v, i) => ({ time: Math.floor(candles[i]!.timestamp / 1000), value: Number.isFinite(v) ? v : null })).filter((x) => x.value !== null),
       rsi14: Number((r14[lastIdx] ?? 50).toFixed(2)),
       atr14: Number((a14[lastIdx] ?? 0).toFixed(4)),
+    },
+    kbosOverlays: {
+      closeSeriesAlt: kbosDetailed.closeSeriesAlt,
+      openSeriesAlt: kbosDetailed.openSeriesAlt,
+      demaAtr: kbosDetailed.demaAtr,
+      almaRibbon: kbosDetailed.almaRibbon,
+      markers: kbosDetailed.markers,
+      latestSignal: kbosDetailed.outputs[kbosDetailed.outputs.length - 1] ?? null,
     },
     mixer,
   });
@@ -619,13 +877,22 @@ tradingRoutes.post('/scanner', async (c) => {
     symbols?: string[];
     limit?: number;
   }>().catch(() => ({} as { strategyKey?: StrategyKey; timeframe?: Timeframe; symbols?: string[]; limit?: number }));
-  const strategyKey = body.strategyKey || 'sp2l';
+  const strategyKey = body.strategyKey || 'kbos_v11';
   const tf = body.timeframe || '15m';
 
-  const activeRow = await c.env.DB.prepare(
-    `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
-  ).bind(user.id).first<{ provider: ExchangeProviderId }>();
+  const [activeRow, cfgRow] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    ).bind(user.id).first<{ provider: ExchangeProviderId }>(),
+    c.env.DB.prepare('SELECT kbos_params_json FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ kbos_params_json?: string }>(),
+  ]);
   const provider = activeRow?.provider || 'paper';
+
+  let kbosParams: Record<string, unknown> | undefined;
+  try {
+    kbosParams = cfgRow?.kbos_params_json ? JSON.parse(cfgRow.kbos_params_json) : undefined;
+  } catch { kbosParams = undefined; }
 
   let symbols = body.symbols?.length ? body.symbols.map(normalizeCanonicalSymbol) : [];
   if (!symbols.length) {
@@ -638,8 +905,15 @@ tradingRoutes.post('/scanner', async (c) => {
 
   const results = await Promise.all(
     symbols.map(async (sym) => {
-      const candles = await adapter.getKlines(sym, tf, 120);
-      const outputs = computeStrategySignals(strategyKey, candles, [], tf, '1h');
+      const candles = await adapter.getKlines(sym, tf, 180);
+      const outputs = computeStrategySignals(
+        strategyKey,
+        candles,
+        [],
+        tf,
+        '1h',
+        kbosParams ? { kbosParams } : {}
+      );
       const latest = outputs[outputs.length - 1];
       const mix = evaluateSignalMixerAtBar(candles, candles.length - 1, latest?.trend ?? 'NEUTRAL');
       const signalCard = latest && latest.signal !== 'NONE'

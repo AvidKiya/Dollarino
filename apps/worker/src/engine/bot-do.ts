@@ -74,21 +74,29 @@ export class TradingBotCoordinator implements DurableObject {
     );
 
     const [ltfRaw, htfRaw] = await Promise.all([
-      adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 150),
+      adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 220),
       adapter.getKlines(cfg.symbol, cfg.higher_timeframe, 100),
     ]);
 
     const now = Date.now();
     const ltfClosed = selectClosedCandles(ltfRaw, cfg.entry_timeframe, now);
     const htfClosed = selectClosedCandles(htfRaw, cfg.higher_timeframe, now);
-    if (ltfClosed.length < 55) return;
+    if (ltfClosed.length < 40) return;
+
+    let kbosParams: Record<string, unknown> | undefined;
+    try {
+      kbosParams = cfg.kbos_params_json ? (JSON.parse(cfg.kbos_params_json) as Record<string, unknown>) : undefined;
+    } catch {
+      kbosParams = undefined;
+    }
 
     const outputs = computeStrategySignals(
       cfg.strategy_key,
       ltfClosed,
       htfClosed,
       cfg.entry_timeframe,
-      cfg.higher_timeframe
+      cfg.higher_timeframe,
+      kbosParams ? { kbosParams } : {}
     );
     const latest = outputs[outputs.length - 1];
     if (!latest || latest.signal === 'NONE') return;

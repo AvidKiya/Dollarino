@@ -1,4 +1,5 @@
-import { computeStrategySignals } from './strategies.js';
+import { buildBacktestMatrices } from './kiya-bot.js';
+import { computeStrategySignals, type StrategyParams } from './strategies.js';
 import type { BacktestMetrics, BacktestResult, BacktestTrade, Candle, StrategyKey, Timeframe } from './types.js';
 
 export interface BacktestOptions {
@@ -14,13 +15,16 @@ export interface BacktestOptions {
   tp3ClosePct: number;
   autoBreakevenOnTp1: boolean;
   moveSlToTp1OnTp2: boolean;
+  useTrailingStop?: boolean;
+  trailPct?: number;
+  trailAfterTp1?: boolean;
   feeRateBps?: number;      // default 5 bps (0.05%) taker
   slippageBps?: number;     // default 3 bps (0.03%)
-  params?: Record<string, number>;
+  params?: StrategyParams;
 }
 
 /**
- * Deterministic no-lookahead sequential backtester with 3-TP partial exits + Risk-Free trailing.
+ * Deterministic no-lookahead sequential backtester with 3-TP partial exits + Risk-Free + Trailing Stop.
  * Conservative policy: if both SL and TP are touched inside the same bar, Stop Loss wins.
  */
 export function runBacktest(
@@ -43,8 +47,11 @@ export function runBacktest(
 
   let balance = opts.initialBalance;
   let peakEquity = balance;
+  let troughEquity = balance;
   let maxDrawdownUsd = 0;
   let maxDrawdownPct = 0;
+  let maxRunupUsd = 0;
+  let maxRunupPct = 0;
 
   interface ActivePos {
     id: string;
@@ -62,6 +69,9 @@ export function runBacktest(
     tp2Hit: boolean;
     tp3Hit: boolean;
     riskFreeTriggered: boolean;
+    trailingTriggered: boolean;
+    highSince: number;
+    lowSince: number;
     realizedPnl: number;
     fees: number;
   }
@@ -76,6 +86,8 @@ export function runBacktest(
     // 1. Evaluate open position on current bar
     if (active) {
       const isLong = active.direction === 'LONG';
+      active.highSince = Math.max(active.highSince, c.high);
+      active.lowSince = Math.min(active.lowSince, c.low);
 
       const slHit = isLong ? c.low <= active.sl : c.high >= active.sl;
       const tp3HitNow = !active.tp3Hit && (isLong ? c.high >= active.tp3 : c.low <= active.tp3);
@@ -117,13 +129,18 @@ export function runBacktest(
           tp2Hit: active.tp2Hit,
           tp3Hit: active.tp3Hit,
           riskFreeTriggered: active.riskFreeTriggered,
+          trailingTriggered: active.trailingTriggered,
         });
         active = null;
       };
 
       // Conservative policy: Stop Loss evaluated first on intra-bar conflicts
       if (slHit) {
-        const reason = active.riskFreeTriggered ? 'RISK_FREE_SL' : 'SL';
+        const reason = active.trailingTriggered
+          ? 'TRAILING_SL'
+          : active.riskFreeTriggered
+            ? 'RISK_FREE_SL'
+            : 'SL';
         const exitPx = active.sl;
         closePartial(active.remQty, exitPx);
         finalizeTrade(exitPx, reason);
@@ -133,7 +150,7 @@ export function runBacktest(
           const q1 = active.initialQty * (opts.tp1ClosePct / 100);
           closePartial(q1, active.tp1);
           if (opts.autoBreakevenOnTp1 && active.remQty > 0) {
-            active.sl = active.entryPrice;
+            active.sl = isLong ? Math.max(active.sl, active.entryPrice) : Math.min(active.sl, active.entryPrice);
             active.riskFreeTriggered = true;
           }
         }
@@ -142,7 +159,7 @@ export function runBacktest(
           const q2 = active.initialQty * (opts.tp2ClosePct / 100);
           closePartial(q2, active.tp2);
           if (opts.moveSlToTp1OnTp2 && active.remQty > 0) {
-            active.sl = active.tp1;
+            active.sl = isLong ? Math.max(active.sl, active.tp1) : Math.min(active.sl, active.tp1);
           }
         }
         if (tp3HitNow && active && active.remQty > 0) {
@@ -151,6 +168,17 @@ export function runBacktest(
         }
         if (active && active.remQty <= 1e-10) {
           finalizeTrade(active.tp3Hit ? active.tp3 : active.tp2Hit ? active.tp2 : active.tp1, 'TP3');
+        } else if (active && opts.useTrailingStop && (opts.trailPct ?? 0) > 0) {
+          const canTrail = active.tp1Hit || opts.trailAfterTp1 === false;
+          if (canTrail) {
+            const pct = (opts.trailPct ?? 2.0) / 100;
+            const trailStop = isLong ? active.highSince * (1 - pct) : active.lowSince * (1 + pct);
+            const tightened = isLong ? trailStop > active.sl : trailStop < active.sl;
+            if (tightened) {
+              active.sl = trailStop;
+              active.trailingTriggered = true;
+            }
+          }
         }
       }
     }
@@ -183,6 +211,9 @@ export function runBacktest(
             tp2Hit: false,
             tp3Hit: false,
             riskFreeTriggered: false,
+            trailingTriggered: false,
+            highSince: nextBar.high,
+            lowSince: nextBar.low,
             realizedPnl: -openFee,
             fees: openFee,
           };
@@ -199,10 +230,15 @@ export function runBacktest(
     }
     const equity = balance + unrealized;
     if (equity > peakEquity) peakEquity = equity;
+    if (equity < troughEquity) troughEquity = equity;
     const ddUsd = Math.max(0, peakEquity - equity);
     const ddPct = peakEquity > 0 ? (ddUsd / peakEquity) * 100 : 0;
+    const ruUsd = Math.max(0, equity - troughEquity);
+    const ruPct = troughEquity > 0 ? (ruUsd / troughEquity) * 100 : 0;
     if (ddUsd > maxDrawdownUsd) maxDrawdownUsd = ddUsd;
     if (ddPct > maxDrawdownPct) maxDrawdownPct = ddPct;
+    if (ruUsd > maxRunupUsd) maxRunupUsd = ruUsd;
+    if (ruPct > maxRunupPct) maxRunupPct = ruPct;
     equityCurve.push({ time: c.timestamp, equity, drawdownPct: ddPct });
   }
 
@@ -233,6 +269,7 @@ export function runBacktest(
       tp2Hit: active.tp2Hit,
       tp3Hit: active.tp3Hit,
       riskFreeTriggered: active.riskFreeTriggered,
+      trailingTriggered: active.trailingTriggered,
     });
   }
 
@@ -272,10 +309,16 @@ export function runBacktest(
     netReturnUsd,
     netReturnPct: opts.initialBalance > 0 ? (netReturnUsd / opts.initialBalance) * 100 : 0,
     totalTrades: trades.length,
+    winCount: wins.length,
+    lossCount: losses.length,
     winRatePct: trades.length > 0 ? (wins.length / trades.length) * 100 : 0,
     profitFactor: grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? 99 : 0,
+    grossProfitUsd: grossWins,
+    grossLossUsd: grossLosses,
     maxDrawdownUsd,
     maxDrawdownPct,
+    maxRunupUsd,
+    maxRunupPct,
     expectancyUsd: trades.length > 0 ? netReturnUsd / trades.length : 0,
     avgWinUsd: wins.length > 0 ? grossWins / wins.length : 0,
     avgLossUsd: losses.length > 0 ? -(grossLosses / losses.length) : 0,
@@ -288,5 +331,7 @@ export function runBacktest(
     sharpeEstimate,
   };
 
-  return { metrics, trades, equityCurve };
+  const { monthlyBreakdown, dayOfWeekStats } = buildBacktestMatrices(trades, opts.initialBalance);
+
+  return { metrics, trades, equityCurve, monthlyBreakdown, dayOfWeekStats };
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alma,
+  computeAlmaRibbon,
+  computeDemaAtr,
+  computeKbosV11Detailed,
   computeStrategySignals,
   DEFAULT_MIXER_WEIGHTS,
   evaluateRiskGates,
@@ -8,6 +12,7 @@ import {
   parseDollarinoSignal,
   quantizeDown,
   runBacktest,
+  superSmoother,
   type BotConfig,
   type Candle,
   type InstrumentSpec,
@@ -263,5 +268,63 @@ describe('@dollarino/core causal backtester', () => {
     expect(mix.channels.length).toBe(8);
     expect(mix.confidence).toBeGreaterThanOrEqual(0);
     expect(mix.confidence).toBeLessThanOrEqual(100);
+  });
+
+  it('computes KIYA BOT ORG - super v11 (KBOs), ALMA Ribbon, DEMA ATR, and Monthly/DOW backtest tables', () => {
+    const candles: Candle[] = [];
+    const start = Date.UTC(2026, 0, 1);
+    let p = 60_000;
+    for (let i = 0; i < 240; i++) {
+      const wave = Math.sin(i / 10) * 650 + (i > 120 ? 60 : -20);
+      const open = p;
+      const close = Math.max(5000, open + wave * 0.15);
+      candles.push({
+        timestamp: start + i * 1_800_000,
+        open,
+        high: Math.max(open, close) + 150,
+        low: Math.min(open, close) - 150,
+        close,
+        volume: 800 + (i % 15) * 90,
+      });
+      p = close;
+    }
+
+    const almaVals = alma(candles.map((c) => c.close), 9, 0.85, 6);
+    expect(Number.isFinite(almaVals[almaVals.length - 1])).toBe(true);
+
+    const ssmaVals = superSmoother(candles.map((c) => c.close), 10);
+    expect(Number.isFinite(ssmaVals[ssmaVals.length - 1])).toBe(true);
+
+    const demaAtr = computeDemaAtr(candles);
+    expect(demaAtr.length).toBe(candles.length);
+
+    const ribbon = computeAlmaRibbon(candles, { mainLen: 160 });
+    expect(ribbon.bands.length).toBe(8);
+
+    const kbos = computeKbosV11Detailed(candles, '30m', { useDemaAtr: false, intRes: 10 });
+    expect(kbos.outputs.length).toBe(candles.length);
+    expect(kbos.closeSeriesAlt.length).toBeGreaterThan(20);
+
+    const bt = runBacktest(candles, [], {
+      symbol: 'BTCUSDT',
+      strategyKey: 'kbos_v11',
+      timeframe: '30m',
+      initialBalance: 5000,
+      marginPct: 50,
+      leverage: 5,
+      tp1ClosePct: 30,
+      tp2ClosePct: 30,
+      tp3ClosePct: 40,
+      autoBreakevenOnTp1: true,
+      moveSlToTp1OnTp2: false,
+      useTrailingStop: true,
+      trailPct: 2.0,
+      trailAfterTp1: true,
+      params: { kbosParams: { useDemaAtr: false, intRes: 8 } },
+    });
+
+    expect(bt.dayOfWeekStats.length).toBe(7);
+    expect(Array.isArray(bt.monthlyBreakdown)).toBe(true);
+    expect(Number.isFinite(bt.metrics.maxRunupUsd)).toBe(true);
   });
 });

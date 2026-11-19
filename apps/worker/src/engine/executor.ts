@@ -43,9 +43,21 @@ export interface UserBotConfigRow {
   webhook_secret: string;
   signal_channel_handle: string;
   paper_balance: string;
+  kbos_params_json?: string;
+  risk_profile_json?: string;
+  trailing_stop_enabled?: number;
+  trailing_stop_pct?: number;
+  trail_after_tp1?: number;
+  started_at?: string | null;
 }
 
 export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
+  let kbosParams: BotConfig['kbosParams'];
+  try {
+    kbosParams = r.kbos_params_json ? JSON.parse(r.kbos_params_json) : undefined;
+  } catch {
+    kbosParams = undefined;
+  }
   return {
     tradingMode: r.trading_mode,
     executionMode: r.trade_execution_mode,
@@ -61,6 +73,9 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     tp3ClosePct: r.tp3_close_pct,
     autoBreakevenOnTp1: Boolean(r.auto_breakeven_on_tp1),
     moveSlToTp1OnTp2: Boolean(r.move_sl_to_tp1_on_tp2),
+    trailingStopEnabled: Boolean(r.trailing_stop_enabled ?? 1),
+    trailingStopPct: r.trailing_stop_pct ?? 2.0,
+    trailAfterTp1: Boolean(r.trail_after_tp1 ?? 1),
     dailyMaxLossPct: r.daily_max_loss_pct,
     maxOpenPositions: r.max_open_positions,
     blockWeekends: Boolean(r.block_weekends),
@@ -68,6 +83,7 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     aiGateEnabled: Boolean(r.ai_gate_enabled),
     aiMinConfidence: r.ai_min_confidence,
     signalChannelHandle: r.signal_channel_handle || '@Dollarinoofficial',
+    kbosParams,
   };
 }
 
@@ -223,8 +239,9 @@ export async function executeSignalForUser(
       id, user_id, signal_id, mode, exchange_provider, symbol, strategy_key, direction, status,
       entry_price, initial_quantity, remaining_quantity, leverage, margin_used,
       current_stop_loss, initial_stop_loss, tp1, tp2, tp3,
+      highest_price, lowest_price, trailing_active,
       fees_paid, exchange_order_id, client_id, ai_confidence, ai_reasoning
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`
   ).bind(
     tradeId,
     userId,
@@ -244,6 +261,8 @@ export async function executeSignalForUser(
     effectiveSignal.tp1,
     effectiveSignal.tp2 ?? null,
     effectiveSignal.tp3 ?? null,
+    order.filledPrice,
+    order.filledPrice,
     order.fee,
     order.orderId,
     clientId,
@@ -310,6 +329,9 @@ interface OpenTradeRow {
   tp2_hit: number;
   tp3_hit: number;
   risk_free_active: number;
+  highest_price?: string | null;
+  lowest_price?: string | null;
+  trailing_active?: number;
   realized_pnl: string;
   fees_paid: string;
 }
@@ -443,12 +465,24 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
     // 1. Stop Loss Check
     const slHit = isLong ? mark <= sl : mark >= sl;
     if (slHit) {
-      await closeChunk(t.remaining_quantity, t.risk_free_active ? 'RISK_FREE_SL' : 'SL', true);
-      await logAudit(env.DB, userId, 'ORDER', 'INFO', `Stop Loss triggered for ${t.symbol} @ ${mark}`, t.symbol);
+      const slReason = t.trailing_active ? 'TRAILING_SL' : t.risk_free_active ? 'RISK_FREE_SL' : 'SL';
+      await closeChunk(t.remaining_quantity, slReason, true);
+      await logAudit(env.DB, userId, 'ORDER', 'INFO', `${slReason} triggered for ${t.symbol} @ ${mark}`, t.symbol);
       continue;
     }
 
-    // 2. TP1 Check (Close 50% + Move SL to Entry = Risk-Free)
+    // Track extreme price for dynamic Trailing SL
+    const prevHigh = Number(t.highest_price || entry);
+    const prevLow = Number(t.lowest_price || entry);
+    const nextHigh = Math.max(prevHigh, mark);
+    const nextLow = Math.min(prevLow, mark);
+    if (nextHigh !== prevHigh || nextLow !== prevLow) {
+      await env.DB.prepare(
+        `UPDATE trades SET highest_price = ?, lowest_price = ? WHERE id = ?`
+      ).bind(String(nextHigh), String(nextLow), t.id).run();
+    }
+
+    // 2. TP1 Check (Close tp1_close_pct% + Move SL to Entry = Risk-Free)
     if (!t.tp1_hit && (isLong ? mark >= tp1 : mark <= tp1)) {
       const q1 = (Number(t.initial_quantity) * (cfg.tp1_close_pct / 100)).toFixed(spec.basePrecision + 2);
       const noMoreTps = !tp2 && !tp3;
@@ -460,6 +494,8 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
         rf = 1;
         await adapter.updatePositionStopLoss(t.symbol, t.direction, newSl).catch(() => {});
       }
+      t.tp1_hit = 1;
+      t.current_stop_loss = newSl;
       await env.DB.prepare(
         `UPDATE trades SET tp1_hit = 1, current_stop_loss = ?, risk_free_active = ? WHERE id = ?`
       ).bind(newSl, rf, t.id).run();
@@ -469,7 +505,7 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
       }
     }
 
-    // 3. TP2 Check (Close 25% + Move SL to TP1)
+    // 3. TP2 Check (Close tp2_close_pct% + Move SL to TP1)
     if (tp2 && !t.tp2_hit && (isLong ? mark >= tp2 : mark <= tp2)) {
       const q2 = (Number(t.initial_quantity) * (cfg.tp2_close_pct / 100)).toFixed(spec.basePrecision + 2);
       const finalHere = !tp3;
@@ -479,13 +515,33 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
         newSl = t.tp1;
         await adapter.updatePositionStopLoss(t.symbol, t.direction, newSl).catch(() => {});
       }
+      t.tp2_hit = 1;
+      t.current_stop_loss = newSl;
       await env.DB.prepare(
         `UPDATE trades SET tp2_hit = 1, current_stop_loss = ? WHERE id = ?`
       ).bind(newSl, t.id).run();
       await logAudit(env.DB, userId, 'ORDER', 'INFO', `TP2 hit for ${t.symbol}! Closed ${cfg.tp2_close_pct}% & SL moved to TP1`, t.symbol);
     }
 
-    // 4. TP3 Check (Close remaining 25%)
+    // 4. Dynamic Trailing Stop Reconciliation (KBOs v11 / TimeTrade)
+    if ((cfg.trailing_stop_enabled ?? 1) && (cfg.trailing_stop_pct ?? 0) > 0 && Number(t.remaining_quantity) > 0) {
+      const canTrail = Boolean(t.tp1_hit) || !Boolean(cfg.trail_after_tp1 ?? 1);
+      if (canTrail) {
+        const pct = (cfg.trailing_stop_pct ?? 2.0) / 100;
+        const candidateSl = isLong ? nextHigh * (1 - pct) : nextLow * (1 + pct);
+        const curSlNum = Number(t.current_stop_loss);
+        const tightened = isLong ? candidateSl > curSlNum : candidateSl < curSlNum;
+        if (tightened) {
+          const slStr = candidateSl.toFixed(spec.quotePrecision);
+          await adapter.updatePositionStopLoss(t.symbol, t.direction, slStr).catch(() => {});
+          await env.DB.prepare(
+            `UPDATE trades SET current_stop_loss = ?, trailing_active = 1 WHERE id = ?`
+          ).bind(slStr, t.id).run();
+        }
+      }
+    }
+
+    // 5. TP3 Check (Close remaining)
     if (tp3 && !t.tp3_hit && (isLong ? mark >= tp3 : mark <= tp3)) {
       await env.DB.prepare(`UPDATE trades SET tp3_hit = 1 WHERE id = ?`).bind(t.id).run();
       await closeChunk(t.remaining_quantity, 'TP3', true);
