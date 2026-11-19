@@ -19,7 +19,7 @@ import {
   type Timeframe,
 } from '@dollarino/core';
 import { requireAuth, type AppVariables } from '../auth.js';
-import { randomId } from '../crypto.js';
+import { decryptVaultJson, randomId } from '../crypto.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -840,11 +840,30 @@ tradingRoutes.get('/markets', async (c) => {
   const sort = c.req.query('sort') || 'volume';
 
   const activeRow = await c.env.DB.prepare(
-    `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
-  ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
+    `SELECT provider, label, encrypted_credentials FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+  ).bind(user.id).first<{ provider: ExchangeProviderId; label: string; encrypted_credentials?: string }>();
 
   const provider: ExchangeProviderId = requestedProvider || activeRow?.provider || 'paper';
-  let markets = await getExchangeMarkets(provider);
+  let proxyConfig = c.env.TOOBIT_PROXY_URL
+    ? { proxyUrl: c.env.TOOBIT_PROXY_URL, proxySecret: c.env.EXCHANGE_PROXY_SECRET }
+    : undefined;
+  if (!proxyConfig && provider === 'toobit') {
+    const tbRow = activeRow?.provider === 'toobit'
+      ? activeRow
+      : await c.env.DB.prepare(
+          `SELECT encrypted_credentials FROM exchange_connections WHERE user_id = ? AND provider = 'toobit' ORDER BY updated_at DESC LIMIT 1`
+        ).bind(user.id).first<{ encrypted_credentials?: string }>();
+    if (tbRow?.encrypted_credentials) {
+      const creds = await decryptVaultJson<{ proxyUrl?: string; proxySecret?: string }>(
+        tbRow.encrypted_credentials,
+        c.env.MASTER_ENCRYPTION_KEY
+      ).catch(() => ({ proxyUrl: undefined, proxySecret: undefined }));
+      if (creds.proxyUrl) {
+        proxyConfig = { proxyUrl: creds.proxyUrl, proxySecret: creds.proxySecret || c.env.EXCHANGE_PROXY_SECRET };
+      }
+    }
+  }
+  let markets = await getExchangeMarkets(provider, proxyConfig);
 
   if (q) {
     markets = markets.filter(
@@ -896,7 +915,10 @@ tradingRoutes.post('/scanner', async (c) => {
 
   let symbols = body.symbols?.length ? body.symbols.map(normalizeCanonicalSymbol) : [];
   if (!symbols.length) {
-    const allMarkets = await getExchangeMarkets(provider);
+    const proxyConfig = c.env.TOOBIT_PROXY_URL
+      ? { proxyUrl: c.env.TOOBIT_PROXY_URL, proxySecret: c.env.EXCHANGE_PROXY_SECRET }
+      : undefined;
+    const allMarkets = await getExchangeMarkets(provider, proxyConfig);
     const count = Math.min(18, Math.max(6, body.limit ?? 12));
     symbols = allMarkets.slice(0, count).map((m) => m.symbol);
   }

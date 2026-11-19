@@ -9,6 +9,8 @@ interface ExchangeConn {
   label: string;
   is_active: number;
   api_key_masked: string;
+  proxy_url?: string;
+  has_global_proxy?: boolean;
   last_test_status: string;
 }
 
@@ -47,7 +49,10 @@ export function ConnectionsPage({
     apiKey: '',
     apiSecret: '',
     webSessionToken: '',
+    proxyUrl: '',
+    proxySecret: '',
   });
+  const [proxyEdits, setProxyEdits] = useState<Record<string, string>>({});
   const [aiForm, setAiForm] = useState({
     provider: 'openai' as 'openai' | 'anthropic' | 'gemini' | 'openai_compatible',
     model: 'gpt-4o-mini',
@@ -80,7 +85,19 @@ export function ConnectionsPage({
       body: JSON.stringify(exForm),
     });
     setMsg(res.test?.message ?? 'Exchange saved');
-    setExForm({ ...exForm, apiKey: '', apiSecret: '', webSessionToken: '' });
+    setExForm({ ...exForm, apiKey: '', apiSecret: '', webSessionToken: '', proxySecret: '' });
+    await loadAll();
+    await onRefreshDashboard();
+  };
+
+  const updateExchangeProxy = async (id: string) => {
+    setMsg(null);
+    const proxyUrl = proxyEdits[id] ?? '';
+    const res = await apiFetch<{ ok: boolean; test: { ok: boolean; message: string } }>(`/api/connections/exchanges/${id}/proxy`, {
+      method: 'PATCH',
+      body: JSON.stringify({ proxyUrl }),
+    });
+    setMsg(res.test?.message ?? 'Relay updated');
     await loadAll();
     await onRefreshDashboard();
   };
@@ -171,7 +188,24 @@ export function ConnectionsPage({
                 </span>
               </div>
               <div className="text-slate-300 mt-1">{c.label}</div>
-              <div className="font-mono-num text-slate-500 text-[11px] mt-0.5">{c.api_key_masked} · {c.last_test_status || 'UNTESTED'}</div>
+              <div className="font-mono-num text-slate-500 text-[11px] mt-0.5 break-words">{c.api_key_masked} · {c.last_test_status || 'UNTESTED'}</div>
+              {c.provider === 'toobit' && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <input
+                    value={proxyEdits[c.id] ?? c.proxy_url ?? ''}
+                    onChange={(e) => setProxyEdits({ ...proxyEdits, [c.id]: e.target.value })}
+                    placeholder={c.has_global_proxy ? 'Global Relay active (optional override)' : 'Toobit Relay URL (https://...)'}
+                    className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] font-mono-num"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => updateExchangeProxy(c.id)}
+                    className="px-2 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-[11px] shrink-0"
+                  >
+                    {lang === 'fa' ? 'ذخیره رله' : 'Save Relay'}
+                  </button>
+                </div>
+              )}
               <div className="flex items-center gap-2 mt-2.5">
                 {!c.is_active && (
                   <button
@@ -264,6 +298,28 @@ export function ConnectionsPage({
                 onChange={(e) => setExForm({ ...exForm, apiSecret: e.target.value })}
                 className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2"
               />
+              {exForm.provider === 'toobit' && (
+                <>
+                  <input
+                    placeholder="Relay Proxy URL (optional, e.g. https://relay.vercel.app)"
+                    value={exForm.proxyUrl}
+                    onChange={(e) => setExForm({ ...exForm, proxyUrl: e.target.value })}
+                    className="md:col-span-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 font-mono-num"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Relay Secret (optional)"
+                    value={exForm.proxySecret}
+                    onChange={(e) => setExForm({ ...exForm, proxySecret: e.target.value })}
+                    className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 font-mono-num"
+                  />
+                  <div className="md:col-span-2 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                    {lang === 'fa'
+                      ? 'نکته Toobit: کلودفلر آی‌پی 2a06:98c0:3600::103 را برای Toobit مسدود می‌کند (خطای 403). رله رایگان apps/relay را روی Vercel (منطقه fra1) یا سرور غیرآمریکایی مستقر کرده و آدرس آن را وارد کنید — یا از Bitunix مستقیم استفاده کنید.'
+                      : 'Toobit Note: Cloudflare Workers IP (2a06:98c0:3600::103) receives 403 Geo-Block from Toobit. Deploy apps/relay to Vercel (fra1) or any non-US VPS and paste its URL here, or connect Bitunix directly.'}
+                  </div>
+                </>
+              )}
             </>
           )}
 

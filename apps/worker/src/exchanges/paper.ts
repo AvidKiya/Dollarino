@@ -1,6 +1,7 @@
 import type { Candle, Direction, InstrumentSpec, Timeframe } from '@dollarino/core';
 import type { ExchangePosition, FuturesBalance, IExchangeAdapter, Market24hStats, OrderResult, PlaceOrderParams } from './base.js';
 import { fetchBitunixKlinesFallback, findMarketSpec, normalizeCanonicalSymbol } from './markets.js';
+import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
 
 const FALLBACK_PRICES: Record<string, number> = {
   BTCUSDT: 63000,
@@ -29,56 +30,86 @@ function tfToMs(tf: Timeframe): number {
   return m[tf] ?? 900_000;
 }
 
-export async function fetchPublicMarket24h(symbol: string): Promise<Market24hStats> {
+export async function fetchPublicMarket24h(symbol: string, proxyConfig?: ToobitProxyConfig): Promise<Market24hStats> {
   const clean = normalizeCanonicalSymbol(symbol);
   const toobitSym = clean.endsWith('USDT') ? `${clean.slice(0, -4)}-SWAP-USDT` : clean;
+  const hasProxy = Boolean(normalizeProxyBaseUrl(proxyConfig?.proxyUrl));
 
   let fundingRate = '0.0001';
-  try {
-    const fRes = await fetch(`https://api.toobit.com/api/v1/futures/fundingRate?symbol=${toobitSym}`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (fRes.ok) {
-      const fJson = await fRes.json() as Array<{ rate?: string }> | { rate?: string };
-      const item = Array.isArray(fJson) ? fJson[0] : fJson;
-      if (item?.rate) fundingRate = String((Number(item.rate) * 100).toFixed(4));
-    }
-  } catch { /* ignore */ }
+  if (hasProxy) {
+    try {
+      const fReq = buildToobitRequest(`/api/v1/futures/fundingRate?symbol=${toobitSym}`, proxyConfig);
+      const fRes = await fetch(fReq.url, { headers: fReq.headers, signal: AbortSignal.timeout(3000) });
+      if (fRes.ok) {
+        const fJson = await fRes.json() as Array<{ rate?: string }> | { rate?: string };
+        const item = Array.isArray(fJson) ? fJson[0] : fJson;
+        if (item?.rate) fundingRate = String((Number(item.rate) * 100).toFixed(4));
+      }
+    } catch { /* ignore */ }
+
+    try {
+      const tReq = buildToobitRequest(`/quote/v1/contract/ticker/24hr?symbol=${toobitSym}`, proxyConfig);
+      const res = await fetch(tReq.url, { headers: tReq.headers, signal: AbortSignal.timeout(4000) });
+      if (res.ok) {
+        const arr = await res.json() as Array<{
+          c?: string;
+          h?: string;
+          l?: string;
+          o?: string;
+          b?: string;
+          a?: string;
+          qv?: string;
+          pcp?: string;
+        }>;
+        const item = Array.isArray(arr) ? arr[0] : undefined;
+        if (item?.c) {
+          const pct = item.pcp ? (Number(item.pcp) * 100).toFixed(2) : '0.00';
+          return {
+            symbol: clean,
+            lastPrice: item.c,
+            changePct24h: pct,
+            high24h: item.h ?? item.c,
+            low24h: item.l ?? item.c,
+            volume24h: item.qv ? Math.round(Number(item.qv)).toLocaleString() : '0',
+            fundingRate,
+            bestBid: item.b ?? item.c,
+            bestAsk: item.a ?? item.c,
+          };
+        }
+      }
+    } catch { /* fallback */ }
+  }
 
   try {
-    const res = await fetch(`https://api.toobit.com/quote/v1/contract/ticker/24hr?symbol=${toobitSym}`, {
+    const res = await fetch(`https://fapi.bitunix.com/api/v1/futures/market/tickers?symbols=${clean}`, {
       signal: AbortSignal.timeout(4000),
     });
     if (res.ok) {
-      const arr = await res.json() as Array<{
-        c?: string;
-        h?: string;
-        l?: string;
-        o?: string;
-        b?: string;
-        a?: string;
-        qv?: string;
-        pcp?: string;
-      }>;
-      const item = Array.isArray(arr) ? arr[0] : undefined;
-      if (item?.c) {
-        const pct = item.pcp ? (Number(item.pcp) * 100).toFixed(2) : '0.00';
+      const json = await res.json() as {
+        code?: number;
+        data?: Array<{ lastPrice?: string; last?: string; open?: string; high?: string; low?: string; quoteVol?: string }>;
+      };
+      const item = json.data?.[0];
+      const last = Number(item?.lastPrice ?? item?.last ?? 0);
+      if (last > 0) {
+        const open = Number(item?.open ?? last);
+        const pct = open > 0 ? (((last - open) / open) * 100).toFixed(2) : '0.00';
         return {
           symbol: clean,
-          lastPrice: item.c,
+          lastPrice: String(item?.lastPrice ?? item?.last),
           changePct24h: pct,
-          high24h: item.h ?? item.c,
-          low24h: item.l ?? item.c,
-          volume24h: item.qv ? Math.round(Number(item.qv)).toLocaleString() : '0',
+          high24h: item?.high ?? String(last),
+          low24h: item?.low ?? String(last),
+          volume24h: item?.quoteVol ? Math.round(Number(item.quoteVol)).toLocaleString() : '0',
           fundingRate,
-          bestBid: item.b ?? item.c,
-          bestAsk: item.a ?? item.c,
+          bestBid: String(last),
+          bestAsk: String(last),
         };
       }
     }
   } catch { /* fallback */ }
 
-  const spec = await findMarketSpec('paper', clean).catch(() => undefined);
+  const spec = await findMarketSpec('paper', clean, proxyConfig).catch(() => undefined);
   if (spec && Number(spec.lastPrice) > 0) {
     return {
       symbol: clean,
@@ -93,7 +124,7 @@ export async function fetchPublicMarket24h(symbol: string): Promise<Market24hSta
     };
   }
 
-  const px = await fetchPublicTickerPrice(clean);
+  const px = await fetchPublicTickerPrice(clean, proxyConfig);
   return {
     symbol: clean,
     lastPrice: px,
@@ -107,22 +138,34 @@ export async function fetchPublicMarket24h(symbol: string): Promise<Market24hSta
   };
 }
 
-export async function fetchPublicTickerPrice(symbol: string): Promise<string> {
+export async function fetchPublicTickerPrice(symbol: string, proxyConfig?: ToobitProxyConfig): Promise<string> {
   const clean = normalizeCanonicalSymbol(symbol);
   const toobitSym = clean.endsWith('USDT') ? `${clean.slice(0, -4)}-SWAP-USDT` : clean;
+  if (normalizeProxyBaseUrl(proxyConfig?.proxyUrl)) {
+    try {
+      const req = buildToobitRequest(`/quote/v1/contract/ticker/price?symbol=${toobitSym}`, proxyConfig);
+      const res = await fetch(req.url, { headers: req.headers, signal: AbortSignal.timeout(4000) });
+      if (res.ok) {
+        const data = await res.json() as Array<{ p?: string; price?: string }> | { p?: string; price?: string };
+        const item = Array.isArray(data) ? data[0] : data;
+        const p = item?.p ?? item?.price;
+        if (p && Number(p) > 0) return String(p);
+      }
+    } catch { /* fall through */ }
+  }
+
   try {
-    const res = await fetch(`https://api.toobit.com/quote/v1/contract/ticker/price?symbol=${toobitSym}`, {
+    const res = await fetch(`https://fapi.bitunix.com/api/v1/futures/market/tickers?symbols=${clean}`, {
       signal: AbortSignal.timeout(4000),
     });
     if (res.ok) {
-      const data = await res.json() as Array<{ p?: string; price?: string }> | { p?: string; price?: string };
-      const item = Array.isArray(data) ? data[0] : data;
-      const p = item?.p ?? item?.price;
+      const json = await res.json() as { data?: Array<{ lastPrice?: string; last?: string }> };
+      const p = json.data?.[0]?.lastPrice ?? json.data?.[0]?.last;
       if (p && Number(p) > 0) return String(p);
     }
   } catch { /* fall through */ }
 
-  const spec = await findMarketSpec('paper', clean).catch(() => undefined);
+  const spec = await findMarketSpec('paper', clean, proxyConfig).catch(() => undefined);
   if (spec && Number(spec.lastPrice) > 0) return spec.lastPrice;
 
   try {
@@ -138,20 +181,21 @@ export async function fetchPublicTickerPrice(symbol: string): Promise<string> {
   return String(FALLBACK_PRICES[clean] ?? 100);
 }
 
-export async function fetchPublicOrderBook(symbol: string, limit = 15): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
+export async function fetchPublicOrderBook(symbol: string, limit = 15, proxyConfig?: ToobitProxyConfig): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
   const clean = normalizeCanonicalSymbol(symbol);
   const toobitSym = clean.endsWith('USDT') ? `${clean.slice(0, -4)}-SWAP-USDT` : clean;
-  try {
-    const res = await fetch(`https://api.toobit.com/quote/v1/depth?symbol=${toobitSym}&limit=${limit}`, {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (res.ok) {
-      const data = await res.json() as { b?: [string, string][]; a?: [string, string][]; bids?: [string, string][]; asks?: [string, string][] };
-      const bids = (data.b ?? data.bids ?? []).slice(0, limit);
-      const asks = (data.a ?? data.asks ?? []).slice(0, limit);
-      if (bids.length || asks.length) return { bids, asks };
-    }
-  } catch { /* fallback */ }
+  if (normalizeProxyBaseUrl(proxyConfig?.proxyUrl)) {
+    try {
+      const req = buildToobitRequest(`/quote/v1/depth?symbol=${toobitSym}&limit=${limit}`, proxyConfig);
+      const res = await fetch(req.url, { headers: req.headers, signal: AbortSignal.timeout(4000) });
+      if (res.ok) {
+        const data = await res.json() as { b?: [string, string][]; a?: [string, string][]; bids?: [string, string][]; asks?: [string, string][] };
+        const bids = (data.b ?? data.bids ?? []).slice(0, limit);
+        const asks = (data.a ?? data.asks ?? []).slice(0, limit);
+        if (bids.length || asks.length) return { bids, asks };
+      }
+    } catch { /* fallback */ }
+  }
 
   try {
     const res = await fetch(`https://fapi.bitunix.com/api/v1/futures/market/depth?symbol=${clean}&limit=${limit}`, {
@@ -165,7 +209,7 @@ export async function fetchPublicOrderBook(symbol: string, limit = 15): Promise<
     }
   } catch { /* fallback */ }
 
-  const price = Number(await fetchPublicTickerPrice(clean));
+  const price = Number(await fetchPublicTickerPrice(clean, proxyConfig));
   const step = price * 0.00025;
   const bids: [string, string][] = [];
   const asks: [string, string][] = [];
@@ -177,29 +221,29 @@ export async function fetchPublicOrderBook(symbol: string, limit = 15): Promise<
   return { bids, asks };
 }
 
-export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 200): Promise<Candle[]> {
+export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 200, proxyConfig?: ToobitProxyConfig): Promise<Candle[]> {
   const clean = normalizeCanonicalSymbol(symbol);
   const toobitSym = clean.endsWith('USDT') ? `${clean.slice(0, -4)}-SWAP-USDT` : clean;
 
-  try {
-    const res = await fetch(
-      `https://api.toobit.com/quote/v1/klines?symbol=${toobitSym}&interval=${tf}&limit=${limit}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (res.ok) {
-      const rows = await res.json() as Array<[number, string, string, string, string, string]>;
-      if (Array.isArray(rows) && rows.length > 5) {
-        return rows.map((r) => ({
-          timestamp: Number(r[0]),
-          open: Number(r[1]),
-          high: Number(r[2]),
-          low: Number(r[3]),
-          close: Number(r[4]),
-          volume: Number(r[5]),
-        }));
+  if (normalizeProxyBaseUrl(proxyConfig?.proxyUrl)) {
+    try {
+      const req = buildToobitRequest(`/quote/v1/klines?symbol=${toobitSym}&interval=${tf}&limit=${limit}`, proxyConfig);
+      const res = await fetch(req.url, { headers: req.headers, signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const rows = await res.json() as Array<[number, string, string, string, string, string]>;
+        if (Array.isArray(rows) && rows.length > 5) {
+          return rows.map((r) => ({
+            timestamp: Number(r[0]),
+            open: Number(r[1]),
+            high: Number(r[2]),
+            low: Number(r[3]),
+            close: Number(r[4]),
+            volume: Number(r[5]),
+          }));
+        }
       }
-    }
-  } catch { /* fall through */ }
+    } catch { /* fall through */ }
+  }
 
   const bitunixRows = await fetchBitunixKlinesFallback(clean, tf, limit);
   if (bitunixRows.length > 5) return bitunixRows;
@@ -247,12 +291,13 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
 
   constructor(
     private db: D1Database,
-    private userId: string
+    private userId: string,
+    private proxyConfig?: ToobitProxyConfig
   ) {}
 
   async testConnection() {
     const balance = await this.getBalance();
-    return { ok: true, message: 'Paper Simulator connected to live Toobit market quotes', balance };
+    return { ok: true, message: 'Paper Simulator connected to live perpetual market quotes', balance };
   }
 
   async getBalance(): Promise<FuturesBalance> {
@@ -274,24 +319,24 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
   }
 
   async getTickerPrice(symbol: string): Promise<string> {
-    return fetchPublicTickerPrice(symbol);
+    return fetchPublicTickerPrice(symbol, this.proxyConfig);
   }
 
   async getMarket24h(symbol: string): Promise<Market24hStats> {
-    return fetchPublicMarket24h(symbol);
+    return fetchPublicMarket24h(symbol, this.proxyConfig);
   }
 
   async getKlines(symbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
-    return fetchPublicKlines(symbol, timeframe, limit);
+    return fetchPublicKlines(symbol, timeframe, limit, this.proxyConfig);
   }
 
   async getOrderBook(symbol: string, limit = 15) {
-    return fetchPublicOrderBook(symbol, limit);
+    return fetchPublicOrderBook(symbol, limit, this.proxyConfig);
   }
 
   async getInstrumentSpec(symbol: string): Promise<InstrumentSpec> {
     const clean = normalizeCanonicalSymbol(symbol);
-    const live = await findMarketSpec('paper', clean).catch(() => undefined);
+    const live = await findMarketSpec('paper', clean, this.proxyConfig).catch(() => undefined);
     if (live) {
       return {
         symbol: clean,

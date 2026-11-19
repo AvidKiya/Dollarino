@@ -1,4 +1,5 @@
 import type { Candle, ExchangeProviderId, Timeframe } from '@dollarino/core';
+import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
 
 export interface ExchangeMarketInfo {
   symbol: string; // Canonical e.g. BTCUSDT
@@ -40,10 +41,12 @@ function isStandardUsdtPerp(nativeSym: string): boolean {
   return nativeSym.endsWith('-SWAP-USDT') || nativeSym.endsWith('USDT');
 }
 
-async function fetchToobitUniverse(): Promise<ExchangeMarketInfo[]> {
+async function fetchToobitUniverse(proxyConfig?: ToobitProxyConfig): Promise<ExchangeMarketInfo[]> {
+  const infoReq = buildToobitRequest('/api/v1/exchangeInfo', proxyConfig);
+  const tickReq = buildToobitRequest('/quote/v1/contract/ticker/24hr', proxyConfig);
   const [infoRes, tickRes] = await Promise.all([
-    fetch('https://api.toobit.com/api/v1/exchangeInfo', { signal: AbortSignal.timeout(7000) }).catch(() => null),
-    fetch('https://api.toobit.com/quote/v1/contract/ticker/24hr', { signal: AbortSignal.timeout(7000) }).catch(() => null),
+    fetch(infoReq.url, { headers: infoReq.headers, signal: AbortSignal.timeout(7000) }).catch(() => null),
+    fetch(tickReq.url, { headers: tickReq.headers, signal: AbortSignal.timeout(7000) }).catch(() => null),
   ]);
 
   type ToobitContract = {
@@ -206,8 +209,13 @@ const FALLBACK_MARKETS: ExchangeMarketInfo[] = [
   { symbol: 'TONUSDT', exchangeSymbol: 'TON-SWAP-USDT', base: 'TON', quote: 'USDT', lastPrice: '4.80', changePct24h: '0.00', high24h: '5.00', low24h: '4.60', volume24h: 80_000_000, maxLeverage: 50, basePrecision: 1, quotePrecision: 3, minTradeVolume: '1', status: 'OPEN' },
 ];
 
-export async function getExchangeMarkets(provider: ExchangeProviderId): Promise<ExchangeMarketInfo[]> {
-  const cached = MARKET_CACHE.get(provider);
+export async function getExchangeMarkets(
+  provider: ExchangeProviderId,
+  proxyConfig?: ToobitProxyConfig
+): Promise<ExchangeMarketInfo[]> {
+  const proxyKey = normalizeProxyBaseUrl(proxyConfig?.proxyUrl) ?? 'direct';
+  const cacheKey = `${provider}:${proxyKey}`;
+  const cached = MARKET_CACHE.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS && cached.data.length > 0) {
     return cached.data;
   }
@@ -215,14 +223,20 @@ export async function getExchangeMarkets(provider: ExchangeProviderId): Promise<
   let list: ExchangeMarketInfo[] = [];
 
   if (provider === 'toobit') {
-    list = await fetchToobitUniverse();
+    if (proxyKey !== 'direct') {
+      list = await fetchToobitUniverse(proxyConfig);
+    }
     if (list.length === 0) list = await fetchBitunixUniverse();
+    if (list.length === 0 && proxyKey === 'direct') list = await fetchToobitUniverse(proxyConfig);
   } else if (provider === 'bitunix') {
     list = await fetchBitunixUniverse();
-    if (list.length === 0) list = await fetchToobitUniverse();
+    if (list.length === 0 && proxyKey !== 'direct') list = await fetchToobitUniverse(proxyConfig);
   } else {
-    // KCEX Mirror & Paper Simulator: merge Toobit + Bitunix live USDT perpetual universes (~1,000+ coins)
-    const [tList, bList] = await Promise.all([fetchToobitUniverse(), fetchBitunixUniverse()]);
+    // KCEX Mirror & Paper Simulator: merge live perpetual universes
+    const [tList, bList] = await Promise.all([
+      proxyKey !== 'direct' ? fetchToobitUniverse(proxyConfig) : Promise.resolve([]),
+      fetchBitunixUniverse(),
+    ]);
     const merged = new Map<string, ExchangeMarketInfo>();
     for (const item of tList) merged.set(item.symbol, item);
     for (const item of bList) {
@@ -236,13 +250,17 @@ export async function getExchangeMarkets(provider: ExchangeProviderId): Promise<
   }
 
   if (list.length === 0) list = FALLBACK_MARKETS;
-  MARKET_CACHE.set(provider, { ts: Date.now(), data: list });
+  MARKET_CACHE.set(cacheKey, { ts: Date.now(), data: list });
   return list;
 }
 
-export async function findMarketSpec(provider: ExchangeProviderId, symbol: string): Promise<ExchangeMarketInfo | undefined> {
+export async function findMarketSpec(
+  provider: ExchangeProviderId,
+  symbol: string,
+  proxyConfig?: ToobitProxyConfig
+): Promise<ExchangeMarketInfo | undefined> {
   const canonical = normalizeCanonicalSymbol(symbol);
-  const all = await getExchangeMarkets(provider);
+  const all = await getExchangeMarkets(provider, proxyConfig);
   return all.find((m) => m.symbol === canonical || m.exchangeSymbol.toUpperCase() === symbol.toUpperCase());
 }
 

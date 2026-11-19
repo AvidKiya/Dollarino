@@ -5,6 +5,7 @@ import { decryptVaultJson, encryptVaultJson, maskSecret, randomId } from '../cry
 import { executeSignalForUser } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
+import { normalizeProxyBaseUrl } from '../exchanges/proxy.js';
 import { TelegramBotClient } from '../telegram/client.js';
 
 export const connectionRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -13,10 +14,47 @@ connectionRoutes.use('*', requireAuth);
 connectionRoutes.get('/exchanges', async (c) => {
   const user = c.get('user');
   const rows = await c.env.DB.prepare(
-    `SELECT id, provider, label, is_testnet, is_active, api_key_masked, last_test_status, last_tested_at, updated_at
+    `SELECT id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials, last_test_status, last_tested_at, updated_at
      FROM exchange_connections WHERE user_id = ? ORDER BY is_active DESC, updated_at DESC`
-  ).bind(user.id).all();
-  return c.json({ connections: rows.results });
+  ).bind(user.id).all<{
+    id: string;
+    provider: string;
+    label: string;
+    is_testnet: number;
+    is_active: number;
+    api_key_masked: string;
+    encrypted_credentials: string;
+    last_test_status: string;
+    last_tested_at: string;
+    updated_at: string;
+  }>();
+
+  const connections = await Promise.all(
+    rows.results.map(async (r) => {
+      let proxyUrl = '';
+      if (r.provider === 'toobit' && r.encrypted_credentials) {
+        const creds = await decryptVaultJson<{ proxyUrl?: string }>(
+          r.encrypted_credentials,
+          c.env.MASTER_ENCRYPTION_KEY
+        ).catch(() => ({ proxyUrl: undefined }));
+        proxyUrl = creds.proxyUrl ?? '';
+      }
+      return {
+        id: r.id,
+        provider: r.provider,
+        label: r.label,
+        is_testnet: r.is_testnet,
+        is_active: r.is_active,
+        api_key_masked: r.api_key_masked,
+        proxy_url: proxyUrl,
+        has_global_proxy: Boolean(c.env.TOOBIT_PROXY_URL),
+        last_test_status: r.last_test_status,
+        last_tested_at: r.last_tested_at,
+        updated_at: r.updated_at,
+      };
+    })
+  );
+  return c.json({ connections });
 });
 
 connectionRoutes.post('/exchanges', async (c) => {
@@ -27,6 +65,8 @@ connectionRoutes.post('/exchanges', async (c) => {
     apiKey?: string;
     apiSecret?: string;
     webSessionToken?: string;
+    proxyUrl?: string;
+    proxySecret?: string;
     activate?: boolean;
   }>();
 
@@ -36,12 +76,22 @@ connectionRoutes.post('/exchanges', async (c) => {
     return c.json({ error: 'API Key and API Secret are required for Toobit and Bitunix' }, 400);
   }
 
+  let normalizedProxy: string | undefined;
+  if (body.proxyUrl?.trim()) {
+    normalizedProxy = normalizeProxyBaseUrl(body.proxyUrl);
+    if (!normalizedProxy) {
+      return c.json({ error: 'Relay Proxy URL must be a valid http:// or https:// URL' }, 400);
+    }
+  }
+
   const id = randomId('ex');
   const encrypted = await encryptVaultJson(
     {
       apiKey: body.apiKey?.trim() ?? '',
       apiSecret: body.apiSecret?.trim() ?? '',
       webSessionToken: body.webSessionToken?.trim() ?? '',
+      ...(normalizedProxy ? { proxyUrl: normalizedProxy } : {}),
+      ...(body.proxySecret?.trim() ? { proxySecret: body.proxySecret.trim() } : {}),
     },
     c.env.MASTER_ENCRYPTION_KEY
   );
@@ -85,9 +135,50 @@ connectionRoutes.post('/exchanges', async (c) => {
   const test = await adapter.testConnection();
   await c.env.DB.prepare(
     `UPDATE exchange_connections SET last_test_status = ?, last_tested_at = datetime('now') WHERE id = ?`
-  ).bind(test.ok ? 'OK' : test.message.slice(0, 120), id).run();
+  ).bind(test.ok ? 'OK' : test.message.slice(0, 240), id).run();
 
   return c.json({ id, test });
+});
+
+connectionRoutes.patch('/exchanges/:id/proxy', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json<{ proxyUrl?: string; proxySecret?: string }>();
+  const row = await c.env.DB.prepare(
+    `SELECT id, provider, encrypted_credentials FROM exchange_connections WHERE id = ? AND user_id = ?`
+  ).bind(id, user.id).first<{ id: string; provider: 'paper' | 'toobit' | 'bitunix' | 'kcex'; encrypted_credentials: string }>();
+  if (!row) return c.json({ error: 'Connection not found' }, 404);
+
+  let normalizedProxy: string | undefined;
+  if (body.proxyUrl?.trim()) {
+    normalizedProxy = normalizeProxyBaseUrl(body.proxyUrl);
+    if (!normalizedProxy) {
+      return c.json({ error: 'Relay Proxy URL must be a valid http:// or https:// URL' }, 400);
+    }
+  }
+
+  const creds = await decryptVaultJson<Record<string, string>>(
+    row.encrypted_credentials,
+    c.env.MASTER_ENCRYPTION_KEY
+  ).catch(() => ({} as Record<string, string>));
+
+  if (normalizedProxy) creds.proxyUrl = normalizedProxy;
+  else delete creds.proxyUrl;
+  if (body.proxySecret?.trim()) creds.proxySecret = body.proxySecret.trim();
+  else if (body.proxySecret === '') delete creds.proxySecret;
+
+  const updatedEnc = await encryptVaultJson(creds, c.env.MASTER_ENCRYPTION_KEY);
+  await c.env.DB.prepare(
+    `UPDATE exchange_connections SET encrypted_credentials = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(updatedEnc, id).run();
+
+  const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, row.provider);
+  const test = await adapter.testConnection();
+  await c.env.DB.prepare(
+    `UPDATE exchange_connections SET last_test_status = ?, last_tested_at = datetime('now') WHERE id = ?`
+  ).bind(test.ok ? 'OK' : test.message.slice(0, 240), id).run();
+
+  return c.json({ ok: true, test });
 });
 
 connectionRoutes.post('/exchanges/:id/activate', async (c) => {
@@ -116,7 +207,7 @@ connectionRoutes.post('/exchanges/:id/test', async (c) => {
   const test = await adapter.testConnection();
   await c.env.DB.prepare(
     `UPDATE exchange_connections SET last_test_status = ?, last_tested_at = datetime('now') WHERE id = ?`
-  ).bind(test.ok ? 'OK' : test.message.slice(0, 120), id).run();
+  ).bind(test.ok ? 'OK' : test.message.slice(0, 240), id).run();
   return c.json(test);
 });
 

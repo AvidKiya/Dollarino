@@ -40,6 +40,7 @@ export function SetupWizardModal({
   const [exProvider, setExProvider] = useState<'paper' | 'toobit' | 'kcex' | 'bitunix'>('toobit');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [proxyUrl, setProxyUrl] = useState('');
   const [kcexSession, setKcexSession] = useState('');
   const [aiProvider, setAiProvider] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
   const [aiKey, setAiKey] = useState('');
@@ -180,6 +181,7 @@ export function SetupWizardModal({
           provider: exProvider,
           apiKey: exProvider === 'toobit' || exProvider === 'bitunix' ? apiKey : undefined,
           apiSecret: exProvider === 'toobit' || exProvider === 'bitunix' ? apiSecret : undefined,
+          proxyUrl: exProvider === 'toobit' && proxyUrl.trim() ? proxyUrl.trim() : undefined,
           webSessionToken: exProvider === 'kcex' ? kcexSession : undefined,
           activate: true,
         }),
@@ -494,20 +496,30 @@ export function SetupWizardModal({
             </div>
 
             {(exProvider === 'toobit' || exProvider === 'bitunix') && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <input
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="API Key"
-                  className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                />
-                <input
-                  type="password"
-                  value={apiSecret}
-                  onChange={(e) => setApiSecret(e.target.value)}
-                  placeholder="API Secret"
-                  className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                />
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="API Key"
+                    className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
+                  />
+                  <input
+                    type="password"
+                    value={apiSecret}
+                    onChange={(e) => setApiSecret(e.target.value)}
+                    placeholder="API Secret"
+                    className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
+                  />
+                </div>
+                {exProvider === 'toobit' && (
+                  <input
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="Optional Relay Proxy URL (e.g. https://relay.vercel.app for CF geo-bypass)"
+                    className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
+                  />
+                )}
               </div>
             )}
 

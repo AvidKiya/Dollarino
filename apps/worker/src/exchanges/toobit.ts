@@ -3,21 +3,30 @@ import { hmacSha256Hex } from '../crypto.js';
 import type { ExchangePosition, FuturesBalance, IExchangeAdapter, Market24hStats, OrderResult, PlaceOrderParams } from './base.js';
 import { findMarketSpec, normalizeCanonicalSymbol } from './markets.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook, fetchPublicTickerPrice } from './paper.js';
+import { buildToobitRequest, formatToobitHttpError, type ToobitProxyConfig } from './proxy.js';
 
 export interface ToobitCredentials {
   apiKey: string;
   apiSecret: string;
+  proxyUrl?: string;
+  proxySecret?: string;
 }
 
 /**
  * Official Toobit USDT-M Futures REST API v1/v2 adapter (https://api.toobit.com).
- * Auth: header `X-BB-APIKEY` + lowercase hex HMAC-SHA256 over queryString.
+ * Auth: header `X-BB-APIKEY` + lowercase hex HMAC-SHA256 over queryString / form body.
+ * Supports optional non-Cloudflare Relay (`proxyUrl`) so Cloudflare Workers avoid `2a06:98c0:3600::103` geo-403.
  */
 export class ToobitFuturesAdapter implements IExchangeAdapter {
   readonly provider = 'toobit' as const;
-  private readonly baseUrl = 'https://api.toobit.com';
+  private readonly proxyConfig: ToobitProxyConfig;
 
-  constructor(private creds: ToobitCredentials) {}
+  constructor(private creds: ToobitCredentials) {
+    this.proxyConfig = {
+      proxyUrl: creds.proxyUrl,
+      proxySecret: creds.proxySecret,
+    };
+  }
 
   static toContractSymbol(symbol: string): string {
     if (symbol.toUpperCase().includes('-SWAP-')) return symbol.toUpperCase();
@@ -42,18 +51,18 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     const signature = await hmacSha256Hex(queryString, this.creds.apiSecret);
     const fullQuery = `${queryString}&signature=${signature}`;
 
-    const url = method === 'GET' || method === 'DELETE'
-      ? `${this.baseUrl}${path}?${fullQuery}`
-      : `${this.baseUrl}${path}`;
+    const useBody = method === 'POST' || method === 'DELETE';
+    const pathAndQuery = useBody ? path : `${path}?${fullQuery}`;
+    const { url, headers, proxied } = buildToobitRequest(pathAndQuery, this.proxyConfig, {
+      'X-BB-APIKEY': this.creds.apiKey,
+      ...(useBody ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+    });
 
     const res = await fetch(url, {
       method,
-      headers: {
-        'X-BB-APIKEY': this.creds.apiKey,
-        ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
-      },
-      body: method === 'POST' ? fullQuery : undefined,
-      signal: AbortSignal.timeout(10_000),
+      headers,
+      body: useBody ? fullQuery : undefined,
+      signal: AbortSignal.timeout(12_000),
     });
 
     const text = await res.text();
@@ -61,7 +70,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     try {
       json = JSON.parse(text);
     } catch {
-      throw new Error(`Toobit HTTP ${res.status}: ${text.slice(0, 200)}`);
+      throw new Error(formatToobitHttpError(res.status, text, proxied));
     }
     if (!res.ok) {
       const errObj = json as { msg?: string; code?: number };
@@ -73,7 +82,13 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
   async testConnection() {
     try {
       const balance = await this.getBalance();
-      return { ok: true, message: 'Connected to Toobit USDT-M Futures API', balance };
+      return {
+        ok: true,
+        message: this.proxyConfig.proxyUrl
+          ? 'Connected to Toobit USDT-M Futures API (via Relay)'
+          : 'Connected to Toobit USDT-M Futures API',
+        balance,
+      };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : 'Toobit connection failed' };
     }
@@ -108,24 +123,24 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
   }
 
   async getTickerPrice(symbol: string): Promise<string> {
-    return fetchPublicTickerPrice(symbol);
+    return fetchPublicTickerPrice(symbol, this.proxyConfig);
   }
 
   async getMarket24h(symbol: string): Promise<Market24hStats> {
-    return fetchPublicMarket24h(symbol);
+    return fetchPublicMarket24h(symbol, this.proxyConfig);
   }
 
   async getKlines(symbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
-    return fetchPublicKlines(symbol, timeframe, limit);
+    return fetchPublicKlines(symbol, timeframe, limit, this.proxyConfig);
   }
 
   async getOrderBook(symbol: string, limit = 15): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
-    return fetchPublicOrderBook(symbol, limit);
+    return fetchPublicOrderBook(symbol, limit, this.proxyConfig);
   }
 
   async getInstrumentSpec(symbol: string): Promise<InstrumentSpec> {
     const contract = ToobitFuturesAdapter.toContractSymbol(symbol);
-    const live = await findMarketSpec('toobit', symbol).catch(() => undefined);
+    const live = await findMarketSpec('toobit', symbol, this.proxyConfig).catch(() => undefined);
     if (live) {
       return {
         symbol: live.exchangeSymbol || contract,
@@ -158,7 +173,9 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
         side: 'LONG' | 'SHORT';
         position: string;
         avgPrice: string;
+        lastPrice?: string;
         markPrice?: string;
+        unrealizedPnL?: string;
         unrealizedPnl?: string;
         leverage?: string | number;
       }>
@@ -171,8 +188,8 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
         direction: p.side,
         quantity: String(p.position),
         entryPrice: String(p.avgPrice),
-        markPrice: String(p.markPrice ?? p.avgPrice),
-        unrealizedPnl: String(p.unrealizedPnl ?? '0'),
+        markPrice: String(p.lastPrice ?? p.markPrice ?? p.avgPrice),
+        unrealizedPnl: String(p.unrealizedPnL ?? p.unrealizedPnl ?? '0'),
         leverage: Number(p.leverage ?? 1),
       }));
   }
@@ -189,6 +206,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     await this.setLeverage(params.symbol, params.leverage);
     const side = params.direction === 'LONG' ? 'BUY_OPEN' : 'SELL_OPEN';
 
+    // Toobit USDT-M Futures API requires type='LIMIT' + priceType='MARKET' for market execution
     const resp = await this.signedRequest<{
       orderId?: string | number;
       clientOrderId?: string;
@@ -197,7 +215,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     }>('POST', '/api/v1/futures/order', {
       symbol: contract,
       side,
-      type: params.type,
+      type: 'LIMIT',
       priceType: params.type === 'MARKET' ? 'MARKET' : 'INPUT',
       quantity: params.quantity,
       price: params.type === 'LIMIT' ? params.price : undefined,
@@ -237,7 +255,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
       {
         symbol: contract,
         side,
-        type: 'MARKET',
+        type: 'LIMIT',
         priceType: 'MARKET',
         quantity,
         newClientOrderId: clientOrderId,
@@ -246,7 +264,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     return {
       orderId: String(resp.orderId ?? `tb_cls_${Date.now()}`),
       clientOrderId,
-      filledPrice: resp.avgPrice ?? await this.getTickerPrice(symbol),
+      filledPrice: resp.avgPrice && Number(resp.avgPrice) > 0 ? resp.avgPrice : await this.getTickerPrice(symbol),
       filledQty: resp.executedQty ?? quantity,
       fee: '0',
     };

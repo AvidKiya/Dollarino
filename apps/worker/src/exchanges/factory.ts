@@ -11,8 +11,12 @@ export async function resolveUserExchangeAdapter(
   userId: string,
   forceProvider?: 'paper' | 'toobit' | 'bitunix' | 'kcex'
 ): Promise<{ adapter: IExchangeAdapter; provider: string; label: string }> {
+  const globalProxy = env.TOOBIT_PROXY_URL
+    ? { proxyUrl: env.TOOBIT_PROXY_URL, proxySecret: env.EXCHANGE_PROXY_SECRET }
+    : undefined;
+
   if (forceProvider === 'paper') {
-    return { adapter: new PaperExchangeAdapter(env.DB, userId), provider: 'paper', label: 'Paper Simulator' };
+    return { adapter: new PaperExchangeAdapter(env.DB, userId, globalProxy), provider: 'paper', label: 'Paper Simulator' };
   }
 
   const row = forceProvider
@@ -28,17 +32,28 @@ export async function resolveUserExchangeAdapter(
   }
 
   if (!row || row.provider === 'paper') {
-    return { adapter: new PaperExchangeAdapter(env.DB, userId), provider: 'paper', label: 'Paper Simulator' };
+    return { adapter: new PaperExchangeAdapter(env.DB, userId, globalProxy), provider: 'paper', label: 'Paper Simulator' };
   }
 
-  const creds = await decryptVaultJson<{ apiKey?: string; apiSecret?: string; webSessionToken?: string }>(
+  const creds = await decryptVaultJson<{
+    apiKey?: string;
+    apiSecret?: string;
+    webSessionToken?: string;
+    proxyUrl?: string;
+    proxySecret?: string;
+  }>(
     row.encrypted_credentials,
     env.MASTER_ENCRYPTION_KEY
-  ).catch(() => ({ apiKey: '', apiSecret: '', webSessionToken: '' }));
+  ).catch(() => ({ apiKey: '', apiSecret: '', webSessionToken: '', proxyUrl: undefined, proxySecret: undefined }));
 
   if (row.provider === 'toobit' && creds.apiKey && creds.apiSecret) {
     return {
-      adapter: new ToobitFuturesAdapter({ apiKey: creds.apiKey, apiSecret: creds.apiSecret }),
+      adapter: new ToobitFuturesAdapter({
+        apiKey: creds.apiKey,
+        apiSecret: creds.apiSecret,
+        proxyUrl: creds.proxyUrl || env.TOOBIT_PROXY_URL,
+        proxySecret: creds.proxySecret || env.EXCHANGE_PROXY_SECRET,
+      }),
       provider: 'toobit',
       label: row.label,
     };
@@ -58,5 +73,5 @@ export async function resolveUserExchangeAdapter(
     };
   }
 
-  return { adapter: new PaperExchangeAdapter(env.DB, userId), provider: 'paper', label: 'Paper Simulator' };
+  return { adapter: new PaperExchangeAdapter(env.DB, userId, globalProxy), provider: 'paper', label: 'Paper Simulator' };
 }
