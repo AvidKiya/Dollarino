@@ -5,10 +5,12 @@ import {
   computeDemaAtr,
   computeKbosV11Detailed,
   computeStrategySignals,
+  DEFAULT_KBOS_PARAMS,
   DEFAULT_MIXER_WEIGHTS,
   evaluateRiskGates,
   evaluateSignalMixerAtBar,
   formatDollarinoSignal,
+  mergeKbosParams,
   parseDollarinoSignal,
   quantizeDown,
   runBacktest,
@@ -326,5 +328,73 @@ describe('@dollarino/core causal backtester', () => {
     expect(bt.dayOfWeekStats.length).toBe(7);
     expect(Array.isArray(bt.monthlyBreakdown)).toBe(true);
     expect(Number.isFinite(bt.metrics.maxRunupUsd)).toBe(true);
+  });
+
+  it('keeps DEMA-ATR BEAR trend across flat consolidations & upgrades legacy v1 kbosParams', () => {
+    const start = Date.UTC(2026, 2, 1);
+    const downtrend: Candle[] = [];
+    let px = 60_000;
+    for (let i = 0; i < 60; i++) {
+      // Sharp drop followed by flat horizontal pause
+      const step = i < 25 ? -350 : i % 2 === 0 ? 15 : -18;
+      const open = px;
+      const close = open + step;
+      downtrend.push({
+        timestamp: start + i * 900_000,
+        open,
+        high: Math.max(open, close) + 60,
+        low: Math.min(open, close) - 60,
+        close,
+        volume: 500,
+      });
+      px = close;
+    }
+
+    const da = computeDemaAtr(downtrend, { periodDema: 7, periodAtr: 14, factorAtr: 1.5 });
+    const postDrop = da.slice(28);
+    expect(postDrop.every((pt) => pt.trend === 'BEAR')).toBe(true);
+
+    // Legacy 0003 unmodified defaults upgrade automatically to v2 defaults
+    const upgraded = mergeKbosParams({
+      basisType: 'ALMA',
+      basisLen: 2,
+      useRes: true,
+      intRes: 18,
+      useEma200: false,
+      useAdx: false,
+      adxThreshold: 25,
+      factorAtr: 1.7,
+      tp1Pct: 1.5,
+      trailPct: 2.0,
+    });
+    expect(upgraded.intRes).toBe(DEFAULT_KBOS_PARAMS.intRes);
+    expect(upgraded.useEma200).toBe(true);
+    expect(upgraded.useAdx).toBe(true);
+
+    // Explicit user override is preserved
+    const custom = mergeKbosParams({ intRes: 12, useEma200: false, tp1Pct: 2.2 });
+    expect(custom.intRes).toBe(12);
+    expect(custom.useEma200).toBe(false);
+    expect(custom.tp1Pct).toBe(2.2);
+
+    // Signal Mixer hits actionable threshold on confluent bullish trend+momentum+volume bar
+    const bullRun: Candle[] = [];
+    let bp = 40_000;
+    for (let i = 0; i < 60; i++) {
+      const open = bp;
+      const close = i === 59 ? open + 450 : open + 120 + (i % 3) * 20;
+      bullRun.push({
+        timestamp: start + i * 900_000,
+        open,
+        high: close + 40,
+        low: open - 30,
+        close,
+        volume: i === 59 ? 2500 : 800,
+      });
+      bp = close;
+    }
+    const mix = evaluateSignalMixerAtBar(bullRun, bullRun.length - 1, 'BULLISH', DEFAULT_MIXER_WEIGHTS, 65);
+    expect(mix.confidence).toBeGreaterThanOrEqual(65);
+    expect(mix.direction).toBe('LONG');
   });
 });

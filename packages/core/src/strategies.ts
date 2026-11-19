@@ -78,26 +78,56 @@ function median(vals: number[]): number {
   return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
+function computeAdx14(candles: Candle[]): number[] {
+  const n = candles.length;
+  const out = new Array<number>(n).fill(20);
+  if (n < 20) return out;
+  const len = 14;
+  let smTr = 0;
+  let smPlus = 0;
+  let smMinus = 0;
+  let adxSm = 20;
+  for (let i = 1; i < n; i++) {
+    const c = candles[i]!;
+    const p = candles[i - 1]!;
+    const tr = Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close));
+    const dmPlus = c.high - p.high > p.low - c.low ? Math.max(c.high - p.high, 0) : 0;
+    const dmMinus = p.low - c.low > c.high - p.high ? Math.max(p.low - c.low, 0) : 0;
+    smTr = smTr - smTr / len + tr;
+    smPlus = smPlus - smPlus / len + dmPlus;
+    smMinus = smMinus - smMinus / len + dmMinus;
+    const dip = smTr > 0 ? (smPlus / smTr) * 100 : 0;
+    const dim = smTr > 0 ? (smMinus / smTr) * 100 : 0;
+    const sum = dip + dim;
+    const dx = sum > 0 ? (Math.abs(dip - dim) / sum) * 100 : 0;
+    adxSm = i < len ? dx : (adxSm * (len - 1) + dx) / len;
+    out[i] = adxSm;
+  }
+  return out;
+}
+
 function build3TpLevels(direction: 'LONG' | 'SHORT', entry: number, riskDist: number) {
-  const risk = Math.max(riskDist, entry * 0.0035);
+  const risk = Math.max(riskDist, entry * 0.0045);
   if (direction === 'LONG') {
     return {
       stopLoss: entry - risk,
-      tp1: entry + risk * 1.0,
-      tp2: entry + risk * 2.0,
-      tp3: entry + risk * 3.0,
+      tp1: entry + risk * 1.2,
+      tp2: entry + risk * 2.2,
+      tp3: entry + risk * 3.5,
     };
   }
   return {
     stopLoss: entry + risk,
-    tp1: entry - risk * 1.0,
-    tp2: entry - risk * 2.0,
-    tp3: entry - risk * 3.0,
+    tp1: entry - risk * 1.2,
+    tp2: entry - risk * 2.2,
+    tp3: entry - risk * 3.5,
   };
 }
 
 /**
  * Computes TimeTrade's 8-channel Weighted Signal Mixer at the latest closed bar index.
+ * Continuous trend/momentum/volume/structure scoring + event catalysts (Liquidity Sweep / FVG)
+ * so strong confluent setups cleanly exceed threshold=65 without being diluted by inactive event channels.
  */
 export function evaluateSignalMixerAtBar(
   candles: Candle[],
@@ -106,10 +136,11 @@ export function evaluateSignalMixerAtBar(
   weights: SignalMixerWeights = DEFAULT_MIXER_WEIGHTS,
   threshold = 65
 ): SignalMixerResult {
-  if (idx < 25 || idx >= candles.length) {
+  if (idx < 30 || idx >= candles.length) {
     return { compositeScore: 0, confidence: 0, direction: 'NONE', channels: [] };
   }
-  const slice = candles.slice(0, idx + 1);
+  const slice = candles.slice(Math.max(0, idx - 220), idx + 1);
+  const localIdx = slice.length - 1;
   const closes = slice.map((c) => c.close);
   const ema20 = ema(closes, 20);
   const ema50 = ema(closes, 50);
@@ -118,56 +149,92 @@ export function evaluateSignalMixerAtBar(
   const bb = bollingerBands(closes, 20, 2);
   const swings = causalSwingLevels(slice, 3, 2);
 
-  const c = slice[idx]!;
-  const prev = slice[idx - 1]!;
-  const prev2 = slice[idx - 2]!;
-  const e20 = ema20[idx] ?? c.close;
-  const e50 = ema50[idx] ?? c.close;
-  const r = rsiArr[idx] ?? 50;
-  const a = atrArr[idx] ?? c.close * 0.006;
+  const c = slice[localIdx]!;
+  const prev = slice[localIdx - 1]!;
+  const prev2 = slice[localIdx - 2]!;
+  const e20 = ema20[localIdx] ?? c.close;
+  const e50 = ema50[localIdx] ?? c.close;
+  const e20Prev = ema20[Math.max(0, localIdx - 3)] ?? e20;
+  const r = rsiArr[localIdx] ?? 50;
+  const rPrev = rsiArr[localIdx - 1] ?? 50;
+  const a = atrArr[localIdx] ?? c.close * 0.006;
 
-  // 1. Trend (-100..+100)
+  // 1. Trend (-100..+100): HTF alignment + EMA20/50 + EMA20 slope
+  const slopeSign = e20 > e20Prev ? 25 : e20 < e20Prev ? -25 : 0;
   const trendRaw =
-    (htfTrend === 'BULLISH' ? 60 : htfTrend === 'BEARISH' ? -60 : 0) +
-    (e20 > e50 ? 40 : e20 < e50 ? -40 : 0);
+    (htfTrend === 'BULLISH' ? 45 : htfTrend === 'BEARISH' ? -45 : 0) +
+    (e20 > e50 ? 30 : e20 < e50 ? -30 : 0) +
+    slopeSign;
 
-  // 2. Momentum
-  const momentumRaw =
-    r > 55 && r < 72 ? 80 : r < 45 && r > 28 ? -80 : c.close > prev.high ? 50 : c.close < prev.low ? -50 : 0;
+  // 2. Momentum (-100..+100): healthy directional RSI & expansion
+  let momentumRaw = 0;
+  if (r >= 53 && r <= 70 && r >= rPrev - 1) momentumRaw = 85;
+  else if (r <= 47 && r >= 30 && r <= rPrev + 1) momentumRaw = -85;
+  else if (c.close > prev.high && r < 74) momentumRaw = 60;
+  else if (c.close < prev.low && r > 26) momentumRaw = -60;
 
-  // 3. Liquidity Sweep
-  const swLow = swings.confirmedLows[idx - 1];
-  const swHigh = swings.confirmedHighs[idx - 1];
+  // 3. Liquidity Sweep (check last 3 bars so sweep+followthrough aligns)
   let sweepRaw = 0;
-  if (Number.isFinite(swLow) && c.low < swLow! && c.close > swLow!) sweepRaw = 95;
-  else if (Number.isFinite(swHigh) && c.high > swHigh! && c.close < swHigh!) sweepRaw = -95;
+  for (let k = localIdx; k >= Math.max(3, localIdx - 2); k--) {
+    const bar = slice[k]!;
+    const swLow = swings.confirmedLows[k - 1];
+    const swHigh = swings.confirmedHighs[k - 1];
+    if (Number.isFinite(swLow) && bar.low < swLow! && bar.close > swLow!) {
+      sweepRaw = k === localIdx ? 95 : 65;
+      break;
+    }
+    if (Number.isFinite(swHigh) && bar.high > swHigh! && bar.close < swHigh!) {
+      sweepRaw = k === localIdx ? -95 : -65;
+      break;
+    }
+  }
 
-  // 4. Fair Value Gap (3-candle FVG)
+  // 4. Fair Value Gap / Imbalance (check last 2 bars)
   let fvgRaw = 0;
-  if (c.low > prev2.high && prev.close > prev.open) fvgRaw = 85;
-  else if (c.high < prev2.low && prev.close < prev.open) fvgRaw = -85;
+  if (c.low > prev2.high && prev.close > prev.open) fvgRaw = 90;
+  else if (c.high < prev2.low && prev.close < prev.open) fvgRaw = -90;
+  else if (c.close > prev.high && c.close > c.open && prev.close > prev.open) fvgRaw = 45;
+  else if (c.close < prev.low && c.close < c.open && prev.close < prev.open) fvgRaw = -45;
 
-  // 5. Volatility Regime (ATR% within healthy 0.2% - 2.5%)
+  // 5. Volatility Regime (healthy ATR% 0.15% - 3.0% aligned with bar direction)
   const atrPct = (a / Math.max(1e-9, c.close)) * 100;
-  const volRegimeRaw = atrPct >= 0.2 && atrPct <= 2.5 ? (c.close >= c.open ? 65 : -65) : 0;
+  const volRegimeRaw = atrPct >= 0.15 && atrPct <= 3.0 ? (c.close > c.open ? 75 : c.close < c.open ? -75 : 0) : 0;
 
   // 6. Volume Surge
   const recentVols = slice.slice(-20).map((x) => x.volume);
   const medVol = Math.max(1e-9, median(recentVols));
   const volRatio = c.volume / medVol;
-  const volRaw = volRatio >= 1.25 ? (c.close >= c.open ? 80 : -80) : volRatio >= 0.9 ? (c.close >= c.open ? 35 : -35) : 0;
+  const volRaw =
+    volRatio >= 1.25
+      ? c.close >= c.open
+        ? 90
+        : -90
+      : volRatio >= 0.9
+        ? c.close >= c.open
+          ? 55
+          : -55
+        : 0;
 
-  // 7. Structure (Body Ratio & Close location)
+  // 7. Structure (Body Ratio & Close position)
   const range = Math.max(1e-9, c.high - c.low);
   const bodyRatio = Math.abs(c.close - c.open) / range;
-  const structureRaw = bodyRatio >= 0.55 ? (c.close > c.open ? 75 : -75) : 0;
+  const closePos = (c.close - c.low) / range;
+  const structureRaw =
+    bodyRatio >= 0.5 && closePos >= 0.65 && c.close > c.open
+      ? 85
+      : bodyRatio >= 0.5 && closePos <= 0.35 && c.close < c.open
+        ? -85
+        : 0;
 
-  // 8. Mean Reversion (Bollinger)
-  const lower = bb.lower[idx];
-  const upper = bb.upper[idx];
+  // 8. Mean Reversion (Bollinger pullbacks — do not penalize strong aligned trend breakouts)
+  const lower = bb.lower[localIdx];
+  const upper = bb.upper[localIdx];
+  const mid = bb.mid[localIdx];
   let mrRaw = 0;
-  if (Number.isFinite(lower) && c.close <= lower! * 1.002) mrRaw = 75;
-  else if (Number.isFinite(upper) && c.close >= upper! * 0.998) mrRaw = -75;
+  if (Number.isFinite(lower) && c.low <= lower! * 1.002 && c.close > c.open) mrRaw = 80;
+  else if (Number.isFinite(upper) && c.high >= upper! * 0.998 && c.close < c.open) mrRaw = -80;
+  else if (Number.isFinite(mid) && trendRaw >= 50 && c.low <= mid! && c.close > mid!) mrRaw = 65;
+  else if (Number.isFinite(mid) && trendRaw <= -50 && c.high >= mid! && c.close < mid!) mrRaw = -65;
 
   const channels: SignalMixerChannelScore[] = [
     { key: 'trend', label: 'HTF & EMA Trend', score: trendRaw, weight: weights.trend },
@@ -177,20 +244,32 @@ export function evaluateSignalMixerAtBar(
     { key: 'volatility', label: 'ATR Volatility Regime', score: volRegimeRaw, weight: weights.volatility },
     { key: 'volume', label: 'Volume Surge', score: volRaw, weight: weights.volume },
     { key: 'structure', label: 'Candle Body Structure', score: structureRaw, weight: weights.structure },
-    { key: 'meanReversion', label: 'Bollinger Mean Reversion', score: mrRaw, weight: weights.meanReversion },
+    { key: 'meanReversion', label: 'BB Pullback / Reversion', score: mrRaw, weight: weights.meanReversion },
   ];
 
-  const totalWeight = Math.max(1, channels.reduce((s, ch) => s + ch.weight, 0));
-  const compositeScore = channels.reduce((s, ch) => s + ch.score * ch.weight, 0) / totalWeight;
+  // Active-weighted normalization across core pillars + triggered catalysts
+  // Continuous baseline pillars always count; event catalysts boost when active or gently dampen if completely absent.
+  const activeWeight = channels.reduce(
+    (s, ch) => s + (ch.score !== 0 ? ch.weight : ch.key === 'liquiditySweep' || ch.key === 'fvg' || ch.key === 'meanReversion' ? ch.weight * 0.25 : ch.weight),
+    0
+  );
+  const denom = Math.max(1, activeWeight);
+  const compositeScore = channels.reduce((s, ch) => s + ch.score * ch.weight, 0) / denom;
   const confidence = Math.min(100, Math.round(Math.abs(compositeScore)));
-  const direction = confidence >= threshold ? (compositeScore > 0 ? 'LONG' : 'SHORT') : 'NONE';
+  // Respect HTF directional bias unless extraordinary counter-trend liquidity sweep + MR confluence occurs
+  const htfConflict =
+    (compositeScore > 0 && htfTrend === 'BEARISH' && !(sweepRaw > 0 && mrRaw > 0)) ||
+    (compositeScore < 0 && htfTrend === 'BULLISH' && !(sweepRaw < 0 && mrRaw < 0));
+  const direction = !htfConflict && confidence >= threshold ? (compositeScore > 0 ? 'LONG' : 'SHORT') : 'NONE';
 
   return { compositeScore, confidence, direction, channels };
 }
 
 export interface StrategyParams {
   kbosParams?: Partial<KbosParams>;
-  [key: string]: number | Partial<KbosParams> | undefined;
+  mixerWeights?: SignalMixerWeights;
+  mixerThreshold?: number;
+  [key: string]: number | Partial<KbosParams> | SignalMixerWeights | undefined;
 }
 
 export function computeStrategySignals(
@@ -204,7 +283,7 @@ export function computeStrategySignals(
   if (ltfCandles.length < 30) return [];
 
   if (strategyKey === 'kbos_v11') {
-    return computeKbosV11Detailed(ltfCandles, timeframe, params.kbosParams ?? params).outputs;
+    return computeKbosV11Detailed(ltfCandles, timeframe, params.kbosParams ?? (params as Partial<KbosParams>)).outputs;
   }
 
   const custom = getCustomIndicator(strategyKey);
@@ -219,6 +298,8 @@ export function computeStrategySignals(
   const ema200 = ema(closes, 200);
   const rsiVals = rsi(closes, Number(params.rsiPeriod ?? 14));
   const atrVals = atr(ltfCandles, Number(params.atrPeriod ?? 14));
+  const adxVals = computeAdx14(ltfCandles);
+  const bb = bollingerBands(closes, 20, 2);
   const swings = causalSwingLevels(ltfCandles, 3, 2);
 
   const ltfMs = timeframeToMs(timeframe);
@@ -235,6 +316,7 @@ export function computeStrategySignals(
 
   const outputs: StrategySignalOutput[] = [];
   let testFired = false;
+  let lastSignalBar = -10;
 
   for (let i = 0; i < ltfCandles.length; i++) {
     const c = ltfCandles[i]!;
@@ -242,14 +324,18 @@ export function computeStrategySignals(
     const f20 = ema20[i] ?? c.close;
     const f50 = ema50[i] ?? c.close;
     const f60 = ema60[i] ?? f50;
-    const f200 = ema200[i] ?? f50;
+    const f200 = ema200[i];
     const r = rsiVals[i] ?? 50;
     const a = Number.isFinite(atrVals[i]) ? atrVals[i]! : c.close * 0.008;
+    const adx = adxVals[i] ?? 20;
     const trend = htfTrend[i] ?? 'NEUTRAL';
+    const range = Math.max(1e-9, c.high - c.low);
+    const body = Math.abs(c.close - c.open);
+    const closePos = (c.close - c.low) / range;
 
     let signal: 'LONG' | 'SHORT' | 'NONE' = 'NONE';
     let reason = 'No setup';
-    let riskDist = a * 1.6;
+    let riskDist = a * 1.8;
     let entryLegs: StrategySignalOutput['entryLegs'];
 
     if (strategyKey === 'test_strategy') {
@@ -259,7 +345,7 @@ export function computeStrategySignals(
         testFired = true;
       }
     } else if ((strategyKey === 'sp2l' || strategyKey === 'dollarino_tv_hybrid') && i >= 26) {
-      // Causal SP2L Spike-2Leg: 3-candle monotonic low/high + breakout over 20-bar lookback + gap + pullback trigger
+      // Causal SP2L Spike-2Leg + Liquidity Sweep reclaim
       const b1 = ltfCandles[i - 3]!;
       const b2 = ltfCandles[i - 2]!;
       const b3 = ltfCandles[i - 1]!;
@@ -274,7 +360,7 @@ export function computeStrategySignals(
         b3.high - b1.low >= a * 1.4 &&
         b2.close > lookbackHigh &&
         spikeBody >= 0.55 &&
-        b2.low > pre.high; // pressure gap
+        b2.low > pre.high;
 
       const bearSpike =
         b1.high >= b2.high &&
@@ -284,97 +370,172 @@ export function computeStrategySignals(
         spikeBody >= 0.55 &&
         b2.high < pre.low;
 
-      if (bullSpike && c.low < b3.low && c.close > b1.low && trend !== 'BEARISH') {
+      if (bullSpike && c.low < b3.low && c.close > b1.low && c.close - f20 <= a * 1.75 && trend === 'BULLISH') {
         signal = 'LONG';
-        riskDist = Math.max(a * 0.8, c.close - (b1.low - a * 0.1));
+        riskDist = Math.max(a * 1.8, c.close - (b1.low - a * 0.3));
         entryLegs = [
           { label: 'Entry 1 (Retest)', price: b3.low, weight: 1 },
           { label: 'Entry 2 (EMA60)', price: f60, weight: 2 },
         ];
         reason = 'SP2L Spike-2Leg bullish breakout + pressure gap + pullback trigger';
-      } else if (bearSpike && c.high > b3.high && c.close < b1.high && trend !== 'BULLISH') {
+      } else if (bearSpike && c.high > b3.high && c.close < b1.high && f20 - c.close <= a * 1.75 && trend === 'BEARISH') {
         signal = 'SHORT';
-        riskDist = Math.max(a * 0.8, b1.high + a * 0.1 - c.close);
+        riskDist = Math.max(a * 1.8, b1.high + a * 0.3 - c.close);
         entryLegs = [
           { label: 'Entry 1 (Retest)', price: b3.high, weight: 1 },
           { label: 'Entry 2 (EMA60)', price: f60, weight: 2 },
         ];
         reason = 'SP2L Spike-2Leg bearish breakdown + pressure gap + pullback trigger';
       } else {
-        // Fallback liquidity sweep if SP2L 3-leg gap absent
         const swLow = swings.confirmedLows[i - 1];
         const swHigh = swings.confirmedHighs[i - 1];
-        if (trend === 'BULLISH' && Number.isFinite(swLow) && c.low < swLow! && c.close > swLow! && c.close > c.open && r < 68) {
+        if (trend === 'BULLISH' && adx >= 18 && Number.isFinite(swLow) && c.low < swLow! && c.close > swLow! && c.close > f20 && c.close > c.open && r >= 40 && r <= 65) {
           signal = 'LONG';
+          riskDist = Math.max(a * 2.0, c.close - c.low + a * 0.4);
           reason = 'SP2L liquidity sweep & close reclaim';
-        } else if (trend === 'BEARISH' && Number.isFinite(swHigh) && c.high > swHigh! && c.close < swHigh! && c.close < c.open && r > 32) {
+        } else if (trend === 'BEARISH' && adx >= 18 && Number.isFinite(swHigh) && c.high > swHigh! && c.close < swHigh! && c.close < f20 && c.close < c.open && r >= 35 && r <= 60) {
           signal = 'SHORT';
+          riskDist = Math.max(a * 2.0, c.high - c.close + a * 0.4);
           reason = 'SP2L liquidity sweep & close rejection';
         }
       }
-    } else if (strategyKey === 'grid_strategy' && i >= 55) {
-      // CodexBot Bounded ATR Pullback Grid: EMA50 vs EMA200 spread 0.5%-4%, ATR% 0.2%-3%, volume >= median, RSI pullback
-      const emaSpreadPct = (Math.abs(f50 - f200) / Math.max(1e-9, c.close)) * 100;
+    } else if (strategyKey === 'grid_strategy' && i >= 35 && i - lastSignalBar >= 4) {
+      // Bounded Bollinger + RSI Exhaustion Pullback (works cleanly with or without EMA200 warmup)
       const atrPct = (a / Math.max(1e-9, c.close)) * 100;
-      const medVol = median(ltfCandles.slice(i - 20, i).map((x) => x.volume));
-      const prevRsi = rsiVals[i - 1] ?? 50;
-      const slope50 = f50 - (ema50[i - 5] ?? f50);
+      const lower = bb.lower[i];
+      const upper = bb.upper[i];
+      const macroOkLong = !Number.isFinite(f200) || c.close >= f200! * 0.985 || adx < 26;
+      const macroOkShort = !Number.isFinite(f200) || c.close <= f200! * 1.015 || adx < 26;
 
-      if (emaSpreadPct >= 0.4 && emaSpreadPct <= 4.0 && atrPct >= 0.2 && atrPct <= 3.0 && c.volume >= medVol * 0.9) {
-        if (trend === 'BULLISH' && slope50 > 0 && prevRsi > 52 && r >= 40 && r <= 56) {
+      if (atrPct >= 0.15 && atrPct <= 3.2 && Number.isFinite(lower) && Number.isFinite(upper)) {
+        const touchedLower = prev.low <= lower! * 1.002 || c.low <= lower! * 1.002;
+        const touchedUpper = prev.high >= upper! * 0.998 || c.high >= upper! * 0.998;
+        if (touchedLower && c.close > c.open && closePos >= 0.55 && r >= 26 && r <= 48 && trend !== 'BEARISH' && macroOkLong) {
           signal = 'LONG';
-          riskDist = a * 2.0;
+          riskDist = Math.max(a * 2.0, c.close - Math.min(c.low, prev.low) + a * 0.4);
           entryLegs = [
             { label: 'Grid Layer 1', price: c.close, weight: 1 },
             { label: 'Grid Layer 2 (-1 ATR)', price: c.close - a, weight: 1 },
           ];
-          reason = 'GridStrategy bounded bullish trend-pullback (EMA50/200 + RSI + ATR)';
-        } else if (trend === 'BEARISH' && slope50 < 0 && prevRsi < 48 && r >= 44 && r <= 60) {
+          reason = 'Grid BB lower band exhaustion bounce (RSI + ATR bounded)';
+        } else if (touchedUpper && c.close < c.open && closePos <= 0.45 && r >= 52 && r <= 74 && trend !== 'BULLISH' && macroOkShort) {
           signal = 'SHORT';
-          riskDist = a * 2.0;
+          riskDist = Math.max(a * 2.0, Math.max(c.high, prev.high) - c.close + a * 0.4);
           entryLegs = [
             { label: 'Grid Layer 1', price: c.close, weight: 1 },
             { label: 'Grid Layer 2 (+1 ATR)', price: c.close + a, weight: 1 },
           ];
-          reason = 'GridStrategy bounded bearish trend-pullback (EMA50/200 + RSI + ATR)';
+          reason = 'Grid BB upper band exhaustion rejection (RSI + ATR bounded)';
         }
       }
-    } else if (strategyKey === 'ema_trend_pullback' && i >= 50) {
-      if (trend === 'BULLISH' && f20 > f50 && prev.low <= f20 && c.close > f20 && r >= 38 && r <= 65) {
+    } else if (strategyKey === 'ema_trend_pullback' && i >= 55 && i - lastSignalBar >= 4) {
+      const slope50 = f50 - (ema50[i - 8] ?? f50);
+      const medVol = median(ltfCandles.slice(i - 20, i).map((x) => x.volume));
+      const macroBull = !Number.isFinite(f200) || c.close > f200!;
+      const macroBear = !Number.isFinite(f200) || c.close < f200!;
+
+      if (
+        trend === 'BULLISH' &&
+        macroBull &&
+        f20 > f50 &&
+        slope50 > 0 &&
+        adx >= 18 &&
+        Math.min(c.low, prev.low) <= f20 * 1.0015 &&
+        c.close > f20 &&
+        c.close > c.open &&
+        closePos >= 0.58 &&
+        c.volume >= medVol * 0.85 &&
+        r >= 44 &&
+        r <= 66
+      ) {
         signal = 'LONG';
-        riskDist = a * 1.5;
-        reason = 'EMA 20/50 trend pullback bullish bounce';
-      } else if (trend === 'BEARISH' && f20 < f50 && prev.high >= f20 && c.close < f20 && r >= 35 && r <= 62) {
+        riskDist = Math.max(a * 1.8, c.close - Math.min(c.low, prev.low) + a * 0.4);
+        reason = 'EMA 20/50/200 aligned trend pullback bullish rejection';
+      } else if (
+        trend === 'BEARISH' &&
+        macroBear &&
+        f20 < f50 &&
+        slope50 < 0 &&
+        adx >= 18 &&
+        Math.max(c.high, prev.high) >= f20 * 0.9985 &&
+        c.close < f20 &&
+        c.close < c.open &&
+        closePos <= 0.42 &&
+        c.volume >= medVol * 0.85 &&
+        r >= 34 &&
+        r <= 56
+      ) {
         signal = 'SHORT';
-        riskDist = a * 1.5;
-        reason = 'EMA 20/50 trend pullback bearish rejection';
+        riskDist = Math.max(a * 1.8, Math.max(c.high, prev.high) - c.close + a * 0.4);
+        reason = 'EMA 20/50/200 aligned trend pullback bearish rejection';
       }
-    } else if (strategyKey === 'vibe_4h_daily_breakout' && i >= 22) {
+    } else if (strategyKey === 'vibe_4h_daily_breakout' && i >= 25 && i - lastSignalBar >= 6) {
       const high20 = Math.max(...ltfCandles.slice(i - 20, i).map((x) => x.high));
-      if (trend === 'BULLISH' && c.close > high20 && r >= 45 && r <= 72) {
+      const low20 = Math.min(...ltfCandles.slice(i - 20, i).map((x) => x.low));
+      const medVol = median(ltfCandles.slice(i - 20, i).map((x) => x.volume));
+      if (trend === 'BULLISH' && f20 > f50 && c.close > high20 && prev.close <= high20 && c.volume >= medVol * 1.25 && adx >= 18 && closePos >= 0.6 && r >= 50 && r <= 70) {
         signal = 'LONG';
-        riskDist = a * 2.0;
-        reason = 'Vibe 4H/Daily long-only 20-bar breakout';
+        riskDist = a * 2.3;
+        reason = 'Donchian 20-bar bullish breakout + volume expansion';
+      } else if (trend === 'BEARISH' && f20 < f50 && c.close < low20 && prev.close >= low20 && c.volume >= medVol * 1.25 && adx >= 18 && closePos <= 0.4 && r >= 30 && r <= 50) {
+        signal = 'SHORT';
+        riskDist = a * 2.3;
+        reason = 'Donchian 20-bar bearish breakdown + volume expansion';
       }
-    } else if (strategyKey === 'vibe_4h_candle_confirmation' && i >= 25) {
-      const body = Math.abs(c.close - c.open);
-      const range = Math.max(c.high - c.low, 1e-9);
+    } else if (strategyKey === 'vibe_4h_candle_confirmation' && i >= 25 && i - lastSignalBar >= 5) {
       const medVol = median(ltfCandles.slice(i - 20, i).map((x) => x.volume));
       const high3 = Math.max(...ltfCandles.slice(i - 3, i).map((x) => x.high));
       const low3 = Math.min(...ltfCandles.slice(i - 3, i).map((x) => x.low));
-      if (trend === 'BULLISH' && body >= a * 0.5 && c.close > high3 && c.volume >= medVol * 0.8 && (c.close - c.low) / range >= 0.6) {
+      if (
+        trend === 'BULLISH' &&
+        f20 > f50 &&
+        adx >= 18 &&
+        body >= a * 0.75 &&
+        c.close - f20 <= a * 1.6 &&
+        c.close > high3 &&
+        c.volume >= medVol * 1.15 &&
+        closePos >= 0.68 &&
+        r >= 50 &&
+        r <= 67
+      ) {
         signal = 'LONG';
-        reason = '4H momentum candle confirmation bullish';
-      } else if (trend === 'BEARISH' && body >= a * 0.5 && c.close < low3 && c.volume >= medVol * 0.8 && (c.high - c.close) / range >= 0.6) {
+        riskDist = a * 2.1;
+        reason = 'Momentum displacement bullish confirmation';
+      } else if (
+        trend === 'BEARISH' &&
+        f20 < f50 &&
+        adx >= 18 &&
+        body >= a * 0.75 &&
+        f20 - c.close <= a * 1.6 &&
+        c.close < low3 &&
+        c.volume >= medVol * 1.15 &&
+        closePos <= 0.32 &&
+        r >= 33 &&
+        r <= 50
+      ) {
         signal = 'SHORT';
-        reason = '4H momentum candle confirmation bearish';
+        riskDist = a * 2.1;
+        reason = 'Momentum displacement bearish confirmation';
       }
-    } else if (strategyKey === 'signal_mixer' && i >= 30) {
-      const mix = evaluateSignalMixerAtBar(ltfCandles, i, trend, DEFAULT_MIXER_WEIGHTS, Number(params.mixerThreshold ?? 65));
-      if (mix.direction !== 'NONE') {
+    } else if (strategyKey === 'signal_mixer' && i >= 35 && i - lastSignalBar >= 6) {
+      const weights = params.mixerWeights ?? DEFAULT_MIXER_WEIGHTS;
+      const threshold = Number(params.mixerThreshold ?? 65);
+      const mix = evaluateSignalMixerAtBar(ltfCandles, i, trend, weights, threshold);
+      const notExtended =
+        mix.direction === 'LONG'
+          ? c.close - f20 <= a * 1.35 && r <= 67
+          : mix.direction === 'SHORT'
+            ? f20 - c.close <= a * 1.35 && r >= 33
+            : false;
+      if (mix.direction !== 'NONE' && adx >= 18 && notExtended) {
         signal = mix.direction;
+        riskDist = a * 2.1;
         reason = `Weighted Signal Mixer (${mix.confidence}% confidence)`;
       }
+    }
+
+    if (signal !== 'NONE') {
+      lastSignalBar = i;
     }
 
     const levels = signal !== 'NONE' ? build3TpLevels(signal, c.close, riskDist) : undefined;

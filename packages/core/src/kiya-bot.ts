@@ -12,9 +12,9 @@ import type {
 
 export const DEFAULT_KBOS_PARAMS: KbosParams = {
   basisType: 'ALMA',
-  basisLen: 2,
+  basisLen: 3,
   useRes: true,
-  intRes: 18,
+  intRes: 4,
   offsetSigma: 5,
   offsetALMA: 0.85,
   delayOffset: 0,
@@ -23,22 +23,22 @@ export const DEFAULT_KBOS_PARAMS: KbosParams = {
   useAtr2: false,
   useVol: false,
   useEmaRsi: false,
-  useEma200: false,
-  useAdx: false,
+  useEma200: true,
+  useAdx: true,
   adxVariant: 'ORIGINAL',
-  adxThreshold: 25,
+  adxThreshold: 18,
   useRsiCustom: false,
   useBb: false,
   useDemaAtr: true,
   haCandles: true,
   periodDema: 7,
   periodAtr: 14,
-  factorAtr: 1.7,
-  tp1Pct: 1.5,
-  tp2Pct: 3.0,
+  factorAtr: 1.5,
+  tp1Pct: 1.4,
+  tp2Pct: 2.8,
   tp3Pct: 4.5,
   useTrail: true,
-  trailPct: 2.0,
+  trailPct: 1.2,
   trailAfterTp1: true,
   beAfterTp1: true,
   mainRibbonLen: 180,
@@ -47,6 +47,19 @@ export const DEFAULT_KBOS_PARAMS: KbosParams = {
 export function mergeKbosParams(partial?: Partial<KbosParams> | Record<string, unknown>): KbosParams {
   if (!partial) return { ...DEFAULT_KBOS_PARAMS };
   const p = partial as Record<string, unknown>;
+  // Auto-upgrade untouched legacy v1 DB defaults (migration 0003) without overwriting explicit user overrides
+  const isUntouchedLegacyV1 =
+    Number(p.intRes) === 18 &&
+    Number(p.basisLen) === 2 &&
+    p.useEma200 === false &&
+    p.useAdx === false &&
+    Number(p.adxThreshold) === 25 &&
+    Number(p.factorAtr) === 1.7 &&
+    Number(p.tp1Pct) === 1.5 &&
+    Number(p.trailPct) === 2.0;
+  if (isUntouchedLegacyV1) {
+    return { ...DEFAULT_KBOS_PARAMS };
+  }
   return {
     ...DEFAULT_KBOS_PARAMS,
     ...(partial as Partial<KbosParams>),
@@ -261,7 +274,7 @@ export function computeHeikinAshi(candles: Candle[]): Candle[] {
 }
 
 /**
- * DEMA Adjusted ATR [BackQuant]
+ * DEMA Adjusted ATR [BackQuant] (stateful SuperTrend ratchet so flat consolidations preserve trend)
  */
 export function computeDemaAtr(
   candles: Candle[],
@@ -272,21 +285,36 @@ export function computeDemaAtr(
   const src = ha.map((c) => c.close);
   const demaOut = dema(src, opts.periodDema ?? 7);
   const atrVals = atr(candles, opts.periodAtr ?? 14);
-  const factor = opts.factorAtr ?? 1.7;
+  const factor = opts.factorAtr ?? 1.5;
 
   const out: Array<{ time: number; value: number; trend: 'BULL' | 'BEAR' }> = [];
-  let prevBand = src[0]!;
+  const d0 = Number.isFinite(demaOut[0]) ? demaOut[0]! : src[0]!;
+  const a0 = Number.isFinite(atrVals[0]) ? atrVals[0]! : d0 * 0.006;
+  let prevUpper = d0 + a0 * factor;
+  let prevLower = d0 - a0 * factor;
+  let prevDema = d0;
+  let trend: 'BULL' | 'BEAR' = 'BULL';
+
   for (let i = 0; i < candles.length; i++) {
     const d = Number.isFinite(demaOut[i]) ? demaOut[i]! : src[i]!;
     const a = Number.isFinite(atrVals[i]) ? atrVals[i]! : d * 0.006;
     const tr = a * factor;
-    let band = i === 0 ? d : prevBand;
-    const upper = d + tr;
-    const lower = d - tr;
-    if (lower > band) band = lower;
-    if (upper < band) band = upper;
-    const trend: 'BULL' | 'BEAR' = band >= prevBand ? 'BULL' : 'BEAR';
-    prevBand = band;
+    const rawUpper = d + tr;
+    const rawLower = d - tr;
+
+    const upper = i === 0 ? rawUpper : (rawUpper < prevUpper || prevDema > prevUpper ? rawUpper : prevUpper);
+    const lower = i === 0 ? rawLower : (rawLower > prevLower || prevDema < prevLower ? rawLower : prevLower);
+
+    if (i > 0) {
+      if (trend === 'BEAR' && d > prevUpper) trend = 'BULL';
+      else if (trend === 'BULL' && d < prevLower) trend = 'BEAR';
+    }
+
+    const band = trend === 'BULL' ? lower : upper;
+    prevUpper = upper;
+    prevLower = lower;
+    prevDema = d;
+
     out.push({
       time: Math.floor(candles[i]!.timestamp / 1000),
       value: band,
@@ -303,7 +331,7 @@ export function computeAlmaRibbon(
   candles: Candle[],
   opts: { mainLen?: number; offsetAlma?: number; sigmaAlma?: number } = {}
 ) {
-  if (candles.length < 15) return { bands: [] as Array<{ label: string; color: string; points: Array<{ time: number; value: number }> }>, bullCross: false, bearCross: false };
+  if (candles.length < 15) return { bands: [] as Array<{ label: string; color: string; points: Array<{ time: number; value: number }> }>, series: [] as number[][], bullCross: false, bearCross: false };
   const PHI = 1.61803398875;
   const maxSafe = Math.max(21, Math.min(opts.mainLen ?? 180, Math.floor(candles.length * 0.85)));
   const off = opts.offsetAlma ?? 0.85;
@@ -332,7 +360,7 @@ export function computeAlmaRibbon(
   const bullCross = Number.isFinite(s8[last]) && Number.isFinite(s7[last]) && s8[prev]! <= s7[prev]! && s8[last]! > s7[last]!;
   const bearCross = Number.isFinite(s8[last]) && Number.isFinite(s7[last]) && s8[prev]! >= s7[prev]! && s8[last]! < s7[last]!;
 
-  return { bands, bullCross, bearCross };
+  return { bands, series, bullCross, bearCross };
 }
 
 function calcAdxSeries(
@@ -418,7 +446,7 @@ export function computeKbosV11Detailed(
       closeSeriesAlt: [],
       openSeriesAlt: [],
       demaAtr: [],
-      almaRibbon: { bands: [], bullCross: false, bearCross: false },
+      almaRibbon: { bands: [], series: [], bullCross: false, bearCross: false },
       markers: [],
     };
   }
@@ -584,14 +612,17 @@ export function computeKbosV11Detailed(
       if (!(c.close < e20 && r < 40 && r < re20)) okShort = false;
     }
 
-    if (params.useEma200 && Number.isFinite(ema200[i])) {
-      if (!(c.close > ema200[i]!)) okLong = false;
-      if (!(c.close < ema200[i]!)) okShort = false;
+    if (params.useEma200) {
+      const e200 = ema200[i];
+      const e200Prev = ema200[Math.max(0, i - 4)];
+      if (Number.isFinite(e200)) {
+        if (!(c.close > e200! && (!Number.isFinite(e200Prev) || e200! >= e200Prev! * 0.9995))) okLong = false;
+        if (!(c.close < e200! && (!Number.isFinite(e200Prev) || e200! <= e200Prev! * 1.0005))) okShort = false;
+      }
     }
 
     if (params.useAdx && i >= 1) {
-      const adxOk = adxVals[i]! > params.adxThreshold && adxVals[i]! > adxVals[i - 1]!;
-      if (!adxOk) {
+      if (adxVals[i]! < params.adxThreshold) {
         okLong = false;
         okShort = false;
       }
@@ -618,6 +649,17 @@ export function computeKbosV11Detailed(
       if (da.trend !== 'BEAR') okShort = false;
     }
 
+    // Momentum, Ribbon & non-chasing equilibrium protection: avoid entering far overextended from EMA20
+    const ribFast = almaRibbon.series[7]?.[i];
+    const ribMid = almaRibbon.series[3]?.[i];
+    const e20Val = ema20[i] ?? c.close;
+    if (Number.isFinite(ribFast) && Number.isFinite(ribMid)) {
+      if (okLong && ribFast! < ribMid! * 0.9985) okLong = false;
+      if (okShort && ribFast! > ribMid! * 1.0015) okShort = false;
+    }
+    if (okLong && (r > 68 || c.close - e20Val > a * 1.6)) okLong = false;
+    if (okShort && (r < 32 || e20Val - c.close > a * 1.6)) okShort = false;
+
     const signal: 'LONG' | 'SHORT' | 'NONE' = okLong ? 'LONG' : okShort ? 'SHORT' : 'NONE';
     const trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
       Number.isFinite(cAlt) && Number.isFinite(oAlt)
@@ -628,24 +670,28 @@ export function computeKbosV11Detailed(
             : 'NEUTRAL'
         : 'NEUTRAL';
 
-    const slDist = Math.max(a * 1.6, c.close * (params.trailPct / 100));
+    // ATR-adaptive SL outside normal 1-bar wick noise, with TP levels scaled >= 1.2R / 2.2R / 3.5R
+    const slDist = Math.max(a * 1.8, c.close * 0.0055);
+    const tp1Dist = Math.max(slDist * 1.2, c.close * (params.tp1Pct / 100));
+    const tp2Dist = Math.max(slDist * 2.2, c.close * (params.tp2Pct / 100));
+    const tp3Dist = Math.max(slDist * 3.5, c.close * (params.tp3Pct / 100));
     const tp1 =
       signal === 'LONG'
-        ? c.close * (1 + params.tp1Pct / 100)
+        ? c.close + tp1Dist
         : signal === 'SHORT'
-          ? c.close * (1 - params.tp1Pct / 100)
+          ? c.close - tp1Dist
           : undefined;
     const tp2 =
       signal === 'LONG'
-        ? c.close * (1 + params.tp2Pct / 100)
+        ? c.close + tp2Dist
         : signal === 'SHORT'
-          ? c.close * (1 - params.tp2Pct / 100)
+          ? c.close - tp2Dist
           : undefined;
     const tp3 =
       signal === 'LONG'
-        ? c.close * (1 + params.tp3Pct / 100)
+        ? c.close + tp3Dist
         : signal === 'SHORT'
-          ? c.close * (1 - params.tp3Pct / 100)
+          ? c.close - tp3Dist
           : undefined;
     const stopLoss =
       signal === 'LONG'

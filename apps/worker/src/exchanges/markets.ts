@@ -264,31 +264,72 @@ export async function findMarketSpec(
   return all.find((m) => m.symbol === canonical || m.exchangeSymbol.toUpperCase() === symbol.toUpperCase());
 }
 
+function tfDurationMs(tf: Timeframe | string): number {
+  const map: Record<string, number> = {
+    '1m': 60_000,
+    '3m': 180_000,
+    '5m': 300_000,
+    '15m': 900_000,
+    '30m': 1_800_000,
+    '1h': 3_600_000,
+    '2h': 7_200_000,
+    '4h': 14_400_000,
+    '1d': 86_400_000,
+  };
+  return map[tf] ?? 900_000;
+}
+
 export async function fetchBitunixKlinesFallback(symbol: string, tf: Timeframe, limit = 200): Promise<Candle[]> {
   const clean = normalizeCanonicalSymbol(symbol);
-  try {
-    const res = await fetch(
-      `https://fapi.bitunix.com/api/v1/futures/market/kline?symbol=${clean}&interval=${tf}&limit=${limit}`,
-      { signal: AbortSignal.timeout(5000) }
-    );
-    if (res.ok) {
+  const target = Math.max(20, Math.min(limit, 1200));
+  const stepMs = tfDurationMs(tf);
+  const byTs = new Map<number, Candle>();
+  let endTime: number | undefined;
+  const maxBatches = Math.ceil(target / 200) + 1;
+
+  for (let b = 0; b < maxBatches && byTs.size < target; b++) {
+    try {
+      const url = new URL('https://fapi.bitunix.com/api/v1/futures/market/kline');
+      url.searchParams.set('symbol', clean);
+      url.searchParams.set('interval', tf);
+      url.searchParams.set('limit', '200');
+      if (endTime !== undefined) url.searchParams.set('endTime', String(endTime));
+
+      const res = await fetch(url.toString(), { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) break;
       const json = (await res.json()) as {
         code?: number;
         data?: Array<{ time: string; open: string; high: string; low: string; close: string; baseVol?: string; quoteVol?: string }>;
       };
-      if (Array.isArray(json.data) && json.data.length > 5) {
-        return json.data
-          .map((r) => ({
-            timestamp: Number(r.time),
-            open: Number(r.open),
-            high: Number(r.high),
-            low: Number(r.low),
-            close: Number(r.close),
-            volume: Number(r.quoteVol ?? r.baseVol ?? 0),
-          }))
-          .sort((a, b) => a.timestamp - b.timestamp);
+      const rows = Array.isArray(json.data) ? json.data : [];
+      if (rows.length === 0) break;
+
+      let minTs = Infinity;
+      let added = 0;
+      for (const r of rows) {
+        const ts = Number(r.time);
+        const close = Number(r.close);
+        if (!Number.isFinite(ts) || !Number.isFinite(close) || close <= 0) continue;
+        if (ts < minTs) minTs = ts;
+        if (!byTs.has(ts)) added++;
+        byTs.set(ts, {
+          timestamp: ts,
+          open: Number(r.open),
+          high: Number(r.high),
+          low: Number(r.low),
+          close,
+          volume: Number(r.quoteVol ?? r.baseVol ?? 0),
+        });
       }
+
+      if (rows.length < 180 || added === 0 || !Number.isFinite(minTs)) break;
+      endTime = minTs - stepMs;
+    } catch {
+      break;
     }
-  } catch { /* ignore */ }
-  return [];
+  }
+
+  return Array.from(byTs.values())
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-target);
 }

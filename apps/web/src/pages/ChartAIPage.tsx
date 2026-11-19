@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrainCircuit, History, Play, Send } from 'lucide-react';
+import { BrainCircuit, History, Play, Send, Target } from 'lucide-react';
 import type { Candle, Timeframe } from '@dollarino/core';
 import { CandlestickChart, type ChartLevels, type KbosChartOverlays } from '../components/CandlestickChart';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
@@ -8,6 +8,7 @@ import type { Lang } from '../lib/i18n';
 
 interface ChartAIResult {
   summary: string;
+  bias?: 'LONG' | 'SHORT' | 'NEUTRAL';
   direction?: 'LONG' | 'SHORT';
   confidence?: number;
   entry?: number;
@@ -15,8 +16,23 @@ interface ChartAIResult {
   tp1?: number;
   tp2?: number;
   tp3?: number;
+  rrRatio?: number;
   supports?: number[];
   resistances?: number[];
+  telemetry?: {
+    htfTrend?: string;
+    rsi14?: number;
+    demaAtrTrend?: string;
+    mixerConfidence?: number;
+  };
+}
+
+function fmtPx(v?: number): string {
+  if (v === undefined || !Number.isFinite(v)) return '-';
+  if (Math.abs(v) >= 1000) return v.toFixed(2);
+  if (Math.abs(v) >= 1) return v.toFixed(4);
+  if (Math.abs(v) >= 0.01) return v.toFixed(5);
+  return v.toFixed(8);
 }
 
 export function ChartAIPage({
@@ -45,6 +61,10 @@ export function ChartAIPage({
   const [analysis, setAnalysis] = useState<ChartAIResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [deployMsg, setDeployMsg] = useState('');
+
+  const actionableDir =
+    analysis?.direction ??
+    (analysis?.bias === 'LONG' || analysis?.bias === 'SHORT' ? analysis.bias : undefined);
 
   const loadMarket = async () => {
     const [res, chats] = await Promise.all([
@@ -87,13 +107,13 @@ export function ChartAIPage({
   };
 
   const deployAiSetup = async () => {
-    if (!analysis?.direction || !analysis.entry || !analysis.stopLoss || !analysis.tp1) return;
+    if (!actionableDir || !analysis?.entry || !analysis.stopLoss || !analysis.tp1) return;
     setDeployMsg('');
     const res = await apiFetch<{ ok: boolean; error?: string; tradeId?: string }>('/api/trading/orders/manual', {
       method: 'POST',
       body: JSON.stringify({
         symbol,
-        direction: analysis.direction,
+        direction: actionableDir,
         orderType: 'MARKET',
         leverage: 5,
         stopLoss: String(analysis.stopLoss),
@@ -137,19 +157,52 @@ export function ChartAIPage({
           </div>
 
           <div className="flex items-center gap-2">
-            {analysis?.direction && analysis.entry && analysis.stopLoss && analysis.tp1 && (
+            {actionableDir && analysis?.entry && analysis?.stopLoss && analysis?.tp1 && (
               <button
                 onClick={deployAiSetup}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#27cd86] hover:bg-[#22b878] text-[#080a0e] text-xs font-bold"
               >
                 <Play className="w-3.5 h-3.5" />
-                <span>{lang === 'fa' ? 'اجرای مستقیم ستاپ AI' : 'Execute AI Setup'}</span>
+                <span>{lang === 'fa' ? `اجرای مستقیم ${actionableDir}` : `Execute ${actionableDir} Setup`}</span>
               </button>
             )}
           </div>
         </div>
 
         {deployMsg && <div className="text-xs px-3 py-2 rounded-xl bg-[#27cd86]/15 border border-[#27cd86]/35 text-[#27cd86]">{deployMsg}</div>}
+
+        {analysis && (actionableDir || (analysis.supports?.length ?? 0) > 0) && (
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-[#080a0e] border border-[#1c2028] rounded-xl p-2.5 text-[11px]">
+            <div>
+              <div className="text-[#6c7689] flex items-center gap-1"><Target className="w-3 h-3" /> Bias</div>
+              <div className={`font-bold font-mono-num ${actionableDir === 'LONG' ? 'text-[#27cd86]' : actionableDir === 'SHORT' ? 'text-[#eb493d]' : 'text-[#f2a900]'}`}>
+                {actionableDir ?? analysis.bias ?? 'NEUTRAL'} {analysis.rrRatio ? `(1:${analysis.rrRatio})` : ''}
+              </div>
+            </div>
+            <div>
+              <div className="text-[#6c7689]">Entry</div>
+              <div className="text-white font-mono-num">{fmtPx(analysis.entry)}</div>
+            </div>
+            <div>
+              <div className="text-[#6c7689]">Stop Loss</div>
+              <div className="text-[#eb493d] font-mono-num">{fmtPx(analysis.stopLoss)}</div>
+            </div>
+            <div>
+              <div className="text-[#6c7689]">TP1</div>
+              <div className="text-[#27cd86] font-mono-num">{fmtPx(analysis.tp1)}</div>
+            </div>
+            <div>
+              <div className="text-[#6c7689]">TP2 / TP3</div>
+              <div className="text-[#27cd86] font-mono-num">{fmtPx(analysis.tp2)} / {fmtPx(analysis.tp3)}</div>
+            </div>
+            <div>
+              <div className="text-[#6c7689]">S / R</div>
+              <div className="text-[#9aa5b5] font-mono-num truncate" title={`S: ${analysis.supports?.map(fmtPx).join(', ')} | R: ${analysis.resistances?.map(fmtPx).join(', ')}`}>
+                {fmtPx(analysis.supports?.[0])} / {fmtPx(analysis.resistances?.[0])}
+              </div>
+            </div>
+          </div>
+        )}
 
         <CandlestickChart candles={candles} levels={levels} kbosOverlays={kbosOverlays} height={510} />
       </div>
@@ -161,7 +214,7 @@ export function ChartAIPage({
               <BrainCircuit className="w-5 h-5 text-[#8e4cf0]" />
               <h3 className="font-bold text-sm text-white">{lang === 'fa' ? 'دستیار چارت AI (BYO Key)' : 'Chart AI Co-Pilot'}</h3>
             </div>
-            {analysis?.confidence && (
+            {analysis?.confidence !== undefined && (
               <span className="text-[11px] px-2 py-0.5 rounded bg-[#8e4cf0]/20 text-[#c9a8ff] font-mono-num">
                 Conf: {analysis.confidence}%
               </span>
@@ -191,8 +244,8 @@ export function ChartAIPage({
             {messages.length === 0 && (
               <p className="text-[#6c7689] leading-relaxed">
                 {lang === 'fa'
-                  ? 'کلید OpenAI، Claude یا Gemini خود را متصل کنید و تحلیل AI را روی چارت زنده KBOs v11 مشاهده کنید.'
-                  : 'Connect your OpenAI, Claude, or Gemini key in Connections to overlay AI S/R & trade levels onto the KBOs v11 chart.'}
+                  ? 'تحلیلگر کوانت دلارینو به صورت داخلی با EMA/RSI/ATR/KBOs/SignalMixer فعال است؛ با اتصال کلید OpenAI، Claude یا Gemini در Connections تحلیل هوشمند ترکیبی هم فعال می‌شود.'
+                  : 'Built-in Dollarino Quant analysis (EMA/RSI/ATR/KBOs/SignalMixer) is active; connect OpenAI, Claude, or Gemini in Connections to enable hybrid LLM reasoning.'}
               </p>
             )}
             {messages.map((m, idx) => (

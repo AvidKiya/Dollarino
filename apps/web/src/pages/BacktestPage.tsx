@@ -69,12 +69,18 @@ export function BacktestPage({
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [compareResult, setCompareResult] = useState<BacktestResult | null>(null);
 
+  const higherTimeframeFor = (ltf: Timeframe): Timeframe => {
+    const map: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+    return map[ltf] ?? '4h';
+  };
+
   const executeBacktest = async (withCompare = false) => {
     setRunning(true);
     try {
+      const htf = higherTimeframeFor(tf);
       const [ltfRes, htfRes] = await Promise.all([
-        apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${symbol}&timeframe=${tf}&limit=450`),
-        apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${symbol}&timeframe=1h&limit=200`),
+        apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${symbol}&timeframe=${tf}&limit=900`),
+        apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${symbol}&timeframe=${htf}&limit=350`),
       ]);
 
       setCandles(ltfRes.candles);
@@ -91,7 +97,7 @@ export function BacktestPage({
       const baseCfg = {
         symbol,
         timeframe: tf,
-        higherTimeframe: '1h' as Timeframe,
+        higherTimeframe: htf,
         initialBalance,
         marginPct,
         leverage,
@@ -111,7 +117,14 @@ export function BacktestPage({
       setResult(main);
 
       if (withCompare) {
-        const cmp = runBacktest(ltfRes.candles, htfRes.candles, { ...baseCfg, strategyKey: compareStrategy });
+        const cmpIsKbos = compareStrategy === 'kbos_v11';
+        const cmp = runBacktest(ltfRes.candles, htfRes.candles, {
+          ...baseCfg,
+          tp1ClosePct: cmpIsKbos ? 30 : 50,
+          tp2ClosePct: cmpIsKbos ? 30 : 25,
+          tp3ClosePct: cmpIsKbos ? 40 : 25,
+          strategyKey: compareStrategy,
+        });
         setCompareResult(cmp);
       } else {
         setCompareResult(null);

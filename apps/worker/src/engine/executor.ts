@@ -45,6 +45,8 @@ export interface UserBotConfigRow {
   paper_balance: string;
   kbos_params_json?: string;
   risk_profile_json?: string;
+  mixer_weights_json?: string;
+  mixer_threshold?: number;
   trailing_stop_enabled?: number;
   trailing_stop_pct?: number;
   trail_after_tp1?: number;
@@ -57,6 +59,12 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     kbosParams = r.kbos_params_json ? JSON.parse(r.kbos_params_json) : undefined;
   } catch {
     kbosParams = undefined;
+  }
+  let mixerWeights: BotConfig['mixerWeights'];
+  try {
+    mixerWeights = r.mixer_weights_json ? JSON.parse(r.mixer_weights_json) : undefined;
+  } catch {
+    mixerWeights = undefined;
   }
   return {
     tradingMode: r.trading_mode,
@@ -74,7 +82,7 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     autoBreakevenOnTp1: Boolean(r.auto_breakeven_on_tp1),
     moveSlToTp1OnTp2: Boolean(r.move_sl_to_tp1_on_tp2),
     trailingStopEnabled: Boolean(r.trailing_stop_enabled ?? 1),
-    trailingStopPct: r.trailing_stop_pct ?? 2.0,
+    trailingStopPct: r.trailing_stop_pct ?? 1.2,
     trailAfterTp1: Boolean(r.trail_after_tp1 ?? 1),
     dailyMaxLossPct: r.daily_max_loss_pct,
     maxOpenPositions: r.max_open_positions,
@@ -83,6 +91,8 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     aiGateEnabled: Boolean(r.ai_gate_enabled),
     aiMinConfidence: r.ai_min_confidence,
     signalChannelHandle: r.signal_channel_handle || '@Dollarinoofficial',
+    mixerThreshold: r.mixer_threshold ?? 65,
+    mixerWeights,
     kbosParams,
   };
 }

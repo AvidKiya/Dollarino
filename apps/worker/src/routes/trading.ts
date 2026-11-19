@@ -190,15 +190,29 @@ tradingRoutes.get('/dashboard', async (c) => {
     return { date: d.bucket, dailyPnl: Number(d.pnl || 0), cumulativePnl: Number(runningCum.toFixed(2)) };
   });
 
-  // Live 8-channel Signal Mixer snapshot on active symbol
+  // Live 8-channel Signal Mixer snapshot on active symbol using real HTF trend
   let mixerSnapshot = null;
   if (cfg) {
-    const klines = await adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 100).catch(() => []);
-    if (klines.length >= 30) {
+    const [klines, htfKlines] = await Promise.all([
+      adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 240).catch(() => []),
+      adapter.getKlines(cfg.symbol, cfg.higher_timeframe || '1h', 120).catch(() => []),
+    ]);
+    if (klines.length >= 35) {
+      let realHtfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+      if (htfKlines.length >= 25) {
+        const hc = htfKlines.map((k) => k.close);
+        const h20 = ema(hc, 20);
+        const h50 = ema(hc, 50);
+        const f = h20[htfKlines.length - 1];
+        const s = h50[htfKlines.length - 1];
+        if (Number.isFinite(f) && Number.isFinite(s)) {
+          realHtfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
+        }
+      }
       const weights: SignalMixerWeights = cfg.mixer_weights_json
         ? (JSON.parse(cfg.mixer_weights_json) as SignalMixerWeights)
         : DEFAULT_MIXER_WEIGHTS;
-      mixerSnapshot = evaluateSignalMixerAtBar(klines, klines.length - 1, 'BULLISH', weights, cfg.mixer_threshold ?? 65);
+      mixerSnapshot = evaluateSignalMixerAtBar(klines, klines.length - 1, realHtfTrend, weights, cfg.mixer_threshold ?? 65);
     }
   }
 
@@ -744,7 +758,7 @@ tradingRoutes.get('/market/klines', async (c) => {
   const user = c.get('user');
   const symbol = (c.req.query('symbol') || 'BTCUSDT').toUpperCase();
   const timeframe = (c.req.query('timeframe') || '15m') as Timeframe;
-  const limit = Math.min(500, Math.max(30, Number(c.req.query('limit') || 200)));
+  const limit = Math.min(1200, Math.max(30, Number(c.req.query('limit') || 200)));
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
   const [candles, ticker, orderBook] = await Promise.all([
     adapter.getKlines(symbol, timeframe, limit),
@@ -758,11 +772,13 @@ tradingRoutes.get('/market/overview', async (c) => {
   const user = c.get('user');
   const symbol = (c.req.query('symbol') || 'BTCUSDT').toUpperCase();
   const timeframe = (c.req.query('timeframe') || '15m') as Timeframe;
+  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+  const htfTf = htfMap[timeframe] ?? '4h';
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
 
   const [candles, candles4h, market24h, orderBook, cfg] = await Promise.all([
-    adapter.getKlines(symbol, timeframe, 220),
-    adapter.getKlines(symbol, '4h', 80),
+    adapter.getKlines(symbol, timeframe, 450),
+    adapter.getKlines(symbol, htfTf, 200),
     adapter.getMarket24h(symbol),
     adapter.getOrderBook(symbol, 15),
     c.env.DB.prepare('SELECT mixer_weights_json, mixer_threshold, kbos_params_json FROM bot_configs WHERE user_id = ?')
@@ -898,20 +914,28 @@ tradingRoutes.post('/scanner', async (c) => {
   }>().catch(() => ({} as { strategyKey?: StrategyKey; timeframe?: Timeframe; symbols?: string[]; limit?: number }));
   const strategyKey = body.strategyKey || 'kbos_v11';
   const tf = body.timeframe || '15m';
+  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+  const htfTf = htfMap[tf] ?? '1h';
 
   const [activeRow, cfgRow] = await Promise.all([
     c.env.DB.prepare(
       `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
     ).bind(user.id).first<{ provider: ExchangeProviderId }>(),
-    c.env.DB.prepare('SELECT kbos_params_json FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ kbos_params_json?: string }>(),
+    c.env.DB.prepare('SELECT kbos_params_json, mixer_weights_json, mixer_threshold, max_leverage FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ kbos_params_json?: string; mixer_weights_json?: string; mixer_threshold?: number; max_leverage?: number }>(),
   ]);
   const provider = activeRow?.provider || 'paper';
 
-  let kbosParams: Record<string, unknown> | undefined;
+  let kbosParams = DEFAULT_KBOS_PARAMS;
   try {
-    kbosParams = cfgRow?.kbos_params_json ? JSON.parse(cfgRow.kbos_params_json) : undefined;
-  } catch { kbosParams = undefined; }
+    if (cfgRow?.kbos_params_json) kbosParams = mergeKbosParams(JSON.parse(cfgRow.kbos_params_json));
+  } catch { /* default */ }
+
+  let mixerWeights: SignalMixerWeights = DEFAULT_MIXER_WEIGHTS;
+  try {
+    if (cfgRow?.mixer_weights_json) mixerWeights = JSON.parse(cfgRow.mixer_weights_json) as SignalMixerWeights;
+  } catch { /* default */ }
+  const mixerThreshold = cfgRow?.mixer_threshold ?? 65;
 
   let symbols = body.symbols?.length ? body.symbols.map(normalizeCanonicalSymbol) : [];
   if (!symbols.length) {
@@ -927,24 +951,38 @@ tradingRoutes.post('/scanner', async (c) => {
 
   const results = await Promise.all(
     symbols.map(async (sym) => {
-      const candles = await adapter.getKlines(sym, tf, 180);
+      const [candles, htfCandles] = await Promise.all([
+        adapter.getKlines(sym, tf, 360),
+        adapter.getKlines(sym, htfTf, 140),
+      ]);
       const outputs = computeStrategySignals(
         strategyKey,
         candles,
-        [],
+        htfCandles,
         tf,
-        '1h',
-        kbosParams ? { kbosParams } : {}
+        htfTf,
+        { kbosParams, mixerWeights, mixerThreshold }
       );
       const latest = outputs[outputs.length - 1];
-      const mix = evaluateSignalMixerAtBar(candles, candles.length - 1, latest?.trend ?? 'NEUTRAL');
+      let realHtfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = latest?.trend ?? 'NEUTRAL';
+      if (htfCandles.length >= 25) {
+        const hc = htfCandles.map((k) => k.close);
+        const h20 = ema(hc, 20);
+        const h50 = ema(hc, 50);
+        const f = h20[htfCandles.length - 1];
+        const s = h50[htfCandles.length - 1];
+        if (Number.isFinite(f) && Number.isFinite(s)) {
+          realHtfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
+        }
+      }
+      const mix = evaluateSignalMixerAtBar(candles, candles.length - 1, realHtfTrend, mixerWeights, mixerThreshold);
       const signalCard = latest && latest.signal !== 'NONE'
-        ? strategyOutputToDollarinoSignal(sym, tf, 10, latest)
+        ? strategyOutputToDollarinoSignal(sym, tf, Math.max(1, cfgRow?.max_leverage ?? 5), latest)
         : null;
       return {
         symbol: sym,
         price: candles[candles.length - 1]?.close ?? 0,
-        trend: latest?.trend ?? 'NEUTRAL',
+        trend: realHtfTrend,
         rsi: Number((latest?.rsi ?? 50).toFixed(1)),
         mixerConfidence: mix.confidence,
         mixerDirection: mix.direction,

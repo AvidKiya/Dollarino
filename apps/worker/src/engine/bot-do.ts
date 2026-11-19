@@ -1,4 +1,11 @@
-import { computeStrategySignals, selectClosedCandles, strategyOutputToDollarinoSignal } from '@dollarino/core';
+import {
+  computeStrategySignals,
+  DEFAULT_MIXER_WEIGHTS,
+  mergeKbosParams,
+  selectClosedCandles,
+  strategyOutputToDollarinoSignal,
+  type SignalMixerWeights,
+} from '@dollarino/core';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { executeSignalForUser, logAudit, reconcileOpenPositionsForUser, type UserBotConfigRow } from './executor.js';
@@ -74,8 +81,8 @@ export class TradingBotCoordinator implements DurableObject {
     );
 
     const [ltfRaw, htfRaw] = await Promise.all([
-      adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 220),
-      adapter.getKlines(cfg.symbol, cfg.higher_timeframe, 100),
+      adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 450),
+      adapter.getKlines(cfg.symbol, cfg.higher_timeframe, 200),
     ]);
 
     const now = Date.now();
@@ -83,12 +90,23 @@ export class TradingBotCoordinator implements DurableObject {
     const htfClosed = selectClosedCandles(htfRaw, cfg.higher_timeframe, now);
     if (ltfClosed.length < 40) return;
 
-    let kbosParams: Record<string, unknown> | undefined;
+    let kbosParams = mergeKbosParams();
     try {
-      kbosParams = cfg.kbos_params_json ? (JSON.parse(cfg.kbos_params_json) as Record<string, unknown>) : undefined;
-    } catch {
-      kbosParams = undefined;
-    }
+      if (cfg.kbos_params_json) kbosParams = mergeKbosParams(JSON.parse(cfg.kbos_params_json));
+    } catch { /* fallback to v2 defaults */ }
+
+    let mixerWeights: SignalMixerWeights = DEFAULT_MIXER_WEIGHTS;
+    try {
+      if (cfg.mixer_weights_json) mixerWeights = JSON.parse(cfg.mixer_weights_json) as SignalMixerWeights;
+    } catch { /* fallback */ }
+
+    let cooldownMinutes = 10;
+    try {
+      if (cfg.risk_profile_json) {
+        const rp = JSON.parse(cfg.risk_profile_json) as { cooldownMinutes?: number };
+        if (Number.isFinite(rp.cooldownMinutes)) cooldownMinutes = Math.max(0, Number(rp.cooldownMinutes));
+      }
+    } catch { /* fallback */ }
 
     const outputs = computeStrategySignals(
       cfg.strategy_key,
@@ -96,7 +114,11 @@ export class TradingBotCoordinator implements DurableObject {
       htfClosed,
       cfg.entry_timeframe,
       cfg.higher_timeframe,
-      kbosParams ? { kbosParams } : {}
+      {
+        kbosParams,
+        mixerWeights,
+        mixerThreshold: cfg.mixer_threshold ?? 65,
+      }
     );
     const latest = outputs[outputs.length - 1];
     if (!latest || latest.signal === 'NONE') return;
@@ -105,11 +127,25 @@ export class TradingBotCoordinator implements DurableObject {
     const lastProcessed = await this.state.storage.get<number>(lastBarKey);
     if (lastProcessed === latest.timestamp) return;
 
+    // Post-trade / post-SL cooldown guard to prevent immediate whipsaw re-entry
+    if (cooldownMinutes > 0) {
+      const lastClosed = await this.env.DB.prepare(
+        `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
+      ).bind(userId, cfg.symbol).first<{ closed_at: string; exit_reason: string | null }>();
+      if (lastClosed?.closed_at) {
+        const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
+        const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
+        if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) {
+          return;
+        }
+      }
+    }
+
     await this.state.storage.put(lastBarKey, latest.timestamp);
     const sig = strategyOutputToDollarinoSignal(
       cfg.symbol,
       cfg.entry_timeframe,
-      Math.min(10, cfg.max_leverage),
+      Math.max(1, cfg.max_leverage),
       latest,
       cfg.signal_channel_handle
     );
