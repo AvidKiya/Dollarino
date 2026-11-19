@@ -1,0 +1,26 @@
+name = "dollarino-worker"
+main = "apps/worker/src/index.ts"
+compatibility_date = "2025-07-18"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+OWNER_TELEGRAM_ID = "944021185"
+DEFAULT_SIGNAL_CHANNEL = "@Dollarinoofficial"
+ALLOW_LIVE_TRADING = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dollarino-db"
+database_id = "local-dev-db"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "TRADING_BOT_DO"
+class_name = "TradingBotCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TradingBotCoordinator"]
+
+[triggers]
+crons = ["* * * * *"]

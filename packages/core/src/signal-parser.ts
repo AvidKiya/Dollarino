@@ -1,0 +1,155 @@
+import type { Direction, DollarinoSignal } from './types.js';
+
+function cleanNumeric(raw: string): string {
+  return raw.replace(/[,$\s%]/g, '').trim();
+}
+
+function calcLeveragedPct(entry: number, target: number, leverage: number): string {
+  if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(target)) return '0.00';
+  const pct = ((target - entry) / entry) * 100 * leverage;
+  return pct.toFixed(2);
+}
+
+/**
+ * Parses both classic & extended Dollarino Telegram/TradingView signal text OR JSON webhook payloads.
+ */
+export function parseDollarinoSignal(input: string | Record<string, unknown>): DollarinoSignal | null {
+  if (typeof input === 'object' && input !== null) {
+    const obj = input as Record<string, unknown>;
+    const rawSide = String(obj.direction ?? obj.side ?? obj.action ?? '').toUpperCase();
+    const direction: Direction | null =
+      rawSide.includes('BUY') || rawSide.includes('LONG') ? 'LONG'
+        : rawSide.includes('SELL') || rawSide.includes('SHORT') ? 'SHORT'
+        : null;
+    const symbol = String(obj.symbol ?? obj.ticker ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const price = cleanNumeric(String(obj.price ?? obj.entry ?? obj.close ?? ''));
+    const stopLoss = cleanNumeric(String(obj.stopLoss ?? obj.stop ?? obj.sl ?? ''));
+    const tp1 = cleanNumeric(String(obj.tp1 ?? obj.TP1 ?? obj.takeProfit1 ?? ''));
+    if (!direction || !symbol || !price || !stopLoss || !tp1) return null;
+
+    const leverage = Math.max(1, Math.round(Number(obj.leverage ?? 1)));
+    const tp2 = obj.tp2 || obj.TP2 ? cleanNumeric(String(obj.tp2 ?? obj.TP2)) : undefined;
+    const tp3 = obj.tp3 || obj.TP3 ? cleanNumeric(String(obj.tp3 ?? obj.TP3)) : undefined;
+    const timeframe = String(obj.timeframe ?? obj.interval ?? obj.tf ?? '15m').trim();
+    const channelHandle = String(obj.channelHandle ?? '@Dollarinoofficial').trim();
+
+    return enrichSignalPercentages({
+      symbol,
+      direction,
+      timeframe,
+      price,
+      stopLoss,
+      leverage,
+      tp1,
+      tp2,
+      tp3,
+      channelHandle,
+      reason: obj.reason ? String(obj.reason) : undefined,
+    });
+  }
+
+  const text = String(input).trim();
+  if (!text) return null;
+
+  // Try JSON string first
+  if (text.startsWith('{') && text.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      return parseDollarinoSignal(parsed);
+    } catch {
+      // fall through to text parser
+    }
+  }
+
+  let direction: Direction | null = null;
+  if (/buy\s*signal|🟢\s*buy|long\s*signal|خرید/i.test(text)) {
+    direction = 'LONG';
+  } else if (/sell\s*signal|🔴\s*sell|short\s*signal|فروش/i.test(text)) {
+    direction = 'SHORT';
+  }
+  if (!direction) return null;
+
+  const symbolMatch = text.match(/symbol\s*[:：]\s*([A-Za-z0-9._/-]+)/i);
+  const tfMatch = text.match(/time\s*frame\s*[:：]\s*([A-Za-z0-9]+)/i);
+  const priceMatch = text.match(/(?:^|\n)[^\n]*?\bprice\s*[:：]\s*([0-9.,]+)/i);
+  const stopMatch = text.match(/(?:^|\n)[^\n]*?\bstop(?:\s*loss)?\s*[:：]\s*([0-9.,]+)/i);
+  const levMatch = text.match(/\bleverage\s*[:：]\s*(\d+)/i);
+  const tp1Match = text.match(/\btp\s*1\s*[:：]\s*([0-9.,]+)/i);
+  const tp2Match = text.match(/\btp\s*2\s*[:：]\s*([0-9.,]+)/i);
+  const tp3Match = text.match(/\btp\s*3\s*[:：]\s*([0-9.,]+)/i);
+  const handleMatch = text.match(/(@[A-Za-z0-9_]+)/);
+
+  if (!symbolMatch?.[1] || !priceMatch?.[1] || !stopMatch?.[1] || !tp1Match?.[1]) {
+    return null;
+  }
+
+  const symbol = symbolMatch[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const signal: DollarinoSignal = {
+    symbol,
+    direction,
+    timeframe: tfMatch?.[1]?.trim() ?? '30',
+    price: cleanNumeric(priceMatch[1]),
+    stopLoss: cleanNumeric(stopMatch[1]),
+    leverage: Math.max(1, Number(levMatch?.[1] ?? '1')),
+    tp1: cleanNumeric(tp1Match[1]),
+    tp2: tp2Match?.[1] ? cleanNumeric(tp2Match[1]) : undefined,
+    tp3: tp3Match?.[1] ? cleanNumeric(tp3Match[1]) : undefined,
+    channelHandle: handleMatch?.[1] ?? '@Dollarinoofficial',
+  };
+
+  return enrichSignalPercentages(signal);
+}
+
+export function enrichSignalPercentages(signal: DollarinoSignal): DollarinoSignal {
+  const entry = Number(signal.price);
+  const sl = Number(signal.stopLoss);
+  const tp1 = Number(signal.tp1);
+  const lev = Math.max(1, signal.leverage);
+
+  return {
+    ...signal,
+    slPct: signal.slPct ?? calcLeveragedPct(entry, sl, lev),
+    tp1Pct: signal.tp1Pct ?? calcLeveragedPct(entry, tp1, lev),
+    tp2Pct: signal.tp2Pct ?? (signal.tp2 ? calcLeveragedPct(entry, Number(signal.tp2), lev) : undefined),
+    tp3Pct: signal.tp3Pct ?? (signal.tp3 ? calcLeveragedPct(entry, Number(signal.tp3), lev) : undefined),
+    channelHandle: signal.channelHandle ?? '@Dollarinoofficial',
+  };
+}
+
+/**
+ * Formats a signal in the exact Dollarino Telegram/Channel specification.
+ */
+export function formatDollarinoSignal(rawSignal: DollarinoSignal): string {
+  const sig = enrichSignalPercentages(rawSignal);
+  const divider = '------------------------------------------------';
+  const header = sig.direction === 'LONG' ? '🟢 Buy signal' : '🔴 Sell signal';
+
+  const lines = [
+    header,
+    divider,
+    `💲 Symbol: ${sig.symbol}`,
+    divider,
+    `⌛️ Time Frame: ${sig.timeframe}`,
+    divider,
+    `🔔 Price: ${sig.price}`,
+    divider,
+    `⛔️ Stop: ${sig.stopLoss}`,
+    divider,
+    `🔘 Leverage: ${sig.leverage}`,
+    divider,
+    `🟢 TP1: ${sig.tp1}`,
+  ];
+
+  if (sig.tp2) lines.push(`🟡 TP2: ${sig.tp2}`);
+  if (sig.tp3) lines.push(`🟠 TP3: ${sig.tp3}`);
+
+  lines.push(divider);
+  lines.push(`🧨 SL: %${sig.slPct ?? '0.00'}`);
+  lines.push(`🎯 TP1: %${sig.tp1Pct ?? '0.00'}`);
+  if (sig.tp2 && sig.tp2Pct !== undefined) lines.push(`🎯 TP2: %${sig.tp2Pct}`);
+  if (sig.tp3 && sig.tp3Pct !== undefined) lines.push(`🎯 TP3: %${sig.tp3Pct}`);
+  lines.push(divider);
+  lines.push(`🆔 ${sig.channelHandle ?? '@Dollarinoofficial'}`);
+
+  return lines.join('\n');
+}
