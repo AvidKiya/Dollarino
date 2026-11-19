@@ -756,7 +756,7 @@ export async function runAutonomousAITrader(
       tp3: 0,
       leverage: 1,
       rrRatio: 0,
-      thesis: 'موتور هوش مصنوعی مرکزی هنوز توسط مدیریت پلتفرم تنظیم نشده است.',
+      thesis: 'هوش مصنوعی دلارینو هنوز توسط مدیریت پلتفرم تنظیم نشده است.',
       invalidation: 'Admin must configure at least 1 platform AI engine in Admin Panel',
       error: 'NO_ACTIVE_AI_KEY',
     };
@@ -1279,7 +1279,7 @@ export async function runChartAIAnalysis(
     const resStr = resistances.join(' / ') || '-';
     const summary = isFa
       ? [
-          `تحلیل هوشمند دلارینو V0.1 برای ${symbol} (${timeframe}):`,
+          `تحلیل استراتژی منتخب دلارینو (موتور دُرنا V1) برای ${symbol} (${timeframe}):`,
           `• روند تایم‌فریم بالاتر: ${htfTrend} | EMA20=${telemetry.ema20} vs EMA50=${telemetry.ema50}`,
           `• قدرت روند و نوسان: RSI(14)=${telemetry.rsi14} | ATR(14)=${telemetry.atr14} | KBOs=${telemetry.kbosSignal}`,
           `• امتیاز ترکیب سیگنال‌ها: ${telemetry.mixerScore} (اطمینان ${mixer.confidence}%)`,
@@ -1289,7 +1289,7 @@ export async function runChartAIAnalysis(
             : '• بازار فعلاً در وضعیت خنثی است؛ بهتر است منتظر تایید واضح‌تر بمانید.',
         ].join('\n')
       : [
-          `Dollarino V0.1 Quant Analysis for ${symbol} (${timeframe}):`,
+          `Dollarino Select (Dorna V1) Quant Analysis for ${symbol} (${timeframe}):`,
           `• HTF Trend: ${htfTrend} | EMA20=${telemetry.ema20} vs EMA50=${telemetry.ema50}`,
           `• Momentum: RSI(14)=${telemetry.rsi14} | ATR(14)=${telemetry.atr14} | KBOs=${telemetry.kbosSignal}`,
           `• Composite Score: ${telemetry.mixerScore} (${mixer.confidence}% confidence)`,

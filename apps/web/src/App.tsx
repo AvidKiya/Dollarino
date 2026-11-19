@@ -126,13 +126,13 @@ export function App() {
         setActiveTab('subscription');
         window.alert(
           lang === 'fa'
-            ? 'برای استفاده از هوش مصنوعی مرکزی یا معامله واقعی صرافی، ابتدا اشتراک Pro را فعال کنید. استراتژی دلارینو V0.1 در دمو رایگان است!'
+            ? 'برای استفاده از هوش مصنوعی دلارینو یا معامله واقعی صرافی، ابتدا اشتراک Pro را فعال کنید. استراتژی منتخب دلارینو در دمو رایگان است!'
             : msg
         );
-      } else if (msg.includes('NO_ACTIVE_AI_KEY') || msg.includes('موتور هوش مصنوعی مرکزی')) {
+      } else if (msg.includes('NO_ACTIVE_AI_KEY') || msg.includes('هوش مصنوعی')) {
         window.alert(
           lang === 'fa'
-            ? 'موتور هوش مصنوعی مرکزی در حال تنظیم توسط مدیریت است. همین الان می‌توانید با استراتژی رایگان «دلارینو V0.1» شروع کنید!'
+            ? 'هوش مصنوعی دلارینو در حال تنظیم توسط مدیریت است. همین الان می‌توانید با «استراتژی منتخب دلارینو» شروع کنید!'
             : msg
         );
       } else {
@@ -246,7 +246,7 @@ export function App() {
           config={dashboard.config}
           markets={markets}
           provider={dashboard.activeExchange.provider}
-          mixerSnapshot={dashboard.mixerSnapshot}
+          mixerSnapshot={dashboard.mixerSnapshot ?? null}
           onRefresh={loadSessionAndDashboard}
         />
       )}

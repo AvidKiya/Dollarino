@@ -86,7 +86,7 @@ export function evaluateRiskGates(input: RiskGateInput): RiskGateDecision {
 
   const equityNum = Number(input.equity);
   const pnlNum = Number(input.todayRealizedPnl);
-  if (equityNum > 0 && pnlNum < 0) {
+  if (equityNum > 0 && pnlNum < 0 && input.config.dailyMaxLossPct > 0 && input.config.dailyMaxLossPct < 100) {
     const lossPct = (Math.abs(pnlNum) / equityNum) * 100;
     if (lossPct >= input.config.dailyMaxLossPct) {
       return emptyReject('DAILY_MAX_LOSS', `Daily loss ${lossPct.toFixed(2)}% reached limit ${input.config.dailyMaxLossPct}%`);

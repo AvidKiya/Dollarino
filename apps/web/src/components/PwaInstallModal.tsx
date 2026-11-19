@@ -38,7 +38,7 @@ export function PwaInstallModal({
         </div>
 
         {isInstalled ? (
-          <div className="p-4 rounded-2xl bg-[#10D856]/15 border border-[#10D856]/35 flex items-center gap-3 text-xs text-signal font-bold">
+          <div className="p-4 rounded-2xl badge-signal flex items-center gap-3 text-xs text-signal font-bold">
             <CheckCircle2 className="w-5 h-5 shrink-0" />
             <span>
               {isFa ? 'اپلیکیشن دلارینو هم‌اکنون نصب شده و در حال اجراست!' : 'Dollarino is already installed on this device!'}

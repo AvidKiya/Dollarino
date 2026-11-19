@@ -534,17 +534,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     ]);
     const stratName =
       cfg?.strategy_key === 'ai_autonomous_agent'
-        ? 'هوش مصنوعی مرکزی دلارینو'
+        ? 'هوش مصنوعی دلارینو'
         : cfg?.strategy_key === 'dollarino_v01'
-          ? 'استراتژی جامع دلارینو V0.1'
-          : cfg?.strategy_key || 'دلارینو V0.1';
+          ? 'استراتژی منتخب دلارینو (موتور دُرنا V1)'
+          : cfg?.strategy_key || 'استراتژی منتخب دلارینو';
     await bot.sendMessage(
       chatId,
       `🤖 وضعیت ربات و هوش مصنوعی دلارینو:\n\n` +
       `🔹 استراتژی انتخاب‌شده: ${stratName}\n` +
-      `🔹 موتور هوش مصنوعی مرکزی: ${aiSummary.effectiveModeLabelFa}\n` +
-      `🔹 ربات‌های کپی‌ترید متصل: ${bots?.cnt ?? 0}\n\n` +
-      `شما بدون نیاز به خرید API هوش مصنوعی، مستقیماً از پنل وب می‌توانید ربات را با یک دکمه روشن کنید.`
+      `🔹 موتور هوش مصنوعی دلارینو: ${aiSummary.effectiveModeLabelFa}\n` +
+      `🔹 ربات‌های کپی ترید دلارینو متصل: ${bots?.cnt ?? 0}\n\n` +
+      `شما بدون نیاز به خرید API هوش مصنوعی، مستقیماً از پنل وب می‌توانید ربات را با یک دکمه روی کل بازار روشن کنید.`
     );
     return { ok: true };
   }

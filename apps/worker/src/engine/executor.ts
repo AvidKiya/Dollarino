@@ -51,6 +51,10 @@ export interface UserBotConfigRow {
   trailing_stop_pct?: number;
   trail_after_tp1?: number;
   auto_scan_top?: number;
+  scan_scope?: 'SINGLE' | 'TOP_COINS' | 'ALL_MARKET';
+  allow_auto_flip?: number;
+  allow_pyramiding?: number;
+  watchlist_json?: string;
   started_at?: string | null;
 }
 

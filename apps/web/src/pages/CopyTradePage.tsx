@@ -187,7 +187,7 @@ export function CopyTradePage({
           </div>
           <div>
             <h1 className="text-lg font-black">
-              {isFa ? 'کپی‌ترید' : 'Copy-Trade'}
+              {isFa ? 'کپی ترید دلارینو' : 'Dollarino Copy-Trade'}
             </h1>
             <p className="text-xs text-white/80 mt-0.5">
               {isFa
@@ -210,7 +210,7 @@ export function CopyTradePage({
             <button
               onClick={() => void saveChannelSettings('AUTO')}
               className={`px-3 py-1.5 rounded-lg font-bold transition ${
-                mode === 'AUTO' ? 'bg-[#16E664] text-[#042310]' : 'text-white/80 hover:text-white'
+                mode === 'AUTO' ? 'bg-[#059669] text-white shadow' : 'text-white/80 hover:text-white'
               }`}
             >
               {isFa ? 'اجرای خودکار' : 'Auto Execute'}
@@ -379,7 +379,7 @@ export function CopyTradePage({
                 <div className="flex items-center gap-2">
                   <span
                     className={`px-2.5 py-0.5 rounded-lg font-extrabold font-mono-num ${
-                      parsedPreview.direction === 'LONG' ? 'bg-[#10D856]/15 text-signal' : 'bg-rose-500/15 text-loss'
+                      parsedPreview.direction === 'LONG' ? 'badge-signal' : 'bg-rose-500/15 text-loss'
                     }`}
                   >
                     {parsedPreview.direction}
@@ -391,23 +391,23 @@ export function CopyTradePage({
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 font-mono-num text-[11px]">
                 <div className="p-2.5 rounded-xl surface-card">
-                  <span className="text-dim block">ENTRY</span>
+                  <span className="text-dim block">{isFa ? 'نقطه ورود' : 'ENTRY'}</span>
                   <b className="text-main">{parsedPreview.price}</b>
                 </div>
                 <div className="p-2.5 rounded-xl bg-rose-500/10">
-                  <span className="text-loss block font-bold">STOP LOSS</span>
+                  <span className="text-loss block font-bold">{isFa ? 'حد ضرر' : 'STOP LOSS'}</span>
                   <b className="text-main">{parsedPreview.stopLoss}</b>
                 </div>
-                <div className="p-2.5 rounded-xl bg-[#10D856]/10">
-                  <span className="text-signal block font-bold">TP 1</span>
+                <div className="p-2.5 rounded-xl badge-signal">
+                  <span className="block font-bold">{isFa ? 'حد سود ۱' : 'TP 1'}</span>
                   <b className="text-main">{parsedPreview.tp1}</b>
                 </div>
-                <div className="p-2.5 rounded-xl bg-[#10D856]/10">
-                  <span className="text-signal block font-bold">TP 2</span>
+                <div className="p-2.5 rounded-xl badge-signal">
+                  <span className="block font-bold">{isFa ? 'حد سود ۲' : 'TP 2'}</span>
                   <b className="text-main">{parsedPreview.tp2 || '-'}</b>
                 </div>
-                <div className="p-2.5 rounded-xl bg-[#10D856]/10">
-                  <span className="text-signal block font-bold">TP 3</span>
+                <div className="p-2.5 rounded-xl badge-signal">
+                  <span className="block font-bold">{isFa ? 'حد سود ۳' : 'TP 3'}</span>
                   <b className="text-main">{parsedPreview.tp3 || '-'}</b>
                 </div>
               </div>

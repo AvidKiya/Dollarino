@@ -81,7 +81,7 @@ export function LogsPage({ lang }: { lang: Lang }) {
                         ? 'bg-rose-500/15 text-loss'
                         : l.level === 'WARN'
                           ? 'bg-[#FF8A00]/15 text-flame'
-                          : 'bg-[#10D856]/15 text-signal'
+                          : 'badge-signal'
                     }`}
                   >
                     {l.level}

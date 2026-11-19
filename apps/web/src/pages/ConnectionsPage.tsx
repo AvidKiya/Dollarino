@@ -189,7 +189,7 @@ export function ConnectionsPage({
             </div>
           </div>
           {onOpenSubscription && (
-            <button onClick={onOpenSubscription} className="px-4 py-2 rounded-xl bg-[#10D856] text-[#042310] text-xs font-black shrink-0">
+            <button onClick={onOpenSubscription} className="px-4 py-2 rounded-xl btn-emerald text-xs font-black shrink-0">
               {isFa ? 'مشاهده اشتراک‌ها' : 'View Plans'}
             </button>
           )}
@@ -201,7 +201,7 @@ export function ConnectionsPage({
           className={`p-3.5 rounded-2xl border text-xs font-bold ${
             msg.type === 'error'
               ? 'bg-rose-500/15 border-rose-500/40 text-rose-500'
-              : 'bg-[#10D856]/15 border-[#10D856]/40 text-signal'
+              : 'badge-signal'
           }`}
         >
           {msg.text}
@@ -218,14 +218,17 @@ export function ConnectionsPage({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-sm sm:text-base font-black text-main">
-                  {isFa ? 'موتور هوش مصنوعی مرکزی دلارینو' : 'Dollarino Central AI Engine'}
+                  {isFa ? 'هوش مصنوعی دلارینو (مرکزی)' : 'Dollarino AI Engine'}
                 </h2>
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
-                  platformAI?.configured ? 'bg-[#10D856]/15 text-signal' : 'bg-[#FF8A00]/15 text-flame'
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1.5 ${
+                  platformAI?.configured ? 'badge-signal' : 'bg-[#FF8A00]/15 text-flame'
                 }`}>
-                  {platformAI?.configured
-                    ? isFa ? `● فعال (${platformAI.activeCount} مدل)` : `● Active (${platformAI.activeCount} models)`
-                    : isFa ? 'در انتظار اتصال توسط مدیر' : 'Pending Admin Setup'}
+                  {platformAI?.configured && <span className="w-2 h-2 dot-signal" />}
+                  <span>
+                    {platformAI?.configured
+                      ? isFa ? `فعال (${platformAI.activeCount} مدل)` : `Active (${platformAI.activeCount} models)`
+                      : isFa ? 'در انتظار اتصال توسط مدیر' : 'Pending Admin Setup'}
+                  </span>
                 </span>
               </div>
               <p className="text-xs text-sub mt-1 leading-relaxed">
@@ -277,7 +280,7 @@ export function ConnectionsPage({
                     <div className="flex items-center gap-2">
                       <span className="font-black text-main">{c.label || c.provider.toUpperCase()}</span>
                       {c.is_active === 1 && (
-                        <span className="px-2 py-0.5 rounded-full bg-[#10D856]/15 text-signal text-[10px] font-black">
+                        <span className="px-2 py-0.5 rounded-full badge-signal text-[10px] font-black">
                           {isFa ? 'فعال' : 'ACTIVE'}
                         </span>
                       )}
@@ -437,7 +440,7 @@ export function ConnectionsPage({
         <section className="lg:col-span-5 space-y-5">
           <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#10D856]/15 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-2xl badge-signal flex items-center justify-center shrink-0">
                 <Bot className="w-5 h-5 text-signal" />
               </div>
               <div>

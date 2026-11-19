@@ -266,7 +266,7 @@ connectionRoutes.post('/exchanges/test-order', async (c) => {
       tp1: String((direction === 'LONG' ? price + risk * 2 : price - risk * 2).toFixed(2)),
       tp2: String((direction === 'LONG' ? price + risk * 3 : price - risk * 3).toFixed(2)),
       tp3: String((direction === 'LONG' ? price + risk * 4 : price - risk * 4).toFixed(2)),
-      reason: 'CodexBot TestStrategy 1-shot guarded diagnostic order',
+      reason: 'Dollarino Select (Dorna V1) 1-shot guarded diagnostic order',
     },
     { forceBypassState: true, strategyKey: 'test_strategy' }
   );

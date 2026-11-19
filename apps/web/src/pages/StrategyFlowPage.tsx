@@ -108,7 +108,7 @@ export function StrategyFlowPage({
       }),
     });
     await onRefresh();
-    setSavedMsg(lang === 'fa' ? 'فلو استراتژی دلارینو V0.1 و میکسر ذخیره شد!' : 'Dollarino V0.1 Strategy Flow & Mixer saved!');
+    setSavedMsg(lang === 'fa' ? 'فلو استراتژی منتخب دلارینو و میکسر ذخیره شد!' : 'Dollarino Select Strategy Flow & Mixer saved!');
   };
 
   const runScanner = async () => {
@@ -137,7 +137,7 @@ export function StrategyFlowPage({
 
   const nodes = [
     { step: '01', title: lang === 'fa' ? 'دیتای غیرریپینت' : 'Closed Candle Feed', detail: `${String(config.symbol || 'BTCUSDT')} · ${scanTf} HTF×${kbos.intRes}`, icon: Radar },
-    { step: '02', title: lang === 'fa' ? 'موتور استراتژی' : 'Strategy Engine', detail: selectedStrategy === 'dollarino_v01' ? 'دلارینو V0.1 (Master)' : selectedStrategy === 'kbos_v11' ? `KBOs v11 (${kbos.basisType})` : selectedStrategy.toUpperCase(), icon: Cpu },
+    { step: '02', title: lang === 'fa' ? 'موتور استراتژی' : 'Strategy Engine', detail: selectedStrategy === 'dollarino_v01' ? (lang === 'fa' ? 'استراتژی منتخب دلارینو' : 'Dollarino Select (Dorna V1)') : selectedStrategy === 'kbos_v11' ? `KBOs v11 (${kbos.basisType})` : selectedStrategy.toUpperCase(), icon: Cpu },
     { step: '03', title: lang === 'fa' ? 'فیلتر DEMA + میکسر' : 'DEMA ATR & Mixer', detail: `Gate ≥ ${threshold}%`, icon: SlidersHorizontal },
     { step: '04', title: lang === 'fa' ? 'دروازه ریسک و AI' : 'Risk & AI Gate', detail: `Margin ${String(config.margin_pct)}%`, icon: BrainCircuit },
     { step: '05', title: lang === 'fa' ? 'خروج ۳ تارگت + تریل' : '3-TP + Trail SL', detail: `[${kbos.tp1Pct}/${kbos.tp2Pct}/${kbos.tp3Pct}%] · ${kbos.trailPct}%`, icon: ShieldCheck },
@@ -150,12 +150,12 @@ export function StrategyFlowPage({
           <div>
             <h2 className="text-base font-black text-main flex items-center gap-2">
               <Layers className="w-5 h-5 text-brand" />
-              <span>{lang === 'fa' ? 'استراتژی اختصاصی دلارینو V0.1 و تنظیمات تخصصی' : 'Dollarino V0.1 Master Strategy & Pro Pipeline'}</span>
+              <span>{lang === 'fa' ? 'استراتژی منتخب دلارینو (موتور دُرنا V1) و تنظیمات تخصصی' : 'Dollarino Select (Dorna V1) & Pro Pipeline'}</span>
             </h2>
             <p className="text-xs text-sub mt-0.5">
               {lang === 'fa'
-                ? 'دلارینو V0.1 تمام الگوریتم‌های KBOs، SP2L، EMA Pullback، Breakout و میکسر ۸ کاناله را در یک موتور جامع ترکیب می‌کند.'
-                : 'Dollarino V0.1 unifies KBOs v11, SP2L Sweeps, Trend Pullback, Breakout & 8-Channel Mixer.'}
+                ? 'استراتژی منتخب دلارینو تمام الگوریتم‌های KBOs، SP2L، EMA Pullback، Breakout و میکسر ۸ کاناله را در یک موتور جامع ترکیب می‌کند.'
+                : 'Dollarino Select unifies KBOs v11, SP2L Sweeps, Trend Pullback, Breakout & 8-Channel Mixer.'}
             </p>
           </div>
           <button onClick={saveFlow} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl btn-emerald font-extrabold text-xs">
@@ -166,7 +166,7 @@ export function StrategyFlowPage({
 
         <div className="flex flex-wrap gap-2 text-xs">
           {([
-            ['dollarino_v01', lang === 'fa' ? '✨ دلارینو V0.1 (جامع اختصاصی)' : '✨ Dollarino V0.1 (Master)'],
+            ['dollarino_v01', lang === 'fa' ? '✨ استراتژی منتخب دلارینو (موتور دُرنا V1)' : '✨ Dollarino Select (Dorna V1)'],
             ['kbos_v11', 'KBOs Super v11'],
             ['sp2l', 'SP2L Liquidity Sweep'],
             ['ema_trend_pullback', 'EMA Trend Pullback'],
@@ -186,7 +186,7 @@ export function StrategyFlowPage({
           ))}
         </div>
 
-        {savedMsg && <div className="text-xs px-3.5 py-2.5 rounded-xl bg-[#10D856]/15 text-signal font-bold">{savedMsg}</div>}
+        {savedMsg && <div className="text-xs px-3.5 py-2.5 rounded-xl badge-signal font-bold">{savedMsg}</div>}
 
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           {nodes.map((n, idx) => {
@@ -212,7 +212,7 @@ export function StrategyFlowPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-black text-sm text-main flex items-center gap-2">
             <Cpu className="w-4 h-4 text-signal" />
-            <span>Dollarino V0.1 & KBOs Super v11 Engine</span>
+            <span>Dollarino Select (Dorna V1) & KBOs Engine</span>
           </h3>
           <span className="text-[11px] px-2.5 py-0.5 rounded-full banner-cobalt-soft text-brand font-mono-num font-bold">
             Non-Repainting HTF ×{kbos.intRes} + RLA 8-Band Ribbon
@@ -315,8 +315,8 @@ export function StrategyFlowPage({
             <div>
               <label className="text-sub font-semibold block mb-1">Active Strategy</label>
               <select value={selectedStrategy} onChange={(e) => setSelectedStrategy(e.target.value as StrategyKey)} className="w-full surface-input rounded-xl px-3 py-2">
-                <option value="dollarino_v01">✨ دلارینو V0.1 (Master)</option>
-                <option value="ai_autonomous_agent">هوش مصنوعی مرکزی دلارینو</option>
+                <option value="dollarino_v01">✨ استراتژی منتخب دلارینو (موتور دُرنا V1)</option>
+                <option value="ai_autonomous_agent">هوش مصنوعی دلارینو</option>
                 <option value="kbos_v11">KBOs Super v11</option>
                 <option value="sp2l">SP2L Liquidity Sweep</option>
                 <option value="ema_trend_pullback">EMA 20/50 Pullback</option>
@@ -357,7 +357,7 @@ export function StrategyFlowPage({
             <Zap className="w-4 h-4 text-flame" />
             <span>
               {lang === 'fa'
-                ? `اسکنر زنده ${selectedStrategy === 'dollarino_v01' ? 'دلارینو V0.1' : selectedStrategy.toUpperCase()} (${markets.length} جفت‌ارز ${provider.toUpperCase()})`
+                ? `اسکنر زنده ${selectedStrategy === 'dollarino_v01' ? 'استراتژی منتخب دلارینو' : selectedStrategy.toUpperCase()} (${markets.length} جفت‌ارز ${provider.toUpperCase()})`
                 : `${provider.toUpperCase()} Live Scanner (${markets.length} pairs)`}
             </span>
           </h3>

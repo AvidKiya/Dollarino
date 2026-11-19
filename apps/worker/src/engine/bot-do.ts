@@ -12,9 +12,21 @@ import { runAutonomousAITrader } from '../ai/providers.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
-import { executeSignalForUser, logAudit, reconcileOpenPositionsForUser, type UserBotConfigRow } from './executor.js';
+import { getExchangeMarkets } from '../exchanges/markets.js';
+import {
+  executeSignalForUser,
+  logAudit,
+  notifyUserTelegram,
+  reconcileOpenPositionsForUser,
+  type UserBotConfigRow,
+} from './executor.js';
 
-const TOP_SCAN_COINS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+const MAJOR_LIQUID_COINS = [
+  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT',
+  'DOGEUSDT', 'AVAXUSDT', 'SUIUSDT', 'TONUSDT', 'LINKUSDT',
+  'ADAUSDT', 'NEARUSDT', 'ARBUSDT', 'PEPEUSDT', 'TRXUSDT',
+  'OPUSDT', 'LTCUSDT', 'INJUSDT', 'APTUSDT', 'WIFUSDT',
+];
 
 export class TradingBotCoordinator implements DurableObject {
   constructor(
@@ -69,38 +81,229 @@ export class TradingBotCoordinator implements DurableObject {
     }
   }
 
+  private async buildScanBatchForUser(
+    userId: string,
+    cfg: UserBotConfigRow,
+    adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
+    openSymbols: Set<string>
+  ): Promise<string[]> {
+    const scope = cfg.scan_scope || (cfg.auto_scan_top ? 'ALL_MARKET' : 'SINGLE');
+
+    if (scope === 'SINGLE' && !cfg.auto_scan_top) {
+      return Array.from(new Set([cfg.symbol, ...openSymbols])).slice(0, 6);
+    }
+
+    let watchlist: string[] = [];
+    try {
+      if (cfg.watchlist_json) {
+        const parsed = JSON.parse(cfg.watchlist_json) as unknown;
+        if (Array.isArray(parsed)) {
+          watchlist = parsed.map((x) => String(x).toUpperCase()).filter(Boolean);
+        }
+      }
+    } catch {
+      watchlist = [];
+    }
+
+    let universe: string[] = [];
+    if (scope === 'ALL_MARKET') {
+      const cachedKey = `mkt_universe_${cfg.trading_mode}`;
+      const cached = await this.state.storage.get<{ ts: number; list: string[] }>(cachedKey);
+      if (cached && Date.now() - cached.ts < 5 * 60_000 && cached.list.length >= 10) {
+        universe = cached.list;
+      } else {
+        const listed = await getExchangeMarkets(adapter.provider).catch(() => []);
+        if (listed.length > 0) {
+          universe = listed
+            .filter((m) => m.symbol.endsWith('USDT'))
+            .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0))
+            .slice(0, 32)
+            .map((m) => m.symbol);
+          await this.state.storage.put(cachedKey, { ts: Date.now(), list: universe });
+        }
+      }
+    }
+
+    const pool = Array.from(
+      new Set([
+        cfg.symbol,
+        ...openSymbols,
+        ...watchlist,
+        ...(universe.length ? universe : MAJOR_LIQUID_COINS),
+      ])
+    );
+
+    // Rotate 6 symbols per 15s tick while always monitoring open positions & primary symbol
+    const priority = Array.from(new Set([cfg.symbol, ...openSymbols])).slice(0, 3);
+    const others = pool.filter((s) => !priority.includes(s));
+    const batchSize = Math.max(2, 6 - priority.length);
+    const cursorKey = `scan_cursor_${userId}`;
+    const cursor = (await this.state.storage.get<number>(cursorKey)) ?? 0;
+
+    const picked: string[] = [...priority];
+    if (others.length > 0) {
+      for (let i = 0; i < Math.min(batchSize, others.length); i++) {
+        picked.push(others[(cursor + i) % others.length]!);
+      }
+      await this.state.storage.put(cursorKey, (cursor + batchSize) % others.length);
+    }
+
+    return Array.from(new Set(picked));
+  }
+
   private async runUserTick(userId: string) {
     // 1. Always manage open positions (3-TP + Risk-Free trailing)
     await reconcileOpenPositionsForUser(this.env, userId);
 
-    // 2. Check if bot is actively scanning strategies or AI Agent
+    // 2. Check if bot is actively scanning strategies or Dollarino AI
     const cfg = await this.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
       .bind(userId).first<UserBotConfigRow>();
     if (!cfg || (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE')) {
       return;
     }
 
-    const { adapter } = await resolveUserExchangeAdapter(
-      this.env,
-      userId,
-      cfg.trading_mode === 'PAPER' ? 'paper' : undefined
-    );
+    const [{ adapter }, openRows] = await Promise.all([
+      resolveUserExchangeAdapter(
+        this.env,
+        userId,
+        cfg.trading_mode === 'PAPER' ? 'paper' : undefined
+      ),
+      this.env.DB.prepare(
+        `SELECT id, symbol, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode
+         FROM trades WHERE user_id = ? AND status = 'OPEN'`
+      ).bind(userId).all<{
+        id: string;
+        symbol: string;
+        direction: Direction;
+        entry_price: string;
+        current_stop_loss: string;
+        tp1: string;
+        remaining_quantity: string;
+        margin_used: string;
+        realized_pnl: string;
+        mode: string;
+      }>(),
+    ]);
 
-    const symbolsToScan = cfg.auto_scan_top
-      ? Array.from(new Set([cfg.symbol, ...TOP_SCAN_COINS])).slice(0, 3)
-      : [cfg.symbol];
+    const openBySymbol = new Map<string, (typeof openRows.results)[number]>();
+    for (const r of openRows.results) {
+      if (!openBySymbol.has(r.symbol)) openBySymbol.set(r.symbol, r);
+    }
+    const openCount = openRows.results.length;
+    const openSymbols = new Set(openBySymbol.keys());
+
+    const symbolsToScan = await this.buildScanBatchForUser(userId, cfg, adapter, openSymbols);
 
     for (const scanSymbol of symbolsToScan) {
-      await this.evaluateSymbolForUser(userId, cfg, adapter, scanSymbol).catch(() => {});
+      const existingOnSymbol = openBySymbol.get(scanSymbol) ?? null;
+      await this.evaluateSymbolForUser(
+        userId,
+        cfg,
+        adapter,
+        scanSymbol,
+        existingOnSymbol,
+        openCount
+      ).catch(async (err) => {
+        const msg = err instanceof Error ? err.message : 'Scan error';
+        await logAudit(this.env.DB, userId, 'SIGNAL', 'WARN', `خطا در بررسی ${scanSymbol}: ${msg}`, scanSymbol).catch(() => {});
+      });
     }
+
+    const hbKey = `last_scan_hb_${userId}`;
+    const lastHb = (await this.state.storage.get<number>(hbKey)) ?? 0;
+    if (Date.now() - lastHb >= 60_000) {
+      await this.state.storage.put(hbKey, Date.now());
+      const names = symbolsToScan.map((s) => s.replace('USDT', '')).join('، ');
+      await logAudit(
+        this.env.DB,
+        userId,
+        'SIGNAL',
+        'INFO',
+        `پایش زنده همزمان ${symbolsToScan.length} ارز (${names}) تکمیل شد · جستجو برای نقطه ورود مطمئن`,
+        symbolsToScan[0] || cfg.symbol
+      );
+    }
+  }
+
+  private async closeOpenPositionEarly(
+    userId: string,
+    cfg: UserBotConfigRow,
+    adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
+    openPos: {
+      id: string;
+      symbol: string;
+      direction: Direction;
+      entry_price: string;
+      remaining_quantity: string;
+      margin_used: string;
+      realized_pnl: string;
+      mode: string;
+    },
+    reason: 'AI_EXIT' | 'STRATEGY_FLIP'
+  ) {
+    const cls = await adapter.closePositionPartialOrFull(
+      openPos.symbol,
+      openPos.direction,
+      openPos.remaining_quantity,
+      `${reason.toLowerCase()}_${Date.now()}`
+    );
+    const exitPx = Number(cls.filledPrice);
+    const entryPx = Number(openPos.entry_price);
+    const qty = Number(openPos.remaining_quantity);
+    const pnl = openPos.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
+    const totalRealized = Number(openPos.realized_pnl) + pnl - Number(cls.fee);
+
+    if (openPos.mode === 'PAPER') {
+      const freshCfg = await this.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
+        .bind(userId).first<{ paper_balance: string }>();
+      const restored = Number(freshCfg?.paper_balance ?? cfg.paper_balance) + Number(openPos.margin_used) + pnl - Number(cls.fee);
+      await this.env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?')
+        .bind(restored.toFixed(2), userId).run();
+    }
+
+    await this.env.DB.prepare(
+      `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = ?, closed_at = datetime('now') WHERE id = ?`
+    ).bind(cls.filledPrice, totalRealized.toFixed(4), reason, openPos.id).run();
+
+    await logAudit(
+      this.env.DB,
+      userId,
+      'ORDER',
+      'INFO',
+      `Closed ${openPos.direction} ${openPos.symbol} (${reason}) @ ${cls.filledPrice} | PnL: ${totalRealized >= 0 ? '+' : ''}${totalRealized.toFixed(2)}`,
+      openPos.symbol
+    );
+    await notifyUserTelegram(
+      this.env,
+      userId,
+      `🔄 معامله ${openPos.symbol} (${reason === 'AI_EXIT' ? 'خروج هوشمند دلارینو' : 'چرخش روند'}) بسته شد | سود/زیان: ${totalRealized >= 0 ? '+' : ''}$${totalRealized.toFixed(2)}`
+    );
   }
 
   private async evaluateSymbolForUser(
     userId: string,
     cfg: UserBotConfigRow,
     adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
-    scanSymbol: string
+    scanSymbol: string,
+    openOnSymbol: {
+      id: string;
+      symbol: string;
+      direction: Direction;
+      entry_price: string;
+      current_stop_loss: string;
+      tp1: string;
+      remaining_quantity: string;
+      margin_used: string;
+      realized_pnl: string;
+      mode: string;
+    } | null,
+    openCount: number
   ) {
+    // If max open positions reached and we don't hold this symbol (nor allow flip/exit), skip heavy API calls
+    if (!openOnSymbol && openCount >= cfg.max_open_positions) {
+      return;
+    }
+
     const [ltfRaw, htfRaw] = await Promise.all([
       adapter.getKlines(scanSymbol, cfg.entry_timeframe, 450),
       adapter.getKlines(scanSymbol, cfg.higher_timeframe, 200),
@@ -131,7 +334,7 @@ export class TradingBotCoordinator implements DurableObject {
       }
     } catch { /* fallback */ }
 
-    // 2A. Centralized Multi-AI Consensus Trader
+    // 2A. Dollarino AI (Centralized Multi-AI Consensus Trader)
     if (cfg.strategy_key === 'ai_autonomous_agent') {
       const latestBarTs = ltfClosed[ltfClosed.length - 1]!.timestamp;
       const aiBarKey = `last_ai_bar_ts_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
@@ -139,22 +342,9 @@ export class TradingBotCoordinator implements DurableObject {
       if (lastAiTs === latestBarTs) return;
       await this.state.storage.put(aiBarKey, latestBarTs);
 
-      const [orderBook, market24h, openOnSymbol] = await Promise.all([
+      const [orderBook, market24h] = await Promise.all([
         adapter.getOrderBook(scanSymbol, 15).catch(() => ({ bids: [], asks: [] })),
         adapter.getMarket24h(scanSymbol).catch(() => null),
-        this.env.DB.prepare(
-          `SELECT id, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode FROM trades WHERE user_id = ? AND symbol = ? AND status = 'OPEN' LIMIT 1`
-        ).bind(userId, scanSymbol).first<{
-          id: string;
-          direction: Direction;
-          entry_price: string;
-          current_stop_loss: string;
-          tp1: string;
-          remaining_quantity: string;
-          margin_used: string;
-          realized_pnl: string;
-          mode: string;
-        }>(),
       ]);
 
       const bidVol = orderBook.bids.reduce((s, [, q]) => s + Number(q), 0);
@@ -192,7 +382,7 @@ export class TradingBotCoordinator implements DurableObject {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'AI Trader error';
-        await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `AI Trader failed on ${scanSymbol}: ${msg}`, scanSymbol);
+        await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `Dollarino AI error on ${scanSymbol}: ${msg}`, scanSymbol);
         return;
       }
 
@@ -201,7 +391,7 @@ export class TradingBotCoordinator implements DurableObject {
         userId,
         'AI_AGENT',
         decision.ok ? 'INFO' : 'WARN',
-        `[Central AI · ${decision.modelCount || 1}x] ${decision.action} ${scanSymbol} (${decision.confidence}% conf) — ${decision.thesis}`,
+        `[هوش مصنوعی دلارینو · ${decision.modelCount || 1}x] ${decision.action} ${scanSymbol} (${decision.confidence}% conf) — ${decision.thesis}`,
         scanSymbol,
         decision
       );
@@ -209,30 +399,25 @@ export class TradingBotCoordinator implements DurableObject {
       if (!decision.ok) return;
 
       if (decision.action === 'CLOSE' && openOnSymbol) {
-        const cls = await adapter.closePositionPartialOrFull(
-          scanSymbol,
-          openOnSymbol.direction,
-          openOnSymbol.remaining_quantity,
-          `ai_exit_${Date.now()}`
-        );
-        const exitPx = Number(cls.filledPrice);
-        const entryPx = Number(openOnSymbol.entry_price);
-        const qty = Number(openOnSymbol.remaining_quantity);
-        const pnl = openOnSymbol.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
-        const totalRealized = Number(openOnSymbol.realized_pnl) + pnl - Number(cls.fee);
-        if (openOnSymbol.mode === 'PAPER') {
-          const restored = Number(cfg.paper_balance) + Number(openOnSymbol.margin_used) + pnl - Number(cls.fee);
-          await this.env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?')
-            .bind(restored.toFixed(2), userId).run();
-        }
-        await this.env.DB.prepare(
-          `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'AI_EXIT', closed_at = datetime('now') WHERE id = ?`
-        ).bind(cls.filledPrice, totalRealized.toFixed(4), openOnSymbol.id).run();
+        await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'AI_EXIT');
         return;
       }
 
       if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 65)) {
-        if (cooldownMinutes > 0) {
+        if (openOnSymbol) {
+          if (openOnSymbol.direction === decision.action && !(cfg.allow_pyramiding ?? 0)) {
+            return;
+          }
+          if (openOnSymbol.direction !== decision.action) {
+            if (cfg.allow_auto_flip ?? 1) {
+              await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'AI_EXIT');
+            } else {
+              return;
+            }
+          }
+        }
+
+        if (cooldownMinutes > 0 && !openOnSymbol) {
           const lastClosed = await this.env.DB.prepare(
             `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
           ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
@@ -288,7 +473,7 @@ export class TradingBotCoordinator implements DurableObject {
       return;
     }
 
-    // 2B. Proprietary Strategy Engine (Dollarino V0.1 & Quant strategies)
+    // 2B. Dollarino Select Strategy (Dorna V1 & Quant strategies)
     const outputs = computeStrategySignals(
       cfg.strategy_key,
       ltfClosed,
@@ -301,14 +486,32 @@ export class TradingBotCoordinator implements DurableObject {
         mixerThreshold: cfg.mixer_threshold ?? 65,
       }
     );
-    const latest = outputs[outputs.length - 1];
-    if (!latest || latest.signal === 'NONE') return;
-
     const lastBarKey = `last_signal_ts_${userId}_${scanSymbol}`;
     const lastProcessed = await this.state.storage.get<number>(lastBarKey);
+
+    let latest = outputs[outputs.length - 1];
+    if ((!latest || latest.signal === 'NONE') && !lastProcessed && outputs.length >= 2) {
+      const prev = outputs[outputs.length - 2];
+      if (prev && prev.signal !== 'NONE') latest = prev;
+    }
+    if (!latest || latest.signal === 'NONE') return;
+
     if (lastProcessed === latest.timestamp) return;
 
-    if (cooldownMinutes > 0) {
+    if (openOnSymbol) {
+      if (openOnSymbol.direction === latest.signal && !(cfg.allow_pyramiding ?? 0)) {
+        return;
+      }
+      if (openOnSymbol.direction !== latest.signal) {
+        if (cfg.allow_auto_flip ?? 1) {
+          await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'STRATEGY_FLIP');
+        } else {
+          return;
+        }
+      }
+    }
+
+    if (cooldownMinutes > 0 && !openOnSymbol) {
       const lastClosed = await this.env.DB.prepare(
         `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
       ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();

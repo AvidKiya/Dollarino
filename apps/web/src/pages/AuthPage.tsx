@@ -277,8 +277,8 @@ export function AuthPage({
             <ShieldCheck className="w-4 h-4 text-signal shrink-0" />
             <span>
               {isFa
-                ? 'هوش مصنوعی مرکزی آماده و متصل است · شروع بدون نیاز به خرید API یا سرمایه اولیه'
-                : 'Central AI Engine ready — zero API setup or upfront deposit required'}
+                ? 'هوش مصنوعی دلارینو و استراتژی منتخب آماده است · شروع بدون نیاز به API یا سرمایه اولیه'
+                : 'Dollarino AI & Dorna Select ready — zero API setup or upfront deposit required'}
             </span>
           </div>
         </div>

@@ -288,7 +288,7 @@ export function AdminPage({
         results: Array<{ slot_order: number; label: string; model: string; ok: boolean; latencyMs: number; reply: string }>;
       }>('/api/admin/ai-engines/test', { method: 'POST' });
       setAiTestResults(res.results || []);
-      setMsg(res.ok ? (isFa ? 'تست موتورهای هوش مصنوعی مرکزی موفق بود ✅' : 'Central AI test passed!') : 'One or more AI models failed');
+      setMsg(res.ok ? (isFa ? 'تست موتورهای هوش مصنوعی دلارینو موفق بود ✅' : 'Dollarino AI test passed!') : 'One or more AI models failed');
       await load();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Test failed');
@@ -377,7 +377,7 @@ export function AdminPage({
               <div>
                 <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
                   <BrainCircuit className="w-5 h-5 text-brand" />
-                  <span>{isFa ? 'موتور هوش مصنوعی مرکزی دلارینو (۱ تا ۳ مدل ترکیبی)' : 'Central Platform AI Engine (1–3 Combined Models)'}</span>
+                  <span>{isFa ? 'موتور هوش مصنوعی دلارینو — موتور دُرّبین (۱ تا ۳ مدل ترکیبی)' : 'Dollarino AI Engine — Dorrbin (1–3 Combined Models)'}</span>
                 </h3>
                 <p className="text-xs text-sub mt-1">
                   {isFa
@@ -399,7 +399,7 @@ export function AdminPage({
             {aiTestResults.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
                 {aiTestResults.map((r) => (
-                  <div key={r.slot_order} className={`p-3 rounded-2xl border ${r.ok ? 'bg-[#10D856]/10 border-[#10D856]/35' : 'bg-rose-500/10 border-rose-500/35'}`}>
+                  <div key={r.slot_order} className={`p-3 rounded-2xl border ${r.ok ? 'badge-signal' : 'bg-rose-500/10 border-rose-500/35'}`}>
                     <div className="font-black text-main flex items-center justify-between">
                       <span>#{r.slot_order} {r.label}</span>
                       <span className="font-mono-num text-[11px]">{r.latencyMs}ms</span>
@@ -481,7 +481,7 @@ export function AdminPage({
                             onUserUpdated();
                           }}
                           className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
-                            eng.is_active === 1 ? 'bg-[#10D856]/15 text-signal' : 'bg-slate-500/20 text-dim'
+                            eng.is_active === 1 ? 'badge-signal' : 'bg-slate-500/20 text-dim'
                           }`}
                         >
                           {eng.is_active === 1 ? (isFa ? 'فعال' : 'ON') : (isFa ? 'خاموش' : 'OFF')}
@@ -640,7 +640,7 @@ export function AdminPage({
 
             {aiSignals.length > 0 && (
               <div className="pt-2 border-t space-y-2 text-xs">
-                <div className="font-black text-sub">{isFa ? 'آخرین تصمیمات اجماع هوش مصنوعی مرکزی' : 'Recent Central Consensus Signals'}</div>
+                <div className="font-black text-sub">{isFa ? 'آخرین تصمیمات اجماع هوش مصنوعی دلارینو' : 'Recent Dollarino AI Signals'}</div>
                 <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
                   {aiSignals.map((sig) => (
                     <div key={sig.id} className="surface-soft rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
@@ -698,7 +698,7 @@ export function AdminPage({
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             o.status === 'ACTIVE'
-                              ? 'bg-[#10D856]/15 text-signal'
+                              ? 'badge-signal'
                               : o.status === 'PENDING_REVIEW'
                                 ? 'bg-[#FF8A00]/15 text-flame'
                                 : 'bg-rose-500/15 text-loss'

@@ -80,22 +80,22 @@ export function SetupWizardModal({
   const strategyOptions = [
     {
       id: 'dollarino_v01' as const,
-      title: lang === 'fa' ? 'استراتژی اختصاصی دلارینو V0.1' : 'Dollarino V0.1 Master Strategy',
+      title: lang === 'fa' ? 'استراتژی منتخب دلارینو (موتور دُرنا V1)' : 'Dollarino Select (Dorna V1 Engine)',
       recommended: true,
-      badge: 'V0.1',
+      badge: 'دُرنا V1',
       detail:
         lang === 'fa'
-          ? 'بهترین ترکیب تمام استراتژی‌های دلارینو در یک موتور جامع و دقیق'
-          : 'Unifies all Dollarino strategies into one non-repainting engine',
+          ? 'برگزیده‌ترین ترکیب تمام استراتژی‌های دلارینو با قابلیت معامله همزمان روی کل بازار'
+          : 'Flagship Dorna V1 strategy scanning all markets simultaneously',
     },
     {
       id: 'ai_autonomous_agent' as const,
-      title: lang === 'fa' ? 'هوش مصنوعی مرکزی دلارینو' : 'Dollarino Central AI',
+      title: lang === 'fa' ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
       badge: '100% AI',
       detail:
         lang === 'fa'
-          ? 'تحلیل توسط موتور هوش مصنوعی مرکزی (بدون نیاز به API شخصی)'
-          : 'Powered by central multi-AI brain — zero API setup needed',
+          ? 'تحلیل توسط موتور هوش مصنوعی دلارینو (بدون نیاز به API شخصی)'
+          : 'Powered by central multi-AI Dollarino engine — zero API setup needed',
     },
     {
       id: 'kbos_v11' as const,
@@ -180,11 +180,11 @@ export function SetupWizardModal({
       onClose();
     } catch (e) {
       const errText = e instanceof Error ? e.message : 'Failed to start AI Agent';
-      if (errText.includes('NO_ACTIVE_AI_KEY') || errText.includes('موتور هوش مصنوعی مرکزی')) {
+      if (errText.includes('NO_ACTIVE_AI_KEY') || errText.includes('هوش مصنوعی دلارینو')) {
         setMsg(
           lang === 'fa'
-            ? 'موتور هوش مصنوعی مرکزی هنوز توسط مدیریت فعال نشده است؛ می‌توانید از استراتژی «دلارینو V0.1» استفاده کنید.'
-            : 'Central AI is awaiting admin setup; try Dollarino V0.1 in the meantime.'
+            ? 'هوش مصنوعی دلارینو هنوز توسط مدیریت فعال نشده است؛ می‌توانید از استراتژی «استراتژی منتخب دلارینو» استفاده کنید.'
+            : 'Central AI is awaiting admin setup; try Dollarino Select in the meantime.'
         );
       } else {
         setMsg(errText);
@@ -288,7 +288,7 @@ export function SetupWizardModal({
                     step === idx
                       ? 'btn-cobalt'
                       : idx < step
-                        ? 'bg-[#10D856]/15 border-[#10D856]/40 text-signal'
+                        ? 'badge-signal border-[#10D856]/40 text-signal'
                         : 'surface-soft text-dim'
                   }`}
                 >
@@ -494,7 +494,7 @@ export function SetupWizardModal({
               <Zap className="w-4 h-4 text-brand shrink-0" />
               <span>
                 {lang === 'fa'
-                  ? 'هوش مصنوعی مرکزی دلارینو روی سرور متصل است و نیازی به وارد کردن کلید API توسط شما ندارد.'
+                  ? 'هوش مصنوعی دلارینو روی سرور متصل است و نیازی به وارد کردن کلید API توسط شما ندارد.'
                   : 'Dollarino Central AI is managed on the platform — no personal AI key required.'}
               </span>
             </div>

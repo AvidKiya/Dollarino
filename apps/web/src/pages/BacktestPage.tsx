@@ -154,7 +154,7 @@ export function BacktestPage({
           <div>
             <h2 className="text-base font-black text-main flex items-center gap-2">
               <Layers className="w-5 h-5 text-brand" />
-              <span>{lang === 'fa' ? 'موتور بک‌تست دلارینو V0.1 و استراتژی‌ها' : 'Dollarino V0.1 Strategy Backtester'}</span>
+              <span>{lang === 'fa' ? 'موتور بک‌تست استراتژی منتخب دلارینو' : 'Dollarino Select (Dorna V1) Backtester'}</span>
             </h2>
             <p className="text-xs text-sub">
               {lang === 'fa'
@@ -165,7 +165,7 @@ export function BacktestPage({
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setShowPineDrawer((v) => !v)} className="px-3.5 py-2 rounded-xl surface-soft border text-xs font-bold text-main inline-flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5 text-brand" />
-              <span>{lang === 'fa' ? 'تنظیمات هسته V0.1' : 'Core Params'}</span>
+              <span>{lang === 'fa' ? 'تنظیمات هسته دُرنا V1' : 'Core Params'}</span>
             </button>
             <button disabled={running} onClick={() => executeBacktest(false)} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl btn-emerald text-xs font-extrabold">
               <Play className="w-3.5 h-3.5" />
@@ -194,7 +194,7 @@ export function BacktestPage({
           <div>
             <label className="text-sub font-semibold block mb-1">Primary Strategy</label>
             <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKey)} className="w-full surface-input rounded-xl px-2.5 py-2">
-              <option value="dollarino_v01">✨ دلارینو V0.1 (Master)</option>
+              <option value="dollarino_v01">✨ استراتژی منتخب دلارینو (موتور دُرنا V1)</option>
               <option value="kbos_v11">KBOs Super v11</option>
               <option value="sp2l">SP2L Liquidity Sweep</option>
               <option value="ema_trend_pullback">EMA 20/50 Pullback</option>
@@ -207,7 +207,7 @@ export function BacktestPage({
             <label className="text-sub font-semibold block mb-1">Compare With</label>
             <select value={compareStrategy} onChange={(e) => setCompareStrategy(e.target.value as StrategyKey)} className="w-full surface-input rounded-xl px-2.5 py-2">
               <option value="kbos_v11">KBOs v11</option>
-              <option value="dollarino_v01">دلارینو V0.1</option>
+              <option value="dollarino_v01">استراتژی منتخب دلارینو</option>
               <option value="sp2l">SP2L Sweep</option>
               <option value="ema_trend_pullback">EMA Pullback</option>
               <option value="signal_mixer">Signal Mixer</option>
@@ -382,7 +382,7 @@ export function BacktestPage({
                         const val = row.months[m] ?? 0;
                         const bg =
                           val > 0
-                            ? 'bg-[#10D856]/15 text-signal font-bold'
+                            ? 'badge-signal font-bold'
                             : val < 0
                               ? 'bg-rose-500/15 text-loss font-bold'
                               : 'surface-soft text-dim';

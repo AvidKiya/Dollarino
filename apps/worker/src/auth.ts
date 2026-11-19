@@ -68,8 +68,8 @@ export async function ensureUserDefaults(db: D1Database, userId: string) {
   const webhookSecret = randomId('tv');
   await db.prepare(
     `INSERT OR IGNORE INTO bot_configs
-     (user_id, strategy_key, margin_pct, max_leverage, tp1_close_pct, tp2_close_pct, tp3_close_pct, webhook_secret)
-     VALUES (?, 'dollarino_v01', 5, 5, 40, 30, 30, ?)`
+     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_scan_top, scan_scope, allow_auto_flip, webhook_secret)
+     VALUES (?, 'dollarino_v01', 5, 5, 6, 40, 30, 30, 1, 'ALL_MARKET', 1, ?)`
   ).bind(userId, webhookSecret).run();
 
   await db.prepare(

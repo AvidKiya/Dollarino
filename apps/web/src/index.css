@@ -6,23 +6,26 @@
 
 @layer base {
   /* =====================================================================
-     DARK THEME — Cosmic Space Cobalt (Derived from Dollarino Logo)
+     DARK THEME — Cosmic Space Cobalt (iOS Midnight Luxury)
      ===================================================================== */
   :root {
     --bg-app: #040814;
     --bg-surface: #0a1328;
     --bg-surface-2: #0f1b38;
-    --bg-glass: rgba(6, 13, 33, 0.88);
+    --bg-glass: rgba(8, 16, 38, 0.88);
     --border-app: #1b2d56;
     --text-main: #f3f7ff;
     --text-sub: #a6badf;
-    --text-muted: #6f86b3;
+    --text-muted: #7088b5;
 
-    --brand: #1464f6;
+    --brand: #2574ff;
     --brand-deep: #0c44c8;
     --brand-cyan: #00b4ff;
     --signal-green: #16e664;
     --signal-green-deep: #059669;
+    --signal-dot: #16e664;
+    --signal-badge-bg: rgba(16, 216, 86, 0.16);
+    --signal-badge-border: rgba(22, 230, 100, 0.34);
     --flame-orange: #ff8a00;
     --danger: #f43f5e;
 
@@ -49,33 +52,36 @@
     --border: 222 53% 22%;
     --input: 222 58% 13%;
     --ring: 219 93% 52%;
-    --radius: 1.25rem;
+    --radius: 1.5rem;
 
-    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 12px 32px rgba(2, 6, 23, 0.45);
-    --glow-primary: 0 8px 28px rgba(20, 100, 246, 0.35);
-    --glow-success: 0 8px 24px rgba(22, 230, 100, 0.25);
+    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 14px 34px rgba(2, 6, 23, 0.45);
+    --glow-primary: 0 10px 28px rgba(20, 100, 246, 0.36);
+    --glow-success: 0 10px 26px rgba(22, 230, 100, 0.25);
   }
 
   /* =====================================================================
-     LIGHT THEME — Ice Sky Cobalt (Clean kifpool.me Daylight Edition)
+     LIGHT THEME — Apple iOS / Kifpool Crisp Daylight Edition
      ===================================================================== */
   html.theme-light,
   .theme-light {
-    --bg-app: #f1f6ff;
+    --bg-app: #f3f7fd;
     --bg-surface: #ffffff;
-    --bg-surface-2: #e7effe;
+    --bg-surface-2: #edf2fb;
     --bg-glass: rgba(255, 255, 255, 0.92);
-    --border-app: #d5e2f8;
-    --text-main: #081538;
-    --text-sub: #3b507d;
-    --text-muted: #657ca7;
+    --border-app: #dce6f7;
+    --text-main: #091534;
+    --text-sub: #3b4f78;
+    --text-muted: #6579a0;
 
     --brand: #0c44c8;
     --brand-deep: #072f94;
     --brand-cyan: #0284c7;
-    --signal-green: #059669;
-    --signal-green-deep: #047857;
-    --flame-orange: #ea580c;
+    --signal-green: #047857;
+    --signal-green-deep: #065f46;
+    --signal-dot: #059669;
+    --signal-badge-bg: #dcfce7;
+    --signal-badge-border: #86efac;
+    --flame-orange: #d97706;
     --danger: #dc2626;
 
     --background: 218 100% 97%;
@@ -94,9 +100,9 @@
     --input: 218 85% 96%;
     --ring: 222 89% 42%;
 
-    --shadow-card: 0 2px 6px rgba(12, 68, 200, 0.04), 0 12px 30px rgba(12, 68, 200, 0.07);
-    --glow-primary: 0 10px 26px rgba(12, 68, 200, 0.25);
-    --glow-success: 0 8px 22px rgba(5, 150, 105, 0.2);
+    --shadow-card: 0 2px 10px rgba(15, 35, 95, 0.04), 0 10px 26px rgba(12, 68, 200, 0.055);
+    --glow-primary: 0 10px 24px rgba(12, 68, 200, 0.24);
+    --glow-success: 0 8px 20px rgba(4, 120, 87, 0.28);
   }
 
   * {
@@ -107,7 +113,7 @@
   body {
     background-color: var(--bg-app);
     color: var(--text-main);
-    font-family: 'Vazirmatn', 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Vazirmatn', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
@@ -121,7 +127,7 @@
 }
 
 /* =====================================================================
-   SEMANTIC DESIGN SYSTEM TOKENS
+   iOS SQUIRCLE & KIFPOOL DESIGN TOKENS
    ===================================================================== */
 .app-shell {
   background-color: var(--bg-app);
@@ -131,7 +137,8 @@
 .app-header {
   background-color: var(--bg-glass);
   border-color: var(--border-app);
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .app-sidebar {
@@ -143,7 +150,7 @@
 .surface-card {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-app);
-  border-radius: 1.35rem;
+  border-radius: 1.5rem;
   box-shadow: var(--shadow-card);
   color: var(--text-main);
 }
@@ -163,37 +170,54 @@
   color: var(--text-muted);
 }
 
-.hero-cobalt {
+.ios-dock {
+  background-color: var(--bg-glass);
+  border: 1px solid var(--border-app);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  box-shadow: 0 -4px 30px rgba(8, 22, 66, 0.14);
+}
+
+/* Cosmic Cobalt Heroes & Dark Preserved Cards (Never altered in Light Mode!) */
+.hero-cobalt,
+.dark-preserve {
   --text-main: #ffffff;
-  --text-sub: rgba(255, 255, 255, 0.85);
-  --text-muted: rgba(255, 255, 255, 0.7);
-  background: linear-gradient(135deg, #06226e 0%, #0c44c8 55%, #1464f6 100%);
+  --text-sub: rgba(255, 255, 255, 0.88);
+  --text-muted: rgba(255, 255, 255, 0.72);
   color: #ffffff;
-  box-shadow: 0 18px 42px rgba(12, 68, 200, 0.32);
-  border: 1px solid rgba(0, 180, 255, 0.35);
+}
+
+.hero-cobalt {
+  background: linear-gradient(135deg, #07277a 0%, #0e4ad4 52%, #1d70ff 100%);
+  box-shadow: 0 18px 42px rgba(12, 68, 200, 0.28);
+  border: 1px solid rgba(56, 189, 248, 0.32);
 }
 .hero-cobalt * {
   border-color: rgba(255, 255, 255, 0.18);
 }
 
 .banner-cobalt-soft {
-  background: linear-gradient(135deg, rgba(12, 68, 200, 0.14) 0%, rgba(0, 180, 255, 0.08) 100%);
-  border: 1px solid rgba(20, 100, 246, 0.28);
+  background: linear-gradient(135deg, rgba(12, 68, 200, 0.12) 0%, rgba(0, 180, 255, 0.08) 100%);
+  border: 1px solid rgba(20, 100, 246, 0.26);
 }
 
 .btn-cobalt {
-  background: linear-gradient(135deg, #0c44c8 0%, #1464f6 100%);
+  background: linear-gradient(135deg, #0c44c8 0%, #1668ff 100%);
   color: #ffffff !important;
   box-shadow: var(--glow-primary);
   transition: transform 0.15s ease, filter 0.15s ease;
 }
 .btn-cobalt:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.07);
   transform: translateY(-1px);
 }
+.btn-cobalt:active {
+  transform: scale(0.985);
+}
 
+/* Crisp Emerald Buttons: Bright Neon in Dark Mode, Rich Deep Emerald + White Text in Light Mode */
 .btn-emerald {
-  background: linear-gradient(135deg, #059669 0%, #10d856 100%);
+  background: linear-gradient(135deg, #059669 0%, #16e664 100%);
   color: #031b0e !important;
   font-weight: 800;
   box-shadow: var(--glow-success);
@@ -202,6 +226,41 @@
 .btn-emerald:hover {
   filter: brightness(1.06);
   transform: translateY(-1px);
+}
+.btn-emerald:active {
+  transform: scale(0.985);
+}
+
+html.theme-light .btn-emerald {
+  background: linear-gradient(135deg, #047857 0%, #059669 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 22px rgba(4, 120, 87, 0.28);
+}
+html.theme-light .btn-emerald * {
+  color: #ffffff !important;
+}
+
+/* Always-visible Green Status Dot & Badge (Dark Emerald in Light Mode, Neon Green in Dark Mode) */
+.dot-signal {
+  display: inline-block;
+  border-radius: 9999px;
+  background-color: var(--signal-dot);
+  box-shadow: 0 0 8px rgba(22, 230, 100, 0.65);
+}
+html.theme-light .dot-signal {
+  background-color: #059669 !important;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.22) !important;
+}
+
+.badge-signal {
+  background-color: var(--signal-badge-bg);
+  border: 1px solid var(--signal-badge-border);
+  color: var(--signal-green);
+}
+html.theme-light .badge-signal {
+  background-color: #dcfce7 !important;
+  border-color: #4ade80 !important;
+  color: #065f46 !important;
 }
 
 .text-main {
@@ -233,146 +292,24 @@
   box-shadow: var(--glow-success);
 }
 
-/* =====================================================================
-   COMPLETE LIGHT-THEME COMPATIBILITY OVERRIDES FOR ALL SECONDARY PAGES
-   ===================================================================== */
+/* Light-Theme form controls & scrollbars (Zero dangerous class prefix wildcards!) */
 html.theme-light body {
-  background-color: #f1f6ff !important;
-  color: #081538 !important;
+  background-color: #f3f7fd;
+  color: #091534;
 }
 
-/* Dark canvases & drawers -> crisp light sky / white */
-html.theme-light [class*="bg-[#04"],
-html.theme-light [class*="bg-[#06"],
-html.theme-light [class*="bg-[#08"],
-html.theme-light [class*="bg-[#09"],
-html.theme-light .bg-slate-950 {
-  background-color: #f1f6ff !important;
-  color: #081538 !important;
-}
-
-html.theme-light [class*="bg-[#0a"],
-html.theme-light [class*="bg-[#0b"],
-html.theme-light [class*="bg-[#0c"],
-html.theme-light [class*="bg-[#0d"],
-html.theme-light [class*="bg-[#0e"],
-html.theme-light [class*="bg-[#0f"],
-html.theme-light [class*="bg-[#10"],
-html.theme-light [class*="bg-[#11"],
-html.theme-light [class*="bg-[#13"],
-html.theme-light [class*="bg-[#14"],
-html.theme-light [class*="bg-[#15"],
-html.theme-light [class*="bg-[#16"],
-html.theme-light [class*="bg-[#1a"],
-html.theme-light .bg-slate-900,
-html.theme-light .bg-slate-800 {
-  background-color: #ffffff !important;
-  color: #081538 !important;
-}
-
-/* Subtle interactive inputs & pills inside white cards */
 html.theme-light input:not([type="checkbox"]):not([type="radio"]),
 html.theme-light select,
 html.theme-light textarea,
 html.theme-light pre {
-  background-color: #edf3ff !important;
-  color: #081538 !important;
-  border-color: #cddcf7 !important;
+  background-color: #edf2fb;
+  color: #091534;
+  border-color: #cfddf5;
 }
 
-/* Borders */
-html.theme-light [class*="border-[#1"],
-html.theme-light [class*="border-[#2"],
-html.theme-light .border-slate-800,
-html.theme-light .border-slate-700 {
-  border-color: #d6e3f8 !important;
-}
-
-html.theme-light [class*="divide-[#1"],
-html.theme-light .divide-slate-800 {
-  border-color: #e3ecfb !important;
-}
-
-/* Typography */
-html.theme-light .text-white {
-  color: #081538 !important;
-}
-html.theme-light .text-slate-100,
-html.theme-light .text-slate-200,
-html.theme-light .text-slate-300,
-html.theme-light [class*="text-[#e7"],
-html.theme-light [class*="text-[#d5"],
-html.theme-light [class*="text-[#c5"],
-html.theme-light [class*="text-[#c8"] {
-  color: #16254a !important;
-}
-html.theme-light .text-slate-400,
-html.theme-light .text-slate-500,
-html.theme-light [class*="text-[#9a"],
-html.theme-light [class*="text-[#8f"],
-html.theme-light [class*="text-[#6c"] {
-  color: #526791 !important;
-}
-html.theme-light [class*="text-[#27cd86]"] {
-  color: #047857 !important;
-}
-html.theme-light [class*="text-[#9eb7ff]"],
-html.theme-light [class*="text-[#60a5fa]"],
-html.theme-light [class*="text-[#4b73f5]"] {
-  color: #0c44c8 !important;
-}
-html.theme-light [class*="text-[#f59f14]"],
-html.theme-light [class*="text-[#f5b74e]"],
-html.theme-light [class*="text-[#fde68a]"] {
-  color: #b45309 !important;
-}
-
-/* Preserve white text on solid colored buttons, active pills, and Cobalt Hero cards! */
-html.theme-light .hero-cobalt,
-html.theme-light .btn-cobalt,
-html.theme-light .btn-cobalt *,
-html.theme-light .bg-\[\#0C44C8\],
-html.theme-light .bg-\[\#0c44c8\],
-html.theme-light .bg-\[\#1464F6\],
-html.theme-light .bg-\[\#1464f6\],
-html.theme-light .bg-\[\#2563eb\],
-html.theme-light .bg-\[\#4b73f5\],
-html.theme-light .bg-blue-600,
-html.theme-light .bg-rose-500,
-html.theme-light .bg-\[\#eb493d\] {
-  color: #ffffff !important;
-}
-
-html.theme-light .hero-cobalt .text-white {
-  color: #ffffff !important;
-}
-html.theme-light .hero-cobalt .bg-\[\#16E664\],
-html.theme-light .hero-cobalt .btn-emerald {
-  color: #031b0e !important;
-}
-html.theme-light .hero-cobalt .bg-white {
-  color: #082475 !important;
-}
-
-html.theme-light .bg-\[\#2563eb\],
-html.theme-light .bg-\[\#4b73f5\],
-html.theme-light .bg-blue-600 {
-  background-color: #0c44c8 !important;
-}
-html.theme-light .bg-\[\#27cd86\] {
-  background-color: #10b981 !important;
-  color: #ffffff !important;
-}
-html.theme-light .bg-\[\#27cd86\] .text-\[\#080a0e\] {
-  color: #ffffff !important;
-}
-
-html.theme-light .hero-cobalt .text-white,
-html.theme-light .btn-cobalt .text-white,
-html.theme-light .bg-\[\#2563eb\] .text-white,
-html.theme-light .bg-\[\#0c44c8\] .text-white,
-html.theme-light .bg-blue-600 .text-white {
-  color: #ffffff !important;
+html.theme-light .bg-slate-500\/20 {
+  background-color: #e2e8f0;
+  color: #475569;
 }
 
 ::-webkit-scrollbar {

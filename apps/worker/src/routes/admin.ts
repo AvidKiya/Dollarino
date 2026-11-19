@@ -110,7 +110,7 @@ adminRoutes.post('/ai-engines', async (c) => {
   if (!existing) {
     const countRow = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM platform_ai_engines`).first<{ cnt: number }>();
     if ((countRow?.cnt ?? 0) >= 3) {
-      return c.json({ error: 'حداکثر ۳ مدل هوش مصنوعی مرکزی قابل ثبت است. یکی از اسلات‌ها را ویرایش یا حذف کنید.' }, 400);
+      return c.json({ error: 'حداکثر ۳ مدل برای هوش مصنوعی دلارینو قابل ثبت است. یکی از اسلات‌ها را ویرایش یا حذف کنید.' }, 400);
     }
     if (!body.apiKey?.trim()) {
       return c.json({ error: 'API Key is required for a new platform AI engine' }, 400);

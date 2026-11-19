@@ -272,8 +272,8 @@ export function LandingPage({
 
             <p className="text-sm sm:text-base text-sub leading-relaxed max-w-xl">
               {isFa
-                ? 'بدون نیاز به دانش ترید یا تنظیمات پیچیده! فقط با یک کلیک از هوش مصنوعی مرکزی دلارینو، استراتژی اختصاصی «دلارینو V0.1» یا کپی‌ترید خودکار روی Toobit، KCEX و حساب دمو رایگان سود بسازید.'
-                : 'Zero clutter. Launch Dollarino Central Multi-AI, Dollarino V0.1 master strategy, or Copy-Trade on Toobit, KCEX, or free Paper Demo in seconds.'}
+                ? 'بدون نیاز به دانش ترید یا تنظیمات پیچیده! فقط با یک کلیک از هوش مصنوعی دلارینو، استراتژی منتخب دلارینو (موتور دُرنا) یا کپی ترید دلارینو روی کل بازار ارزها با معامله همزمان سود بسازید.'
+                : 'Zero clutter. Launch Dollarino AI, Dollarino Select (Dorna V1 Engine), or Dollarino Copy-Trade across all live markets simultaneously in seconds.'}
             </p>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -300,7 +300,7 @@ export function LandingPage({
                 className="px-3.5 py-2 rounded-xl surface-card inline-flex items-center gap-2 hover:border-brand transition"
               >
                 <Monitor className="w-4 h-4 text-brand" />
-                <span>{isFa ? 'نسخه ویندوز (PWA)' : 'Windows App'}</span>
+                <span>{isFa ? 'اپلیکیشن ویندوز' : 'Windows App'}</span>
               </button>
               <button
                 onClick={handleInstallClick}
@@ -314,7 +314,7 @@ export function LandingPage({
 
           {/* Interactive Cobalt Visual Showcase Card */}
           <div className="lg:col-span-6">
-            <div className="surface-card p-6 space-y-5 relative overflow-hidden">
+            <div className="surface-card rounded-[28px] p-6 space-y-5 relative overflow-hidden">
               {/* Top Cobalt Brand Strip with Logo Astronaut */}
               <div className="hero-cobalt p-4 rounded-2xl flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -325,24 +325,25 @@ export function LandingPage({
                     </div>
                     <div className="text-base font-black text-white">
                       {previewMode === 'ai'
-                        ? isFa ? 'هوش مصنوعی مرکزی دلارینو (ترکیب ۳ مدل)' : 'Central Multi-AI Consensus'
+                        ? isFa ? 'هوش مصنوعی دلارینو (ترکیب ۱ تا ۳ مدل)' : 'Dollarino AI (Multi-Model Consensus)'
                         : previewMode === 'codexbot'
-                          ? isFa ? 'استراتژی اختصاصی دلارینو V0.1' : 'Dollarino V0.1 Master Strategy'
-                          : isFa ? 'کپی‌ترید خودکار' : 'Copy-Trade'}
+                          ? isFa ? 'استراتژی منتخب دلارینو (موتور دُرنا V1)' : 'Dollarino Select (Dorna V1 Engine)'
+                          : isFa ? 'کپی ترید دلارینو' : 'Dollarino Copy-Trade'}
                     </div>
                   </div>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-[#16E664] text-[#032410] text-[11px] font-black shrink-0">
-                  LIVE
+                <span className="px-3 py-1 rounded-full bg-[#059669] text-white text-[11px] font-black shrink-0 inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#34d399] animate-pulse" />
+                  <span>{isFa ? 'زنده' : 'LIVE'}</span>
                 </span>
               </div>
 
               {/* 3-Mode Pill Switcher */}
               <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-2xl surface-soft text-xs font-bold">
                 {[
-                  { id: 'ai', label: isFa ? 'هوش مصنوعی' : 'AI Trading' },
-                  { id: 'codexbot', label: isFa ? 'دلارینو V0.1' : 'Dollarino V0.1' },
-                  { id: 'copytrade', label: isFa ? 'کپی‌ترید' : 'Copy-Trade' },
+                  { id: 'ai', label: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI' },
+                  { id: 'codexbot', label: isFa ? 'استراتژی منتخب' : 'Dollarino Select' },
+                  { id: 'copytrade', label: isFa ? 'کپی ترید' : 'Copy-Trade' },
                 ].map((m) => (
                   <button
                     key={m.id}
@@ -420,51 +421,63 @@ export function LandingPage({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="surface-card p-6 space-y-4 hover:border-brand transition">
+            <div className="surface-card rounded-[26px] p-6 space-y-4 hover:border-brand transition">
               <ModeGraphicAI />
               <h3 className="text-lg font-extrabold text-main">
-                {isFa ? '۱. هوش مصنوعی مرکزی دلارینو' : '1. Central Multi-AI Engine'}
+                {isFa ? '۱. هوش مصنوعی دلارینو' : '1. Dollarino AI'}
               </h3>
               <p className="text-xs text-sub leading-relaxed">
                 {isFa
-                  ? 'بدون نیاز به خرید اشتراک یا API شخصی! تیم ما ۱ تا ۳ مدل پیشرفته هوش مصنوعی را با هم ترکیب کرده و با اجماع دقیق برای شما معامله می‌کند.'
-                  : 'Zero API key setup! Powered by 1–3 combined AI models voting in consensus with strict SL and 3-TP exits.'}
+                  ? 'بدون نیاز به خرید اشتراک یا API شخصی! موتور «دُرّبین» ۱ تا ۳ مدل پیشرفته هوش مصنوعی را با هم ترکیب کرده و همزمان روی کل بازار ارزها معامله می‌کند.'
+                  : 'Zero API setup! Dorrbin Multi-AI fuses 1–3 frontier AI models in consensus to trade across all liquid coins simultaneously.'}
               </p>
               <div className="flex flex-wrap gap-1.5 text-[11px] font-bold">
-                <span className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand">Multi-AI Consensus</span>
-                <span className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand">Zero API Needed</span>
+                <span className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand">
+                  {isFa ? 'اجماع چند مدل هوشمند' : 'Multi-AI Consensus'}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand">
+                  {isFa ? 'بدون نیاز به API' : 'Zero API Needed'}
+                </span>
               </div>
             </div>
 
-            <div className="surface-card p-6 space-y-4 hover:border-brand transition">
+            <div className="surface-card rounded-[26px] p-6 space-y-4 hover:border-brand transition">
               <ModeGraphicCodex />
               <h3 className="text-lg font-extrabold text-main">
-                {isFa ? '۲. استراتژی اختصاصی دلارینو V0.1' : '2. Dollarino V0.1 Strategy'}
+                {isFa ? '۲. استراتژی منتخب دلارینو' : '2. Dollarino Select'}
               </h3>
               <p className="text-xs text-sub leading-relaxed">
                 {isFa
-                  ? 'کامل‌ترین و بهترین استراتژی اختصاصی دلارینو؛ ترکیب هوشمند چندلایه تمام الگوریتم‌ها با ریسک‌فری و حفظ سود خودکار.'
-                  : 'Our unified master strategy combining all proven trend, sweep & momentum engines with automatic profit protection.'}
+                  ? 'موتور اختصاصی «دُرنا V1»؛ ترکیب هوشمند تمام استراتژی‌های منتخب دلارینو با اسکن ۳۰+ ارز بازار، ریسک‌فری خودکار و حفظ سود.'
+                  : 'Our flagship Dorna V1 Engine unifying top Dollarino strategies with 30+ coin market scanning and automatic profit lock.'}
               </p>
               <div className="flex flex-wrap gap-1.5 text-[11px] font-bold">
-                <span className="px-2.5 py-1 rounded-lg bg-[#10D856]/15 text-signal">دلارینو V0.1</span>
-                <span className="px-2.5 py-1 rounded-lg bg-[#10D856]/15 text-signal">Free in Demo</span>
+                <span className="px-2.5 py-1 rounded-lg badge-signal">
+                  {isFa ? 'موتور دُرنا V1' : 'Dorna V1 Engine'}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg badge-signal">
+                  {isFa ? 'رایگان در دمو' : 'Free in Demo'}
+                </span>
               </div>
             </div>
 
-            <div className="surface-card p-6 space-y-4 hover:border-brand transition">
+            <div className="surface-card rounded-[26px] p-6 space-y-4 hover:border-brand transition">
               <ModeGraphicTelegram />
               <h3 className="text-lg font-extrabold text-main">
-                {isFa ? '۳. کپی‌ترید' : '3. Copy-Trade'}
+                {isFa ? '۳. کپی ترید دلارینو' : '3. Dollarino Copy-Trade'}
               </h3>
               <p className="text-xs text-sub leading-relaxed">
                 {isFa
-                  ? 'کپی خودکار و لحظه‌ای تمام معاملات کانال @Dollarinoofficial یا کانال دلخواه شما با مدیریت خودکار حد سود و ضرر.'
-                  : 'Automatically mirror signals from @Dollarinoofficial or your Telegram channel with full risk protection.'}
+                  ? 'کپی خودکار و لحظه‌ای تمام معاملات کانال رسمی یا کانال دلخواه شما در تلگرام با مدیریت خودکار حد ضرر و ۳ حد سود.'
+                  : 'Automatically mirror Telegram signals from @Dollarinoofficial or your channel with full 3-TP & SL protection.'}
               </p>
               <div className="flex flex-wrap gap-1.5 text-[11px] font-bold">
-                <span className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand">کپی‌ترید خودکار</span>
-                <span className="px-2.5 py-1 rounded-lg bg-[#FF8A00]/15 text-flame">Auto 3-TP</span>
+                <span className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand">
+                  {isFa ? 'کپی ترید خودکار' : 'Auto Copy-Trade'}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-[#FF8A00]/15 text-flame">
+                  {isFa ? '۳ حد سود خودکار' : 'Auto 3-TP'}
+                </span>
               </div>
             </div>
           </div>
@@ -523,7 +536,7 @@ export function LandingPage({
                         <span
                           className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
                             m.changePct24h >= 0
-                              ? 'bg-[#10D856]/15 text-signal'
+                              ? 'badge-signal'
                               : 'bg-rose-500/15 text-rose-500'
                           }`}
                         >
@@ -569,38 +582,38 @@ export function LandingPage({
               : [
                   {
                     code: 'free_demo',
-                    name_fa: 'تست دمو (Paper Demo)',
+                    name_fa: 'تست دمو (رایگان)',
                     name_en: 'Paper Demo Trial',
-                    description_fa: 'تست استراتژی دلارینو V0.1 در حساب دمو',
-                    description_en: 'Test Dollarino V0.1 in Paper Demo',
+                    description_fa: 'تست استراتژی منتخب دلارینو در حساب دمو',
+                    description_en: 'Test Dollarino Select in Paper Demo',
                     price_usd: 0,
                     price_toman: 0,
                     duration_days: 365,
-                    features_json: '["حساب دمو با قیمت زنده بازار","اجرای استراتژی دلارینو V0.1","نصب نسخه ویندوز و موبایل"]',
+                    features_json: '["حساب دمو با قیمت زنده بازار","اجرای استراتژی منتخب دلارینو (موتور دُرنا V1)","معامله همزمان روی کل بازار + نصب اپلیکیشن"]',
                     is_popular: 0,
                   },
                   {
                     code: 'pro_monthly',
-                    name_fa: 'اشتراک حرفه‌ای ماهانه (Pro)',
+                    name_fa: 'اشتراک حرفه‌ای ماهانه',
                     name_en: 'Pro Monthly',
-                    description_fa: 'دسترسی کامل به هوش مصنوعی مرکزی، دلارینو V0.1 و کپی‌ترید',
-                    description_en: 'Full Central AI, Dollarino V0.1 & Copy-Trade',
+                    description_fa: 'دسترسی کامل به هوش مصنوعی دلارینو، استراتژی منتخب و کپی ترید دلارینو',
+                    description_en: 'Full Dollarino AI, Dollarino Select & Dollarino Copy-Trade',
                     price_usd: 29,
                     price_toman: 1950000,
                     duration_days: 30,
-                    features_json: '["هوش مصنوعی مرکزی ترکیبی (بدون نیاز به API)","کپی‌ترید خودکار کانال تلگرام","اتصال لایو صرافی Toobit و KCEX"]',
+                    features_json: '["هوش مصنوعی دلارینو (بدون نیاز به API)","کپی ترید دلارینو خودکار از تلگرام","اتصال صرافی واقعی با معامله همزمان کل بازار"]',
                     is_popular: 1,
                   },
                   {
                     code: 'vip_quarterly',
-                    name_fa: 'اشتراک ویژه ۳ ماهه (VIP)',
+                    name_fa: 'اشتراک ویژه ۳ ماهه',
                     name_en: 'VIP Quarterly',
-                    description_fa: '۹۰ روز تمام امکانات Pro با ۳۲٪ تخفیف',
+                    description_fa: '۹۰ روز تمام امکانات حرفه‌ای با ۳۲٪ تخفیف',
                     description_en: '90 days full VIP access with 32% savings',
                     price_usd: 59,
                     price_toman: 3950000,
                     duration_days: 90,
-                    features_json: '["۹۰ روز تمام امکانات Pro","سقف بالاتر فراخوانی AI","پشتیبانی و راه‌اندازی اختصاصی"]',
+                    features_json: '["۹۰ روز دسترسی کامل به همه موتورها","سقف بالاتر پردازش هوشمند کل بازار","پشتیبانی و راه‌اندازی اختصاصی"]',
                     is_popular: 0,
                   },
                 ]
@@ -673,8 +686,8 @@ export function LandingPage({
         <section id="pwa" className="hero-cobalt p-7 sm:p-10 rounded-3xl grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
           <div className="lg:col-span-8 space-y-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-bold">
-              <Rocket className="w-3.5 h-3.5 text-[#16E664]" />
-              <span>Windows &amp; Mobile PWA Ready</span>
+              <Rocket className="w-3.5 h-3.5 text-[#34d399]" />
+              <span>{isFa ? 'نسخه وب‌اپلیکیشن ویندوز و موبایل' : 'Windows & Mobile PWA Ready'}</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-black text-white">
               {isFa
@@ -703,7 +716,7 @@ export function LandingPage({
           <div className="lg:col-span-4 flex flex-col items-center justify-center gap-3">
             <DollarinoBrandMark size={132} glow />
             <div className="text-xs font-bold text-white/90 flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-[#16E664]" />
+              <ShieldCheck className="w-4 h-4 text-[#34d399]" />
               <span>{isFa ? 'رمزنگاری بانکی AES-256-GCM' : 'Bank-Grade AES-256 Encryption'}</span>
             </div>
           </div>
@@ -714,8 +727,8 @@ export function LandingPage({
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <DollarinoBrandMark size={28} />
-            <span className="font-extrabold text-main">{isFa ? 'دلارینو (Dollarino)' : 'Dollarino Platform'}</span>
-            <span className="text-dim">· {isFa ? 'هوش مصنوعی مرکزی · دلارینو V0.1 · کپی‌ترید' : 'Central AI · Dollarino V0.1 · Copy-Trade'}</span>
+            <span className="font-extrabold text-main">{isFa ? 'دلارینو' : 'Dollarino Platform'}</span>
+            <span className="text-dim">· {isFa ? 'هوش مصنوعی دلارینو · استراتژی منتخب دلارینو · کپی ترید دلارینو' : 'Dollarino AI · Dollarino Select · Dollarino Copy-Trade'}</span>
           </div>
           <div className="flex items-center gap-5 font-semibold">
             <button onClick={handleInstallClick} className="hover:text-brand transition">

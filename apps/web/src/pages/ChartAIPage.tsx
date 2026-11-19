@@ -156,7 +156,7 @@ export function ChartAIPage({
           )}
         </div>
 
-        {deployMsg && <div className="text-xs px-3 py-2 rounded-xl bg-[#10D856]/15 text-signal font-bold">{deployMsg}</div>}
+        {deployMsg && <div className="text-xs px-3 py-2 rounded-xl badge-signal font-bold">{deployMsg}</div>}
 
         {analysis && (actionableDir || (analysis.supports?.length ?? 0) > 0) && (
           <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 surface-soft border rounded-2xl p-3 text-[11px]">
@@ -210,7 +210,7 @@ export function ChartAIPage({
 
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             {[
-              lang === 'fa' ? 'ستاپ دلارینو V0.1 و ریبون' : 'Dollarino V0.1 + DEMA ATR',
+              lang === 'fa' ? 'ستاپ استراتژی منتخب دلارینو و ریبون' : 'Dollarino Select (Dorna V1) + ATR',
               lang === 'fa' ? 'حمایت/مقاومت کلیدی' : 'Key S/R Levels',
               lang === 'fa' ? 'بهترین R:R برای ورود' : '3-TP R:R Setup',
             ].map((chip) => (

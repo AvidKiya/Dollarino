@@ -159,11 +159,11 @@ export function SubscriptionPage({
             <p className="text-xs text-white/80 mt-1">
               {entitlement?.hasPaidPlan
                 ? isFa
-                  ? 'دسترسی کامل به هوش مصنوعی مرکزی، دلارینو V0.1، کپی‌ترید و صرافی‌های Toobit و KCEX فعال است.'
-                  : 'Full access unlocked: Central AI, Dollarino V0.1, Copy-Trade & Live Toobit/KCEX.'
+                  ? 'دسترسی کامل به هوش مصنوعی دلارینو، استراتژی منتخب دلارینو، کپی ترید دلارینو و صرافی‌های Toobit و KCEX فعال است.'
+                  : 'Full access unlocked: Dollarino AI, Dollarino Select, Dollarino Copy-Trade & Live Toobit/KCEX.'
                 : isFa
-                  ? 'دمو رایگان باز است. با خرید اشتراک Pro، ترید لایو Toobit / KCEX و کپی‌ترید تلگرام را فعال کنید.'
-                  : 'Paper Demo is free. Upgrade to Pro or VIP for AI Auto-Trading, Copy-Trade & Live Toobit/KCEX.'}
+                  ? 'دمو رایگان باز است. با خرید اشتراک حرفه‌ای، هوش مصنوعی دلارینو، ترید لایو و کپی ترید دلارینو را فعال کنید.'
+                  : 'Paper Demo is free. Upgrade to Pro or VIP for Dollarino AI, Copy-Trade & Live Toobit/KCEX.'}
             </p>
           </div>
         </div>
@@ -171,14 +171,14 @@ export function SubscriptionPage({
         <div className="flex flex-wrap gap-2 text-xs">
           {[
             { ok: true, label: isFa ? 'دمو رایگان' : 'Paper Demo' },
-            { ok: entitlement?.allowAiTrading, label: isFa ? 'ترید AI' : 'AI Trading' },
-            { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی‌ترید تلگرام' : 'Copy-Trade' },
-            { ok: entitlement?.allowLiveTrading, label: 'Toobit & KCEX' },
+            { ok: entitlement?.allowAiTrading, label: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI' },
+            { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی ترید دلارینو' : 'Dollarino Copy-Trade' },
+            { ok: entitlement?.allowLiveTrading, label: isFa ? 'اتصال صرافی واقعی' : 'Toobit & KCEX' },
           ].map((e) => (
             <span
               key={e.label}
               className={`px-3 py-1 rounded-xl inline-flex items-center gap-1 font-bold ${
-                e.ok ? 'bg-[#16E664]/25 text-[#baffd3]' : 'bg-white/10 text-white/60'
+                e.ok ? 'bg-[#059669] text-white shadow' : 'bg-white/10 text-white/60'
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" /> {e.label}
@@ -265,7 +265,7 @@ export function SubscriptionPage({
                   onClick={() => setSelectedPlan(p)}
                   className={`w-full py-3 rounded-2xl font-extrabold text-xs transition ${
                     p.is_popular
-                      ? 'bg-[#16E664] hover:bg-[#12cc56] text-[#042310]'
+                      ? 'bg-[#059669] hover:bg-[#047857] text-white shadow'
                       : isSelected
                         ? 'btn-emerald'
                         : 'btn-cobalt'
@@ -418,7 +418,7 @@ export function SubscriptionPage({
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[10px] font-sans font-bold ${
                           o.status === 'ACTIVE'
-                            ? 'bg-[#10D856]/15 text-signal'
+                            ? 'badge-signal'
                             : o.status === 'PENDING_REVIEW'
                               ? 'bg-[#FF8A00]/15 text-flame'
                               : 'bg-rose-500/15 text-loss'

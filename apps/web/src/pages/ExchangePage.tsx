@@ -294,7 +294,7 @@ export function ExchangePage({
               <div className="text-signal font-bold mb-2">Bids (Buy)</div>
               <div className="space-y-1">
                 {(snap?.orderBook.bids ?? []).slice(0, 12).map(([p, q], i) => (
-                  <div key={i} className="flex justify-between px-2.5 py-1 rounded-xl bg-[#10D856]/10">
+                  <div key={i} className="flex justify-between px-2.5 py-1 rounded-xl badge-signal">
                     <span className="text-signal font-bold">{p}</span>
                     <span className="text-sub">{Number(q).toFixed(2)}</span>
                   </div>

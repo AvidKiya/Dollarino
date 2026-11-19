@@ -22,15 +22,30 @@ app.use('*', cors({
   credentials: true,
 }));
 
+app.get('/', (c) => {
+  return c.json({
+    ok: true,
+    service: 'Dollarino API Worker v6.0',
+    health: '/api/health',
+    note: 'Open the Website preview (port 5173) or Cloudflare Pages frontend to use the full Dollarino UI.',
+  });
+});
+
 app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '5.0.0',
+    version: '6.0.0',
     openSource: false,
     paidSubscriptions: true,
     centralMultiAI: true,
+    multiCoinAutonomous: true,
     primaryStrategy: 'dollarino_v01',
+    brandNames: {
+      ai: 'هوش مصنوعی دلارینو',
+      strategy: 'استراتژی منتخب دلارینو (موتور دُرنا V1)',
+      copyTrade: 'کپی ترید دلارینو',
+    },
     aiProviders: ['deepseek', 'anthropic', 'openai', 'gemini', 'openai_compatible'],
     exchanges: {
       toobit: 'LIVE_FUTURES_SUPPORTED',

@@ -52,6 +52,17 @@ tradingRoutes.get('/dashboard', async (c) => {
       started_at?: string | null;
     }>();
 
+  if (cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE') {
+    const doId = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
+    const doStub = c.env.TRADING_BOT_DO.get(doId);
+    const keepTick = doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+    try {
+      c.executionCtx.waitUntil(keepTick);
+    } catch {
+      void keepTick;
+    }
+  }
+
   const activeRow = await c.env.DB.prepare(
     `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
   ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
@@ -124,7 +135,7 @@ tradingRoutes.get('/dashboard', async (c) => {
     c.env.DB.prepare(`SELECT provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`)
       .bind(user.id).first<{ provider: string; model: string }>(),
     c.env.DB.prepare(
-      `SELECT id, level, symbol, message, details_json, created_at FROM audit_logs WHERE user_id = ? AND category = 'AI_AGENT' ORDER BY created_at DESC LIMIT 12`
+      `SELECT id, level, symbol, message, details_json, created_at FROM audit_logs WHERE user_id = ? AND category IN ('AI_AGENT', 'SIGNAL', 'ORDER', 'SYSTEM') ORDER BY created_at DESC LIMIT 12`
     ).bind(user.id).all().catch(() => ({ results: [] })),
     resolveUserEntitlement(c.env.DB, user),
     getPlatformAISummary(c.env),
@@ -349,6 +360,10 @@ tradingRoutes.patch('/config', async (c) => {
     notifications_enabled: 'notifications_enabled',
     symbol: 'symbol',
     auto_scan_top: 'auto_scan_top',
+    scan_scope: 'scan_scope',
+    allow_auto_flip: 'allow_auto_flip',
+    allow_pyramiding: 'allow_pyramiding',
+    watchlist_json: 'watchlist_json',
     strategy_key: 'strategy_key',
     entry_timeframe: 'entry_timeframe',
     higher_timeframe: 'higher_timeframe',
@@ -420,6 +435,9 @@ tradingRoutes.post('/bot/start', async (c) => {
     strategyKey?: StrategyKey;
     symbol?: string;
     autoScanTop?: boolean;
+    scanScope?: 'SINGLE' | 'TOP_COINS' | 'ALL_MARKET';
+    maxOpenPositions?: number;
+    allowAutoFlip?: boolean;
     riskPreset?: string;
     maxLeverage?: number;
     dailyMaxLossPct?: number;
@@ -444,13 +462,13 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   if (targetStrategy === 'ai_autonomous_agent' && !entitlement.allowAiTrading) {
     return c.json({
-      error: 'برای ترید با هوش مصنوعی مرکزی دلارینو، اشتراک Pro یا VIP لازم است. می‌توانید با استراتژی رایگان دلارینو V0.1 در دمو تست کنید.',
+      error: 'برای ترید با «هوش مصنوعی دلارینو»، اشتراک Pro یا VIP لازم است. می‌توانید همین الان با «استراتژی منتخب دلارینو» در دمو رایگان تست کنید.',
       code: 'SUBSCRIPTION_REQUIRED',
     }, 402);
   }
   if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0) {
     return c.json({
-      error: 'موتور هوش مصنوعی مرکزی هنوز توسط مدیریت پلتفرم فعال نشده است. تا فعال‌سازی از استراتژی دلارینو V0.1 استفاده کنید.',
+      error: 'موتور «هوش مصنوعی دلارینو» هنوز توسط مدیریت فعال نشده است. تا فعال‌سازی می‌توانید از «استراتژی منتخب دلارینو» استفاده کنید.',
       code: 'NO_ACTIVE_AI_KEY',
     }, 400);
   }
@@ -476,9 +494,21 @@ tradingRoutes.post('/bot/start', async (c) => {
     sets.push(`auto_scan_top = ?`);
     vals.push(body.autoScanTop ? 1 : 0);
   }
+  if (body.scanScope === 'SINGLE' || body.scanScope === 'TOP_COINS' || body.scanScope === 'ALL_MARKET') {
+    sets.push(`scan_scope = ?`, `auto_scan_top = ?`);
+    vals.push(body.scanScope, body.scanScope === 'SINGLE' ? 0 : 1);
+  }
+  if (typeof body.maxOpenPositions === 'number') {
+    sets.push(`max_open_positions = ?`);
+    vals.push(Math.max(1, Math.min(20, Math.round(body.maxOpenPositions))));
+  }
+  if (typeof body.allowAutoFlip === 'boolean') {
+    sets.push(`allow_auto_flip = ?`);
+    vals.push(body.allowAutoFlip ? 1 : 0);
+  }
   if (typeof body.maxLeverage === 'number') {
     sets.push(`max_leverage = ?`);
-    vals.push(body.maxLeverage);
+    vals.push(Math.max(1, Math.min(50, Math.round(body.maxLeverage))));
   }
   if (typeof body.dailyMaxLossPct === 'number') {
     sets.push(`daily_max_loss_pct = ?`);
@@ -504,6 +534,16 @@ tradingRoutes.post('/bot/start', async (c) => {
   vals.push(user.id);
   await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
 
+  await logAudit(
+    c.env.DB,
+    user.id,
+    'SYSTEM',
+    'INFO',
+    targetStrategy === 'ai_autonomous_agent'
+      ? 'ربات با «هوش مصنوعی دلارینو» روشن شد و اسکن کل بازار آغاز گردید'
+      : 'ربات با «استراتژی منتخب دلارینو (موتور دُرنا V1)» روشن شد و اسکن کل بازار آغاز گردید'
+  );
+
   const id = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
   const stub = c.env.TRADING_BOT_DO.get(id);
   const runTick = Promise.all([
@@ -515,8 +555,8 @@ tradingRoutes.post('/bot/start', async (c) => {
   } catch {
     void runTick;
   }
+  await Promise.race([runTick, new Promise((resolve) => setTimeout(resolve, 2500))]);
 
-  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Bot started in ${nextState} mode (${targetStrategy})`);
   return c.json({ ok: true, bot_state: nextState, strategy_key: targetStrategy });
 });
 

@@ -336,8 +336,8 @@ export function RiskStudioPage({
             <div>
               <label className="text-sub font-semibold block mb-1">Primary Strategy</label>
               <select value={form.strategy_key} onChange={(e) => setForm({ ...form, strategy_key: e.target.value })} className="w-full surface-input rounded-xl px-2.5 py-2">
-                <option value="dollarino_v01">✨ دلارینو V0.1 (Master)</option>
-                <option value="ai_autonomous_agent">هوش مصنوعی مرکزی دلارینو</option>
+                <option value="dollarino_v01">✨ استراتژی منتخب دلارینو (موتور دُرنا V1)</option>
+                <option value="ai_autonomous_agent">هوش مصنوعی دلارینو</option>
                 <option value="kbos_v11">KBOs Super v11</option>
                 <option value="sp2l">SP2L Liquidity Sweep</option>
                 <option value="ema_trend_pullback">EMA 20/50 Pullback</option>

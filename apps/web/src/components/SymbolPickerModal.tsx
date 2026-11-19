@@ -96,7 +96,7 @@ export function SymbolPicker({
               {current.exchangeSymbol}
             </span>
           )}
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#10D856]/15 text-signal font-mono-num font-bold">
+          <span className="text-[10px] px-1.5 py-0.5 rounded badge-signal font-mono-num font-bold">
             {markets.length} {lang === 'fa' ? 'ارز' : 'pairs'}
           </span>
         </div>

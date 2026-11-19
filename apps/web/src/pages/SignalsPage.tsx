@@ -110,7 +110,7 @@ export function SignalsPage({
             {lang === 'fa' ? 'تست و اجرای مستقیم کارت سیگنال دلارینو' : 'Dollarino Signal Parser & Executor'}
           </h3>
           <textarea dir="ltr" rows={8} value={rawSignal} onChange={(e) => setRawSignal(e.target.value)} className="w-full surface-input rounded-2xl p-3 font-mono-num text-[11px]" />
-          {execResult && <div className="p-3 rounded-xl bg-[#10D856]/15 text-signal font-bold">{execResult}</div>}
+          {execResult && <div className="p-3 rounded-xl badge-signal font-bold">{execResult}</div>}
           <div className="flex gap-2">
             <button onClick={() => testParseAndRun(false)} className="px-3.5 py-2 rounded-xl surface-soft border text-main font-bold">
               Parse & Log Only
