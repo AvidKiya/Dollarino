@@ -362,7 +362,7 @@ export function RiskStudioPage({
             <div>
               <label className="text-[#6c7689] block mb-1">Primary Strategy</label>
               <select value={form.strategy_key} onChange={(e) => setForm({ ...form, strategy_key: e.target.value })} className="w-full bg-[#080a0e] border border-[#262b36] rounded-lg px-2.5 py-2">
-                <option value="kbos_v11">KIYA BOT ORG - super v11 (KBOs)</option>
+                <option value="kbos_v11">CodexBot Super v11 (Quant)</option>
                 <option value="sp2l">SP2L Liquidity Sweep</option>
                 <option value="ema_trend_pullback">EMA 20/50 Trend Pullback</option>
                 <option value="grid_strategy">Grid / Mean Reversion</option>

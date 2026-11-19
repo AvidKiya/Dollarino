@@ -15,9 +15,11 @@ import {
   quantizeDown,
   runBacktest,
   superSmoother,
+  type AIProviderId,
   type BotConfig,
   type Candle,
   type InstrumentSpec,
+  type StrategyKey,
 } from '../index.js';
 
 describe('@dollarino/core signal parser & formatter', () => {
@@ -100,6 +102,19 @@ describe('@dollarino/core signal parser & formatter', () => {
     });
     expect(jsonParsed?.symbol).toBe('SOLUSDT');
     expect(jsonParsed?.direction).toBe('LONG');
+
+    const hashtagShort = parseDollarinoSignal(`🔴 SHORT #SOLUSDT | 15m
+Entry: 198.50
+SL: 203.00
+TP1: 194.00
+TP2: 189.50
+Leverage: 5x`);
+    expect(hashtagShort?.direction).toBe('SHORT');
+    expect(hashtagShort?.symbol).toBe('SOLUSDT');
+    expect(hashtagShort?.timeframe).toBe('15m');
+    expect(hashtagShort?.leverage).toBe(5);
+    expect(hashtagShort?.price).toBe('198.50');
+    expect(hashtagShort?.stopLoss).toBe('203.00');
   });
 });
 
@@ -396,5 +411,68 @@ describe('@dollarino/core causal backtester', () => {
     const mix = evaluateSignalMixerAtBar(bullRun, bullRun.length - 1, 'BULLISH', DEFAULT_MIXER_WEIGHTS, 65);
     expect(mix.confidence).toBeGreaterThanOrEqual(65);
     expect(mix.direction).toBe('LONG');
+  });
+
+  it('supports DeepSeek provider and ai_autonomous_agent strategy in risk gates', () => {
+    const provider: AIProviderId = 'deepseek';
+    const strategyKey: StrategyKey = 'ai_autonomous_agent';
+    expect(provider).toBe('deepseek');
+    expect(strategyKey).toBe('ai_autonomous_agent');
+
+    const decision = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: {
+        tradingMode: 'PAPER',
+        executionMode: 'AUTO',
+        symbol: 'BTCUSDT',
+        strategyKey,
+        entryTimeframe: '15m',
+        higherTimeframe: '1h',
+        marginPct: 10,
+        useSignalLeverage: true,
+        maxLeverage: 10,
+        tp1ClosePct: 50,
+        tp2ClosePct: 25,
+        tp3ClosePct: 25,
+        autoBreakevenOnTp1: true,
+        moveSlToTp1OnTp2: true,
+        dailyMaxLossPct: 5,
+        maxOpenPositions: 3,
+        blockWeekends: false,
+        macroBlackout: false,
+        aiGateEnabled: false,
+        aiMinConfidence: 65,
+        signalChannelHandle: '@Dollarinoofficial',
+      },
+      signal: {
+        symbol: 'BTCUSDT',
+        direction: 'LONG',
+        timeframe: '15m',
+        price: '91500',
+        stopLoss: '90200',
+        leverage: 6,
+        tp1: '93000',
+        tp2: '94500',
+        tp3: '96500',
+        reason: 'DeepSeek-V4 bullish structure thesis',
+      },
+      availableBalance: '2000',
+      equity: '2000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 0,
+      instrument: {
+        symbol: 'BTCUSDT',
+        basePrecision: 3,
+        quotePrecision: 2,
+        minTradeVolume: '0.001',
+        maxMarketVolume: '50',
+        minNotional: '5',
+        minLeverage: 1,
+        maxLeverage: 50,
+        status: 'OPEN',
+      },
+    });
+    expect(decision.approved).toBe(true);
+    expect(decision.marginUsed).toBe('200');
   });
 });

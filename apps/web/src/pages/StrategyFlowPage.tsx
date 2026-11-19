@@ -197,12 +197,12 @@ export function StrategyFlowPage({
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Layers className="w-4 h-4 text-[#4b73f5]" />
-              <span>{lang === 'fa' ? 'معماری فلو استراتژی KIYA BOT v11 و میکسر ۸ کاناله' : 'Strategy Flow, KIYA BOT v11 & 8-Channel Signal Mixer'}</span>
+              <span>{lang === 'fa' ? 'معماری استراتژی‌های CodexBot و میکسر ۸ کاناله' : 'CodexBot Strategies & 8-Channel Signal Mixer'}</span>
             </h2>
             <p className="text-xs text-[#6c7689] mt-0.5">
               {lang === 'fa'
-                ? 'تنظیم کامل اندیکاتورهای KBOs (Ribbon 8-Band + DEMA ATR) و وزن‌های میکسر برای اجرای خودکار'
-                : 'End-to-end execution pipeline combining KIYA BOT ORG - super v11 Pine logic with TimeTrade 8-channel scoring'}
+                ? 'تنظیم کامل اندیکاتورهای CodexBot (Ribbon 8-Band + DEMA ATR) و وزن‌های میکسر برای اجرای خودکار'
+                : 'End-to-end execution pipeline combining CodexBot Super v11 logic with 8-channel scoring'}
             </p>
           </div>
           <button
@@ -236,12 +236,12 @@ export function StrategyFlowPage({
         </div>
       </div>
 
-      {/* KIYA BOT ORG - super v11 Live Parameter Matrix */}
+      {/* CodexBot Super v11 Live Parameter Matrix */}
       <div className="card-tt p-5 space-y-4 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-bold text-sm text-white flex items-center gap-2">
             <Cpu className="w-4 h-4 text-[#27cd86]" />
-            <span>KIYA BOT ORG - super v11 (KBOs v11) Engine Configuration</span>
+            <span>CodexBot Super v11 Engine Configuration</span>
           </h3>
           <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-[#4b73f5]/15 text-[#4b73f5] border border-[#4b73f5]/35 font-mono-num">
             Non-Repainting HTF ×{kbos.intRes} + RLA 8-Band Ribbon
@@ -354,7 +354,8 @@ export function StrategyFlowPage({
                 onChange={(e) => setSelectedStrategy(e.target.value as StrategyKey)}
                 className="w-full bg-[#080a0e] border border-[#262b36] rounded-lg px-3 py-2"
               >
-                <option value="kbos_v11">KIYA BOT ORG - super v11</option>
+                <option value="ai_autonomous_agent">Autonomous AI Agent (DeepSeek / Claude / GPT)</option>
+                <option value="kbos_v11">CodexBot Super v11 (Quant)</option>
                 <option value="sp2l">SP2L Liquidity Sweep</option>
                 <option value="ema_trend_pullback">EMA 20/50 Pullback</option>
                 <option value="grid_strategy">Grid Mean Reversion</option>

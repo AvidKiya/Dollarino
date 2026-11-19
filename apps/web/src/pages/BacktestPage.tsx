@@ -168,7 +168,7 @@ export function BacktestPage({
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Layers className="w-4 h-4 text-[#4b73f5]" />
-              <span>{lang === 'fa' ? 'موتور بک‌تست کوانت + KIYA BOT ORG v11' : 'KIYA BOT v11 & Quant Backtester'}</span>
+              <span>{lang === 'fa' ? 'موتور بک‌تست استراتژی‌های CodexBot' : 'CodexBot Strategy Backtester'}</span>
             </h2>
             <p className="text-xs text-[#6c7689]">
               {lang === 'fa'
@@ -220,7 +220,7 @@ export function BacktestPage({
           <div>
             <label className="text-[#6c7689] block mb-1">Primary Strategy</label>
             <select value={strategy} onChange={(e) => setStrategy(e.target.value as StrategyKey)} className="w-full bg-[#080a0e] border border-[#262b36] rounded-lg px-2.5 py-2">
-              <option value="kbos_v11">KIYA BOT ORG - super v11 (KBOs)</option>
+              <option value="kbos_v11">CodexBot Super v11 (Quant)</option>
               <option value="sp2l">SP2L Liquidity Sweep</option>
               <option value="ema_trend_pullback">EMA 20/50 Pullback</option>
               <option value="grid_strategy">Grid Mean Reversion</option>
@@ -254,7 +254,7 @@ export function BacktestPage({
             <select value={feeBps} onChange={(e) => setFeeBps(Number(e.target.value))} className="w-full bg-[#080a0e] border border-[#262b36] rounded-lg px-2.5 py-2">
               <option value={5}>Toobit (5 bps / 0.05%)</option>
               <option value={1}>KCEX (1 bps / 0.01%)</option>
-              <option value={6}>Bitunix (6 bps / 0.06%)</option>
+              <option value={5}>Paper Demo (5 bps / 0.05%)</option>
             </select>
           </div>
         </div>

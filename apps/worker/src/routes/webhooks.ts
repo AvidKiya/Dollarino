@@ -3,6 +3,7 @@ import { formatDollarinoSignal, parseDollarinoSignal } from '@dollarino/core';
 import { decryptVaultJson, randomId } from '../crypto.js';
 import { executeSignalForUser, logAudit, notifyUserTelegram } from '../engine/executor.js';
 import type { Env } from '../env.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { handleTelegramUpdate } from '../telegram/handler.js';
 
@@ -15,7 +16,7 @@ export const webhookRoutes = new Hono<{ Bindings: Env }>();
 webhookRoutes.post('/tv/:secret', async (c) => {
   const secret = c.req.param('secret');
   const cfg = await c.env.DB.prepare(
-    `SELECT bc.user_id, bc.trade_execution_mode, bc.signal_channel_handle, u.telegram_id
+    `SELECT bc.user_id, bc.trade_execution_mode, bc.signal_channel_handle, u.telegram_id, u.email, u.username, u.role
      FROM bot_configs bc JOIN users u ON bc.user_id = u.id
      WHERE bc.webhook_secret = ?`
   ).bind(secret).first<{
@@ -23,6 +24,9 @@ webhookRoutes.post('/tv/:secret', async (c) => {
     trade_execution_mode: 'AUTO' | 'MANUAL_CONFIRM';
     signal_channel_handle: string;
     telegram_id: string | null;
+    email: string;
+    username: string;
+    role: 'owner' | 'admin' | 'user';
   }>();
 
   if (!cfg) return c.json({ error: 'Invalid TradingView webhook secret' }, 404);
@@ -64,6 +68,17 @@ webhookRoutes.post('/tv/:secret', async (c) => {
   await logAudit(c.env.DB, cfg.user_id, 'SIGNAL', 'INFO', `TradingView Webhook received ${signal.direction} ${signal.symbol}`, signal.symbol);
 
   if (cfg.trade_execution_mode === 'AUTO') {
+    const ent = await resolveUserEntitlement(c.env.DB, {
+      id: cfg.user_id,
+      email: cfg.email,
+      username: cfg.username,
+      role: cfg.role,
+      telegramId: cfg.telegram_id,
+    });
+    if (!ent.allowCopyTrade) {
+      await logAudit(c.env.DB, cfg.user_id, 'RISK', 'WARN', 'Auto Copy-Trade skipped: active Pro/VIP subscription required', signal.symbol);
+      return c.json({ ok: false, mode: 'AUTO', code: 'SUBSCRIPTION_REQUIRED', error: 'Active Pro/VIP subscription required for Auto Copy-Trade' }, 402);
+    }
     const exec = await executeSignalForUser(c.env, cfg.user_id, signal, {
       signalId: sigId,
       forceBypassState: true,

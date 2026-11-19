@@ -9,12 +9,15 @@ import { AuthPage } from './pages/AuthPage';
 import { BacktestPage } from './pages/BacktestPage';
 import { ChartAIPage } from './pages/ChartAIPage';
 import { ConnectionsPage } from './pages/ConnectionsPage';
+import { CopyTradePage } from './pages/CopyTradePage';
 import { DashboardPage, type DashboardPayload } from './pages/DashboardPage';
 import { ExchangePage } from './pages/ExchangePage';
+import { LandingPage } from './pages/LandingPage';
 import { LogsPage } from './pages/LogsPage';
 import { RiskStudioPage } from './pages/RiskStudioPage';
 import { SignalsPage } from './pages/SignalsPage';
 import { StrategyFlowPage } from './pages/StrategyFlowPage';
+import { SubscriptionPage, type UserEntitlement } from './pages/SubscriptionPage';
 
 interface MeUser {
   id: string;
@@ -25,6 +28,8 @@ interface MeUser {
 }
 
 type FullDashboard = DashboardPayload & {
+  config: DashboardPayload['config'] & { signal_channel_handle?: string };
+  entitlement?: UserEntitlement | null;
   recentSignals: Array<{
     id: string;
     source: string;
@@ -38,14 +43,29 @@ type FullDashboard = DashboardPayload & {
 };
 
 export function App() {
-  const [lang, setLang] = useState<Lang>('fa');
+  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('dollarino_lang') === 'en' ? 'en' : 'fa'));
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    localStorage.getItem('dollarino_theme') === 'light' ? 'light' : 'dark'
+  );
   const [user, setUser] = useState<MeUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [dashboard, setDashboard] = useState<FullDashboard | null>(null);
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
+
+  const handleSetLang = (l: Lang) => {
+    setLang(l);
+    localStorage.setItem('dollarino_lang', l);
+  };
+
+  const handleSetTheme = (t: 'dark' | 'light') => {
+    setTheme(t);
+    localStorage.setItem('dollarino_theme', t);
+  };
 
   const loadSessionAndDashboard = useCallback(async () => {
     try {
@@ -84,8 +104,29 @@ export function App() {
   const handleStartStop = async () => {
     if (!dashboard) return;
     const isRunning = dashboard.config.bot_state.startsWith('RUNNING');
-    await apiFetch(isRunning ? '/api/trading/bot/stop' : '/api/trading/bot/start', { method: 'POST' });
-    await loadSessionAndDashboard();
+    try {
+      await apiFetch(isRunning ? '/api/trading/bot/stop' : '/api/trading/bot/start', { method: 'POST' });
+      await loadSessionAndDashboard();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to change bot state';
+      if (msg.includes('subscription') || msg.includes('Pro') || msg.includes('VIP') || msg.includes('SUBSCRIPTION_REQUIRED')) {
+        setActiveTab('subscription');
+        window.alert(
+          lang === 'fa'
+            ? 'برای فعال‌سازی ترید هوشمند AI یا معاملات لایو Toobit / KCEX، ابتدا اشتراک Pro یا VIP تهیه کنید.'
+            : msg
+        );
+      } else if (msg.includes('AI API key') || msg.includes('NO_ACTIVE_AI_KEY')) {
+        setActiveTab('connections');
+        window.alert(
+          lang === 'fa'
+            ? 'برای فعال‌سازی ترید هوشمند، ابتدا کلید DeepSeek / Claude / GPT / Gemini خود را در صفحه اتصالات ثبت کنید.'
+            : msg
+        );
+      } else {
+        window.alert(msg);
+      }
+    }
   };
 
   const handleKillSwitch = async () => {
@@ -104,23 +145,54 @@ export function App() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen bg-[#080a0e] flex items-center justify-center text-sm text-[#6c7689]">
+      <div className={`min-h-screen bg-[#080a0e] flex items-center justify-center text-sm text-[#6c7689] ${theme === 'light' ? 'theme-light' : ''}`}>
         Loading Dollarino (دلارینو)...
       </div>
     );
   }
 
   if (!user || !dashboard) {
-    return <AuthPage lang={lang} setLang={setLang} externalError={authError} onSuccess={loadSessionAndDashboard} />;
+    if (publicScreen === 'landing' && !authError) {
+      return (
+        <LandingPage
+          lang={lang}
+          setLang={handleSetLang}
+          theme={theme}
+          setTheme={handleSetTheme}
+          onOpenAuth={(mode) => {
+            setAuthMode(mode);
+            setPublicScreen('auth');
+          }}
+        />
+      );
+    }
+    return (
+      <AuthPage
+        lang={lang}
+        setLang={handleSetLang}
+        theme={theme}
+        setTheme={handleSetTheme}
+        initialMode={authMode}
+        externalError={authError}
+        onBack={() => {
+          setAuthError(null);
+          setPublicScreen('landing');
+        }}
+        onSuccess={loadSessionAndDashboard}
+      />
+    );
   }
 
   return (
     <Layout
       lang={lang}
-      setLang={setLang}
+      setLang={handleSetLang}
+      theme={theme}
+      setTheme={handleSetTheme}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       user={user}
+      entitlement={dashboard.entitlement}
       botState={dashboard.config.bot_state}
       tradingMode={dashboard.config.trading_mode}
       activeExchangeLabel={dashboard.activeExchange.label}
@@ -131,7 +203,29 @@ export function App() {
       onLogout={handleLogout}
     >
       {activeTab === 'dashboard' && (
-        <DashboardPage lang={lang} data={dashboard} markets={markets} onRefresh={loadSessionAndDashboard} />
+        <DashboardPage
+          lang={lang}
+          data={dashboard}
+          markets={markets}
+          onRefresh={loadSessionAndDashboard}
+          onOpenConnections={() => setActiveTab('connections')}
+          onOpenTab={setActiveTab}
+        />
+      )}
+      {activeTab === 'copytrade' && (
+        <CopyTradePage
+          lang={lang}
+          webhookSecret={dashboard.config.webhook_secret}
+          executionMode={dashboard.config.trade_execution_mode}
+          channelHandle={dashboard.config.signal_channel_handle || '@Dollarinoofficial'}
+          recentSignals={dashboard.recentSignals}
+          entitlement={dashboard.entitlement ?? undefined}
+          onExecuted={loadSessionAndDashboard}
+          onOpenSubscription={() => setActiveTab('subscription')}
+        />
+      )}
+      {activeTab === 'subscription' && (
+        <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} />
       )}
       {activeTab === 'flow' && (
         <StrategyFlowPage
@@ -181,7 +275,12 @@ export function App() {
         />
       )}
       {activeTab === 'connections' && (
-        <ConnectionsPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} />
+        <ConnectionsPage
+          lang={lang}
+          entitlement={dashboard.entitlement}
+          onOpenSubscription={() => setActiveTab('subscription')}
+          onRefreshDashboard={loadSessionAndDashboard}
+        />
       )}
       {activeTab === 'logs' && <LogsPage lang={lang} />}
       {activeTab === 'admin' && (

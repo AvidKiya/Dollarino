@@ -2,8 +2,9 @@ import { formatDollarinoSignal, parseDollarinoSignal } from '@dollarino/core';
 import { ensureUserDefaults } from '../auth.js';
 import { encryptVaultJson, hashPassword, maskSecret, randomId } from '../crypto.js';
 import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
-import type { Env } from '../env.js';
+import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
+import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import { TelegramBotClient } from './client.js';
 import {
   exchangeSelectionKeyboard,
@@ -36,7 +37,7 @@ interface TelegramUpdate {
 
 interface TelegramStepState {
   step: string;
-  provider?: 'toobit' | 'bitunix' | 'kcex';
+  provider?: 'toobit' | 'kcex';
   apiKey?: string;
 }
 
@@ -106,14 +107,32 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       formatDollarinoSignal(signal)
     ).run();
 
-    // Route to all linked users with Auto-Trade or Manual-Trade enabled
+    // Route to all linked users with Auto-Trade or Manual-Trade enabled (enforcing paid Copy-Trade entitlement)
     const users = await env.DB.prepare(
-      `SELECT u.id, u.telegram_id, bc.trade_execution_mode, bc.bot_state
+      `SELECT u.id, u.email, u.username, u.role, u.telegram_id, bc.trade_execution_mode, bc.bot_state
        FROM users u JOIN bot_configs bc ON u.id = bc.user_id
        WHERE u.telegram_id IS NOT NULL AND u.is_blocked = 0`
-    ).all<{ id: string; telegram_id: string; trade_execution_mode: 'AUTO' | 'MANUAL_CONFIRM'; bot_state: string }>();
+    ).all<{
+      id: string;
+      email: string;
+      username: string;
+      role: AuthUser['role'];
+      telegram_id: string;
+      trade_execution_mode: 'AUTO' | 'MANUAL_CONFIRM';
+      bot_state: string;
+    }>();
 
     for (const u of users.results) {
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        role: u.role,
+        telegramId: u.telegram_id,
+      });
+      if (!ent.allowCopyTrade) {
+        continue;
+      }
       if (u.trade_execution_mode === 'AUTO' && (u.bot_state === 'RUNNING_PAPER' || u.bot_state === 'RUNNING_LIVE')) {
         await executeSignalForUser(env, u.id, signal, { signalId: sigId }).catch(() => {});
       } else {
@@ -162,6 +181,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     if (data.startsWith('confirm_trade:')) {
       const sigId = data.split(':')[1]!;
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: String(cq.from.id),
+      });
+      if (!ent.allowCopyTrade) {
+        await bot.answerCallbackQuery(cq.id, 'برای کپی‌ترید تلگرام اشتراک Pro یا VIP لازم است.', true);
+        return { ok: true };
+      }
       const sigRow = await env.DB.prepare('SELECT * FROM signals WHERE id = ?').bind(sigId).first<{
         symbol: string;
         direction: 'LONG' | 'SHORT';
@@ -289,17 +319,41 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const apiKey = state.apiKey;
       const apiSecret = text;
       const encCreds = await encryptVaultJson({ apiKey, apiSecret }, env.MASTER_ENCRYPTION_KEY);
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: String(msg.from.id),
+      });
+      const canActivateLive = ent.allowLiveTrading;
 
-      await env.DB.prepare(`UPDATE exchange_connections SET is_active = 0 WHERE user_id = ?`).bind(user.id).run();
+      if (canActivateLive) {
+        await env.DB.prepare(`UPDATE exchange_connections SET is_active = 0 WHERE user_id = ?`).bind(user.id).run();
+      }
       await env.DB.prepare(
         `INSERT INTO exchange_connections (id, user_id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials, last_test_status)
-         VALUES (?, ?, ?, ?, 0, 1, ?, ?, 'PENDING')`
-      ).bind(randomId('ex'), user.id, state.provider, `${state.provider.toUpperCase()} Telegram`, maskSecret(apiKey), encCreds).run();
+         VALUES (?, ?, ?, ?, 0, ?, ?, ?, 'PENDING')`
+      ).bind(
+        randomId('ex'),
+        user.id,
+        state.provider,
+        `${state.provider.toUpperCase()} Telegram`,
+        canActivateLive ? 1 : 0,
+        maskSecret(apiKey),
+        encCreds
+      ).run();
 
       await clearState();
       const { adapter } = await resolveUserExchangeAdapter(env, user.id, state.provider);
       const test = await adapter.testConnection();
-      if (test.ok && test.balance) {
+      if (!canActivateLive) {
+        await bot.sendMessage(
+          chatId,
+          `🔐 کلید ${state.provider.toUpperCase()} با رمزنگاری AES-256 ذخیره شد (در حالت Standby).\n\nبرای فعال‌سازی معاملات واقعی روی Toobit یا KCEX لطفاً از پنل وب دلارینو اشتراک Pro یا VIP تهیه کنید.`,
+          { replyKeyboard: mainMenuKeyboard() }
+        );
+      } else if (test.ok && test.balance) {
         await env.DB.prepare(`UPDATE bot_configs SET trading_mode = 'LIVE' WHERE user_id = ?`).bind(user.id).run();
         await bot.sendMessage(
           chatId,
@@ -346,13 +400,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   if (text === 'اتصال به صرافی 🔗' || text === 'تغییر API صرافی 📡') {
     await bot.sendMessage(
       chatId,
-      `🔗 انتخاب صرافی و اتصال API:\n\n• **Toobit (توبیت):** پشتیبانی کامل از فیوچرز USDT-M\n• **Paper Mode:** ترید آزمایشی رایگان با قیمت زنده بازار\n• **Bitunix:** پشتیبانی کامل\n• **KCEX:** در انتظار انتشار API عمومی توسط صرافی\n\nصرافی مورد نظر خود را انتخاب کنید:`,
+      `🔗 انتخاب صرافی و اتصال:\n\n• **Toobit (توبیت):** اتصال مستقیم API فیوچرز\n• **KCEX (کی‌سی‌ای‌ایکس):** معاملات ۰٪ کارمزد میرر\n• **Paper Mode:** حساب دمو رایگان برای تست\n\nصرافی مورد نظر خود را انتخاب کنید:`,
       { replyKeyboard: exchangeSelectionKeyboard() }
     );
     return { ok: true };
   }
 
-  if (text === 'Toobit (توبیت - فعال) 🟢') {
+  if (text === 'Toobit (توبیت - API لایو) 🟢' || text === 'Toobit (توبیت - فعال) 🟢') {
     await setState({ step: 'AWAIT_API_KEY', provider: 'toobit' });
     await bot.sendMessage(
       chatId,
@@ -362,28 +416,22 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === 'Bitunix (بیت‌یونیکس) 🔵') {
-    await setState({ step: 'AWAIT_API_KEY', provider: 'bitunix' });
-    await bot.sendMessage(chatId, `🔵 لطفاً **API Key** صرافی Bitunix را ارسال کنید:`, { removeKeyboard: true });
+  if (text === 'KCEX (۰٪ کارمزد) 🔵' || text === 'KCEX (در انتظار API) ⏳') {
+    await bot.sendMessage(
+      chatId,
+      `🔵 صرافی KCEX (۰٪ کارمزد میرر):\nبرای اتصال حساب KCEX و لینک معامله سریع، وارد پنل وب دلارینو بخش «صرافی Toobit / KCEX» شوید و اشتراک Pro خود را فعال کنید.`,
+      { replyKeyboard: exchangeSelectionKeyboard() }
+    );
     return { ok: true };
   }
 
-  if (text === 'Paper Mode (آزمایشی) 🧪') {
+  if (text === 'Paper Mode (دمو رایگان) 🧪' || text === 'Paper Mode (آزمایشی) 🧪') {
     await env.DB.prepare(`UPDATE bot_configs SET trading_mode = 'PAPER' WHERE user_id = ?`).bind(user.id).run();
     const { adapter } = await resolveUserExchangeAdapter(env, user.id, 'paper');
     const bal = await adapter.getBalance();
-    await bot.sendMessage(chatId, `✅ حالت معاملاتی روی **Paper Simulator** فعال شد!\n\n${formatBalanceCard('PAPER', bal)}`, {
+    await bot.sendMessage(chatId, `✅ حالت معاملاتی روی **Paper Demo** فعال شد!\n\n${formatBalanceCard('PAPER', bal)}`, {
       replyKeyboard: mainMenuKeyboard(),
     });
-    return { ok: true };
-  }
-
-  if (text === 'KCEX (در انتظار API) ⏳') {
-    await bot.sendMessage(
-      chatId,
-      `⏳ وضعیت صرافی KCEX:\nبر اساس مستندات رسمی KCEX، این صرافی هنوز API عمومی ترید برای کاربران منتشر نکرده است (فقط وب و اپلیکیشن دارد). به محض انتشار API رسمی KCEX، در دلارینو فعال خواهد شد.\n\nفعلاً می‌توانید از **Toobit** یا **Paper Mode** استفاده کنید.`,
-      { replyKeyboard: exchangeSelectionKeyboard() }
-    );
     return { ok: true };
   }
 
@@ -456,16 +504,23 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     const cfg = await env.DB.prepare('SELECT trading_mode, trade_execution_mode, margin_pct FROM bot_configs WHERE user_id = ?')
       .bind(user.id).first<UserBotConfigRow>();
+    const ent = await resolveUserEntitlement(env.DB, {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      role: (user.role as AuthUser['role']) || 'user',
+      telegramId: String(msg.from.id),
+    });
 
     await bot.sendMessage(
       chatId,
       `👤 اطلاعات حساب کاربری دلارینو:\n\n` +
       `🆔 آیدی تلگرام: ${msg.from.id}\n` +
       `📧 ایمیل وب متصل: ${user.email.endsWith('.local') ? 'هنوز به وب لینک نشده (/link)' : user.email}\n` +
+      `💎 اشتراک فعال: ${ent.planNameFa}${ent.hasPaidPlan ? ` (${ent.daysRemaining} روز باقیمانده)` : ''}\n` +
       `⚙️ حالت معامله: ${cfg?.trading_mode ?? 'PAPER'} | ${cfg?.trade_execution_mode ?? 'AUTO'}\n` +
       `📊 تعداد معاملات بسته: ${stats?.total ?? 0} (برد: ${stats?.wins ?? 0})\n` +
-      `💰 سود/ضرر کل: ${(stats?.pnl ?? 0).toFixed(2)} USDT\n` +
-      `💎 نسخه اوپن‌سورس و ۱۰۰٪ رایگان`
+      `💰 سود/ضرر کل: ${(stats?.pnl ?? 0).toFixed(2)} USDT`
     );
     return { ok: true };
   }

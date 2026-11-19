@@ -6,12 +6,16 @@ import {
   Award,
   BarChart3,
   Bot,
+  BrainCircuit,
   Clock,
+  Cpu,
+  Crown,
   Edit3,
   Gauge,
   Layers,
   Plus,
   Power,
+  Radio,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -22,6 +26,8 @@ import {
 } from 'lucide-react';
 import type { Candle, KbosParams, SignalMixerResult, Timeframe } from '@dollarino/core';
 import { CandlestickChart, type ChartLevels, type ChartOverlays, type KbosChartOverlays } from '../components/CandlestickChart';
+import { CoinIcon } from '../components/CoinIcon';
+import type { EntitlementSummary, NavTab } from '../components/Layout';
 import { SetupWizardModal } from '../components/SetupWizardModal';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { WeeklyTradingCardModal, type WeeklyCardMetrics } from '../components/WeeklyTradingCardModal';
@@ -136,6 +142,14 @@ export interface DashboardPayload {
     note: string;
     created_at: string;
   }>;
+  recentAiDecisions?: Array<{
+    id: string;
+    level: string;
+    symbol: string | null;
+    message: string;
+    details_json: string | null;
+    created_at: string;
+  }>;
   stats: {
     totalTrades: number;
     winRate: number;
@@ -155,6 +169,7 @@ export interface DashboardPayload {
     weeklyResults: Array<{ day: string; count: number; wins: number; pnl: number }>;
   };
   mixerSnapshot: SignalMixerResult | null;
+  entitlement?: EntitlementSummary | null;
 }
 
 interface MarketOverview {
@@ -297,14 +312,15 @@ function CumulativeAreaSvg({ data }: { data: Array<{ date: string; cumulativePnl
 }
 
 const STRAT_LABELS: Record<string, string> = {
-  kbos_v11: 'KIYA BOT v11 (KBOs)',
-  sp2l: 'Steady Growth (SP2L)',
-  ema_trend_pullback: 'Momentum (EMA)',
-  signal_mixer: 'AI Managed (8-Ch)',
-  grid_strategy: 'Grid Mean Reversion',
-  vibe_4h_daily_breakout: '4H Daily Breakout',
-  vibe_4h_candle_confirmation: '4H Confirmation',
-  dollarino_tv_hybrid: 'Dollarino TV Hybrid',
+  ai_autonomous_agent: 'Autonomous AI Agent',
+  kbos_v11: 'CodexBot Super v11',
+  sp2l: 'CodexBot Steady Growth (SP2L)',
+  ema_trend_pullback: 'CodexBot Momentum (EMA)',
+  signal_mixer: 'CodexBot 8-Channel Mixer',
+  grid_strategy: 'CodexBot Grid Mean Reversion',
+  vibe_4h_daily_breakout: 'CodexBot 4H Breakout',
+  vibe_4h_candle_confirmation: 'CodexBot 4H Confirmation',
+  dollarino_tv_hybrid: 'Telegram Copy-Trade Hybrid',
 };
 
 export function DashboardPage({
@@ -312,11 +328,15 @@ export function DashboardPage({
   data,
   markets,
   onRefresh,
+  onOpenConnections,
+  onOpenTab,
 }: {
   lang: Lang;
   data: DashboardPayload;
   markets: ExchangeMarket[];
   onRefresh: () => void;
+  onOpenConnections?: () => void;
+  onOpenTab?: (tab: NavTab) => void;
 }) {
   const t = dict[lang];
   const [symbol, setSymbol] = useState(data.config.symbol || 'BTCUSDT');
@@ -324,6 +344,21 @@ export function DashboardPage({
   const [overview, setOverview] = useState<MarketOverview | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'closed' | 'chart' | 'pending' | 'weekly'>('closed');
   const [marketFilter, setMarketFilter] = useState<'all' | 'crypto' | 'forex' | 'metal' | 'energy' | 'index' | 'equity'>('all');
+  const [modeError, setModeError] = useState<string | null>(null);
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiRunOutput, setAiRunOutput] = useState<{
+    action: string;
+    confidence: number;
+    entry?: number;
+    stopLoss?: number;
+    tp1?: number;
+    tp2?: number;
+    thesis: string;
+    provider?: string;
+    model?: string;
+    executed?: boolean;
+    error?: string;
+  } | null>(null);
 
   // Interactive modals matching timetrade.live
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -437,11 +472,22 @@ export function DashboardPage({
 
   const switchAccountMode = async (mode: 'PAPER' | 'LIVE') => {
     if (mode === data.config.trading_mode) return;
-    await apiFetch('/api/trading/config', {
-      method: 'PATCH',
-      body: JSON.stringify({ trading_mode: mode }),
-    });
-    onRefresh();
+    setModeError(null);
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({ trading_mode: mode }),
+      });
+      onRefresh();
+    } catch (e) {
+      setModeError(
+        e instanceof Error
+          ? e.message
+          : lang === 'fa'
+            ? 'برای فعال‌سازی حالت واقعی (Toobit / KCEX) اشتراک Pro لازم است.'
+            : 'Active Pro or VIP subscription required to switch to Live Trading.'
+      );
+    }
   };
 
   const handleTopup = async (e: React.FormEvent) => {
@@ -553,8 +599,8 @@ export function DashboardPage({
           </div>
           <p className="text-xs text-[#6c7689]">
             {lang === 'fa'
-              ? 'موتور معاملاتی غیرریپینت KBOs v11 · میکسر ۸ کاناله · خروج ۳ تارگت و تریلینگ استاپ'
-              : 'Non-repainting KIYA BOT v11 engine · 8-Channel Mixer · 3-TP Risk-Free & Trailing SL'}
+              ? 'عامل هوشمند معامله‌گر (DeepSeek · Claude · GPT · Gemini) با تحلیل زنده ساختار بازار، مدیریت ریسک قطعی و خروج ۳ تارگت'
+              : 'Autonomous LLM Trader (DeepSeek · Claude · GPT · Gemini) · Live Market Structure · Deterministic Risk Gates'}
           </p>
         </div>
 
@@ -608,6 +654,117 @@ export function DashboardPage({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Mode Error / Subscription Prompt */}
+      {modeError && (
+        <div className="p-3.5 rounded-2xl bg-[#f59f14]/15 border border-[#f59f14]/40 flex flex-wrap items-center justify-between gap-2 text-xs text-[#fde68a]">
+          <span>{modeError}</span>
+          {onOpenTab && (
+            <button
+              onClick={() => onOpenTab('subscription')}
+              className="px-3.5 py-1.5 rounded-xl bg-[#2563eb] text-white font-bold inline-flex items-center gap-1"
+            >
+              <Crown className="w-3.5 h-3.5" />
+              <span>{lang === 'fa' ? 'مشاهده اشتراک‌ها' : 'View Plans'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Kifpool-inspired Graphical 3-Mode Quick Action Strip */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+        <div className="card-tt p-4 rounded-3xl flex items-center justify-between gap-3 border-[#2563eb]/35">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-2xl bg-[#2563eb]/15 border border-[#2563eb]/35 flex items-center justify-center shrink-0">
+              <BrainCircuit className="w-5 h-5 text-[#3b82f6]" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold text-white truncate">
+                {lang === 'fa' ? '۱. ترید هوش مصنوعی' : '1. AI Trading'}
+              </div>
+              <div className="text-[11px] text-[#8f99aa] truncate">
+                {data.activeAI ? `${data.activeAI.provider.toUpperCase()} · ${data.activeAI.model}` : lang === 'fa' ? 'کلید AI متصل نشده' : 'No AI Key connected'}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (data.activeAI) setWizardOpen(true);
+              else onOpenConnections?.();
+            }}
+            className="px-3 py-1.5 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[11px] font-bold shrink-0"
+          >
+            {data.activeAI ? (lang === 'fa' ? 'اجرا' : 'Launch') : lang === 'fa' ? 'اتصال' : 'Connect'}
+          </button>
+        </div>
+
+        <div className="card-tt p-4 rounded-3xl flex items-center justify-between gap-3 border-[#10b981]/35">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-2xl bg-[#10b981]/15 border border-[#10b981]/35 flex items-center justify-center shrink-0">
+              <Cpu className="w-5 h-5 text-[#10b981]" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold text-white truncate">
+                {lang === 'fa' ? '۲. استراتژی CodexBot' : '2. CodexBot Strategies'}
+              </div>
+              <div className="text-[11px] text-[#8f99aa] truncate">
+                {STRAT_LABELS[data.config.strategy_key] || data.config.strategy_key}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => onOpenTab?.('flow')}
+            className="px-3 py-1.5 rounded-xl bg-[#10b981]/20 hover:bg-[#10b981]/30 border border-[#10b981]/35 text-[#34d399] text-[11px] font-bold shrink-0"
+          >
+            {lang === 'fa' ? 'انتخاب / بک‌تست' : 'Strategies'}
+          </button>
+        </div>
+
+        <div className="card-tt p-4 rounded-3xl flex items-center justify-between gap-3 border-[#8b5cf6]/35">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-2xl bg-[#8b5cf6]/15 border border-[#8b5cf6]/35 flex items-center justify-center shrink-0">
+              <Radio className="w-5 h-5 text-[#a78bfa]" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold text-white truncate">
+                {lang === 'fa' ? '۳. کپی‌ترید تلگرام' : '3. Telegram Copy-Trade'}
+              </div>
+              <div className="text-[11px] text-[#8f99aa] truncate">
+                {lang === 'fa' ? 'فرمت کانال @Dollarinoofficial' : 'Channel Format Auto-Sync'}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => onOpenTab?.('copytrade')}
+            className="px-3 py-1.5 rounded-xl bg-[#8b5cf6]/20 hover:bg-[#8b5cf6]/30 border border-[#8b5cf6]/35 text-[#c4b5fd] text-[11px] font-bold shrink-0"
+          >
+            {lang === 'fa' ? 'تنظیم و تست' : 'Configure'}
+          </button>
+        </div>
+      </div>
+
+      {/* Active Coin Quick Pill Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl bg-[#0d111a] border border-[#1c2230] text-xs">
+        <div className="flex items-center gap-2.5">
+          <CoinIcon symbol={symbol} size={26} />
+          <span className="font-extrabold text-white font-mono-num">{symbol}</span>
+          <span className="text-[#27cd86] font-mono-num font-bold">
+            ${overview ? Number(overview.market24h.lastPrice).toLocaleString() : '—'}
+          </span>
+          <span className="text-[11px] text-[#6c7689]">
+            ({data.activeExchange.provider === 'paper' ? 'Paper Demo' : data.activeExchange.provider.toUpperCase()})
+          </span>
+        </div>
+        {data.entitlement && !data.entitlement.hasPaidPlan && onOpenTab && (
+          <button
+            onClick={() => onOpenTab('subscription')}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#f59f14]/15 border border-[#f59f14]/35 text-[#f59f14] text-[11px] font-bold"
+          >
+            <Crown className="w-3.5 h-3.5" />
+            <span>{lang === 'fa' ? 'دمو رایگان · ارتقا به اشتراک Pro' : 'Paper Demo · Upgrade to Pro'}</span>
+          </button>
+        )}
       </div>
 
       {/* Post-Stop Settlement Summary Card (when user stops bot) */}
@@ -719,6 +876,207 @@ export function DashboardPage({
             </p>
           </div>
         </div>
+      </div>
+
+      {/* 2B. Autonomous AI Agent Brain & Live Decision Feed */}
+      <div className="card-tt p-4 sm:p-5 border-[#4b73f5]/35 bg-[#0b0f18] space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#4b73f5]/15 border border-[#4b73f5]/40 flex items-center justify-center shrink-0">
+              <BrainCircuit className="w-5 h-5 text-[#4b73f5]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm font-bold text-white">
+                  {lang === 'fa' ? 'مغز معامله‌گر هوش مصنوعی (AI-Driven Trading)' : 'Autonomous AI Agent Brain'}
+                </h2>
+                {data.activeAI ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono-num font-semibold bg-[#27cd86]/15 text-[#27cd86] border border-[#27cd86]/35">
+                    {data.activeAI.provider.toUpperCase()} · {data.activeAI.model}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#f59f14]/15 text-[#f59f14] border border-[#f59f14]/35">
+                    {lang === 'fa' ? 'کلید AI متصل نیست' : 'No AI Key Connected'}
+                  </span>
+                )}
+                {data.config.strategy_key === 'ai_autonomous_agent' && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#4b73f5]/20 text-[#9eb7ff] border border-[#4b73f5]/40">
+                    PRIMARY ENGINE
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-[#8f99aa] mt-0.5">
+                {lang === 'fa'
+                  ? `تحلیل مستقیم ${symbol} (${tf}) توسط مدل هوشمند با بررسی کندل‌ها، اردربوک و سطوح ساختار — نه فقط اندیکاتورهای آماده.`
+                  : `Real AI reasoning on ${symbol} (${tf}) live candles, orderbook imbalance & S/R — not static indicator scripts.`}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {!data.activeAI && onOpenConnections && (
+              <button
+                onClick={onOpenConnections}
+                className="px-3.5 py-2 rounded-lg bg-[#4b73f5] hover:bg-[#3d63e0] text-white font-semibold transition"
+              >
+                {lang === 'fa' ? 'اتصال کلید DeepSeek / AI →' : 'Connect DeepSeek / AI Key →'}
+              </button>
+            )}
+            {data.config.strategy_key !== 'ai_autonomous_agent' && (
+              <button
+                onClick={async () => {
+                  await apiFetch('/api/trading/config', {
+                    method: 'PATCH',
+                    body: JSON.stringify({ strategy_key: 'ai_autonomous_agent' }),
+                  });
+                  onRefresh();
+                }}
+                className="px-3 py-2 rounded-lg bg-[#4b73f5]/15 hover:bg-[#4b73f5]/25 border border-[#4b73f5]/40 text-[#9eb7ff] font-semibold transition"
+              >
+                {lang === 'fa' ? 'سوییچ به ترید تماماً AI' : 'Switch to AI-Driven Mode'}
+              </button>
+            )}
+            <button
+              disabled={aiRunning || !data.activeAI}
+              onClick={async () => {
+                setAiRunning(true);
+                setAiRunOutput(null);
+                try {
+                  const res = await apiFetch<{
+                    ok: boolean;
+                    decision?: {
+                      action: string;
+                      confidence: number;
+                      entry: number;
+                      stopLoss: number;
+                      tp1: number;
+                      tp2: number;
+                      thesis: string;
+                      provider?: string;
+                      model?: string;
+                    };
+                    error?: string;
+                  }>('/api/trading/ai-agent/run', {
+                    method: 'POST',
+                    body: JSON.stringify({ symbol, timeframe: tf, executeIfSignal: false }),
+                  });
+                  if (res.decision) setAiRunOutput({ ...res.decision, executed: false });
+                  onRefresh();
+                } catch (e) {
+                  setAiRunOutput({
+                    action: 'ERROR',
+                    confidence: 0,
+                    thesis: '',
+                    error: e instanceof Error ? e.message : 'AI run failed',
+                  });
+                } finally {
+                  setAiRunning(false);
+                }
+              }}
+              className="px-3 py-2 rounded-lg bg-[#161b26] hover:bg-[#1e2533] disabled:opacity-50 border border-[#262d3d] text-white font-semibold inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${aiRunning ? 'animate-spin' : ''}`} />
+              <span>{lang === 'fa' ? 'تصمیم لحظه‌ای AI' : 'Ask AI Decision'}</span>
+            </button>
+            <button
+              disabled={aiRunning || !data.activeAI}
+              onClick={async () => {
+                setAiRunning(true);
+                setAiRunOutput(null);
+                try {
+                  const res = await apiFetch<{
+                    ok: boolean;
+                    decision?: {
+                      action: string;
+                      confidence: number;
+                      entry: number;
+                      stopLoss: number;
+                      tp1: number;
+                      tp2: number;
+                      thesis: string;
+                      provider?: string;
+                      model?: string;
+                    };
+                    executed?: { ok: boolean; tradeId?: string; closed?: boolean };
+                    error?: string;
+                  }>('/api/trading/ai-agent/run', {
+                    method: 'POST',
+                    body: JSON.stringify({ symbol, timeframe: tf, executeIfSignal: true }),
+                  });
+                  if (res.decision) setAiRunOutput({ ...res.decision, executed: Boolean(res.executed?.ok) });
+                  onRefresh();
+                } catch (e) {
+                  setAiRunOutput({
+                    action: 'ERROR',
+                    confidence: 0,
+                    thesis: '',
+                    error: e instanceof Error ? e.message : 'AI execution failed',
+                  });
+                } finally {
+                  setAiRunning(false);
+                }
+              }}
+              className="px-3.5 py-2 rounded-lg bg-[#27cd86] hover:bg-[#22b878] disabled:opacity-50 text-[#080a0e] font-bold inline-flex items-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{lang === 'fa' ? 'تحلیل و معامله فوری AI' : 'AI Analyze & Trade'}</span>
+            </button>
+          </div>
+        </div>
+
+        {aiRunOutput && (
+          <div className="p-3.5 rounded-xl bg-[#080a0e] border border-[#1f2636] text-xs space-y-2">
+            {aiRunOutput.error ? (
+              <div className="text-[#eb493d]">{aiRunOutput.error}</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`px-2 py-0.5 rounded font-bold font-mono-num ${
+                        aiRunOutput.action === 'LONG'
+                          ? 'bg-[#27cd86]/20 text-[#27cd86]'
+                          : aiRunOutput.action === 'SHORT'
+                            ? 'bg-[#eb493d]/20 text-[#eb493d]'
+                            : 'bg-[#4b73f5]/20 text-[#9eb7ff]'
+                      }`}
+                    >
+                      {aiRunOutput.action}
+                    </span>
+                    <span className="font-mono-num text-white font-semibold">{symbol} ({tf})</span>
+                    <span className="font-mono-num text-[#9aa5b5]">Confidence {aiRunOutput.confidence}%</span>
+                    {aiRunOutput.executed && (
+                      <span className="px-2 py-0.5 rounded bg-[#27cd86]/15 text-[#27cd86] font-semibold">EXECUTED</span>
+                    )}
+                  </div>
+                  {(aiRunOutput.action === 'LONG' || aiRunOutput.action === 'SHORT') && (
+                    <div className="font-mono-num text-[11px] text-[#c5cede] flex gap-3">
+                      <span>Entry ${aiRunOutput.entry}</span>
+                      <span className="text-[#eb493d]">SL ${aiRunOutput.stopLoss}</span>
+                      <span className="text-[#27cd86]">TP1 ${aiRunOutput.tp1}</span>
+                      <span className="text-[#27cd86]">TP2 ${aiRunOutput.tp2}</span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[#a5b0c0] leading-relaxed">{aiRunOutput.thesis}</p>
+              </>
+            )}
+          </div>
+        )}
+
+        {(data.recentAiDecisions?.length ?? 0) > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+            {data.recentAiDecisions!.slice(0, 4).map((d) => (
+              <div key={d.id} className="p-2.5 rounded-lg bg-[#080a0e]/80 border border-[#171c26] space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-[#6c7689] font-mono-num">
+                  <span>{d.symbol || symbol}</span>
+                  <span>{d.created_at}</span>
+                </div>
+                <p className="text-[#c5cede] line-clamp-2">{d.message}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 3. Dual Analytics Charts (Sl): Hourly Trading Activity + Earn-System Result · 30d */}

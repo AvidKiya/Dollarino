@@ -7,6 +7,7 @@ import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { normalizeProxyBaseUrl } from '../exchanges/proxy.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 
 export const connectionRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 connectionRoutes.use('*', requireAuth);
@@ -60,7 +61,7 @@ connectionRoutes.get('/exchanges', async (c) => {
 connectionRoutes.post('/exchanges', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<{
-    provider: 'paper' | 'toobit' | 'bitunix' | 'kcex';
+    provider: 'paper' | 'toobit' | 'kcex' | string;
     label?: string;
     apiKey?: string;
     apiSecret?: string;
@@ -71,10 +72,27 @@ connectionRoutes.post('/exchanges', async (c) => {
   }>();
 
   if (!body.provider) return c.json({ error: 'Provider is required' }, 400);
-
-  if ((body.provider === 'toobit' || body.provider === 'bitunix') && (!body.apiKey || !body.apiSecret)) {
-    return c.json({ error: 'API Key and API Secret are required for Toobit and Bitunix' }, 400);
+  if (body.provider !== 'paper' && body.provider !== 'toobit' && body.provider !== 'kcex') {
+    return c.json({ error: 'Only Toobit, KCEX, and Paper Demo are supported in Dollarino.' }, 400);
   }
+
+  const provider = body.provider as 'paper' | 'toobit' | 'kcex';
+  if (provider === 'toobit' && (!body.apiKey || !body.apiSecret)) {
+    return c.json({ error: 'API Key and API Secret are required for Toobit' }, 400);
+  }
+
+  const ent = await resolveUserEntitlement(c.env.DB, user);
+  const canActivateNow = provider === 'paper' || ent.allowLiveTrading;
+  if (body.activate === true && !canActivateNow) {
+    return c.json(
+      {
+        error: 'Active Pro or VIP subscription required to activate live Toobit or KCEX trading.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      },
+      402
+    );
+  }
+  const shouldActivate = body.activate !== false && canActivateNow;
 
   let normalizedProxy: string | undefined;
   if (body.proxyUrl?.trim()) {
@@ -96,21 +114,21 @@ connectionRoutes.post('/exchanges', async (c) => {
     c.env.MASTER_ENCRYPTION_KEY
   );
   const masked =
-    body.provider === 'paper'
+    provider === 'paper'
       ? 'PAPER-MODE'
-      : body.provider === 'kcex'
+      : provider === 'kcex'
         ? body.webSessionToken?.trim()
           ? maskSecret(body.webSessionToken)
           : 'KCEX-MIRROR-0%'
         : maskSecret(body.apiKey!);
 
-  if (body.activate !== false) {
+  if (shouldActivate) {
     await c.env.DB.prepare('UPDATE exchange_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
   }
 
   const label =
     body.label?.trim() ||
-    (body.provider === 'kcex' ? 'KCEX Futures (0% Maker / Mirror)' : `${body.provider.toUpperCase()} Futures`);
+    (provider === 'kcex' ? 'KCEX Futures (0% Maker / Mirror)' : provider === 'paper' ? 'Paper Demo' : 'Toobit Futures');
 
   await c.env.DB.prepare(
     `INSERT INTO exchange_connections (id, user_id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials)
@@ -118,26 +136,26 @@ connectionRoutes.post('/exchanges', async (c) => {
   ).bind(
     id,
     user.id,
-    body.provider,
+    provider,
     label,
-    body.provider === 'paper' || body.provider === 'kcex' ? 1 : 0,
-    body.activate !== false ? 1 : 0,
+    provider === 'paper' || provider === 'kcex' ? 1 : 0,
+    shouldActivate ? 1 : 0,
     masked,
     encrypted
   ).run();
 
-  if (body.activate !== false) {
+  if (shouldActivate) {
     await c.env.DB.prepare('UPDATE bot_configs SET trading_mode = ? WHERE user_id = ?')
-      .bind(body.provider === 'paper' || body.provider === 'kcex' ? 'PAPER' : 'LIVE', user.id).run();
+      .bind(provider === 'paper' || provider === 'kcex' ? 'PAPER' : 'LIVE', user.id).run();
   }
 
-  const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, body.provider);
+  const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, provider);
   const test = await adapter.testConnection();
   await c.env.DB.prepare(
     `UPDATE exchange_connections SET last_test_status = ?, last_tested_at = datetime('now') WHERE id = ?`
   ).bind(test.ok ? 'OK' : test.message.slice(0, 240), id).run();
 
-  return c.json({ id, test });
+  return c.json({ id, test, activated: shouldActivate, requiresSubscription: !canActivateNow });
 });
 
 connectionRoutes.patch('/exchanges/:id/proxy', async (c) => {
@@ -187,6 +205,16 @@ connectionRoutes.post('/exchanges/:id/activate', async (c) => {
   const row = await c.env.DB.prepare('SELECT id, provider FROM exchange_connections WHERE id = ? AND user_id = ?')
     .bind(id, user.id).first<{ id: string; provider: string }>();
   if (!row) return c.json({ error: 'Connection not found' }, 404);
+
+  if (row.provider !== 'paper') {
+    const ent = await resolveUserEntitlement(c.env.DB, user);
+    if (!ent.allowLiveTrading) {
+      return c.json({
+        error: 'Active Pro or VIP subscription required to activate Toobit / KCEX.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      }, 402);
+    }
+  }
 
   await c.env.DB.prepare('UPDATE exchange_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
   await c.env.DB.prepare('UPDATE exchange_connections SET is_active = 1 WHERE id = ?').bind(id).run();
@@ -261,7 +289,7 @@ connectionRoutes.get('/ai', async (c) => {
 connectionRoutes.post('/ai', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<{
-    provider: 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
+    provider: 'deepseek' | 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
     label?: string;
     model: string;
     baseUrl?: string;
@@ -276,6 +304,7 @@ connectionRoutes.post('/ai', async (c) => {
   }
 
   const id = randomId('ai');
+  const defaultBaseUrl = body.provider === 'deepseek' ? 'https://api.deepseek.com' : null;
   const encrypted = await encryptVaultJson({ apiKey: body.apiKey.trim() }, c.env.MASTER_ENCRYPTION_KEY);
   await c.env.DB.prepare('UPDATE ai_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
   await c.env.DB.prepare(
@@ -287,23 +316,44 @@ connectionRoutes.post('/ai', async (c) => {
     body.provider,
     body.label?.trim() || `${body.provider.toUpperCase()} (${body.model})`,
     body.model.trim(),
-    body.baseUrl?.trim() || null,
+    body.baseUrl?.trim() || defaultBaseUrl,
     maskSecret(body.apiKey),
     encrypted,
     body.temperature ?? 0.15,
-    body.maxTokens ?? 1024,
-    body.dailyCallCap ?? 40
+    body.maxTokens ?? 1536,
+    body.dailyCallCap ?? 120
   ).run();
 
   return c.json({ id, ok: true });
 });
 
+connectionRoutes.post('/ai/:id/activate', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const row = await c.env.DB.prepare('SELECT id FROM ai_connections WHERE id = ? AND user_id = ?')
+    .bind(id, user.id).first<{ id: string }>();
+  if (!row) return c.json({ error: 'AI connection not found' }, 404);
+  await c.env.DB.prepare('UPDATE ai_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
+  await c.env.DB.prepare('UPDATE ai_connections SET is_active = 1, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?')
+    .bind(id, user.id).run();
+  return c.json({ ok: true });
+});
+
 connectionRoutes.post('/ai/test', async (c) => {
   const user = c.get('user');
-  const ai = await resolveUserActiveAI(c.env, user.id);
-  if (!ai) return c.json({ ok: false, error: 'No active BYO AI key connected' }, 404);
-  const reply = await callBYOAI(ai, 'Reply with 1 short sentence confirming connection.', 'Ping test from Dollarino.');
-  return c.json({ ok: true, provider: ai.provider, model: ai.model, reply });
+  try {
+    const ai = await resolveUserActiveAI(c.env, user.id);
+    if (!ai) return c.json({ ok: false, error: 'No active BYO AI key connected' }, 404);
+    const reply = await callBYOAI(
+      ai,
+      'Reply with 1 short sentence confirming connection.',
+      'Ping test from Dollarino AI Trading Desk.',
+      { fastJson: true }
+    );
+    return c.json({ ok: true, provider: ai.provider, model: ai.model, reply });
+  } catch (err) {
+    return c.json({ ok: false, error: (err as Error).message || 'AI test failed' }, 400);
+  }
 });
 
 connectionRoutes.delete('/ai/:id', async (c) => {

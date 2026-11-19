@@ -19,7 +19,9 @@ import {
   type Timeframe,
 } from '@dollarino/core';
 import { requireAuth, type AppVariables } from '../auth.js';
+import { runAutonomousAITrader } from '../ai/providers.js';
 import { decryptVaultJson, randomId } from '../crypto.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -63,7 +65,7 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
 
-  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow] = await Promise.all([
+  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement] = await Promise.all([
     adapter.getBalance().catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC`).bind(user.id).all<{
       id: string;
@@ -121,6 +123,10 @@ tradingRoutes.get('/dashboard', async (c) => {
     ).bind(user.id).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(`SELECT provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`)
       .bind(user.id).first<{ provider: string; model: string }>(),
+    c.env.DB.prepare(
+      `SELECT id, level, symbol, message, details_json, created_at FROM audit_logs WHERE user_id = ? AND category = 'AI_AGENT' ORDER BY created_at DESC LIMIT 12`
+    ).bind(user.id).all().catch(() => ({ results: [] })),
+    resolveUserEntitlement(c.env.DB, user),
   ]);
 
   const totalEq = Math.max(1, Number(balance.total) || Number(cfg?.paper_balance ?? 10000));
@@ -255,11 +261,13 @@ tradingRoutes.get('/dashboard', async (c) => {
     riskProfile,
     activeExchange: { provider, label },
     activeAI: aiRow || null,
+    entitlement,
     balance,
     openTrades,
     pendingOrders: pendingOrders.results,
     closedTrades: closedTrades.results,
     recentSignals: recentSignals.results,
+    recentAiDecisions: recentAiDecisions.results,
     walletLedger: ledgerRows.results,
     nextCycleInSec,
     stats: {
@@ -355,6 +363,15 @@ tradingRoutes.patch('/config', async (c) => {
 
   const sets: string[] = [];
   const vals: unknown[] = [];
+  if (body.trading_mode === 'LIVE') {
+    const ent = await resolveUserEntitlement(c.env.DB, user);
+    if (!ent.allowLiveTrading) {
+      return c.json({
+        error: 'Active paid subscription required to switch to Live Trading (Toobit / KCEX). Paper Demo remains free.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      }, 402);
+    }
+  }
   for (const [k, col] of Object.entries(allowedFields)) {
     if (body[k] !== undefined) {
       sets.push(`${col} = ?`);
@@ -383,8 +400,34 @@ tradingRoutes.post('/bot/start', async (c) => {
     allocatedAmount?: number;
   }>().catch(() => ({} as Record<string, unknown>));
 
-  const cfg = await c.env.DB.prepare('SELECT trading_mode, risk_profile_json FROM bot_configs WHERE user_id = ?')
-    .bind(user.id).first<{ trading_mode: string; risk_profile_json?: string }>();
+  const [cfg, activeAI, entitlement] = await Promise.all([
+    c.env.DB.prepare('SELECT trading_mode, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ trading_mode: string; strategy_key: string; risk_profile_json?: string }>(),
+    c.env.DB.prepare('SELECT id, provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1')
+      .bind(user.id).first<{ id: string; provider: string; model: string }>(),
+    resolveUserEntitlement(c.env.DB, user),
+  ]);
+
+  const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'ai_autonomous_agent');
+  if (cfg?.trading_mode === 'LIVE' && !entitlement.allowLiveTrading) {
+    return c.json({
+      error: 'Active paid subscription required for Live Trading (Toobit / KCEX). Please upgrade or test in Paper Demo.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    }, 402);
+  }
+  if (targetStrategy === 'ai_autonomous_agent' && !entitlement.allowAiTrading) {
+    return c.json({
+      error: 'Active Pro or VIP subscription required for Autonomous AI Trading. You can test CodexBot strategies in Paper Demo or upgrade your plan.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    }, 402);
+  }
+  if (targetStrategy === 'ai_autonomous_agent' && !activeAI) {
+    return c.json({
+      error: 'No active AI API key found. Connect DeepSeek, Claude, OpenAI, or Gemini in Connections -> AI Engine first.',
+      code: 'NO_ACTIVE_AI_KEY',
+    }, 400);
+  }
+
   const nextState = cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
 
   const sets = [`bot_state = ?`, `started_at = datetime('now')`, `updated_at = datetime('now')`];
@@ -424,10 +467,18 @@ tradingRoutes.post('/bot/start', async (c) => {
 
   const id = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
   const stub = c.env.TRADING_BOT_DO.get(id);
-  await stub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+  const runTick = Promise.all([
+    stub.fetch('https://do/start').catch(() => {}),
+    stub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {}),
+  ]);
+  try {
+    c.executionCtx.waitUntil(runTick);
+  } catch {
+    void runTick;
+  }
 
-  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Bot started in ${nextState} mode`);
-  return c.json({ ok: true, bot_state: nextState });
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Bot started in ${nextState} mode (${targetStrategy})`);
+  return c.json({ ok: true, bot_state: nextState, strategy_key: targetStrategy });
 });
 
 tradingRoutes.post('/bot/stop', async (c) => {
@@ -742,6 +793,17 @@ tradingRoutes.post('/signals/execute', async (c) => {
     return c.json({ ok: true, signalId: sigId, parsed, formatted });
   }
 
+  const ent = await resolveUserEntitlement(c.env.DB, user);
+  if (!ent.allowCopyTrade) {
+    return c.json(
+      {
+        error: 'Active Pro or VIP subscription required to execute Telegram Copy-Trade signals.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      },
+      402
+    );
+  }
+
   const execRes = await executeSignalForUser(c.env, user.id, parsed, {
     signalId: sigId,
     forceBypassState: true,
@@ -912,7 +974,7 @@ tradingRoutes.post('/scanner', async (c) => {
     symbols?: string[];
     limit?: number;
   }>().catch(() => ({} as { strategyKey?: StrategyKey; timeframe?: Timeframe; symbols?: string[]; limit?: number }));
-  const strategyKey = body.strategyKey || 'kbos_v11';
+  const strategyKey = body.strategyKey === 'ai_autonomous_agent' ? 'signal_mixer' : (body.strategyKey || 'signal_mixer');
   const tf = body.timeframe || '15m';
   const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
   const htfTf = htfMap[tf] ?? '1h';
@@ -993,6 +1055,170 @@ tradingRoutes.post('/scanner', async (c) => {
   );
 
   return c.json({ provider, strategyKey, timeframe: tf, results });
+});
+
+tradingRoutes.post('/ai-agent/run', async (c) => {
+  const user = c.get('user');
+  const entitlement = await resolveUserEntitlement(c.env.DB, user);
+  if (!entitlement.allowAiTrading) {
+    return c.json({
+      ok: false,
+      error: 'Active Pro or VIP subscription required for Autonomous AI Trading.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    }, 402);
+  }
+  const body = await c.req.json<{
+    symbol?: string;
+    timeframe?: Timeframe;
+    executeIfSignal?: boolean;
+  }>().catch(() => ({} as { symbol?: string; timeframe?: Timeframe; executeIfSignal?: boolean }));
+
+  const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<UserBotConfigRow>();
+  if (!cfg) return c.json({ error: 'Bot config not found' }, 404);
+
+  const symbol = normalizeCanonicalSymbol(body.symbol || cfg.symbol);
+  const timeframe = (body.timeframe || cfg.entry_timeframe || '15m') as Timeframe;
+  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+  const higherTimeframe = htfMap[timeframe] ?? '1h';
+
+  const { adapter } = await resolveUserExchangeAdapter(
+    c.env,
+    user.id,
+    cfg.trading_mode === 'PAPER' ? 'paper' : undefined
+  );
+
+  const [candles, htfCandles, orderBook, market24h, openOnSymbol] = await Promise.all([
+    adapter.getKlines(symbol, timeframe, 300),
+    adapter.getKlines(symbol, higherTimeframe, 140),
+    adapter.getOrderBook(symbol, 15).catch(() => ({ bids: [], asks: [] })),
+    adapter.getMarket24h(symbol).catch(() => null),
+    c.env.DB.prepare(
+      `SELECT id, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode FROM trades WHERE user_id = ? AND symbol = ? AND status = 'OPEN' LIMIT 1`
+    ).bind(user.id, symbol).first<{
+      id: string;
+      direction: Direction;
+      entry_price: string;
+      current_stop_loss: string;
+      tp1: string;
+      remaining_quantity: string;
+      margin_used: string;
+      realized_pnl: string;
+      mode: string;
+    }>(),
+  ]);
+
+  const bidVol = orderBook.bids.reduce((s, [, q]) => s + Number(q), 0);
+  const askVol = orderBook.asks.reduce((s, [, q]) => s + Number(q), 0);
+  const imbalancePct = bidVol + askVol > 0 ? (((bidVol - askVol) / (bidVol + askVol)) * 100).toFixed(1) : '0.0';
+  const bestBid = Number(orderBook.bids[0]?.[0] ?? 0);
+  const bestAsk = Number(orderBook.asks[0]?.[0] ?? 0);
+  const spreadPct = bestBid > 0 ? (((bestAsk - bestBid) / bestBid) * 100).toFixed(4) : '0.01';
+
+  let kbosParams = mergeKbosParams();
+  try { if (cfg.kbos_params_json) kbosParams = mergeKbosParams(JSON.parse(cfg.kbos_params_json)); } catch { /* fallback */ }
+  let mixerWeights: SignalMixerWeights = DEFAULT_MIXER_WEIGHTS;
+  try { if (cfg.mixer_weights_json) mixerWeights = JSON.parse(cfg.mixer_weights_json) as SignalMixerWeights; } catch { /* fallback */ }
+  let riskPreset = 'balanced';
+  try { if (cfg.risk_profile_json) riskPreset = (JSON.parse(cfg.risk_profile_json) as { preset?: string }).preset || 'balanced'; } catch { /* fallback */ }
+
+  let decision;
+  try {
+    decision = await runAutonomousAITrader(c.env, user.id, {
+      symbol,
+      timeframe,
+      higherTimeframe,
+      candles,
+      htfCandles,
+      maxLeverage: Math.max(1, cfg.max_leverage),
+      minConfidence: cfg.ai_min_confidence ?? 65,
+      orderBookImbalancePct: imbalancePct,
+      spreadPct,
+      fundingRate: market24h?.fundingRate,
+      openPosition: openOnSymbol
+        ? {
+            direction: openOnSymbol.direction,
+            entryPrice: openOnSymbol.entry_price,
+            currentStopLoss: openOnSymbol.current_stop_loss,
+            tp1: openOnSymbol.tp1,
+          }
+        : null,
+      riskPreset,
+      kbosParams,
+      mixerWeights,
+      mixerThreshold: cfg.mixer_threshold ?? 65,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : 'AI Trader failed';
+    await logAudit(c.env.DB, user.id, 'AI_AGENT', 'ERROR', `AI Trader error on ${symbol}: ${errMsg}`, symbol);
+    return c.json({ ok: false, error: errMsg }, 400);
+  }
+
+  if (!decision.ok) {
+    return c.json({ ok: false, error: decision.error || decision.thesis, decision }, 400);
+  }
+
+  await logAudit(
+    c.env.DB,
+    user.id,
+    'AI_AGENT',
+    'INFO',
+    `[${(decision.provider || 'AI').toUpperCase()} · ${decision.model || ''}] ${decision.action} ${symbol} (${decision.confidence}% conf) — ${decision.thesis}`,
+    symbol,
+    decision
+  );
+
+  let executed: { ok: boolean; tradeId?: string; error?: string; closed?: boolean } | null = null;
+  if (body.executeIfSignal) {
+    if (decision.action === 'CLOSE' && openOnSymbol) {
+      const cls = await adapter.closePositionPartialOrFull(symbol, openOnSymbol.direction, openOnSymbol.remaining_quantity, `ai_manual_exit_${Date.now()}`);
+      const exitPx = Number(cls.filledPrice);
+      const entryPx = Number(openOnSymbol.entry_price);
+      const qty = Number(openOnSymbol.remaining_quantity);
+      const pnl = openOnSymbol.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
+      const totalRealized = Number(openOnSymbol.realized_pnl) + pnl - Number(cls.fee);
+      if (openOnSymbol.mode === 'PAPER') {
+        const restored = Number(cfg.paper_balance) + Number(openOnSymbol.margin_used) + pnl - Number(cls.fee);
+        await c.env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?').bind(restored.toFixed(2), user.id).run();
+      }
+      await c.env.DB.prepare(
+        `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'AI_EXIT', closed_at = datetime('now') WHERE id = ?`
+      ).bind(cls.filledPrice, totalRealized.toFixed(4), openOnSymbol.id).run();
+      executed = { ok: true, tradeId: openOnSymbol.id, closed: true };
+    } else if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 65)) {
+      const sig = {
+        symbol,
+        direction: decision.action,
+        timeframe,
+        price: String(decision.entry),
+        stopLoss: String(decision.stopLoss),
+        leverage: decision.leverage,
+        tp1: String(decision.tp1),
+        tp2: String(decision.tp2),
+        tp3: String(decision.tp3),
+        channelHandle: cfg.signal_channel_handle,
+        reason: decision.thesis,
+      };
+      const sigId = randomId('sig');
+      await c.env.DB.prepare(
+        `INSERT INTO signals (id, user_id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, raw_text, status)
+         VALUES (?, ?, 'ai_agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW')`
+      ).bind(sigId, user.id, sig.symbol, sig.direction, sig.timeframe, sig.price, sig.stopLoss, sig.leverage, sig.tp1, sig.tp2, sig.tp3, formatDollarinoSignal(sig)).run();
+
+      executed = await executeSignalForUser(c.env, user.id, sig, {
+        signalId: sigId,
+        forceBypassState: true,
+        strategyKey: 'ai_autonomous_agent',
+        aiConfidence: decision.confidence,
+        aiReasoning: decision.thesis,
+      });
+      if (executed.ok) {
+        await c.env.DB.prepare(`UPDATE signals SET status = 'EXECUTED' WHERE id = ?`).bind(sigId).run();
+      }
+    }
+  }
+
+  return c.json({ ok: true, decision, executed });
 });
 
 tradingRoutes.get('/logs', async (c) => {

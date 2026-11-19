@@ -1,5 +1,6 @@
 import {
   atr,
+  bollingerBands,
   causalSwingLevels,
   computeKbosV11Detailed,
   DEFAULT_KBOS_PARAMS,
@@ -41,6 +42,25 @@ export interface ChartAIAnalysisResult {
     mixerScore: number;
     mixerConfidence: number;
   };
+}
+
+export interface AITradeDecision {
+  ok: boolean;
+  provider?: AIProviderId;
+  model?: string;
+  action: 'LONG' | 'SHORT' | 'HOLD' | 'CLOSE';
+  confidence: number;
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  leverage: number;
+  rrRatio: number;
+  thesis: string;
+  invalidation: string;
+  reasoningTrace?: string;
+  error?: string;
 }
 
 export interface AIRecord {
@@ -119,7 +139,12 @@ export async function resolveUserActiveAI(env: Env, userId: string): Promise<AIR
   };
 }
 
-export async function callBYOAI(ai: AIRecord, systemPrompt: string, userPrompt: string): Promise<string> {
+export async function callBYOAI(
+  ai: AIRecord,
+  systemPrompt: string,
+  userPrompt: string,
+  opts?: { fastJson?: boolean }
+): Promise<string> {
   if (ai.provider === 'anthropic') {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -130,12 +155,12 @@ export async function callBYOAI(ai: AIRecord, systemPrompt: string, userPrompt: 
       },
       body: JSON.stringify({
         model: ai.model || 'claude-3-5-sonnet-20241022',
-        max_tokens: ai.maxTokens || 1024,
+        max_tokens: ai.maxTokens || 1536,
         temperature: ai.temperature,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(25_000),
     });
     const json = await res.json() as { content?: Array<{ text?: string }>; error?: { message?: string } };
     if (!res.ok) throw new Error(json.error?.message ?? `Anthropic HTTP ${res.status}`);
@@ -151,9 +176,9 @@ export async function callBYOAI(ai: AIRecord, systemPrompt: string, userPrompt: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
-          generationConfig: { temperature: ai.temperature, maxOutputTokens: ai.maxTokens || 1024 },
+          generationConfig: { temperature: ai.temperature, maxOutputTokens: ai.maxTokens || 1536 },
         }),
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(25_000),
       }
     );
     const json = await res.json() as {
@@ -164,6 +189,47 @@ export async function callBYOAI(ai: AIRecord, systemPrompt: string, userPrompt: 
     return json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   }
 
+  // DeepSeek first-class integration (https://api.deepseek.com)
+  if (ai.provider === 'deepseek') {
+    const baseUrl = (ai.baseUrl || 'https://api.deepseek.com').replace(/\/$/, '');
+    const model = ai.model || 'deepseek-flash';
+    const isReasoningModel = model.includes('reasoner') || model.includes('v4-pro');
+    const bodyPayload: Record<string, unknown> = {
+      model,
+      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2048, 2048) : (ai.maxTokens || 1536),
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    };
+    if (!isReasoningModel) {
+      bodyPayload.temperature = ai.temperature;
+    }
+    // DeepSeek V4.1+ enables thinking by default on deepseek-flash; disable only when fast structured JSON is requested
+    if (opts?.fastJson && model === 'deepseek-flash') {
+      bodyPayload.thinking = { type: 'disabled' };
+    }
+
+    const endpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/chat/completions`;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ai.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bodyPayload),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const json = await res.json() as {
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+      error?: { message?: string };
+    };
+    if (!res.ok) throw new Error(json.error?.message ?? `DeepSeek HTTP ${res.status}`);
+    const msg = json.choices?.[0]?.message;
+    return msg?.content || msg?.reasoning_content || '';
+  }
+
+  // OpenAI or OpenAI-compatible (OpenRouter, Groq, Ollama, etc.)
   const baseUrl = (ai.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
@@ -174,20 +240,351 @@ export async function callBYOAI(ai: AIRecord, systemPrompt: string, userPrompt: 
     body: JSON.stringify({
       model: ai.model || 'gpt-4o-mini',
       temperature: ai.temperature,
-      max_tokens: ai.maxTokens || 1024,
+      max_tokens: ai.maxTokens || 1536,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
     }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(25_000),
   });
   const json = await res.json() as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
     error?: { message?: string };
   };
   if (!res.ok) throw new Error(json.error?.message ?? `OpenAI HTTP ${res.status}`);
-  return json.choices?.[0]?.message?.content ?? '';
+  return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+}
+
+function buildMarketContext(
+  symbol: string,
+  timeframe: Timeframe | string,
+  candles: Candle[],
+  opts?: {
+    htfCandles?: Candle[];
+    kbosParams?: KbosParams;
+    mixerWeights?: SignalMixerWeights;
+    mixerThreshold?: number;
+  }
+) {
+  const last = candles[candles.length - 1]!;
+  const price = last.close;
+  const closes = candles.map((c) => c.close);
+  const e20Arr = ema(closes, 20);
+  const e50Arr = ema(closes, 50);
+  const e200Arr = ema(closes, 200);
+  const r14Arr = rsi(closes, 14);
+  const a14Arr = atr(candles, 14);
+  const bb = bollingerBands(closes, 20, 2);
+  const swings = causalSwingLevels(candles, 3, 2);
+
+  const idx = candles.length - 1;
+  const e20 = e20Arr[idx] ?? price;
+  const e50 = e50Arr[idx] ?? price;
+  const e200 = Number.isFinite(e200Arr[idx]) ? e200Arr[idx]! : undefined;
+  const r14 = r14Arr[idx] ?? 50;
+  const a14 = Number.isFinite(a14Arr[idx]) ? a14Arr[idx]! : price * 0.008;
+  const bbUpper = bb.upper[idx];
+  const bbLower = bb.lower[idx];
+
+  let htfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = e20 > e50 ? 'BULLISH' : e20 < e50 ? 'BEARISH' : 'NEUTRAL';
+  const htfCandles = opts?.htfCandles ?? [];
+  if (htfCandles.length >= 25) {
+    const hc = htfCandles.map((c) => c.close);
+    const he20 = ema(hc, 20);
+    const he50 = ema(hc, 50);
+    const f = he20[htfCandles.length - 1];
+    const s = he50[htfCandles.length - 1];
+    if (Number.isFinite(f) && Number.isFinite(s)) {
+      htfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
+    }
+  }
+
+  const kbos = computeKbosV11Detailed(candles, timeframe as Timeframe, opts?.kbosParams ?? DEFAULT_KBOS_PARAMS);
+  const kbosLatest = kbos.outputs[kbos.outputs.length - 1];
+  const demaLatest = kbos.demaAtr[kbos.demaAtr.length - 1];
+  const mixer = evaluateSignalMixerAtBar(
+    candles,
+    idx,
+    htfTrend,
+    opts?.mixerWeights ?? DEFAULT_MIXER_WEIGHTS,
+    opts?.mixerThreshold ?? 65
+  );
+
+  const rawLowCandidates: number[] = [];
+  const rawHighCandidates: number[] = [];
+  for (let k = Math.max(0, idx - 120); k <= idx; k++) {
+    const sl = swings.confirmedLows[k];
+    const sh = swings.confirmedHighs[k];
+    if (Number.isFinite(sl) && sl! < price * 0.999) rawLowCandidates.push(sl!);
+    if (Number.isFinite(sh) && sh! > price * 1.001) rawHighCandidates.push(sh!);
+  }
+  const recent80 = candles.slice(-80);
+  const low80 = Math.min(...recent80.map((c) => c.low));
+  const high80 = Math.max(...recent80.map((c) => c.high));
+  if (low80 < price * 0.9995) rawLowCandidates.push(low80);
+  if (high80 > price * 1.0005) rawHighCandidates.push(high80);
+
+  const supports = uniqueSortedLevels(rawLowCandidates, price, false);
+  const resistances = uniqueSortedLevels(rawHighCandidates, price, true);
+
+  const telemetry = {
+    htfTrend,
+    ema20: roundPx(e20, price),
+    ema50: roundPx(e50, price),
+    ema200: e200 !== undefined ? roundPx(e200, price) : undefined,
+    rsi14: Number(r14.toFixed(1)),
+    atr14: roundPx(a14, price),
+    bbUpper: Number.isFinite(bbUpper) ? roundPx(bbUpper!, price) : undefined,
+    bbLower: Number.isFinite(bbLower) ? roundPx(bbLower!, price) : undefined,
+    kbosSignal: kbosLatest?.signal ?? 'NONE',
+    demaAtrTrend: demaLatest?.trend ?? 'NEUTRAL',
+    mixerScore: Number(mixer.compositeScore.toFixed(1)),
+    mixerConfidence: mixer.confidence,
+  };
+
+  const compactCandles = candles.slice(-32).map((c) => ({
+    t: new Date(c.timestamp).toISOString().slice(0, 16),
+    o: roundPx(c.open, price),
+    h: roundPx(c.high, price),
+    l: roundPx(c.low, price),
+    c: roundPx(c.close, price),
+    v: Math.round(c.volume),
+  }));
+
+  const compactHtf = htfCandles.slice(-16).map((c) => ({
+    t: new Date(c.timestamp).toISOString().slice(0, 16),
+    o: roundPx(c.open, price),
+    h: roundPx(c.high, price),
+    l: roundPx(c.low, price),
+    c: roundPx(c.close, price),
+  }));
+
+  return {
+    symbol,
+    price,
+    e20,
+    e50,
+    e200,
+    r14,
+    a14,
+    htfTrend,
+    mixer,
+    kbosLatest,
+    supports,
+    resistances,
+    telemetry,
+    compactCandles,
+    compactHtf,
+  };
+}
+
+/**
+ * Autonomous LLM Portfolio Trader (DeepSeek / Claude / GPT / Gemini).
+ * Gives the AI model full live market telemetry, multi-timeframe candles, order book depth,
+ * and open position context so the AI itself decides LONG / SHORT / HOLD / CLOSE.
+ */
+export async function runAutonomousAITrader(
+  env: Env,
+  userId: string,
+  params: {
+    symbol: string;
+    timeframe: Timeframe;
+    higherTimeframe: Timeframe;
+    candles: Candle[];
+    htfCandles?: Candle[];
+    maxLeverage: number;
+    minConfidence: number;
+    orderBookImbalancePct?: string;
+    spreadPct?: string;
+    fundingRate?: string;
+    openPosition?: {
+      direction: 'LONG' | 'SHORT';
+      entryPrice: string;
+      currentStopLoss: string;
+      tp1: string;
+      unrealizedPct?: number;
+    } | null;
+    riskPreset?: string;
+    kbosParams?: KbosParams;
+    mixerWeights?: SignalMixerWeights;
+    mixerThreshold?: number;
+  }
+): Promise<AITradeDecision> {
+  if (params.candles.length < 35) {
+    return {
+      ok: false,
+      action: 'HOLD',
+      confidence: 0,
+      entry: 0,
+      stopLoss: 0,
+      tp1: 0,
+      tp2: 0,
+      tp3: 0,
+      leverage: 1,
+      rrRatio: 0,
+      thesis: 'Insufficient candle history for AI analysis',
+      invalidation: 'Wait for 35+ candles',
+      error: 'Insufficient candle data',
+    };
+  }
+
+  const ai = await resolveUserActiveAI(env, userId);
+  if (!ai) {
+    return {
+      ok: false,
+      action: 'HOLD',
+      confidence: 0,
+      entry: params.candles[params.candles.length - 1]!.close,
+      stopLoss: 0,
+      tp1: 0,
+      tp2: 0,
+      tp3: 0,
+      leverage: 1,
+      rrRatio: 0,
+      thesis: 'No active AI API key connected (DeepSeek, Claude, OpenAI, or Gemini).',
+      invalidation: 'Connect an AI API key in Connections -> AI Engine',
+      error: 'NO_ACTIVE_AI_KEY',
+    };
+  }
+
+  const ctx = buildMarketContext(params.symbol, params.timeframe, params.candles, {
+    htfCandles: params.htfCandles,
+    kbosParams: params.kbosParams,
+    mixerWeights: params.mixerWeights,
+    mixerThreshold: params.mixerThreshold,
+  });
+
+  const sysPrompt = `You are Dollarino Autonomous AI Trader, an elite institutional perpetual futures portfolio manager.
+You analyze raw multi-timeframe price action, market microstructure, momentum, volatility (ATR), orderbook imbalance, and structural S/R to decide whether to open LONG, open SHORT, HOLD (no high-conviction edge), or CLOSE an existing open position.
+Respond ONLY with strict valid JSON matching:
+{
+  "action": "LONG" | "SHORT" | "HOLD" | "CLOSE",
+  "confidence": 0-100,
+  "entry": number,
+  "stopLoss": number,
+  "tp1": number,
+  "tp2": number,
+  "tp3": number,
+  "leverage": number,
+  "thesis": "clear, concise institutional reasoning citing structure, HTF alignment, and momentum",
+  "invalidation": "exact price/condition that invalidates thesis"
+}
+Hard Rules:
+1. If there is no clear edge or setup is noisy/choppy, return "action": "HOLD" (never force weak trades).
+2. Stop Loss MUST be placed outside normal 1-bar ATR noise (>= 1.5 * ATR14 away from entry) and anchored behind swing structure.
+3. Minimum Risk:Reward must be >= 1.2x on TP1, >= 2.2x on TP2, >= 3.2x on TP3.
+4. For LONG: stopLoss < entry < tp1 < tp2 < tp3. For SHORT: stopLoss > entry > tp1 > tp2 > tp3.
+5. Leverage MUST be between 1 and ${Math.max(1, params.maxLeverage)}.
+6. Preserve ${pricePrecision(ctx.price)} decimal places for ${params.symbol}.`;
+
+  const userPrompt = [
+    `Market: ${params.symbol} | LTF: ${params.timeframe} | HTF: ${params.higherTimeframe} | Last Price: ${roundPx(ctx.price, ctx.price)}`,
+    `Risk Preset: ${params.riskPreset || 'balanced'} | Max Leverage: ${params.maxLeverage}x | Min Confidence Gate: ${params.minConfidence}%`,
+    `Orderbook Imbalance: ${params.orderBookImbalancePct ?? '0.0'}% | Spread: ${params.spreadPct ?? '0.01'}% | Funding: ${params.fundingRate ?? '0.0001'}`,
+    `Open Position on ${params.symbol}: ${params.openPosition ? JSON.stringify(params.openPosition) : 'NONE'}`,
+    `Quant Telemetry: ${JSON.stringify(ctx.telemetry)}`,
+    `Swing Supports: ${JSON.stringify(ctx.supports)} | Swing Resistances: ${JSON.stringify(ctx.resistances)}`,
+    `HTF Candles (${params.higherTimeframe}, last 16): ${JSON.stringify(ctx.compactHtf)}`,
+    `LTF Candles (${params.timeframe}, last 32): ${JSON.stringify(ctx.compactCandles)}`,
+  ].join('\n');
+
+  const rawText = await callBYOAI(ai, sysPrompt, userPrompt, { fastJson: false });
+  const match = rawText.match(/\{[\s\S]*\}/);
+  if (!match) {
+    return {
+      ok: true,
+      provider: ai.provider,
+      model: ai.model,
+      action: 'HOLD',
+      confidence: 0,
+      entry: roundPx(ctx.price, ctx.price),
+      stopLoss: 0,
+      tp1: 0,
+      tp2: 0,
+      tp3: 0,
+      leverage: 1,
+      rrRatio: 0,
+      thesis: rawText.slice(0, 600) || 'AI returned non-JSON response; defaulting safely to HOLD.',
+      invalidation: 'Wait for next closed candle',
+    };
+  }
+
+  let parsed: Partial<AITradeDecision>;
+  try {
+    parsed = JSON.parse(match[0]) as Partial<AITradeDecision>;
+  } catch {
+    return {
+      ok: true,
+      provider: ai.provider,
+      model: ai.model,
+      action: 'HOLD',
+      confidence: 0,
+      entry: roundPx(ctx.price, ctx.price),
+      stopLoss: 0,
+      tp1: 0,
+      tp2: 0,
+      tp3: 0,
+      leverage: 1,
+      rrRatio: 0,
+      thesis: rawText.slice(0, 600),
+      invalidation: 'JSON parse fallback HOLD',
+    };
+  }
+
+  const rawAction = String(parsed.action || 'HOLD').toUpperCase();
+  const action: 'LONG' | 'SHORT' | 'HOLD' | 'CLOSE' =
+    rawAction === 'LONG' || rawAction === 'SHORT' || rawAction === 'CLOSE' ? rawAction : 'HOLD';
+  const confidence = Math.min(100, Math.max(0, Math.round(Number(parsed.confidence ?? 0))));
+  const leverage = Math.min(Math.max(1, params.maxLeverage), Math.max(1, Math.round(Number(parsed.leverage ?? Math.min(5, params.maxLeverage)))));
+
+  const entry = roundPx(Number(parsed.entry) > 0 ? Number(parsed.entry) : ctx.price, ctx.price);
+  const safeRisk = Math.max(ctx.a14 * 1.8, ctx.price * 0.005);
+  let stopLoss = Number(parsed.stopLoss) > 0 ? roundPx(Number(parsed.stopLoss), ctx.price) : 0;
+  let tp1 = Number(parsed.tp1) > 0 ? roundPx(Number(parsed.tp1), ctx.price) : 0;
+  let tp2 = Number(parsed.tp2) > 0 ? roundPx(Number(parsed.tp2), ctx.price) : 0;
+  let tp3 = Number(parsed.tp3) > 0 ? roundPx(Number(parsed.tp3), ctx.price) : 0;
+
+  if (action === 'LONG') {
+    if (stopLoss <= 0 || stopLoss >= entry || entry - stopLoss < ctx.a14 * 0.8) {
+      stopLoss = roundPx(entry - safeRisk, ctx.price);
+    }
+    const risk = entry - stopLoss;
+    if (tp1 <= entry) tp1 = roundPx(entry + risk * 1.3, ctx.price);
+    if (tp2 <= tp1) tp2 = roundPx(entry + risk * 2.3, ctx.price);
+    if (tp3 <= tp2) tp3 = roundPx(entry + risk * 3.5, ctx.price);
+  } else if (action === 'SHORT') {
+    if (stopLoss <= 0 || stopLoss <= entry || stopLoss - entry < ctx.a14 * 0.8) {
+      stopLoss = roundPx(entry + safeRisk, ctx.price);
+    }
+    const risk = stopLoss - entry;
+    if (tp1 <= 0 || tp1 >= entry) tp1 = roundPx(entry - risk * 1.3, ctx.price);
+    if (tp2 <= 0 || tp2 >= tp1) tp2 = roundPx(entry - risk * 2.3, ctx.price);
+    if (tp3 <= 0 || tp3 >= tp2) tp3 = roundPx(entry - risk * 3.5, ctx.price);
+  }
+
+  const riskDist = Math.abs(entry - stopLoss);
+  const rrRatio =
+    (action === 'LONG' || action === 'SHORT') && riskDist > 0 && tp2 > 0
+      ? Number((Math.abs(tp2 - entry) / riskDist).toFixed(2))
+      : 0;
+
+  return {
+    ok: true,
+    provider: ai.provider,
+    model: ai.model,
+    action,
+    confidence,
+    entry,
+    stopLoss,
+    tp1,
+    tp2,
+    tp3,
+    leverage,
+    rrRatio,
+    thesis: String(parsed.thesis || 'AI thesis generated.').slice(0, 900),
+    invalidation: String(parsed.invalidation || 'Structure break beyond Stop Loss').slice(0, 300),
+  };
 }
 
 export async function runChartAIAnalysis(
@@ -214,80 +611,9 @@ export async function runChartAIAnalysis(
     };
   }
 
-  const last = candles[candles.length - 1]!;
-  const price = last.close;
-  const closes = candles.map((c) => c.close);
-  const e20Arr = ema(closes, 20);
-  const e50Arr = ema(closes, 50);
-  const e200Arr = ema(closes, 200);
-  const r14Arr = rsi(closes, 14);
-  const a14Arr = atr(candles, 14);
-  const swings = causalSwingLevels(candles, 3, 2);
+  const ctx = buildMarketContext(symbol, timeframe, candles, opts);
+  const { price, e20, e50, r14, a14, htfTrend, mixer, kbosLatest, supports, resistances, telemetry, compactCandles } = ctx;
 
-  const idx = candles.length - 1;
-  const e20 = e20Arr[idx] ?? price;
-  const e50 = e50Arr[idx] ?? price;
-  const e200 = Number.isFinite(e200Arr[idx]) ? e200Arr[idx]! : undefined;
-  const r14 = r14Arr[idx] ?? 50;
-  const a14 = Number.isFinite(a14Arr[idx]) ? a14Arr[idx]! : price * 0.008;
-
-  // HTF trend from real higher-timeframe bars
-  let htfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = e20 > e50 ? 'BULLISH' : e20 < e50 ? 'BEARISH' : 'NEUTRAL';
-  const htfCandles = opts?.htfCandles ?? [];
-  if (htfCandles.length >= 25) {
-    const hc = htfCandles.map((c) => c.close);
-    const he20 = ema(hc, 20);
-    const he50 = ema(hc, 50);
-    const f = he20[htfCandles.length - 1];
-    const s = he50[htfCandles.length - 1];
-    if (Number.isFinite(f) && Number.isFinite(s)) {
-      htfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
-    }
-  }
-
-  const kbos = computeKbosV11Detailed(candles, timeframe as Timeframe, opts?.kbosParams ?? DEFAULT_KBOS_PARAMS);
-  const kbosLatest = kbos.outputs[kbos.outputs.length - 1];
-  const demaLatest = kbos.demaAtr[kbos.demaAtr.length - 1];
-  const mixer = evaluateSignalMixerAtBar(
-    candles,
-    idx,
-    htfTrend,
-    opts?.mixerWeights ?? DEFAULT_MIXER_WEIGHTS,
-    opts?.mixerThreshold ?? 65
-  );
-
-  // Structural support & resistance levels from causal pivot swings + recent range
-  const rawLowCandidates: number[] = [];
-  const rawHighCandidates: number[] = [];
-  for (let k = Math.max(0, idx - 120); k <= idx; k++) {
-    const sl = swings.confirmedLows[k];
-    const sh = swings.confirmedHighs[k];
-    if (Number.isFinite(sl) && sl! < price * 0.999) rawLowCandidates.push(sl!);
-    if (Number.isFinite(sh) && sh! > price * 1.001) rawHighCandidates.push(sh!);
-  }
-  const recent80 = candles.slice(-80);
-  const low80 = Math.min(...recent80.map((c) => c.low));
-  const high80 = Math.max(...recent80.map((c) => c.high));
-  if (low80 < price * 0.9995) rawLowCandidates.push(low80);
-  if (high80 > price * 1.0005) rawHighCandidates.push(high80);
-
-  const supports = uniqueSortedLevels(rawLowCandidates, price, false);
-  const resistances = uniqueSortedLevels(rawHighCandidates, price, true);
-
-  const telemetry = {
-    htfTrend,
-    ema20: roundPx(e20, price),
-    ema50: roundPx(e50, price),
-    ema200: e200 !== undefined ? roundPx(e200, price) : undefined,
-    rsi14: Number(r14.toFixed(1)),
-    atr14: roundPx(a14, price),
-    kbosSignal: kbosLatest?.signal ?? 'NONE',
-    demaAtrTrend: demaLatest?.trend ?? 'NEUTRAL',
-    mixerScore: Number(mixer.compositeScore.toFixed(1)),
-    mixerConfidence: mixer.confidence,
-  };
-
-  // Quant setup builder (used both as deterministic fallback and structural guard for BYO AI)
   const quantBias: 'LONG' | 'SHORT' | 'NEUTRAL' =
     kbosLatest?.signal === 'LONG' || kbosLatest?.signal === 'SHORT'
       ? kbosLatest.signal
@@ -356,6 +682,7 @@ export async function runChartAIAnalysis(
           actionableDir
             ? `• ستاپ پیشنهادی ${actionableDir}: ورود=${fallbackEntry} | استاپ=${fallbackSl} | تارگت‌ها: ${fallbackTp1} / ${fallbackTp2} / ${fallbackTp3} (R:R تا 1:3.5)`
             : '• در حال حاضر بازار در محدوده خنثی است؛ بهتر است منتظر تایید شکست یا پولبک بمانید.',
+          `💡 برای تحلیل و ترید تماماً هوشمند با DeepSeek / Claude / GPT / Gemini، کلید API خود را در Connections ثبت کنید.`,
         ].join('\n')
       : [
           `Dollarino Quant Analysis for ${symbol} (${timeframe}):`,
@@ -366,6 +693,7 @@ export async function runChartAIAnalysis(
           actionableDir
             ? `• ${actionableDir} Setup: Entry=${fallbackEntry} | SL=${fallbackSl} | TP1=${fallbackTp1} / TP2=${fallbackTp2} / TP3=${fallbackTp3} (up to 1:3.5 R:R)`
             : '• Neutral regime — wait for directional confirmation.',
+          `💡 Connect DeepSeek, Claude, OpenAI, or Gemini in Connections to unlock full LLM autonomous reasoning & trading.`,
         ].join('\n');
 
     return {
@@ -385,7 +713,7 @@ export async function runChartAIAnalysis(
     };
   }
 
-  const systemPrompt = `You are Dollarino Chart AI, an institutional quantitative crypto futures analyst.
+  const systemPrompt = `You are Dollarino Chart AI (${ai.provider.toUpperCase()} / ${ai.model}), an institutional quantitative crypto futures analyst.
 Respond ONLY with valid JSON matching this schema:
 {
   "summary": "concise technical analysis in the user's language (Persian if user asks in Persian) referencing the exact indicators, S/R levels, and R:R",
@@ -405,15 +733,6 @@ Rules:
 - If bias is SHORT: stopLoss > entry > tp1 > tp2 > tp3.
 - Never invent wildly distant S/R levels; anchor to the provided swing levels and ATR.`;
 
-  const compactCandles = candles.slice(-30).map((c) => ({
-    t: new Date(c.timestamp).toISOString().slice(0, 16),
-    o: roundPx(c.open, price),
-    h: roundPx(c.high, price),
-    l: roundPx(c.low, price),
-    c: roundPx(c.close, price),
-    v: Math.round(c.volume),
-  }));
-
   const rawText = await callBYOAI(
     ai,
     systemPrompt,
@@ -422,9 +741,10 @@ Rules:
       `Computed Telemetry: ${JSON.stringify(telemetry)}`,
       `Signal Mixer Channels: ${JSON.stringify(mixer.channels)}`,
       `Swing Supports: ${JSON.stringify(supports)} | Swing Resistances: ${JSON.stringify(resistances)}`,
-      `Recent 30 Candles: ${JSON.stringify(compactCandles)}`,
+      `Recent 32 Candles: ${JSON.stringify(compactCandles)}`,
       `User Question: ${userQuestion}`,
-    ].join('\n')
+    ].join('\n'),
+    { fastJson: true }
   );
 
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
@@ -470,7 +790,6 @@ Rules:
   let tp2 = Number(parsed.tp2) > 0 ? roundPx(Number(parsed.tp2), price) : fallbackTp2;
   let tp3 = Number(parsed.tp3) > 0 ? roundPx(Number(parsed.tp3), price) : fallbackTp3;
 
-  // Validate directional invariants on BYO AI levels; fallback to quant ATR levels if inverted
   if (dir === 'LONG' && (!stopLoss || !tp1 || stopLoss >= entry || tp1 <= entry)) {
     entry = fallbackEntry;
     stopLoss = roundPx(entry - effRisk, price);

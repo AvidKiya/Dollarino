@@ -153,7 +153,13 @@ export async function executeSignalForUser(
   env: Env,
   userId: string,
   signal: DollarinoSignal,
-  options?: { signalId?: string; forceBypassState?: boolean; strategyKey?: string }
+  options?: {
+    signalId?: string;
+    forceBypassState?: boolean;
+    strategyKey?: string;
+    aiConfidence?: number | null;
+    aiReasoning?: string | null;
+  }
 ): Promise<{ ok: boolean; tradeId?: string; error?: string }> {
   const cfgRow = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
     .bind(userId).first<UserBotConfigRow>();
@@ -202,9 +208,9 @@ export async function executeSignalForUser(
     return { ok: false, error: decision.reasonMessage };
   }
 
-  let aiConfidence: number | null = null;
-  let aiReasoning: string | null = null;
-  if (botConfig.aiGateEnabled) {
+  let aiConfidence: number | null = options?.aiConfidence ?? null;
+  let aiReasoning: string | null = options?.aiReasoning ?? null;
+  if (botConfig.aiGateEnabled && aiConfidence === null) {
     const ai = await resolveUserActiveAI(env, userId).catch(() => null);
     if (ai) {
       try {

@@ -111,8 +111,8 @@ export function ExchangePage({
 
   return (
     <div className="space-y-5">
-      {/* Exchange Matrix Banner */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+      {/* Exchange Matrix Banner (Strictly Toobit, KCEX & Paper Demo) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
         {[
           {
             name: 'Toobit Futures',
@@ -131,16 +131,8 @@ export function ExchangePage({
             href: `https://www.kcex.com/futures/exchange/${kcexPair}`,
           },
           {
-            name: 'Bitunix Futures',
-            badge: 'CODEXBOT LIVE REST',
-            pair: symbol,
-            fee: 'Maker 0.02% / Taker 0.06%',
-            active: activeExchange.provider === 'bitunix',
-            href: `https://www.bitunix.com/contract-trade/${symbol}`,
-          },
-          {
-            name: 'Paper Simulator',
-            badge: 'LIVE QUOTES UNIVERSE',
+            name: 'Paper Demo Simulator',
+            badge: 'FREE TESTING QUOTES',
             pair: symbol,
             fee: '0.05% Simulated Fee',
             active: activeExchange.provider === 'paper',

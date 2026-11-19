@@ -3,8 +3,9 @@ import type { FuturesBalance } from '../exchanges/base.js';
 export function welcomeMessage(firstName: string): string {
   return (
     `سلام خوش اومدی ${firstName || 'دوست عزیز'} 🌹\n\n` +
-    `🤖 ربات ترید خودکار دلارینو (Dollarino) — نسخه کاملاً رایگان و متن‌باز\n\n` +
-    `با دلارینو می‌توانید سیگنال‌های کانال و اندیکاتورهای TradingView را روی حساب صرافی خودتان (Toobit / Bitunix / حالت آزمایشی Paper) با مدیریت سرمایه درصدی، ۳ تارگت خودکار و ریسک‌فری هوشمند معامله کنید.\n\n` +
+    `🤖 ربات ترید خودکار دلارینو (Dollarino)\n` +
+    `ترید هوشمند با AI (DeepSeek / Claude / GPT)، استراتژی‌های CodexBot و کپی‌ترید کانال تلگرام!\n\n` +
+    `💎 صرافی‌های پشتیبانی‌شده: **Toobit** و **KCEX** + حساب آزمایشی رایگان **Paper Demo** برای تست.\n\n` +
     `⚠️ توجه: تمام مسئولیت معاملات بر عهده کاربر است.\n\n` +
     `از منوی زیر انتخاب کنید:`
   );
@@ -33,8 +34,8 @@ export function settingsKeyboard(isAdmin: boolean) {
 
 export function exchangeSelectionKeyboard() {
   return [
-    [{ text: 'Toobit (توبیت - فعال) 🟢' }, { text: 'Paper Mode (آزمایشی) 🧪' }],
-    [{ text: 'Bitunix (بیت‌یونیکس) 🔵' }, { text: 'KCEX (در انتظار API) ⏳' }],
+    [{ text: 'Toobit (توبیت - API لایو) 🟢' }, { text: 'KCEX (۰٪ کارمزد) 🔵' }],
+    [{ text: 'Paper Mode (دمو رایگان) 🧪' }],
     [{ text: 'بازگشت به صفحه قبل 🔙' }],
   ];
 }

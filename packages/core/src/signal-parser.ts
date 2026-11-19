@@ -62,28 +62,44 @@ export function parseDollarinoSignal(input: string | Record<string, unknown>): D
   }
 
   let direction: Direction | null = null;
-  if (/buy\s*signal|🟢\s*buy|long\s*signal|خرید/i.test(text)) {
+  if (/buy\s*(?:\/\s*long)?\s*signal|🟢|\blong\b|\bbuy\b|خرید|لانگ/i.test(text)) {
     direction = 'LONG';
-  } else if (/sell\s*signal|🔴\s*sell|short\s*signal|فروش/i.test(text)) {
-    direction = 'SHORT';
+  }
+  if (/sell\s*(?:\/\s*short)?\s*signal|🔴|\bshort\b|\bsell\b|فروش|شورت/i.test(text)) {
+    // Only override if explicitly short/sell and not a header like "Buy / Long"
+    if (!direction || !/buy\s*signal|🟢\s*buy/i.test(text)) {
+      direction = 'SHORT';
+    }
   }
   if (!direction) return null;
 
-  const symbolMatch = text.match(/symbol\s*[:：]\s*([A-Za-z0-9._/-]+)/i);
-  const tfMatch = text.match(/time\s*frame\s*[:：]\s*([A-Za-z0-9]+)/i);
-  const priceMatch = text.match(/(?:^|\n)[^\n]*?\bprice\s*[:：]\s*([0-9.,]+)/i);
-  const stopMatch = text.match(/(?:^|\n)[^\n]*?\bstop(?:\s*loss)?\s*[:：]\s*([0-9.,]+)/i);
-  const levMatch = text.match(/\bleverage\s*[:：]\s*(\d+)/i);
-  const tp1Match = text.match(/\btp\s*1\s*[:：]\s*([0-9.,]+)/i);
-  const tp2Match = text.match(/\btp\s*2\s*[:：]\s*([0-9.,]+)/i);
-  const tp3Match = text.match(/\btp\s*3\s*[:：]\s*([0-9.,]+)/i);
+  // Match explicit `Symbol: BTCUSDT` OR `#BTCUSDT` OR `BTC/USDT`
+  const symbolMatch =
+    text.match(/symbol\s*[:：]\s*#?([A-Za-z0-9._/-]+)/i) ||
+    text.match(/#([A-Za-z]{2,12}[/_-]?USDT?)\b/i) ||
+    text.match(/\b([A-Za-z]{2,10}USDT)\b/i);
+
+  const tfMatch =
+    text.match(/time\s*frame\s*[:：]\s*([A-Za-z0-9]+)/i) ||
+    text.match(/\|\s*([0-9]+[mhdw]?)\b/i);
+
+  const priceMatch = text.match(/(?:^|\n)[^\n]*?(?:\bprice|\bentry(?:\s*price)?|نقطه\s*ورود|ورود)\s*[:：]\s*\$?([0-9.,]+)/i);
+  const stopMatch = text.match(/(?:^|\n)[^\n]*?(?:\bstop(?:\s*loss)?|\bsl\b|حد\s*ضرر|استاپ)\s*[:：]\s*\$?([0-9.,]+)/i);
+  const levMatch = text.match(/(?:\bleverage|\blev|اهرم)\s*[:：]?\s*(\d+)x?/i) || text.match(/(\d+)\s*x\b/i);
+  const tp1Match = text.match(/(?:\btp\s*1|\btake\s*profit\s*1|تارگت\s*1)\s*[:：]\s*\$?([0-9.,]+)/i);
+  const tp2Match = text.match(/(?:\btp\s*2|\btake\s*profit\s*2|تارگت\s*2)\s*[:：]\s*\$?([0-9.,]+)/i);
+  const tp3Match = text.match(/(?:\btp\s*3|\btake\s*profit\s*3|تارگت\s*3)\s*[:：]\s*\$?([0-9.,]+)/i);
   const handleMatch = text.match(/(@[A-Za-z0-9_]+)/);
 
   if (!symbolMatch?.[1] || !priceMatch?.[1] || !stopMatch?.[1] || !tp1Match?.[1]) {
     return null;
   }
 
-  const symbol = symbolMatch[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+  let symbol = symbolMatch[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!symbol.endsWith('USDT') && !symbol.endsWith('USD') && symbol.length <= 6) {
+    symbol = `${symbol}USDT`;
+  }
+
   const signal: DollarinoSignal = {
     symbol,
     direction,

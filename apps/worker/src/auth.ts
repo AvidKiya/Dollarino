@@ -67,7 +67,7 @@ function isHttpsRequest(c: Context): boolean {
 export async function ensureUserDefaults(db: D1Database, userId: string) {
   const webhookSecret = randomId('tv');
   await db.prepare(
-    `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
+    `INSERT OR IGNORE INTO bot_configs (user_id, strategy_key, webhook_secret) VALUES (?, 'kbos_v11', ?)`
   ).bind(userId, webhookSecret).run();
 
   await db.prepare(

@@ -4,7 +4,7 @@ export type TradingMode = 'PAPER' | 'LIVE';
 export type ExecutionMode = 'AUTO' | 'MANUAL_CONFIRM';
 export type MarginMode = 'ISOLATED' | 'CROSS';
 export type ExchangeProviderId = 'paper' | 'toobit' | 'bitunix' | 'kcex';
-export type AIProviderId = 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
+export type AIProviderId = 'deepseek' | 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
 export type Timeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '1d';
 
 export interface Candle {
@@ -35,6 +35,7 @@ export interface DollarinoSignal {
 }
 
 export type StrategyKey =
+  | 'ai_autonomous_agent'
   | 'kbos_v11'
   | 'sp2l'
   | 'grid_strategy'

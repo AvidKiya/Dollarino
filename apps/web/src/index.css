@@ -88,6 +88,76 @@
 .bg-tt-success {
   background-color: hsl(var(--success));
 }
+
+/* Optional Light Fintech Theme (kifpool.me crisp aesthetic) */
+.theme-light {
+  --background: 215 35% 97%;
+  --foreground: 222 35% 13%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 35% 13%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 35% 13%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 32% 93%;
+  --secondary-foreground: 222 35% 18%;
+  --muted: 214 28% 92%;
+  --muted-foreground: 215 16% 42%;
+  --border: 214 25% 87%;
+  --input: 214 28% 95%;
+  --sidebar-background: 0 0% 100%;
+  --sidebar-foreground: 222 35% 18%;
+  --sidebar-border: 214 25% 89%;
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(37, 99, 235, 0.06);
+}
+.theme-light body,
+.theme-light .bg-\[\#080a0e\],
+.theme-light .bg-\[\#090d16\] {
+  background-color: #f4f7fb !important;
+  color: #0f172a !important;
+}
+.theme-light .bg-\[\#0a0c11\],
+.theme-light .bg-\[\#0b0e15\],
+.theme-light .bg-\[\#0b0f18\],
+.theme-light .bg-\[\#0c1018\],
+.theme-light .bg-\[\#0d1017\],
+.theme-light .bg-\[\#0f1218\],
+.theme-light .bg-\[\#0f131b\],
+.theme-light .bg-\[\#10141d\],
+.theme-light .bg-\[\#11151d\] {
+  background-color: #ffffff !important;
+}
+.theme-light .text-white {
+  color: #0f172a !important;
+}
+.theme-light .text-\[\#e7ecf2\],
+.theme-light .text-\[\#d5dce6\],
+.theme-light .text-\[\#c5cede\] {
+  color: #1e293b !important;
+}
+.theme-light .text-\[\#8f99aa\],
+.theme-light .text-\[\#9aa5b5\],
+.theme-light .text-\[\#a5b0c0\],
+.theme-light .text-\[\#6c7689\] {
+  color: #475569 !important;
+}
+.theme-light .border-\[\#181b23\],
+.theme-light .border-\[\#181d28\],
+.theme-light .border-\[\#1c2028\],
+.theme-light .border-\[\#1d2330\],
+.theme-light .border-\[\#222836\] {
+  border-color: #e2e8f0 !important;
+}
+.theme-light .bg-\[\#4b73f5\],
+.theme-light .bg-\[\#2563eb\],
+.theme-light .bg-blue-600,
+.theme-light .bg-\[\#27cd86\] {
+  color: #ffffff !important;
+}
+.theme-light .bg-\[\#4b73f5\] .text-white,
+.theme-light .bg-\[\#2563eb\] .text-white {
+  color: #ffffff !important;
+}
 .text-tt-destructive {
   color: hsl(var(--destructive));
 }

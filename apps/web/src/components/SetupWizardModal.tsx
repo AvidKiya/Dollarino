@@ -34,15 +34,15 @@ export function SetupWizardModal({
   const safeAvail = Math.max(100, availableBalance);
   const [allocatedAmount, setAllocatedAmount] = useState<number>(Math.round(safeAvail * 0.5));
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
-  const [strategyType, setStrategyType] = useState<'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'>('kbos_v11');
+  const [strategyType, setStrategyType] = useState<'ai_autonomous_agent' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'>('ai_autonomous_agent');
 
   // Vault connection state
-  const [exProvider, setExProvider] = useState<'paper' | 'toobit' | 'kcex' | 'bitunix'>('toobit');
+  const [exProvider, setExProvider] = useState<'paper' | 'toobit' | 'kcex'>('toobit');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [proxyUrl, setProxyUrl] = useState('');
   const [kcexSession, setKcexSession] = useState('');
-  const [aiProvider, setAiProvider] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
+  const [aiProvider, setAiProvider] = useState<'deepseek' | 'openai' | 'anthropic' | 'gemini'>('deepseek');
   const [aiKey, setAiKey] = useState('');
 
   const [saving, setSaving] = useState(false);
@@ -83,13 +83,22 @@ export function SetupWizardModal({
 
   const strategyOptions = [
     {
-      id: 'kbos_v11' as const,
-      title: 'KIYA BOT ORG - super v11 (KBOs v11)',
+      id: 'ai_autonomous_agent' as const,
+      title: lang === 'fa' ? 'عامل هوشمند مستقل (DeepSeek / Claude / GPT)' : 'Autonomous AI Agent (DeepSeek / Claude / GPT)',
       recommended: true,
-      badge: 'ALMA + DEMA ATR + RLA Ribbon',
+      badge: '100% AI-Driven',
       detail:
         lang === 'fa'
-          ? 'استراتژی اختصاصی غیرریپینت تایم‌فریم بالا با ۳ تارگت (۱.۵/۳/۴.۵٪) و تریلینگ ۲٪'
+          ? 'هوش مصنوعی (دیپ‌سیک / کلود) شخصاً کندل‌ها، تایم‌فریم‌ها و اردربوک را تحلیل کرده و معاملات را باز و مدیریت می‌کند'
+          : 'Real LLM reasoning directly analyzes live candles, HTF structure & orderbook to decide LONG / SHORT / HOLD / CLOSE',
+    },
+    {
+      id: 'kbos_v11' as const,
+      title: 'CodexBot Super v11 (Quant Hybrid)',
+      badge: 'ALMA + DEMA ATR',
+      detail:
+        lang === 'fa'
+          ? 'استراتژی کوانت غیرریپینت تایم‌فریم بالا با ۳ تارگت (۱.۵/۳/۴.۵٪) و تریلینگ ۲٪'
           : 'Non-repainting HTF ALMA crossover + DEMA ATR + 8-band Golden ALMA ribbon & 3-TP Trailing',
     },
     {
@@ -106,7 +115,7 @@ export function SetupWizardModal({
     },
     {
       id: 'signal_mixer' as const,
-      title: lang === 'fa' ? 'مدیریت هوش مصنوعی (AI Managed 8-Ch)' : 'AI Managed (8-Channel Mixer)',
+      title: lang === 'fa' ? 'میکسر ۸ کاناله (Quant + AI Gate)' : '8-Channel Mixer + AI Gate',
       badge: '8-Channel Quant',
       detail: lang === 'fa' ? 'اجماع ۸ کانال تکنیکال + دروازه تایید BYO AI' : '8-channel composite scoring + BYO AI confirmation gate',
     },
@@ -165,7 +174,17 @@ export function SetupWizardModal({
       onCompleted();
       onClose();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Failed to start AI Agent');
+      const errText = e instanceof Error ? e.message : 'Failed to start AI Agent';
+      if (errText.includes('AI API key') || errText.includes('NO_ACTIVE_AI_KEY')) {
+        setTab('vault');
+        setMsg(
+          lang === 'fa'
+            ? 'ابتدا کلید DeepSeek (یا Claude/GPT/Gemini) خود را در بخش پایین وارد و ذخیره کنید، سپس ربات را استارت بزنید.'
+            : 'Paste & save your DeepSeek (or Claude/GPT/Gemini) API key below first, then launch the AI Agent.'
+        );
+      } else {
+        setMsg(errText);
+      }
     } finally {
       setSaving(false);
     }
@@ -175,18 +194,29 @@ export function SetupWizardModal({
     setSaving(true);
     setMsg('');
     try {
-      const res = await apiFetch<{ test: { ok: boolean; message: string } }>('/api/connections/exchanges', {
+      const res = await apiFetch<{
+        test: { ok: boolean; message: string };
+        activated?: boolean;
+        requiresSubscription?: boolean;
+      }>('/api/connections/exchanges', {
         method: 'POST',
         body: JSON.stringify({
           provider: exProvider,
-          apiKey: exProvider === 'toobit' || exProvider === 'bitunix' ? apiKey : undefined,
-          apiSecret: exProvider === 'toobit' || exProvider === 'bitunix' ? apiSecret : undefined,
+          apiKey: exProvider === 'toobit' ? apiKey : undefined,
+          apiSecret: exProvider === 'toobit' ? apiSecret : undefined,
           proxyUrl: exProvider === 'toobit' && proxyUrl.trim() ? proxyUrl.trim() : undefined,
           webSessionToken: exProvider === 'kcex' ? kcexSession : undefined,
-          activate: true,
         }),
       });
-      setMsg(res.test?.message || 'Exchange saved');
+      if (res.requiresSubscription && !res.activated) {
+        setMsg(
+          lang === 'fa'
+            ? 'کلید ذخیره شد (حالت Standby). برای فعال‌سازی معامله واقعی روی Toobit / KCEX ابتدا اشتراک تهیه کنید.'
+            : 'Saved in Standby. Upgrade to Pro/VIP to activate live Toobit or KCEX trading.'
+        );
+      } else {
+        setMsg(res.test?.message || 'Exchange saved');
+      }
       onCompleted();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Failed');
@@ -200,6 +230,7 @@ export function SetupWizardModal({
     setSaving(true);
     try {
       const modelMap = {
+        deepseek: 'deepseek-flash',
         openai: 'gpt-4o-mini',
         anthropic: 'claude-3-5-sonnet-latest',
         gemini: 'gemini-2.0-flash',
@@ -476,11 +507,10 @@ export function SetupWizardModal({
           </>
         ) : (
           <div className="space-y-4 text-xs">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {[
                 { id: 'toobit', name: 'Toobit Live' },
                 { id: 'kcex', name: 'KCEX 0% Fee' },
-                { id: 'bitunix', name: 'Bitunix Live' },
                 { id: 'paper', name: 'Paper Demo' },
               ].map((p) => (
                 <button
@@ -495,7 +525,7 @@ export function SetupWizardModal({
               ))}
             </div>
 
-            {(exProvider === 'toobit' || exProvider === 'bitunix') && (
+            {exProvider === 'toobit' && (
               <div className="space-y-2">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
@@ -512,14 +542,12 @@ export function SetupWizardModal({
                     className="bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
                   />
                 </div>
-                {exProvider === 'toobit' && (
-                  <input
-                    value={proxyUrl}
-                    onChange={(e) => setProxyUrl(e.target.value)}
-                    placeholder="Optional Relay Proxy URL (e.g. https://relay.vercel.app for CF geo-bypass)"
-                    className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
-                  />
-                )}
+                <input
+                  value={proxyUrl}
+                  onChange={(e) => setProxyUrl(e.target.value)}
+                  placeholder="Optional Relay Proxy URL (e.g. https://relay.vercel.app for CF geo-bypass)"
+                  className="w-full bg-[#080a0e] border border-[#262b36] rounded-xl px-3 py-2 font-mono-num"
+                />
               </div>
             )}
 
@@ -553,8 +581,9 @@ export function SetupWizardModal({
                   onChange={(e) => setAiProvider(e.target.value as typeof aiProvider)}
                   className="bg-[#080a0e] border border-[#262b36] rounded-xl px-2.5 py-2"
                 >
-                  <option value="openai">OpenAI</option>
+                  <option value="deepseek">DeepSeek (Flash / V4-Pro)</option>
                   <option value="anthropic">Claude</option>
+                  <option value="openai">OpenAI</option>
                   <option value="gemini">Gemini</option>
                 </select>
                 <input
