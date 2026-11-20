@@ -2,24 +2,21 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
-  Briefcase,
-  CircleDollarSign,
   Download,
   Eye,
   EyeOff,
-  PiggyBank,
   RefreshCw,
   RotateCcw,
   Search,
-  Trophy,
   X,
   Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { coinDisplayName, formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import type { DashboardPayload } from '../lib/types';
 import { CoinIcon } from '../components/CoinIcon';
-import { AreaChart, DonutChart } from '../components/DollarinoViz';
+import { AreaChart } from '../components/DollarinoViz';
 
 interface AuditLog {
   id: string;
@@ -57,6 +54,8 @@ export function PortfolioPage({
   const [walletLedger, setWalletLedger] = useState<WalletLedgerEntry[]>([]);
   const [logCategory, setLogCategory] = useState<string>('ALL');
   const [logQ, setLogQ] = useState('');
+  const [assetQ, setAssetQ] = useState('');
+  const [hideZero, setHideZero] = useState(false);
   const [notice, setNotice] = useState('');
   const [hideBal, setHideBal] = useState(false);
 
@@ -88,15 +87,38 @@ export function PortfolioPage({
   const slices = useMemo(() => {
     const bySym = new Map<string, number>();
     data.openTrades.forEach((p) => bySym.set(p.symbol, (bySym.get(p.symbol) ?? 0) + Number(p.margin_used || 0)));
-    const palette = ['#2b74ff', '#e8c15a', '#10d9a3', '#ff8a00', '#a855f7'];
+    const palette = ['#F59E0B', '#1652F0', '#8B5CF6', '#EF4444', '#06B6D4'];
     const items = [...bySym.entries()].map(([sym, val], idx) => ({
       label: sym.replace('USDT', ''),
       value: Math.max(1, val),
       color: palette[idx % palette.length]!,
     }));
-    items.push({ label: 'USDT Free', value: Math.max(1, freeCash), color: '#10d9a3' });
+    items.unshift({ label: 'USDT', value: Math.max(1, freeCash), color: '#10B981' });
     return items;
   }, [data.openTrades, freeCash]);
+
+  const assetCards = useMemo(() => {
+    const map = new Map<string, { symbol: string; base: string; usd: number; count: number; pnl: number }>();
+    map.set('USDT', { symbol: 'USDT', base: 'USDT', usd: freeCash, count: 0, pnl: 0 });
+    ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].forEach((sym) => {
+      const base = sym.replace('USDT', '');
+      map.set(base, { symbol: sym, base, usd: 0, count: 0, pnl: 0 });
+    });
+    data.openTrades.forEach((p) => {
+      const base = p.symbol.replace('USDT', '');
+      const prev = map.get(base) ?? { symbol: p.symbol, base, usd: 0, count: 0, pnl: 0 };
+      prev.usd += Number(p.margin_used || 0);
+      prev.count += 1;
+      prev.pnl += Number(p.unrealized_pnl || 0);
+      map.set(base, prev);
+    });
+    const q = assetQ.trim().toLowerCase();
+    return [...map.values()].filter((a) => {
+      if (hideZero && a.usd <= 0.01) return false;
+      if (!q) return true;
+      return a.base.toLowerCase().includes(q) || coinDisplayName(a.base, isFa).toLowerCase().includes(q);
+    });
+  }, [data.openTrades, freeCash, assetQ, hideZero, isFa]);
 
   const closeAll = async () => {
     await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: true }) });
@@ -145,178 +167,233 @@ export function PortfolioPage({
     });
   }, [logs, logQ, logCategory]);
 
+  const sliceTotal = slices.reduce((s, x) => s + x.value, 0) || 1;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center gap-2" style={{ color: 'var(--gold)' }}>
-            <span className="live-gold h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold)' }} />
-            <span>PORTFOLIO · WALLET LEDGER · AUDIT LOGS</span>
-          </p>
-          <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-            {isFa ? 'پورتفوی، دفتر تراکنش و گزارش ربات' : 'Portfolio, Ledger & Trading Logs'}
-          </h2>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {data.config.trading_mode === 'PAPER' && (
-            <button type="button" onClick={() => void resetDemo()} className="btn-ghost inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold">
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>{isFa ? 'ریست دمو' : 'Reset Demo'}</span>
-            </button>
-          )}
-          <button type="button" onClick={exportCsv} className="btn-ghost inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold">
-            <Download className="w-3.5 h-3.5" style={{ color: 'var(--gold)' }} />
-            <span>{isFa ? 'خروجی CSV' : 'Export CSV'}</span>
-          </button>
-          {data.openTrades.length > 0 && (
-            <button
-              type="button"
-              onClick={() => void closeAll()}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-loss border border-rose-500/30 hover:bg-rose-500/10 transition"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>{isFa ? 'بستن همه' : 'Close All'}</span>
-            </button>
-          )}
-        </div>
-      </div>
-
+    <div className="space-y-5 max-w-3xl mx-auto">
       {notice && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{notice}</div>}
 
-      {/* Kifpool-inspired Curved Cobalt Wallet Hero Card */}
-      <div className="ios-wallet-card rounded-[30px] p-6 sm:p-7 space-y-5">
-        <div className="flex items-start justify-between gap-4">
+      {/* 1. Curved Cobalt Wallet Card matching Screenshot 3 */}
+      <div
+        className="rounded-[28px] p-5 sm:p-6 text-white relative overflow-hidden shadow-lg space-y-4"
+        style={{ background: 'linear-gradient(135deg, #1652F0 0%, #0D3CC4 58%, #072275 100%)' }}
+      >
+        <div className="pointer-events-none absolute -top-12 -end-10 w-40 h-40 rounded-full bg-white/10" />
+        <div className="pointer-events-none absolute -bottom-14 -start-8 w-36 h-36 rounded-full bg-white/8" />
+
+        <div className="relative z-10 flex items-center justify-between gap-2">
+          <span className="px-3 py-1 rounded-full bg-white/15 text-[11px] font-black">
+            {data.config.trading_mode === 'PAPER' ? (isFa ? 'کیف پول دمو' : 'PAPER WALLET') : isFa ? 'کیف پول واقعی' : 'LIVE WALLET'}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setHideBal((v) => !v)}
+              className="p-1.5 rounded-full bg-white/15 hover:bg-white/25 transition"
+              aria-label="Toggle balance"
+            >
+              {hideBal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onRefresh()}
+              className="p-1.5 rounded-full bg-white/15 hover:bg-white/25 transition"
+              aria-label="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="relative z-10 text-center space-y-1 py-1">
+          <p className="text-xs text-white/80 font-bold">{isFa ? 'موجودی کل' : 'Total Equity'}</p>
+          <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-white">
+            {hideBal ? '••••••' : `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          </p>
+          {!hideBal && isFa && (
+            <p className="text-xs text-white/80 font-semibold">معادل {formatTomanEq(totalEq)} تومان</p>
+          )}
+          <div className="flex items-center justify-center gap-3 text-[11px] text-white/75 pt-1">
+            <span>{isFa ? `آزاد: $${freeCash.toFixed(0)}` : `Free: $${freeCash.toFixed(0)}`}</span>
+            <span>·</span>
+            <span>{isFa ? `درگیر: $${usedMargin.toFixed(0)}` : `Used: $${usedMargin.toFixed(0)}`}</span>
+            <span>·</span>
+            <span dir="ltr" className={unreal >= 0 ? 'text-[#8EFFB6] font-bold' : 'text-rose-200 font-bold'}>
+              {unreal >= 0 ? '+' : ''}${unreal.toFixed(2)}
+            </span>
+          </div>
+        </div>
+
+        {/* Carousel indicator dots matching Screenshot 3 */}
+        <div className="relative z-10 flex items-center justify-center gap-1.5 pt-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-white/40" />
+          <span className="h-1.5 w-5 rounded-full bg-white" />
+          <span className="h-1.5 w-1.5 rounded-full bg-white/40" />
+        </div>
+      </div>
+
+      {/* 2. Dotted Allocation Strip + Color Legend matching Screenshot 3 */}
+      <div className="panel rounded-[22px] p-4 space-y-2.5">
+        <div className="flex h-2.5 w-full gap-1 rounded-full overflow-hidden">
+          {slices.map((s) => (
+            <div
+              key={s.label}
+              className="h-full rounded-full transition-all"
+              style={{ width: `${Math.max(6, (s.value / sliceTotal) * 100)}%`, background: s.color }}
+              title={`${s.label}: $${s.value.toFixed(0)}`}
+            />
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] font-bold text-sub">
+          {slices.slice(0, 5).map((s) => (
+            <span key={s.label} className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
+              <span>{s.label}</span>
+              <span dir="ltr" className="text-dim font-num">{Math.round((s.value / sliceTotal) * 100)}%</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* 3. 4 Circular Action Buttons matching Screenshot 3 (Primary Amber + 3 Clean Circles) */}
+      <div className="grid grid-cols-4 gap-2 text-center py-1">
+        <button
+          type="button"
+          onClick={() => onOpenTerminal('BTCUSDT')}
+          className="flex flex-col items-center gap-1.5 group"
+        >
+          <span className="w-12 h-12 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white grid place-items-center shadow-md transition">
+            <Zap className="w-5 h-5" />
+          </span>
+          <span className="text-[11px] font-extrabold text-main">{isFa ? 'معامله سریع' : 'Trade'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void resetDemo()}
+          className="flex flex-col items-center gap-1.5 group"
+        >
+          <span className="w-12 h-12 rounded-full panel text-[#1652F0] grid place-items-center transition group-hover:scale-105">
+            <RotateCcw className="w-5 h-5" />
+          </span>
+          <span className="text-[11px] font-extrabold text-main">{isFa ? 'ریست $۱۰K' : 'Reset $10K'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={exportCsv}
+          className="flex flex-col items-center gap-1.5 group"
+        >
+          <span className="w-12 h-12 rounded-full panel text-[#1652F0] grid place-items-center transition group-hover:scale-105">
+            <Download className="w-5 h-5" />
+          </span>
+          <span className="text-[11px] font-extrabold text-main">{isFa ? 'خروجی CSV' : 'Export'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => void closeAll()}
+          className="flex flex-col items-center gap-1.5 group"
+        >
+          <span className="w-12 h-12 rounded-full panel text-loss grid place-items-center transition group-hover:scale-105">
+            <X className="w-5 h-5" />
+          </span>
+          <span className="text-[11px] font-extrabold text-main">{isFa ? 'بستن همه' : 'Settle All'}</span>
+        </button>
+      </div>
+
+      {/* 4. Search & Zero Balance Filter Row + 2-Column Asset Cards matching Screenshot 3 */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="panel rounded-2xl px-3 py-2 flex items-center gap-2 flex-1 min-w-[180px]">
+            <Search className="w-4 h-4 text-dim" />
+            <input
+              value={assetQ}
+              onChange={(e) => setAssetQ(e.target.value)}
+              placeholder={isFa ? 'جستجو در دارایی...' : 'Search assets...'}
+              className="bg-transparent flex-1 text-xs text-main outline-none placeholder:text-dim"
+            />
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs font-bold text-sub cursor-pointer px-2">
+            <input
+              type="checkbox"
+              checked={hideZero}
+              onChange={(e) => setHideZero(e.target.checked)}
+              className="accent-[#1652F0] rounded"
+            />
+            <span>{isFa ? 'مخفی‌سازی موجودی صفر' : 'Hide zero'}</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          {assetCards.map((a) => (
+            <button
+              key={a.base}
+              type="button"
+              onClick={() => onOpenTerminal(a.base === 'USDT' ? 'BTCUSDT' : `${a.base}USDT`)}
+              className="panel panel-hover rounded-[22px] p-4 flex flex-col justify-between gap-3 text-start"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <CoinIcon symbol={a.symbol} size={32} />
+                  <div className="min-w-0">
+                    <p className="font-display font-bold text-sm text-main truncate">{coinDisplayName(a.base, isFa)}</p>
+                    <p className="text-[10px] font-bold text-dim">{a.base}</p>
+                  </div>
+                </div>
+                {a.count > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-[#1652F0]/10 text-[#1652F0] text-[10px] font-black">
+                    {a.count}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-end justify-between gap-1">
+                <div>
+                  <p dir="ltr" className="font-num font-black text-sm text-main">
+                    ${a.usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </p>
+                  {isFa && <p className="text-[10px] text-dim">{formatTomanEq(a.usd)} تومان</p>}
+                </div>
+                {a.pnl !== 0 && (
+                  <span dir="ltr" className={`text-[11px] font-black tabular ${a.pnl >= 0 ? 'text-jade' : 'text-loss'}`}>
+                    {a.pnl >= 0 ? '+' : ''}${a.pnl.toFixed(2)}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 5. Compact Equity Growth Card */}
+      <div className="panel rounded-[26px] p-5 space-y-3">
+        <div className="flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2 text-xs font-bold text-white/80">
-              <span>{isFa ? 'دارایی کل حساب' : 'Total Wallet Equity'}</span>
-              <button
-                type="button"
-                onClick={() => setHideBal((v) => !v)}
-                className="p-1 rounded-lg bg-white/15 hover:bg-white/25 transition"
-                aria-label="Toggle balance"
-              >
-                {hideBal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-            <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular mt-1.5 text-white">
-              {hideBal ? '••••••' : `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
-            </p>
-            <p className="text-[11px] text-white/75 mt-1">
-              {isFa
-                ? `آزاد: $${freeCash.toLocaleString(undefined, { maximumFractionDigits: 0 })} · درگیر در معامله: $${usedMargin.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-                : `Free: $${freeCash.toLocaleString(undefined, { maximumFractionDigits: 0 })} · In Margin: $${usedMargin.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            <h3 className="font-display font-bold text-base text-main">{isFa ? 'نمودار رشد دارایی' : 'Equity Curve'}</h3>
+            <p className="text-[11px] text-dim">
+              {isFa ? `نرخ برد: ${data.stats.winRate.toFixed(0)}% · کل سود: $${data.stats.totalPnl.toFixed(2)}` : `Win Rate ${data.stats.winRate.toFixed(0)}%`}
             </p>
           </div>
-          <span className="px-3 py-1 rounded-full bg-white/15 text-white text-[11px] font-black">
-            {data.config.trading_mode === 'PAPER' ? (isFa ? 'حالت دمو' : 'PAPER') : 'LIVE'}
-          </span>
-        </div>
-
-        {/* Circular Action Buttons matching Kifpool Wallet */}
-        <div className="grid grid-cols-4 gap-2 pt-1">
-          <button
-            type="button"
-            onClick={() => onOpenTerminal('BTCUSDT')}
-            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
-          >
-            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
-              <Zap className="w-5 h-5" />
-            </span>
-            <span>{isFa ? 'معامله جدید' : 'Trade'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void resetDemo()}
-            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
-          >
-            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
-              <RotateCcw className="w-5 h-5" />
-            </span>
-            <span>{isFa ? 'ریست $۱۰k' : 'Reset'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
-          >
-            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
-              <Download className="w-5 h-5" />
-            </span>
-            <span>{isFa ? 'خروجی CSV' : 'CSV'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void closeAll()}
-            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
-          >
-            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
-              <X className="w-5 h-5" />
-            </span>
-            <span>{isFa ? 'بستن همه' : 'Settle'}</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          { icon: Briefcase, l: isFa ? 'کل دارایی' : 'Total Equity', v: `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`, c: 'text-goldsoft' },
-          { icon: CircleDollarSign, l: isFa ? 'سود/زیان باز' : 'Unrealized PnL', v: `${unreal >= 0 ? '+' : ''}$${unreal.toFixed(2)}`, c: unreal >= 0 ? 'text-jade' : 'text-loss' },
-          { icon: PiggyBank, l: isFa ? 'سود تحقق‌یافته' : 'Realized PnL', v: `${data.stats.totalPnl >= 0 ? '+' : ''}$${data.stats.totalPnl.toFixed(2)}`, c: data.stats.totalPnl >= 0 ? 'text-jade' : 'text-loss' },
-          { icon: Trophy, l: isFa ? 'نرخ برد' : 'Win Rate', v: `${data.stats.winRate.toFixed(0)}%`, c: 'text-brand' },
-        ].map((s) => {
-          const Icon = s.icon;
-          return (
-            <div key={s.l} className="panel rounded-3xl p-4 sm:p-5">
-              <Icon className={`w-5 h-5 mb-2 ${s.c}`} />
-              <p dir="ltr" className="font-display font-bold text-2xl tabular text-main">{s.v}</p>
-              <p className="text-xs text-dim font-semibold mt-1">{s.l}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="grid lg:grid-cols-[310px_1fr] gap-4">
-        <div className="panel rounded-[26px] p-5 flex flex-col items-center">
-          <h3 className="font-display font-bold text-lg text-main self-start mb-4">{isFa ? 'توزیع سرمایه' : 'Allocation'}</h3>
-          <DonutChart segments={slices} size={135} />
-          <div className="w-full mt-5 space-y-2">
-            {slices.map((s) => (
-              <div key={s.label} className="flex items-center gap-2 text-xs">
-                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: s.color }} />
-                <span className="font-bold text-main">{s.label}</span>
-                <span dir="ltr" className="ms-auto tabular font-bold text-dim">${s.value.toFixed(0)}</span>
-              </div>
+          <div className="flex gap-1">
+            {(['1D', '1W', '1M', 'ALL'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRange(r)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition ${range === r ? 'ios-pill-active' : 'text-dim hover:text-main'}`}
+              >
+                {r}
+              </button>
             ))}
           </div>
         </div>
-
-        <div className="panel rounded-[26px] p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display font-bold text-lg text-main">{isFa ? 'رشد سرمایه' : 'Equity Curve'}</h3>
-            <div className="flex gap-1">
-              {(['1D', '1W', '1M', 'ALL'] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setRange(r)}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition ${range === r ? 'btn-gold' : 'text-dim hover:text-main'}`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-          <p dir="ltr" className="font-display font-bold text-3xl tabular text-main mb-3">
-            ${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-          </p>
-          <div className="h-52">
-            <AreaChart values={curvePoints} height={200} />
-          </div>
+        <div className="h-44">
+          <AreaChart values={curvePoints} height={170} />
         </div>
       </div>
 
-      {/* Unified Open / Closed / Wallet Ledger / Activity Logs */}
+      {/* 6. Unified Open / Closed / Wallet Ledger / Activity Logs */}
       <div className="panel rounded-[26px] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex p-1 surface-soft rounded-xl overflow-x-auto no-scrollbar">

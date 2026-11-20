@@ -11,6 +11,7 @@ import {
   CreditCard,
   Flame,
   Globe,
+  Headphones,
   Home,
   Image,
   LayoutDashboard,
@@ -35,6 +36,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { getPersianToday } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import type { AuthUserInfo, EntitlementSummary, NavTab } from '../lib/types';
@@ -605,7 +607,7 @@ export function Layout({
   );
 
   return (
-    <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell flex flex-col">
+    <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell flex flex-col overflow-x-hidden max-w-full">
       <div className="flex-1 flex min-w-0">
         <aside className="hidden lg:flex w-64 shrink-0 border-e hairline p-4 flex-col sticky top-0 h-screen overflow-y-auto backdrop-blur-2xl bg-[var(--panel)]">
           {renderSidebarBody()}
@@ -622,129 +624,220 @@ export function Layout({
           </div>
         )}
 
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
           {/* Apple iOS Frosted Header */}
-          <header className="sticky top-0 z-30 backdrop-blur-2xl bg-[var(--bg)]/80 border-b hairline">
-            <div className="mx-auto max-w-6xl px-3 sm:px-6 py-2.5 flex items-center gap-2 sm:gap-3">
-              <button
-                type="button"
-                onClick={() => setDrawerOpen(true)}
-                aria-label="Menu"
-                className="lg:hidden h-10 w-10 grid place-items-center rounded-2xl btn-ghost shrink-0"
-              >
-                <Menu className="w-5 h-5" />
-              </button>
+          <header className="sticky top-0 z-30 backdrop-blur-2xl bg-[var(--bg)]/90 border-b hairline">
+            <div className="mx-auto max-w-6xl px-3 sm:px-6 py-2 flex items-center justify-between gap-2">
+              {uiMode === 'simple' ? (
+                <>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setDrawerOpen(true)}
+                      aria-label="Menu"
+                      className="lg:hidden h-8 w-8 grid place-items-center rounded-full btn-ghost shrink-0"
+                    >
+                      <Menu className="w-4 h-4 text-main" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectTab('services')}
+                      className="flex items-center gap-2 text-start group min-w-0"
+                    >
+                      <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border hairline shrink-0">
+                        {user.username.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div className="leading-tight truncate">
+                        <span className="flex items-center gap-1 text-[11px] font-bold text-main">
+                          <span className={`h-2 w-2 rounded-full shrink-0 ${isRunning ? 'bg-[#10B981] live-dot' : 'bg-[#0D9455]'}`} />
+                          <span className="truncate">{isFa ? getPersianToday() : clock}</span>
+                        </span>
+                        <span className="text-[10px] text-dim hidden sm:inline">{user.username}</span>
+                      </div>
+                    </button>
+                  </div>
 
-              <div className="lg:hidden flex items-center gap-2 shrink-0">
-                <DollarinoCoinMark size={30} />
-                <span className="font-display font-bold text-base text-main">
-                  Dollarino<span style={{ color: 'var(--gold-soft)' }}>.</span>
-                </span>
-              </div>
+                  <div className="hidden sm:block">{renderModeSwitcher()}</div>
 
-              {uiMode === 'pro' ? (
-                <button
-                  type="button"
-                  onClick={() => setPaletteOpen(true)}
-                  className="hidden lg:flex flex-1 max-w-xs items-center gap-2.5 panel rounded-2xl px-4 py-2 text-[12px] text-dim hover:border-[var(--line-strong)] transition text-start"
-                >
-                  <Search className="w-4 h-4 shrink-0" />
-                  <span className="truncate">{isFa ? 'جستجوی صفحه یا ارز...' : 'Search views or coins...'}</span>
-                  <kbd dir="ltr" className="ms-auto text-[9px] border hairline rounded px-1.5 py-0.5">
-                    ⌘K
-                  </kbd>
-                </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {onToggleUiMode && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          tgHaptic('light');
+                          onToggleUiMode('pro');
+                        }}
+                        className="sm:hidden px-2.5 py-1 rounded-full surface-soft border hairline text-[10px] font-black text-[#1652F0] inline-flex items-center gap-1"
+                      >
+                        <Zap className="w-3 h-3" />
+                        <span>{isFa ? 'حرفه‌ای' : 'Pro'}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => selectTab('faq')}
+                      aria-label={isFa ? 'پشتیبانی و راهنما' : 'Support & Guide'}
+                      title={isFa ? 'پشتیبانی و راهنما' : 'Support & Guide'}
+                      className="relative h-8 w-8 grid place-items-center rounded-full hover:bg-[var(--soft)] transition"
+                    >
+                      <Headphones className="w-[17px] h-[17px] text-main" />
+                      <span className="absolute top-1 end-1 w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)]" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNotifOpen((v) => !v);
+                        if (!notifOpen && unreadNotifs > 0) {
+                          void apiFetch('/api/trading/notifications/read', { method: 'POST' }).catch(() => {});
+                          setUnreadNotifs(0);
+                        }
+                      }}
+                      aria-label={isFa ? 'اعلان‌ها' : 'Notifications'}
+                      title={isFa ? 'اعلان‌ها' : 'Notifications'}
+                      className="relative h-8 w-8 grid place-items-center rounded-full hover:bg-[var(--soft)] transition"
+                    >
+                      <Bell className="w-[17px] h-[17px] text-main" />
+                      {unreadNotifs > 0 && (
+                        <span className="absolute top-1 end-1 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--bg)]" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={toggleDayNight}
+                      aria-label="Toggle day or night"
+                      title={isFa ? 'حالت روز / شب' : 'Day / Night'}
+                      className="h-8 w-8 grid place-items-center rounded-full hover:bg-[var(--soft)] transition"
+                    >
+                      {currentLook === 'paper' ? (
+                        <Moon className="w-4 h-4 text-[var(--gold)]" />
+                      ) : (
+                        <Sun className="w-4 h-4 text-[#F59E0B]" />
+                      )}
+                    </button>
+                  </div>
+                </>
               ) : (
-                <div className="hidden lg:block">{renderModeSwitcher()}</div>
-              )}
-
-              <div className="ms-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {uiMode === 'pro' && <div className="hidden md:block">{renderModeSwitcher(true)}</div>}
-                <div className="md:hidden">{renderModeSwitcher(true)}</div>
-
-                <span dir="ltr" className="hidden xl:flex items-center gap-1.5 text-[10px] font-bold text-dim tabular px-2">
-                  <span className="live-gold h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold-soft)' }} />
-                  {clock} UTC
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNotifOpen((v) => !v);
-                    if (!notifOpen && unreadNotifs > 0) {
-                      void apiFetch('/api/trading/notifications/read', { method: 'POST' }).catch(() => {});
-                      setUnreadNotifs(0);
-                    }
-                  }}
-                  title={isFa ? 'اعلان‌ها' : 'Notifications'}
-                  className="relative h-9 w-9 grid place-items-center rounded-2xl btn-ghost"
-                >
-                  <Bell className="w-4 h-4 text-main" />
-                  {unreadNotifs > 0 && (
-                    <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--panel)]" />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={toggleDayNight}
-                  title={isFa ? 'حالت روز / شب' : 'Day / Night'}
-                  className="h-9 w-9 grid place-items-center rounded-2xl btn-ghost"
-                >
-                  {currentLook === 'paper' ? (
-                    <Moon className="w-4 h-4 text-[var(--gold)]" />
-                  ) : (
-                    <Sun className="w-4 h-4 text-[#F59E0B]" />
-                  )}
-                </button>
-
-                {onGoLanding && (
+                <>
                   <button
                     type="button"
-                    onClick={onGoLanding}
-                    title={isFa ? 'مشاهده صفحه معرفی' : 'View Site'}
-                    className="hidden sm:grid h-9 w-9 place-items-center rounded-2xl btn-ghost"
+                    onClick={() => setDrawerOpen(true)}
+                    aria-label="Menu"
+                    className="lg:hidden h-10 w-10 grid place-items-center rounded-2xl btn-ghost shrink-0"
                   >
-                    <LayoutDashboard className="w-4 h-4" />
+                    <Menu className="w-5 h-5" />
                   </button>
-                )}
 
-                <button
-                  type="button"
-                  onClick={() => setLang(isFa ? 'en' : 'fa')}
-                  className="hidden sm:inline-flex items-center gap-1 text-xs font-bold px-2.5 py-2 rounded-2xl btn-ghost"
-                >
-                  <Globe className="w-3.5 h-3.5" style={{ color: 'var(--gold-soft)' }} />
-                  <span>{isFa ? 'EN' : 'فارسی'}</span>
-                </button>
+                  <div className="lg:hidden flex items-center gap-2 shrink-0">
+                    <DollarinoCoinMark size={30} />
+                    <span className="font-display font-bold text-base text-main">
+                      Dollarino<span style={{ color: 'var(--gold-soft)' }}>.</span>
+                    </span>
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={() => selectTab('portfolio')}
-                  className="hidden sm:inline-flex items-center gap-1.5 panel rounded-2xl px-3 py-1.5 text-xs font-bold"
-                >
-                  <Wallet className="w-3.5 h-3.5" style={{ color: 'var(--jade)' }} />
-                  <span dir="ltr" className="tabular text-main">
-                    ${Number(freeBalance || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaletteOpen(true)}
+                    className="hidden lg:flex flex-1 max-w-xs items-center gap-2.5 panel rounded-2xl px-4 py-2 text-[12px] text-dim hover:border-[var(--line-strong)] transition text-start"
+                  >
+                    <Search className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{isFa ? 'جستجوی صفحه یا ارز...' : 'Search views or coins...'}</span>
+                    <kbd dir="ltr" className="ms-auto text-[9px] border hairline rounded px-1.5 py-0.5">
+                      ⌘K
+                    </kbd>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    tgHaptic('medium');
-                    void onStartStop();
-                  }}
-                  className={`inline-flex items-center gap-1.5 text-xs font-black px-3.5 py-2 rounded-2xl transition ${
-                    isRunning ? 'bg-[#FF8200] hover:bg-[#ea7600] text-white' : 'btn-emerald'
-                  }`}
-                >
-                  <Power className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">
-                    {isRunning ? (isFa ? 'توقف ربات' : 'Stop') : isFa ? 'شروع ربات' : 'Start Bot'}
-                  </span>
-                </button>
-              </div>
+                  <div className="ms-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    <div className="hidden md:block">{renderModeSwitcher(true)}</div>
+                    <div className="md:hidden">{renderModeSwitcher(true)}</div>
+
+                    <span dir="ltr" className="hidden xl:flex items-center gap-1.5 text-[10px] font-bold text-dim tabular px-2">
+                      <span className="live-gold h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold-soft)' }} />
+                      {clock} UTC
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNotifOpen((v) => !v);
+                        if (!notifOpen && unreadNotifs > 0) {
+                          void apiFetch('/api/trading/notifications/read', { method: 'POST' }).catch(() => {});
+                          setUnreadNotifs(0);
+                        }
+                      }}
+                      title={isFa ? 'اعلان‌ها' : 'Notifications'}
+                      className="relative h-9 w-9 grid place-items-center rounded-2xl btn-ghost"
+                    >
+                      <Bell className="w-4 h-4 text-main" />
+                      {unreadNotifs > 0 && (
+                        <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--panel)]" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={toggleDayNight}
+                      title={isFa ? 'حالت روز / شب' : 'Day / Night'}
+                      className="h-9 w-9 grid place-items-center rounded-2xl btn-ghost"
+                    >
+                      {currentLook === 'paper' ? (
+                        <Moon className="w-4 h-4 text-[var(--gold)]" />
+                      ) : (
+                        <Sun className="w-4 h-4 text-[#F59E0B]" />
+                      )}
+                    </button>
+
+                    {onGoLanding && (
+                      <button
+                        type="button"
+                        onClick={onGoLanding}
+                        title={isFa ? 'مشاهده صفحه معرفی' : 'View Site'}
+                        className="hidden sm:grid h-9 w-9 place-items-center rounded-2xl btn-ghost"
+                      >
+                        <LayoutDashboard className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setLang(isFa ? 'en' : 'fa')}
+                      className="hidden sm:inline-flex items-center gap-1 text-xs font-bold px-2.5 py-2 rounded-2xl btn-ghost"
+                    >
+                      <Globe className="w-3.5 h-3.5" style={{ color: 'var(--gold-soft)' }} />
+                      <span>{isFa ? 'EN' : 'فارسی'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => selectTab('portfolio')}
+                      className="hidden sm:inline-flex items-center gap-1.5 panel rounded-2xl px-3 py-1.5 text-xs font-bold"
+                    >
+                      <Wallet className="w-3.5 h-3.5" style={{ color: 'var(--jade)' }} />
+                      <span dir="ltr" className="tabular text-main">
+                        ${Number(freeBalance || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        tgHaptic('medium');
+                        void onStartStop();
+                      }}
+                      className={`inline-flex items-center gap-1.5 text-xs font-black px-3.5 py-2 rounded-2xl transition ${
+                        isRunning ? 'bg-[#FF8200] hover:bg-[#ea7600] text-white' : 'btn-emerald'
+                      }`}
+                    >
+                      <Power className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">
+                        {isRunning ? (isFa ? 'توقف ربات' : 'Stop') : isFa ? 'شروع ربات' : 'Start Bot'}
+                      </span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
 
             {tickerCoins.length > 0 && uiMode === 'pro' && (
@@ -841,7 +934,7 @@ export function Layout({
             />
           </svg>
 
-          {/* Floating Center Cobalt Circle Button */}
+          {/* Floating Center Cobalt / Amber Circle Button */}
           <button
             type="button"
             onClick={() => {
@@ -853,9 +946,16 @@ export function Layout({
               }
             }}
             aria-label={isFa ? 'معامله' : 'Trade'}
-            className="absolute left-1/2 -translate-x-1/2 -top-5 w-[56px] h-[56px] rounded-full grid place-items-center shadow-[0_10px_26px_rgba(22,82,240,0.52)] active:scale-95 transition-transform"
+            className="z-20 absolute left-1/2 -translate-x-1/2 -top-5 w-[56px] h-[56px] rounded-full grid place-items-center active:scale-95 transition-all"
             style={{
-              background: 'linear-gradient(145deg, #2563EB 0%, #1652F0 58%, #0B3BB8 100%)',
+              background:
+                activeTab === 'terminal'
+                  ? 'linear-gradient(145deg, #FBBF24 0%, #F59E0B 60%, #D97706 100%)'
+                  : 'linear-gradient(145deg, #3B82F6 0%, #1652F0 58%, #0B3BB8 100%)',
+              boxShadow:
+                activeTab === 'terminal'
+                  ? '0 10px 26px rgba(245,158,11,0.48), 0 0 0 4px rgba(245,158,11,0.16)'
+                  : '0 10px 26px rgba(22,82,240,0.48), 0 0 0 4px rgba(59,130,246,0.16)',
               border: '3px solid var(--bg)',
             }}
           >

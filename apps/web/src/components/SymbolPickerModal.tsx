@@ -100,14 +100,14 @@ export function SymbolPicker({
         }`}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <CoinIcon symbol={value} size={18} />
-          <span className="font-extrabold text-main truncate">{value}</span>
+          <CoinIcon symbol={value} size={20} />
+          <span className="font-extrabold text-main whitespace-nowrap">{value}</span>
           {current && current.exchangeSymbol !== value && (
             <span className="hidden sm:inline text-[10px] px-1.5 py-0.5 rounded banner-cobalt-soft text-brand font-mono-num">
               {current.exchangeSymbol}
             </span>
           )}
-          <span className="text-[10px] px-1.5 py-0.5 rounded badge-signal font-mono-num font-bold">
+          <span className="hidden sm:inline whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded badge-signal font-mono-num font-bold">
             {markets.length} {lang === 'fa' ? 'ارز' : 'pairs'}
           </span>
         </div>

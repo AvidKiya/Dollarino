@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
 /* ==========================================================================
    DOLLARINO DESIGN SYSTEM — APPLE iOS CUPERTINO + LOGO COBALT & AMBER
    Single Cohesive Apple Theme with Clean Day (Light) & Night (Dark) Modes
@@ -9,14 +15,14 @@
 :root,
 html[data-theme='paper'],
 html.theme-light {
-  --bg: #f3f6fb;
+  --bg: #f4f7fc;
   --panel: #ffffff;
-  --panel-translucent: rgba(255, 255, 255, 0.90);
-  --soft: #eef2f9;
+  --panel-translucent: rgba(255, 255, 255, 0.94);
+  --soft: #eff3fa;
   --text: #0f172a;
   --muted: #475569;
   --faint: #94a3b8;
-  --line: rgba(15, 23, 42, 0.08);
+  --line: rgba(15, 23, 42, 0.06);
   --line-strong: rgba(22, 82, 240, 0.28);
 
   --gold: #1652f0;
@@ -27,22 +33,22 @@ html.theme-light {
   --gold-c: #0b3bb8;
 
   --amber: #f59e0b;
-  --jade: #10b981;
+  --jade: #0d9455;
   --rose: #ef4444;
   --blue: #0ea5e9;
-  --lime: #12e35d;
+  --lime: #10b981;
   --flame: #f97316;
 
-  --bg-app: #f3f6fb;
+  --bg-app: #f4f7fc;
   --bg-surface: #ffffff;
-  --bg-soft: #eef2f9;
-  --border-app: rgba(15, 23, 42, 0.08);
+  --bg-soft: #eff3fa;
+  --border-app: rgba(15, 23, 42, 0.06);
   --border-strong: rgba(22, 82, 240, 0.28);
   --text-main: #0f172a;
   --text-sub: #475569;
   --text-dim: #94a3b8;
   --brand: #1652f0;
-  --signal: #10b981;
+  --signal: #0d9455;
   --loss: #ef4444;
 }
 
@@ -127,7 +133,7 @@ html[data-theme='cosmic'] .app-shell {
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  box-shadow: 0 6px 24px -10px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 20px -8px rgba(15, 23, 42, 0.06);
 }
 
 html[data-theme='cosmic'] .panel {

@@ -39,6 +39,7 @@ import {
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { apiFetch } from '../lib/api';
+import { coinDisplayName, formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import type { DashboardPayload, OpenTradeRow } from '../lib/types';
@@ -114,6 +115,7 @@ export function TerminalPage({
 }) {
   const isFa = lang === 'fa';
   const [tf, setTf] = useState<Timeframe>('15m');
+  const [showSimpleChart, setShowSimpleChart] = useState(false);
   const [rightIntel, setRightIntel] = useState<'ai' | 'book' | 'script'>('ai');
   const [snap, setSnap] = useState<OverviewResponse | null>(null);
   const [showEma, setShowEma] = useState(true);
@@ -366,16 +368,21 @@ export function TerminalPage({
   }, [aiAnalysis, data.openTrades, symbol]);
 
   if (uiMode === 'simple') {
+    const coinBase = symbol.replace('USDT', '');
+    const coinFaTitle = coinDisplayName(coinBase, isFa);
+    const usdAmountStr = marginEst > 0 ? marginEst.toFixed(0) : '0';
+    const tomanAmountStr = marginEst > 0 ? Math.round(marginEst * 70000).toLocaleString('en-US') : '0';
+
     return (
-      <div className="space-y-5">
-        {/* Kifpool-inspired Top Segmented Switch: معامله آسان | معامله حرفه‌ای */}
+      <div className="space-y-4 max-w-2xl mx-auto">
+        {/* 1. Screenshot 4 Top Segmented Switch: معامله آسان | معامله حرفه‌ای */}
         {onToggleUiMode && (
           <div className="flex justify-center">
-            <div className="ios-segmented p-1">
+            <div className="panel rounded-full p-1 inline-flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => onToggleUiMode('simple')}
-                className="px-5 py-2 rounded-full text-xs font-black ios-pill-active"
+                className="px-5 py-2 rounded-full text-xs font-black bg-[#1E293B] text-white shadow-sm transition"
               >
                 {isFa ? 'معامله آسان' : 'Easy Trade'}
               </button>
@@ -390,10 +397,12 @@ export function TerminalPage({
           </div>
         )}
 
-        <div className="panel rounded-[28px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
+        {/* 2. Screenshot 4 Clean Coin Selector Bar + Expandable Live Candle Chart Toggle */}
+        <div className="panel rounded-[22px] px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <SymbolPicker
               lang={lang}
+              compact
               value={symbol}
               markets={markets}
               provider={data.activeExchange?.provider || 'paper'}
@@ -401,44 +410,56 @@ export function TerminalPage({
               onChangeMarketType={(m) => void onChangeMarketType?.(m)}
               onChange={(sym) => setSymbol(sym)}
             />
+            <div className="hidden sm:block">
+              <p dir="ltr" className="font-num font-bold text-sm text-main">${fmtPx(lastPx)}</p>
+              <p dir="ltr" className={`text-[11px] font-bold tabular ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
+                {chg24 >= 0 ? '+' : ''}
+                {chg24.toFixed(2)}%
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
             {onChangeMarketType && (
-              <div className="ios-segmented">
+              <div className="ios-segmented p-0.5">
                 <button
                   type="button"
                   onClick={() => void onChangeMarketType('FUTURES')}
-                  className={`px-3 py-1 rounded-full text-[11px] font-black transition ${marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'}`}
+                  className={`px-2.5 py-1 rounded-full text-[10px] font-black transition ${marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'}`}
                 >
                   {isFa ? 'فیوچرز' : 'Futures'}
                 </button>
                 <button
                   type="button"
                   onClick={() => void onChangeMarketType('SPOT')}
-                  className={`px-3 py-1 rounded-full text-[11px] font-black transition ${marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'}`}
+                  className={`px-2.5 py-1 rounded-full text-[10px] font-black transition ${marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'}`}
                 >
-                  {isFa ? 'اسپات (1×)' : 'Spot (1×)'}
+                  {isFa ? 'اسپات' : 'Spot'}
                 </button>
               </div>
             )}
-            <div>
-              <p dir="ltr" className="font-display font-bold text-2xl tabular text-main">${fmtPx(lastPx)}</p>
-              <p dir="ltr" className={`text-xs font-bold tabular inline-flex items-center gap-1 ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
-                {chg24 >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                <span>{Math.abs(chg24).toFixed(2)}% {isFa ? 'تغییر ۲۴ ساعته' : '24h change'}</span>
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowSimpleChart((v) => !v)}
+              className={`p-2 rounded-xl border transition inline-flex items-center gap-1.5 text-xs font-bold ${
+                showSimpleChart ? 'bg-[#1652F0] text-white border-[#1652F0]' : 'surface-soft text-main border-[var(--line)]'
+              }`}
+              title={isFa ? 'نمودار کندلی' : 'Candlestick Chart'}
+            >
+              <CandleIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">{isFa ? 'نمودار' : 'Chart'}</span>
+            </button>
           </div>
-          <span className="text-[11px] font-bold px-3 py-1.5 rounded-full surface-soft text-sub inline-flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-jade" />
-            <span>{isFa ? 'حالت محافظت‌شده + حدضرر خودکار' : 'Auto Stop-Loss Protected'}</span>
-          </span>
         </div>
 
-        <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4 items-start">
-          <div className="panel rounded-[28px] p-4 sm:p-5 space-y-3">
+        {/* Expandable Interactive Candlestick Chart */}
+        {showSimpleChart && (
+          <div className="panel rounded-[24px] p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-black text-main">
-                {isFa ? `نمودار زنده ${symbol.replace('USDT', '')}` : `${symbol.replace('USDT', '')} Live Price`}
-              </p>
+              <div className="flex items-center gap-2">
+                <span className="font-display font-bold text-sm text-main">{coinFaTitle}</span>
+                <span dir="ltr" className="font-num font-bold text-sm text-main">${fmtPx(lastPx)}</span>
+              </div>
               <div className="flex gap-1">
                 {(['15m', '1h', '4h', '1d'] as Timeframe[]).map((t) => (
                   <button
@@ -452,121 +473,213 @@ export function TerminalPage({
                 ))}
               </div>
             </div>
-            <CandlestickChart candles={snap?.candles ?? []} height={330} />
+            <CandlestickChart candles={snap?.candles ?? []} height={260} />
+          </div>
+        )}
+
+        {/* 3. Screenshot 4 Buy / Sell Form Card */}
+        <form onSubmit={prepareOrderConfirmation} className="panel rounded-[26px] p-5 space-y-4">
+          {/* Full-Width Emerald/White Buy & Sell Pills */}
+          <div className={marketType === 'SPOT' ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-2 gap-2 surface-soft p-1.5 rounded-2xl'}>
+            <button
+              type="button"
+              onClick={() => {
+                setSide('LONG');
+                if (lastPx > 0) applyAutoLevels(lastPx, 'LONG');
+              }}
+              className={`py-3 rounded-xl text-sm font-black transition ${
+                effectiveSide === 'LONG'
+                  ? 'bg-[#0D9455] text-white shadow-sm'
+                  : 'bg-transparent text-sub hover:text-main'
+              }`}
+            >
+              {marketType === 'SPOT' ? (isFa ? `خرید ${coinFaTitle}` : `Buy ${coinBase}`) : isFa ? 'خرید (LONG)' : 'Buy (LONG)'}
+            </button>
+            {marketType === 'FUTURES' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSide('SHORT');
+                  if (lastPx > 0) applyAutoLevels(lastPx, 'SHORT');
+                }}
+                className={`py-3 rounded-xl text-sm font-black transition ${
+                  effectiveSide === 'SHORT'
+                    ? 'bg-[#EF4444] text-white shadow-sm'
+                    : 'bg-transparent text-sub hover:text-main'
+                }`}
+              >
+                {isFa ? 'فروش (SHORT)' : 'Sell (SHORT)'}
+              </button>
+            )}
           </div>
 
-          <form onSubmit={prepareOrderConfirmation} className="panel rounded-[28px] p-5 sm:p-6 space-y-4">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-wider" style={{ color: 'var(--gold-soft)' }}>
-                {isFa ? 'معامله آسان با محافظت خودکار' : 'EASY PROTECTED TRADE'}
-              </p>
-              <h3 className="font-display font-bold text-xl text-main mt-0.5">
-                {isFa ? 'انتخاب جهت و ثبت معامله' : 'Pick Direction & Confirm'}
-              </h3>
-            </div>
+          {/* Available Balance Caption */}
+          <div className="flex items-center justify-between text-xs px-1">
+            <span className="text-dim font-semibold">{isFa ? 'موجودی در دسترس:' : 'Available Balance:'}</span>
+            <button
+              type="button"
+              onClick={() => setMarginPct(100)}
+              dir="ltr"
+              className="font-num font-black text-main hover:text-[#1652F0] transition"
+            >
+              ${freeCash.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+            </button>
+          </div>
 
-            <div className={marketType === 'SPOT' ? 'grid grid-cols-1 gap-2.5' : 'grid grid-cols-2 gap-2.5'}>
-              {(['LONG', ...(marketType === 'FUTURES' ? (['SHORT'] as const) : [])] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setSide(s);
-                    if (lastPx > 0) applyAutoLevels(lastPx, s);
+          {/* Twin Clean Amount Inputs (USD + Toman Equivalent) matching Screenshot 4 */}
+          <div className="space-y-2.5">
+            <div className="surface-soft rounded-2xl px-4 py-3 flex items-center justify-between gap-2 border border-[var(--line)] focus-within:border-[#1652F0]">
+              <span className="text-xs font-bold text-dim shrink-0">{isFa ? 'مقدار دلاری' : 'USD Margin'}</span>
+              <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.max(10, freeCash)}
+                  value={Math.round(marginEst)}
+                  onChange={(e) => {
+                    const usd = Math.max(1, Number(e.target.value) || 0);
+                    const pct = Math.min(100, Math.max(1, Math.round((usd / Math.max(1, freeCash)) * 100)));
+                    setMarginPct(pct);
                   }}
-                  className={`py-4 px-3 rounded-2xl font-black text-xs flex flex-col items-center gap-1.5 border-2 transition ${
-                    effectiveSide === s
-                      ? s === 'LONG'
-                        ? 'bg-[#12E35D]/15 border-[#12E35D] text-main'
-                        : 'bg-rose-500/15 border-rose-500 text-main'
-                      : 'surface-soft border-transparent text-dim'
-                  }`}
-                >
-                  {s === 'LONG' ? <ArrowUpRight className="w-6 h-6 text-jade" /> : <ArrowDownRight className="w-6 h-6 text-loss" />}
-                  <span className="inline-flex items-center gap-1">
-                    {s === 'LONG' ? (
-                      <>
-                        <TrendingUp className="w-3.5 h-3.5 text-jade" />
-                        <span>{marketType === 'SPOT' ? (isFa ? 'خرید اسپات (1× بدون اهرم)' : 'Spot Buy (1×)') : isFa ? 'بالا میره (خرید)' : 'Going UP'}</span>
-                      </>
-                    ) : (
-                      <>
-                        <TrendingDown className="w-3.5 h-3.5 text-loss" />
-                        <span>{isFa ? 'پایین میاد (فروش)' : 'Going DOWN'}</span>
-                      </>
-                    )}
-                  </span>
-                </button>
-              ))}
+                  dir="ltr"
+                  className="bg-transparent text-end font-num font-black text-base text-main outline-none w-28"
+                />
+                <span className="text-xs font-black px-2 py-1 rounded-lg bg-[var(--panel)] text-main shadow-xs">USD</span>
+              </div>
             </div>
 
-            {marketType === 'FUTURES' && (
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-sub">{isFa ? 'میزان سرعت / ریسک:' : 'Comfort Level:'}</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { v: 3, icon: Shield, l: isFa ? 'امن (3×)' : 'Safe 3×' },
-                    { v: 5, icon: Scale, l: isFa ? 'متعادل (5×)' : 'Normal 5×' },
-                    { v: 10, icon: Zap, l: isFa ? 'سریع (10×)' : 'Fast 10×' },
-                  ].map((opt) => {
-                    const OptIcon = opt.icon;
-                    return (
-                      <button
-                        key={opt.v}
-                        type="button"
-                        onClick={() => setLev(opt.v)}
-                        className={`py-2.5 px-2 rounded-2xl text-[11px] font-black transition inline-flex items-center justify-center gap-1 ${lev === opt.v ? 'ios-pill-active' : 'surface-soft text-dim'}`}
-                      >
-                        <OptIcon className="w-3.5 h-3.5" />
-                        <span>{opt.l}</span>
-                      </button>
-                    );
-                  })}
+            {isFa && (
+              <div className="surface-soft rounded-2xl px-4 py-3 flex items-center justify-between gap-2 border border-[var(--line)]">
+                <span className="text-xs font-bold text-dim shrink-0">معادل تومانی</span>
+                <div className="flex items-center gap-2 min-w-0 justify-end">
+                  <span dir="ltr" className="font-num font-bold text-sm text-main">
+                    {tomanAmountStr}
+                  </span>
+                  <span className="text-xs font-bold text-dim">تومان</span>
                 </div>
               </div>
             )}
+          </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-sub">{isFa ? 'مقدار سرمایه درگیر:' : 'Trade Margin:'}</p>
-                <span dir="ltr" className="font-num text-xs font-black text-main">${marginEst.toFixed(0)} ({marginPct}%)</span>
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                {[10, 25, 50, 100].map((pct) => (
+          {/* 4 Dashed Percentage Chips matching Screenshot 4 */}
+          <div className="grid grid-cols-4 gap-2">
+            {[10, 25, 50, 100].map((pct) => {
+              const active = Math.abs(marginPct - pct) <= 2;
+              return (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => setMarginPct(pct)}
+                  className={`py-2 rounded-full text-xs font-num font-black border border-dashed transition ${
+                    active
+                      ? 'border-[#0D9455] bg-[#0D9455]/10 text-[#0D9455]'
+                      : 'border-[var(--line-strong)] text-sub hover:text-main'
+                  }`}
+                >
+                  {pct}%
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Futures Comfort Leverage Pills */}
+          {marketType === 'FUTURES' && (
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-xs font-bold text-dim">{isFa ? 'اهرم محافظت‌شده:' : 'Leverage:'}</span>
+              <div className="flex gap-1.5">
+                {[
+                  { v: 3, l: isFa ? 'امن ۳×' : '3×' },
+                  { v: 5, l: isFa ? 'متعادل ۵×' : '5×' },
+                  { v: 10, l: isFa ? 'سریع ۱۰×' : '10×' },
+                ].map((opt) => (
                   <button
-                    key={pct}
+                    key={opt.v}
                     type="button"
-                    onClick={() => setMarginPct(pct)}
-                    className={`py-2 rounded-full text-xs font-black border border-dashed transition ${
-                      marginPct === pct
-                        ? 'border-[var(--gold)] bg-[color:color-mix(in_srgb,var(--gold)_14%,transparent)] text-[var(--gold)]'
-                        : 'border-[var(--line-strong)] text-dim hover:text-main'
+                    onClick={() => setLev(opt.v)}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition ${
+                      lev === opt.v ? 'ios-pill-active' : 'surface-soft text-dim'
                     }`}
                   >
-                    {pct}%
+                    {opt.l}
                   </button>
                 ))}
               </div>
             </div>
+          )}
 
-            <div className="surface-soft rounded-2xl p-3.5 space-y-1.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-dim">{isFa ? 'سپر توقف ضرر خودکار:' : 'Auto Safety Stop:'}</span>
-                <span dir="ltr" className="font-num font-bold text-loss">${stopLoss || '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-dim">{isFa ? 'تارگت سود خودکار:' : 'Auto Profit Target:'}</span>
-                <span dir="ltr" className="font-num font-bold text-jade">${tp1 || '—'}</span>
-              </div>
+          {/* Auto SL / TP Preview Line */}
+          <div className="flex items-center justify-between text-[11px] text-dim px-1">
+            <span>
+              {isFa ? 'توقف ضرر خودکار:' : 'Auto SL:'}{' '}
+              <strong dir="ltr" className="text-loss">${stopLoss || '—'}</strong>
+            </span>
+            <span>
+              {isFa ? 'تارگت سود:' : 'Auto TP1:'}{' '}
+              <strong dir="ltr" className="text-jade">${tp1 || '—'}</strong>
+            </span>
+          </div>
+
+          {orderMsg && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{orderMsg}</div>}
+
+          {/* Full-Width Emerald / Rose Execution CTA */}
+          <button
+            type="submit"
+            disabled={submitting}
+            className={`w-full py-4 rounded-2xl text-sm font-black text-white shadow-md transition inline-flex items-center justify-center gap-2 ${
+              effectiveSide === 'LONG' ? 'bg-[#0D9455] hover:bg-[#059669]' : 'bg-[#EF4444] hover:bg-[#DC2626]'
+            }`}
+          >
+            <Rocket className="w-4 h-4" />
+            <span>
+              {submitting
+                ? '...'
+                : effectiveSide === 'LONG'
+                  ? isFa
+                    ? `خرید ${coinFaTitle} ($${usdAmountStr})`
+                    : `Buy ${coinBase} ($${usdAmountStr})`
+                  : isFa
+                    ? `فروش ${coinFaTitle} ($${usdAmountStr})`
+                    : `Sell ${coinBase} ($${usdAmountStr})`}
+            </span>
+          </button>
+        </form>
+
+        {/* 4. Screenshot 4 — Market Info 4-Row Stats Card */}
+        <div className="panel rounded-[24px] p-4 sm:p-5 space-y-3">
+          <p className="text-xs font-black text-main">{isFa ? 'اطلاعات بازار' : 'Market Stats'}</p>
+          <div className="divide-y hairline text-xs">
+            <div className="py-2.5 flex items-center justify-between">
+              <span className="text-dim">{isFa ? 'قیمت فعلی:' : 'Last Price:'}</span>
+              <span dir="ltr" className="font-num font-bold text-main">
+                ${fmtPx(lastPx)} {isFa ? `(${formatTomanEq(lastPx)} تومان)` : ''}
+              </span>
             </div>
+            <div className="py-2.5 flex items-center justify-between">
+              <span className="text-dim">{isFa ? 'بالاترین ۲۴ ساعته:' : '24h High:'}</span>
+              <span dir="ltr" className="font-num font-bold text-main">${fmtPx(snap?.market24h.high24h)}</span>
+            </div>
+            <div className="py-2.5 flex items-center justify-between">
+              <span className="text-dim">{isFa ? 'پایین‌ترین ۲۴ ساعته:' : '24h Low:'}</span>
+              <span dir="ltr" className="font-num font-bold text-main">${fmtPx(snap?.market24h.low24h)}</span>
+            </div>
+            <div className="py-2.5 flex items-center justify-between">
+              <span className="text-dim">{isFa ? 'تغییر ۲۴ ساعته:' : '24h Change:'}</span>
+              <span dir="ltr" className={`font-num font-black ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
+                {chg24 >= 0 ? '+' : ''}
+                {chg24.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+        </div>
 
-            {orderMsg && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{orderMsg}</div>}
-
-            <button type="submit" disabled={submitting} className="btn-cobalt w-full py-4 rounded-2xl text-sm font-black inline-flex items-center justify-center gap-2">
-              <Rocket className="w-4 h-4" />
-              <span>{submitting ? '...' : isFa ? 'دلارینو ترید کن برام' : 'Execute Protected Trade'}</span>
-            </button>
-          </form>
+        {/* 5. Shield Safety Notice matching Screenshot 4 */}
+        <div className="px-3 py-2 flex items-center justify-center gap-2 text-[11px] text-dim text-center">
+          <ShieldCheck className="w-4 h-4 text-[#0D9455] shrink-0" />
+          <span>
+            {isFa
+              ? 'با ثبت سفارش، سپر حدضرر و تارگت سود خودکار دلارینو برای محافظت از سرمایه شما فعال می‌شود.'
+              : 'Every order includes Dollarino auto stop-loss & profit protection.'}
+          </span>
         </div>
 
         <ConfirmTradeSheet
@@ -583,6 +696,27 @@ export function TerminalPage({
 
   return (
     <div className="space-y-4">
+      {onToggleUiMode && (
+        <div className="flex justify-center">
+          <div className="panel rounded-full p-1 inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onToggleUiMode('simple')}
+              className="px-5 py-2 rounded-full text-xs font-bold text-dim hover:text-main transition"
+            >
+              {isFa ? 'معامله آسان' : 'Easy Trade'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleUiMode('pro')}
+              className="px-5 py-2 rounded-full text-xs font-black bg-[#1E293B] text-white shadow-sm transition"
+            >
+              {isFa ? 'معامله حرفه‌ای' : 'Pro Trade'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header Bar */}
       <div className="panel rounded-[24px] px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">

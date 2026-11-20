@@ -5,12 +5,15 @@ import {
   ArrowUpRight,
   Coins,
   Flame,
+  LayoutGrid,
+  List,
   Search,
   Star,
   TrendingDown,
   TrendingUp,
   Zap,
 } from 'lucide-react';
+import { coinDisplayName, formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import type { ExchangeMarket } from '../components/SymbolPickerModal';
 import { CoinIcon } from '../components/CoinIcon';
@@ -45,6 +48,7 @@ export function MarketsPage({
   const [q, setQ] = useState('');
   const [category, setCategory] = useState<'all' | 'favs' | 'layer1' | 'meme'>('all');
   const [sortBy, setSortBy] = useState<'volume' | 'gainers' | 'losers'>('volume');
+  const [simpleViewMode, setSimpleViewMode] = useState<'list' | 'grid'>('list');
   const [visibleCount, setVisibleCount] = useState(60);
   const [favs, setFavs] = useState<string[]>(() => {
     try {
@@ -85,65 +89,125 @@ export function MarketsPage({
   const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount]);
 
   if (uiMode === 'simple') {
+    const totalVol = markets.reduce((acc, m) => acc + Number(m.volume24h || 0), 0);
+    const btcRow = markets.find((m) => m.symbol === 'BTCUSDT');
+    const btcCh = Number(btcRow?.changePct24h ?? 0);
+    const btcDom = totalVol > 0 && btcRow ? Math.min(68, Math.max(46, 54 + (Number(btcRow.volume24h || 0) / totalVol) * 20)) : 58.7;
+    const fearScore = Math.max(5, Math.min(95, stats.sentiment));
+
     return (
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-wider mb-1" style={{ color: 'var(--gold-soft)' }}>
-              {isFa
-                ? `قیمت زنده تمام ارزهای صرافی (${markets.length} جفت‌ارز)`
-                : `LIVE COIN PRICES (${markets.length} PAIRS)`}
+      <div className="space-y-4 max-w-3xl mx-auto">
+        {/* Screenshot 1 Top 4 Market Pulse Strip */}
+        <div className="grid grid-cols-4 gap-2 text-center py-2 px-1">
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-bold text-dim">{isFa ? 'ارزش بازار' : 'M. Cap'}</p>
+            <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-main">$2.04 T</p>
+            <p dir="ltr" className={`text-[11px] font-bold tabular ${btcCh >= 0 ? 'text-jade' : 'text-loss'}`}>
+              {btcCh >= 0 ? '+' : ''}
+              {btcCh.toFixed(2)}%
             </p>
-            <h2 className="font-display font-bold text-3xl text-main flex items-center gap-2.5">
-              <Coins className="w-7 h-7" style={{ color: 'var(--gold-soft)' }} />
-              <span>{isFa ? 'انتخاب ارز برای معامله آسان' : 'Pick a Coin to Trade'}</span>
-            </h2>
           </div>
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute start-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dim" />
-            <input
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setVisibleCount(60);
-              }}
-              placeholder={isFa ? 'مثلاً BTC یا SOL...' : 'Search BTC, ETH, SOL...'}
-              className="field ps-10 text-xs"
-            />
+
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-bold text-dim">{isFa ? 'حجم معاملات' : '24h Vol'}</p>
+            <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-main">
+              {totalVol >= 1e9 ? `${(totalVol / 1e9).toFixed(1)} B` : `${Math.max(12.4, totalVol / 1e6).toFixed(1)} M`}
+            </p>
+            <p dir="ltr" className="text-[11px] font-bold tabular text-jade">
+              {markets.length} {isFa ? 'جفت' : 'pairs'}
+            </p>
+          </div>
+
+          <div className="space-y-0.5">
+            <p className="text-[11px] font-bold text-dim">{isFa ? 'دامیننس BTC' : 'BTC Dom'}</p>
+            <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-main">{btcDom.toFixed(2)}%</p>
+            <div className="text-[11px] font-bold text-dim inline-flex items-center justify-center gap-1">
+              <CoinIcon symbol="BTCUSDT" size={13} />
+              <span>BTC</span>
+            </div>
+          </div>
+
+          <div className="space-y-1 flex flex-col items-center">
+            <p className="text-[11px] font-bold text-dim">{isFa ? 'ترس و طمع' : 'Fear & Greed'}</p>
+            <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-main">{fearScore}</p>
+            <div className="relative w-16 h-2 rounded-full overflow-hidden flex">
+              <span className="flex-1 bg-[#EF4444]" />
+              <span className="flex-1 bg-[#F97316]" />
+              <span className="flex-1 bg-[#FACC15]" />
+              <span className="flex-1 bg-[#10B981]" />
+              <span
+                className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white border-2 border-slate-900 shadow"
+                style={{ left: `calc(${fearScore}% - 5px)` }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-2">
-            {[
-              { id: 'all', lbl: isFa ? 'همه ارزهای بازار' : 'All Coins' },
-              { id: 'favs', lbl: isFa ? 'مورد علاقه‌ها' : 'Favorites', star: true },
-              { id: 'layer1', lbl: isFa ? 'ارزهای معتبر (BTC/ETH...)' : 'Top Majors' },
-              { id: 'meme', lbl: isFa ? 'میم‌کوین‌ها (DOGE/PEPE...)' : 'Meme Coins' },
-            ].map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  setCategory(item.id as typeof category);
-                  setVisibleCount(60);
-                }}
-                className={`px-4 py-2 rounded-2xl text-xs font-black transition inline-flex items-center gap-1.5 ${
-                  category === item.id ? 'ios-pill-active' : 'panel text-sub'
-                }`}
-              >
-                {item.star && <Star className="w-3.5 h-3.5" />}
-                <span>{item.lbl}</span>
-              </button>
-            ))}
-          </div>
+        {/* Clean Rounded Search Pill */}
+        <div className="panel rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5">
+          <Search className="w-4 h-4 text-dim shrink-0" />
+          <input
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setVisibleCount(60);
+            }}
+            placeholder={isFa ? 'جستجوی ارز (مثلاً BTC، ETH، SOL)...' : 'Search coin (BTC, ETH, SOL)...'}
+            className="bg-transparent flex-1 text-xs font-medium text-main outline-none placeholder:text-dim"
+          />
+        </div>
 
-          {onChangeMarketType && (
+        {/* Horizontal Filter Tabs + Market Type / View Toggle */}
+        <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar px-1 pb-1">
+          <div className="flex items-center gap-3.5 text-xs font-bold shrink-0">
+            {[
+              { id: 'favs', sort: 'volume', lbl: isFa ? 'علاقه‌مندی' : 'Favorites' },
+              { id: 'all', sort: 'volume', lbl: isFa ? 'محبوب‌ترین' : 'Popular' },
+              { id: 'layer1', sort: 'volume', lbl: isFa ? 'ارزهای برتر' : 'Top Majors' },
+              { id: 'all_gain', sort: 'gainers', lbl: isFa ? 'بیشترین سود' : 'Top Gainers' },
+              { id: 'all_loss', sort: 'losers', lbl: isFa ? 'بیشترین ضرر' : 'Top Losers' },
+            ].map((t) => {
+              const active =
+                (t.id === 'favs' && category === 'favs') ||
+                (t.id === 'layer1' && category === 'layer1') ||
+                (t.id === 'all' && category === 'all' && sortBy === 'volume') ||
+                (t.id === 'all_gain' && category === 'all' && sortBy === 'gainers') ||
+                (t.id === 'all_loss' && category === 'all' && sortBy === 'losers');
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    if (t.id === 'favs') {
+                      setCategory('favs');
+                      setSortBy('volume');
+                    } else if (t.id === 'layer1') {
+                      setCategory('layer1');
+                      setSortBy('volume');
+                    } else {
+                      setCategory('all');
+                      setSortBy(t.sort as typeof sortBy);
+                    }
+                    setVisibleCount(60);
+                  }}
+                  className={`py-1.5 whitespace-nowrap transition border-b-2 ${
+                    active ? 'text-[#D97706] border-[#F59E0B] font-black' : 'text-dim border-transparent hover:text-main'
+                  }`}
+                >
+                  {t.lbl}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          {onChangeMarketType ? (
             <div className="ios-segmented">
               <button
                 type="button"
                 onClick={() => void onChangeMarketType('FUTURES')}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${
+                className={`px-3 py-1 rounded-full text-[11px] font-black transition ${
                   marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'
                 }`}
               >
@@ -152,75 +216,128 @@ export function MarketsPage({
               <button
                 type="button"
                 onClick={() => void onChangeMarketType('SPOT')}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${
+                className={`px-3 py-1 rounded-full text-[11px] font-black transition ${
                   marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'
                 }`}
               >
                 {isFa ? 'اسپات' : 'Spot'}
               </button>
             </div>
+          ) : (
+            <div />
           )}
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSimpleViewMode((v) => (v === 'list' ? 'grid' : 'list'))}
+              className="p-2 rounded-xl panel text-sub hover:text-main transition"
+              title={isFa ? 'تغییر نمایش' : 'Toggle view'}
+            >
+              {simpleViewMode === 'list' ? <LayoutGrid className="w-4 h-4" /> : <List className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {visibleList.map((c) => {
-            const px = Number(c.lastPrice || 0);
-            const ch = Number(c.changePct24h || 0);
-            const up = ch >= 0;
-            const isFav = favs.includes(c.symbol);
-            return (
-              <div key={c.symbol} className="panel rounded-[26px] p-4 flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <CoinIcon symbol={c.symbol} size={40} />
-                    <div>
-                      <p className="font-display font-bold text-base text-main">{c.base}</p>
-                      <p className="text-[11px] text-dim inline-flex items-center gap-1">
-                        {up ? <TrendingUp className="w-3 h-3 text-jade" /> : <TrendingDown className="w-3 h-3 text-loss" />}
-                        <span>{up ? (isFa ? 'رشد امروز' : 'Up today') : isFa ? 'افت امروز' : 'Down today'}</span>
-                      </p>
+        {/* Clean Crisp Coin List matching Screenshot 1 */}
+        {simpleViewMode === 'list' ? (
+          <div className="panel rounded-[26px] divide-y hairline overflow-hidden">
+            {visibleList.map((c) => {
+              const px = Number(c.lastPrice || 0);
+              const ch = Number(c.changePct24h || 0);
+              const up = ch >= 0;
+              const isFav = favs.includes(c.symbol);
+              return (
+                <div
+                  key={c.symbol}
+                  onClick={() => onTradeSymbol(c.symbol)}
+                  className="px-4 py-3.5 flex items-center justify-between gap-3 hover:bg-[var(--soft)] cursor-pointer transition"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <CoinIcon symbol={c.symbol} size={36} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-display font-extrabold text-sm text-main">{c.base}</span>
+                        {c.quote && c.quote !== 'USDT' && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[var(--soft)] text-dim">{c.quote}</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFav(c.symbol);
+                          }}
+                          className="text-dim hover:text-[#F59E0B]"
+                          aria-label="Favorite"
+                        >
+                          <Star className={`w-3 h-3 ${isFav ? 'fill-[#F59E0B] text-[#F59E0B]' : ''}`} />
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-dim truncate">{coinDisplayName(c.base, isFa)}</p>
                     </div>
                   </div>
-                  <button type="button" onClick={() => toggleFav(c.symbol)} className="text-dim hover:text-[var(--gold)]">
-                    <Star className={`w-4 h-4 ${isFav ? 'fill-[var(--gold)] text-[var(--gold)]' : ''}`} />
-                  </button>
-                </div>
 
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-[11px] text-dim">{isFa ? 'قیمت فعلی' : 'Price'}</p>
-                    <p dir="ltr" className="font-display font-bold text-xl tabular text-main">${fmtPx(px)}</p>
+                  <div className="text-center">
+                    <p dir="ltr" className="font-num font-bold text-xs sm:text-sm text-main">
+                      ${fmtPx(px)}
+                    </p>
+                    {isFa && (
+                      <p className="text-[10px] text-dim tabular">
+                        {formatTomanEq(px)} تومان
+                      </p>
+                    )}
                   </div>
-                  <span
-                    dir="ltr"
-                    className={`px-3 py-1 rounded-full text-xs font-black tabular inline-flex items-center gap-1 ${
-                      up ? 'bg-[#12E35D]/15 text-jade' : 'bg-rose-500/15 text-loss'
-                    }`}
-                  >
-                    {up ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-                    <span>{Math.abs(ch).toFixed(2)}%</span>
-                  </span>
-                </div>
 
+                  <div dir="ltr" className={`font-num font-black text-xs sm:text-sm tabular min-w-[58px] text-end ${up ? 'text-jade' : 'text-loss'}`}>
+                    {up ? '+' : '-'}
+                    {Math.abs(ch).toFixed(1)}%
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {visibleList.map((c) => {
+              const px = Number(c.lastPrice || 0);
+              const ch = Number(c.changePct24h || 0);
+              const up = ch >= 0;
+              return (
                 <button
+                  key={c.symbol}
                   type="button"
                   onClick={() => onTradeSymbol(c.symbol)}
-                  className="btn-cobalt w-full py-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
+                  className="panel panel-hover rounded-[24px] p-4 flex flex-col gap-2.5 text-start"
                 >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>{isFa ? `شروع معامله ${c.base}` : `Trade ${c.base}`}</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <CoinIcon symbol={c.symbol} size={34} />
+                      <div>
+                        <p className="font-display font-bold text-sm text-main">{c.base}</p>
+                        <p className="text-[10px] text-dim">{coinDisplayName(c.base, isFa)}</p>
+                      </div>
+                    </div>
+                    <span dir="ltr" className={`text-xs font-black tabular ${up ? 'text-jade' : 'text-loss'}`}>
+                      {up ? '+' : ''}
+                      {ch.toFixed(2)}%
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span dir="ltr" className="font-num font-bold text-base text-main">${fmtPx(px)}</span>
+                    {isFa && <span className="text-[10px] text-dim">{formatTomanEq(px)} تومان</span>}
+                  </div>
                 </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {list.length > visibleList.length && (
-          <div className="text-center">
+          <div className="text-center pt-1">
             <button
               type="button"
               onClick={() => setVisibleCount((n) => n + 60)}
-              className="btn-ghost px-6 py-3 rounded-2xl text-xs font-black"
+              className="btn-ghost px-6 py-2.5 rounded-2xl text-xs font-black"
             >
               {isFa
                 ? `نمایش ۶۰ ارز بیشتر (${visibleList.length} از ${list.length})`
