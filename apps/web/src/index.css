@@ -3,144 +3,158 @@
 @tailwind utilities;
 
 /* ==========================================================================
-   FOUR SIGNATURE LOOKS (01 + 02 Unified Token System)
+   DOLLARINO DESIGN SYSTEM — LOGO HEXAGON PALETTE + APPLE iOS CUPERTINO GLASS
+   Logo Colors:
+     • Royal Cobalt Blue:  #0A4CE8 / #1D68FF
+     • Electric Rocket Cyan: #00C2FF / #18DCFF
+     • Bullish Candle Green: #10E05B / #16EB66
+     • Rocket Flame Amber: #FF8200 / #FFC02E
    ========================================================================== */
 :root,
 html[data-theme='cosmic'] {
-  --bg: #050a1a;
-  --panel: #0a1328;
-  --soft: rgba(120, 160, 255, 0.06);
-  --text: #f3f7fd;
-  --muted: rgba(226, 236, 255, 0.68);
-  --faint: rgba(226, 236, 255, 0.42);
-  --line: rgba(140, 180, 255, 0.14);
-  --line-strong: rgba(140, 180, 255, 0.28);
-  --gold: #1f63ff;
-  --gold-soft: #8fb6ff;
-  --gold-deep: #0c44c8;
-  --gold-a: #6f9bff;
-  --gold-b: #1f63ff;
-  --gold-c: #0c44c8;
-  --jade: #16e664;
-  --rose: #f43f5e;
-  --blue: #00b4ff;
-  --lime: #16e664;
+  --bg: #040917;
+  --panel: rgba(8, 21, 56, 0.78);
+  --soft: rgba(25, 108, 255, 0.085);
+  --text: #f5f8ff;
+  --muted: rgba(232, 240, 255, 0.74);
+  --faint: rgba(212, 226, 255, 0.48);
+  --line: rgba(115, 175, 255, 0.16);
+  --line-strong: rgba(28, 198, 255, 0.36);
+
+  --gold: #1565ff;
+  --gold-soft: #4ad8ff;
+  --gold-deep: #0634ad;
+  --gold-a: #16cfff;
+  --gold-b: #1565ff;
+  --gold-c: #0738b8;
+
+  --jade: #12e35d;
+  --rose: #ff4560;
+  --blue: #16d4ff;
+  --lime: #12e35d;
+  --flame: #ff8200;
 
   --bg-app: var(--bg);
-  --bg-surface: var(--panel);
-  --bg-soft: rgba(120, 160, 255, 0.08);
+  --bg-surface: #071436;
+  --bg-soft: rgba(25, 108, 255, 0.09);
   --border-app: var(--line);
   --border-strong: var(--line-strong);
   --text-main: var(--text);
   --text-sub: var(--muted);
   --text-dim: var(--faint);
-  --brand: #3b7bff;
-  --signal: #16e664;
-  --loss: #f43f5e;
+  --brand: #1d70ff;
+  --signal: #12e35d;
+  --loss: #ff4560;
+}
+
+/* iPhone Frosted Daylight (Apple iOS 18 Light Mode + Logo Cobalt) */
+html[data-theme='paper'],
+html.theme-light {
+  --bg: #eef3fb;
+  --panel: rgba(255, 255, 255, 0.88);
+  --soft: rgba(10, 76, 232, 0.055);
+  --text: #0b132b;
+  --muted: rgba(11, 19, 43, 0.70);
+  --faint: rgba(11, 19, 43, 0.48);
+  --line: rgba(12, 54, 156, 0.10);
+  --line-strong: rgba(10, 76, 232, 0.28);
+
+  --gold: #0a4ce8;
+  --gold-soft: #0095ff;
+  --gold-deep: #0630a0;
+  --gold-a: #18a4ff;
+  --gold-b: #0a4ce8;
+  --gold-c: #0630a0;
+
+  --jade: #05a849;
+  --rose: #e02849;
+  --blue: #0095ff;
+  --lime: #12e35d;
+  --flame: #e86b00;
+
+  --bg-app: #eef3fb;
+  --bg-surface: #ffffff;
+  --bg-soft: rgba(10, 76, 232, 0.055);
+  --border-app: rgba(12, 54, 156, 0.10);
+  --border-strong: rgba(10, 76, 232, 0.28);
+  --text-main: #0b132b;
+  --text-sub: rgba(11, 19, 43, 0.70);
+  --text-dim: rgba(11, 19, 43, 0.48);
+  --brand: #0a4ce8;
+  --signal: #05a849;
+  --loss: #e02849;
+}
+
+html[data-theme='midnight'] {
+  --bg: #050a16;
+  --panel: rgba(13, 21, 44, 0.82);
+  --soft: rgba(120, 165, 255, 0.065);
+  --text: #eef3ff;
+  --muted: rgba(226, 234, 255, 0.70);
+  --faint: rgba(226, 234, 255, 0.44);
+  --line: rgba(130, 170, 255, 0.14);
+  --line-strong: rgba(110, 165, 255, 0.30);
+
+  --gold: #4c7dff;
+  --gold-soft: #8fc5ff;
+  --gold-deep: #2448b8;
+  --gold-a: #68b8ff;
+  --gold-b: #4c7dff;
+  --gold-c: #2448b8;
+
+  --jade: #16e68a;
+  --rose: #ff5b74;
+  --blue: #46c8ff;
+  --lime: #16e68a;
   --flame: #ff8a00;
+
+  --bg-app: var(--bg);
+  --bg-surface: #0d152c;
+  --bg-soft: rgba(120, 165, 255, 0.08);
+  --border-app: var(--line);
+  --border-strong: var(--line-strong);
+  --text-main: var(--text);
+  --text-sub: var(--muted);
+  --text-dim: var(--faint);
+  --brand: #4c7dff;
+  --signal: #16e68a;
+  --loss: #ff5b74;
 }
 
 html[data-theme='obsidian'] {
-  --bg: #070906;
-  --panel: #0e120b;
-  --soft: rgba(255, 255, 255, 0.045);
-  --text: #f2f0e6;
-  --muted: rgba(242, 240, 230, 0.64);
-  --faint: rgba(242, 240, 230, 0.4);
+  --bg: #070907;
+  --panel: rgba(18, 21, 15, 0.82);
+  --soft: rgba(255, 255, 255, 0.05);
+  --text: #f6f3ea;
+  --muted: rgba(246, 243, 234, 0.68);
+  --faint: rgba(246, 243, 234, 0.42);
   --line: rgba(232, 193, 90, 0.16);
   --line-strong: rgba(232, 193, 90, 0.34);
+
   --gold: #e8c15a;
-  --gold-soft: #f5dd9a;
-  --gold-deep: #9a7420;
+  --gold-soft: #f7e1a0;
+  --gold-deep: #9c751e;
   --gold-a: #f7e3a5;
   --gold-b: #e8c15a;
   --gold-c: #c9982f;
-  --jade: #10d9a3;
+
+  --jade: #12e37d;
   --rose: #ff4d6d;
   --blue: #38e1ff;
   --lime: #d7f83c;
+  --flame: #ff8a00;
 
   --bg-app: var(--bg);
-  --bg-surface: var(--panel);
-  --bg-soft: rgba(232, 193, 90, 0.06);
+  --bg-surface: #11140e;
+  --bg-soft: rgba(232, 193, 90, 0.07);
   --border-app: var(--line);
   --border-strong: var(--line-strong);
   --text-main: var(--text);
   --text-sub: var(--muted);
   --text-dim: var(--faint);
   --brand: #e8c15a;
-  --signal: #10d9a3;
+  --signal: #12e37d;
   --loss: #ff4d6d;
-  --flame: #ff8a00;
-}
-
-html[data-theme='midnight'] {
-  --bg: #070a12;
-  --panel: #0d1220;
-  --soft: rgba(150, 170, 255, 0.055);
-  --text: #eef2ff;
-  --muted: rgba(226, 232, 255, 0.65);
-  --faint: rgba(226, 232, 255, 0.4);
-  --line: rgba(150, 170, 255, 0.14);
-  --line-strong: rgba(150, 170, 255, 0.28);
-  --gold: #6d8bff;
-  --gold-soft: #b6c8ff;
-  --gold-deep: #3a5bd9;
-  --gold-a: #9db2ff;
-  --gold-b: #6d8bff;
-  --gold-c: #3a5bd9;
-  --jade: #37d6a5;
-  --rose: #ff7185;
-  --blue: #62c6ff;
-  --lime: #c9f24e;
-
-  --bg-app: var(--bg);
-  --bg-surface: var(--panel);
-  --bg-soft: rgba(109, 139, 255, 0.07);
-  --border-app: var(--line);
-  --border-strong: var(--line-strong);
-  --text-main: var(--text);
-  --text-sub: var(--muted);
-  --text-dim: var(--faint);
-  --brand: #6d8bff;
-  --signal: #37d6a5;
-  --loss: #ff7185;
-  --flame: #ff8a00;
-}
-
-html[data-theme='paper'],
-html.theme-light {
-  --bg: #f4f1ea;
-  --panel: #fffdf7;
-  --soft: rgba(16, 19, 26, 0.04);
-  --text: #10131a;
-  --muted: rgba(16, 19, 26, 0.68);
-  --faint: rgba(16, 19, 26, 0.45);
-  --line: rgba(16, 19, 26, 0.11);
-  --line-strong: rgba(47, 91, 255, 0.28);
-  --gold: #2f5bff;
-  --gold-soft: #1c41d4;
-  --gold-deep: #2f5bff;
-  --gold-a: #7d9bff;
-  --gold-b: #2f5bff;
-  --gold-c: #1d3ed8;
-  --jade: #04875a;
-  --rose: #e23c58;
-  --blue: #00a2e8;
-  --lime: #d9f73c;
-
-  --bg-app: #f4f1ea;
-  --bg-surface: #fffdf7;
-  --bg-soft: rgba(16, 19, 26, 0.04);
-  --border-app: rgba(16, 19, 26, 0.11);
-  --border-strong: rgba(47, 91, 255, 0.28);
-  --text-main: #10131a;
-  --text-sub: rgba(16, 19, 26, 0.68);
-  --text-dim: rgba(16, 19, 26, 0.45);
-  --brand: #2f5bff;
-  --signal: #04875a;
-  --loss: #e23c58;
-  --flame: #ea6a00;
 }
 
 @layer base {
@@ -152,14 +166,14 @@ html.theme-light {
   body {
     background-color: var(--bg);
     color: var(--text);
-    font-family: 'Vazirmatn', 'Manrope', 'Inter', system-ui, sans-serif;
+    font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Manrope', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     overflow-x: clip;
   }
 
   ::selection {
-    background: var(--lime);
-    color: #08120a;
+    background: var(--gold);
+    color: #ffffff;
   }
 
   input[type='number']::-webkit-outer-spin-button,
@@ -170,29 +184,79 @@ html.theme-light {
 }
 
 .app-shell {
-  background: var(--bg);
+  background:
+    radial-gradient(920px 460px at 82% -10%, color-mix(in srgb, var(--gold) 15%, transparent), transparent 65%),
+    radial-gradient(640px 380px at 10% 10%, color-mix(in srgb, var(--blue) 10%, transparent), transparent 65%),
+    var(--bg);
   color: var(--text);
 }
 
+/* Apple iOS 18 Liquid Glass Surface */
 .panel {
-  background: linear-gradient(155deg, var(--soft), var(--panel));
+  background: linear-gradient(160deg, color-mix(in srgb, var(--soft) 80%, rgba(255, 255, 255, 0.04)), var(--panel));
   border: 1px solid var(--line);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(26px) saturate(175%);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+  box-shadow:
+    0 18px 42px -24px rgba(2, 10, 38, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+html[data-theme='paper'] .panel,
+html.theme-light .panel {
+  box-shadow:
+    0 14px 36px -18px rgba(10, 40, 120, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .panel-hover {
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s, box-shadow 0.25s;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s, box-shadow 0.25s;
 }
 .panel-hover:hover {
   transform: translateY(-2px);
-  border-color: var(--gold);
-  box-shadow: 0 22px 52px -28px color-mix(in srgb, var(--gold) 32%, transparent);
+  border-color: var(--line-strong);
+  box-shadow: 0 24px 50px -24px color-mix(in srgb, var(--gold) 36%, transparent);
+}
+
+/* Apple Segmented Control */
+.ios-segmented {
+  background: color-mix(in srgb, var(--soft) 90%, rgba(0, 0, 0, 0.14));
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ios-pill-active {
+  background: linear-gradient(135deg, var(--gold-a), var(--gold-b) 55%, var(--gold-c));
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--gold) 65%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+html[data-theme='obsidian'] .ios-pill-active {
+  color: #10130a;
+}
+
+/* Apple Wallet Hero Card (Exact Logo Cobalt-Sapphire + Cyan Glow) */
+.ios-wallet-card {
+  background:
+    radial-gradient(280px 180px at 88% 12%, rgba(0, 210, 255, 0.28), transparent 70%),
+    radial-gradient(240px 160px at 14% 92%, rgba(18, 227, 93, 0.18), transparent 70%),
+    linear-gradient(135deg, #135eff 0%, #0942d2 52%, #052175 100%);
+  border: 1px solid rgba(110, 200, 255, 0.34);
+  box-shadow:
+    0 24px 56px -20px rgba(10, 76, 232, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  color: #ffffff;
 }
 
 .surface-card {
-  background: var(--bg-surface);
+  background: var(--panel);
   border: 1px solid var(--border-app);
+  backdrop-filter: blur(22px) saturate(165%);
   border-radius: 26px;
+  box-shadow: 0 14px 36px -22px rgba(4, 14, 48, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .surface-soft {
@@ -205,24 +269,26 @@ html.theme-light {
   border: 1px solid var(--border-app);
   color: var(--text-main);
   outline: none;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .surface-input:focus {
   border-color: var(--gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
 }
 
 .field {
   background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 11px 14px;
+  padding: 12px 15px;
   width: 100%;
   outline: none;
   color: var(--text);
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 .field:focus {
   border-color: var(--gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
 }
 .field::placeholder {
   color: var(--faint);
@@ -237,30 +303,30 @@ html.theme-light {
 .text-flame { color: var(--flame); }
 
 .text-gold-grad {
-  background: linear-gradient(100deg, var(--gold-soft), var(--gold) 50%, var(--gold-deep) 85%, var(--gold-soft));
+  background: linear-gradient(100deg, var(--gold-soft), var(--gold) 52%, var(--gold-deep) 95%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
 .text-gradient-cobalt {
-  background: linear-gradient(90deg, #7fb2ff 0%, #2b74ff 45%, #00b4ff 100%);
+  background: linear-gradient(95deg, #4ad8ff 0%, #1d70ff 55%, #0a4ce8 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
 [dir='rtl'] .font-display {
-  font-family: 'Vazirmatn', sans-serif;
+  font-family: 'Vazirmatn', -apple-system, sans-serif;
   letter-spacing: 0;
   font-weight: 800;
 }
 .font-display {
-  font-family: 'Fraunces', 'Vazirmatn', Georgia, serif;
-  letter-spacing: -0.01em;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Space Grotesk', 'Vazirmatn', sans-serif;
+  letter-spacing: -0.02em;
 }
 .font-latin {
-  font-family: 'Manrope', 'Space Grotesk', 'Inter', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Manrope', 'Space Grotesk', sans-serif;
 }
 .font-mono-num,
 .font-num,
@@ -272,60 +338,60 @@ html.theme-light {
 .hairline { border-color: var(--line); }
 
 .btn-gold {
-  background: linear-gradient(135deg, var(--gold-a), var(--gold-b) 45%, var(--gold-c));
-  color: #10130a;
-  font-weight: 800;
-  box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--gold) 65%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  transition: transform 0.2s, filter 0.2s, box-shadow 0.25s;
-}
-html[data-theme='cosmic'] .btn-gold,
-html[data-theme='paper'] .btn-gold,
-html[data-theme='midnight'] .btn-gold,
-html.theme-light .btn-gold {
+  background: linear-gradient(135deg, var(--gold-a), var(--gold-b) 50%, var(--gold-c));
   color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 12px 28px -10px color-mix(in srgb, var(--gold) 65%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), filter 0.2s, box-shadow 0.25s;
+}
+html[data-theme='obsidian'] .btn-gold {
+  color: #10130a;
 }
 .btn-gold:hover { filter: brightness(1.07); }
-.btn-gold:active { transform: scale(0.97); }
+.btn-gold:active { transform: scale(0.96); }
 
 .btn-cobalt {
-  background: linear-gradient(135deg, #2b74ff 0%, #1f63ff 50%, #0c44c8 100%);
+  background: linear-gradient(135deg, #1fc6ff 0%, #1565ff 52%, #0738b8 100%);
   color: #ffffff;
   font-weight: 800;
-  box-shadow: 0 14px 34px -10px rgba(31, 99, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  transition: transform 0.2s, filter 0.2s;
+  box-shadow: 0 12px 28px -10px rgba(21, 101, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.18s, filter 0.2s;
 }
-.btn-cobalt:hover { filter: brightness(1.08); }
-.btn-cobalt:active { transform: scale(0.97); }
+.btn-cobalt:hover { filter: brightness(1.07); }
+.btn-cobalt:active { transform: scale(0.96); }
 
 .btn-lime {
-  background: var(--lime);
-  color: #0b1405;
+  background: linear-gradient(135deg, #27f274 0%, #0ec951 100%);
+  color: #03210d;
   font-weight: 900;
-  box-shadow: 0 14px 36px -12px color-mix(in srgb, var(--lime) 70%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.45);
-  transition: transform 0.2s, filter 0.2s;
+  box-shadow: 0 14px 32px -12px rgba(18, 227, 93, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.18s, filter 0.2s;
 }
 .btn-lime:hover { filter: brightness(1.06); }
-.btn-lime:active { transform: scale(0.97); }
+.btn-lime:active { transform: scale(0.96); }
 
 .btn-emerald {
-  background: linear-gradient(135deg, #10d9a3 0%, #04875a 100%);
+  background: linear-gradient(135deg, #16ea65 0%, #069f43 100%);
   color: #ffffff;
   font-weight: 800;
-  box-shadow: 0 12px 28px -10px rgba(16, 217, 163, 0.45);
-  transition: transform 0.2s, filter 0.2s;
+  box-shadow: 0 12px 26px -10px rgba(16, 224, 91, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.18s, filter 0.2s;
 }
 .btn-emerald:hover { filter: brightness(1.07); }
+.btn-emerald:active { transform: scale(0.96); }
 
 .btn-ghost {
   background: var(--soft);
   border: 1px solid var(--line);
   color: var(--text);
-  transition: all 0.2s;
+  backdrop-filter: blur(12px);
+  transition: all 0.18s;
 }
 .btn-ghost:hover {
-  background: color-mix(in srgb, var(--gold) 10%, transparent);
-  border-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  border-color: var(--line-strong);
 }
+.btn-ghost:active { transform: scale(0.97); }
 
 .badge-signal {
   background: color-mix(in srgb, var(--jade) 16%, transparent);
@@ -339,21 +405,25 @@ html.theme-light .btn-gold {
 }
 
 .mark-lime {
-  background: #d9f73c;
-  color: #0b1405;
+  background: linear-gradient(120deg, #14eb66, #16cfff);
+  color: #02120a;
   border-radius: 12px;
-  padding: 0.02em 0.28em 0.08em;
+  padding: 0.02em 0.32em 0.08em;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
 .coin-card-wallet {
-  background: linear-gradient(135deg, #2b4bf2 0%, #15279f 55%, #0c185e 100%);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(135deg, #1d68ff 0%, #0a42c8 55%, #051c6b 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .hero-cobalt {
-  background: linear-gradient(135deg, #1f63ff 0%, #0c44c8 60%, #082d8c 100%);
+  background:
+    radial-gradient(260px 160px at 90% 10%, rgba(22, 212, 255, 0.28), transparent 70%),
+    linear-gradient(135deg, #1665ff 0%, #0a43c8 55%, #052175 100%);
+  border-radius: 28px;
+  box-shadow: 0 22px 50px -20px rgba(10, 67, 200, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .dot-grid {
@@ -389,13 +459,12 @@ html.theme-light .btn-gold {
   animation: spin 60s linear infinite;
 }
 
-/* Motion */
 @keyframes twinkle { from { opacity: 0.55; } to { opacity: 1; } }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes ticker-rtl { from { transform: translateX(-50%); } to { transform: translateX(0); } }
 @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-@keyframes pulse-dot { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 217, 163, 0.5); } 50% { opacity: 0.65; box-shadow: 0 0 0 7px transparent; } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(18, 227, 93, 0.5); } 50% { opacity: 0.65; box-shadow: 0 0 0 7px transparent; } }
 @keyframes pulse-gold { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 50%, transparent); } 50% { opacity: 0.65; box-shadow: 0 0 0 7px transparent; } }
 @keyframes pop-in { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 @keyframes slide-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
@@ -407,8 +476,8 @@ html.theme-light .btn-gold {
 .animate-floaty-slow { animation: floaty 9s ease-in-out infinite; }
 .live-dot { animation: pulse-dot 2s ease-in-out infinite; }
 .live-gold { animation: pulse-gold 2s ease-in-out infinite; }
-.pop-in { animation: pop-in 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
-.signal-in { animation: slide-in 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+.pop-in { animation: pop-in 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+.signal-in { animation: slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
 .shine {
   background: linear-gradient(110deg, transparent 40%, rgba(255, 255, 255, 0.3) 50%, transparent 60%);
   background-size: 200% 100%;
@@ -428,15 +497,15 @@ input[type='range'] {
 }
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: var(--lime);
-  border: 3px solid var(--bg);
+  background: #ffffff;
+  border: 3px solid var(--gold);
+  box-shadow: 0 4px 12px rgba(10, 76, 232, 0.35);
   cursor: pointer;
 }
 
-/* Light/Paper contrast compatibility */
 html[data-theme='paper'] .text-white\/50,
 html[data-theme='paper'] .text-white\/45,
 html[data-theme='paper'] .text-white\/40,

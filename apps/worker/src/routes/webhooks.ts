@@ -90,8 +90,13 @@ webhookRoutes.post('/tv/:secret', async (c) => {
     return c.json({ ok: exec.ok, mode: 'AUTO', signalId: sigId, tradeId: exec.tradeId, error: exec.error });
   }
 
-  // Manual Confirm Mode: push Telegram inline card if user has linked bot
-  await notifyUserTelegram(c.env, cfg.user_id, `📡 سیگنال جدید TradingView آماده تایید در ربات/پنل وب:\n\n${formatted}`);
+  // Manual Confirm Mode: push Telegram inline card with exact 2-step confirmation flow
+  await notifyUserTelegram(
+    c.env,
+    cfg.user_id,
+    `📡 سیگنال جدید TradingView:\n\n${formatted}`,
+    [[{ text: '👈 دلارینو ترید کن برام 👉', callback_data: `manual_trade:${sigId}` }]]
+  );
   return c.json({ ok: true, mode: 'MANUAL_CONFIRM', signalId: sigId, formatted });
 });
 

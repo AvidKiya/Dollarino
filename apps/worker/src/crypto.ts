@@ -142,3 +142,55 @@ export async function sha256Hex(input: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', enc.encode(input));
   return toHex(new Uint8Array(buf));
 }
+
+export async function verifyTelegramWebAppInitData(
+  initDataRaw: string,
+  botToken: string,
+  maxAgeSeconds = 86_400
+): Promise<{
+  valid: boolean;
+  user?: { id: number; first_name?: string; last_name?: string; username?: string; language_code?: string };
+  startParam?: string;
+  error?: string;
+}> {
+  if (!initDataRaw || !botToken) return { valid: false, error: 'Missing initData or botToken' };
+  const params = new URLSearchParams(initDataRaw);
+  const hash = params.get('hash');
+  if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) {
+    return { valid: false, error: 'Missing or invalid initData hash' };
+  }
+
+  const authDate = Number(params.get('auth_date') || 0);
+  if (!Number.isFinite(authDate) || Math.floor(Date.now() / 1000) - authDate > maxAgeSeconds) {
+    return { valid: false, error: 'Telegram initData has expired' };
+  }
+
+  params.delete('hash');
+  const dataCheckString = Array.from(params.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+
+  const webAppKey = await crypto.subtle.importKey('raw', enc.encode('WebAppData'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const secretRaw = await crypto.subtle.sign('HMAC', webAppKey, enc.encode(botToken));
+  const dataKey = await crypto.subtle.importKey('raw', secretRaw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sigHex = toHex(new Uint8Array(await crypto.subtle.sign('HMAC', dataKey, enc.encode(dataCheckString))));
+
+  const expected = hash.toLowerCase();
+  if (sigHex.length !== expected.length) return { valid: false, error: 'Hash length mismatch' };
+  let diff = 0;
+  for (let i = 0; i < sigHex.length; i++) diff |= sigHex.charCodeAt(i) ^ expected.charCodeAt(i);
+  if (diff !== 0) return { valid: false, error: 'Invalid Telegram signature' };
+
+  const userJson = params.get('user');
+  if (!userJson) return { valid: false, error: 'Missing user payload in initData' };
+  const tgUser = JSON.parse(userJson) as {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+    language_code?: string;
+  };
+  return { valid: true, user: tgUser, startParam: params.get('start_param') ?? undefined };
+}
+

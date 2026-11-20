@@ -5,8 +5,10 @@ import {
   Copy,
   CreditCard,
   Crown,
+  Gift,
   ShieldCheck,
   Sparkles,
+  Users,
   Wallet,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
@@ -74,21 +76,63 @@ export function SubscriptionPage({
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState('');
+  const [giftCode, setGiftCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+  const [referral, setReferral] = useState<{
+    referralCode: string;
+    totalReferred: number;
+    rewardDaysEarned: number;
+    referrals: Array<{ username: string; created_at: string }>;
+  } | null>(null);
 
   const loadData = async () => {
-    const res = await apiFetch<{
-      entitlement: UserEntitlement;
-      plans: PlanRow[];
-      orders: SubOrder[];
-      paymentConfig: Record<string, string>;
-    }>('/api/subscriptions/me');
+    const [res, refRes] = await Promise.all([
+      apiFetch<{
+        entitlement: UserEntitlement;
+        plans: PlanRow[];
+        orders: SubOrder[];
+        paymentConfig: Record<string, string>;
+      }>('/api/subscriptions/me'),
+      apiFetch<{
+        referralCode: string;
+        totalReferred: number;
+        rewardDaysEarned: number;
+        referrals: Array<{ username: string; created_at: string }>;
+      }>('/api/subscriptions/referrals').catch(() => null),
+    ]);
     setEntitlement(res.entitlement);
     setPlans(res.plans);
     setOrders(res.orders);
     setPayCfg(res.paymentConfig);
+    if (refRes) setReferral(refRes);
     if (!selectedPlan) {
       const def = res.plans.find((p) => p.code === 'pro_monthly') || res.plans.find((p) => p.price_usd > 0) || null;
       setSelectedPlan(def);
+    }
+  };
+
+  const redeemGift = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!giftCode.trim()) return;
+    setRedeeming(true);
+    setMsg(null);
+    try {
+      const r = await apiFetch<{ ok: boolean; durationDays: number; expiresAt: string }>('/api/subscriptions/redeem-gift', {
+        method: 'POST',
+        body: JSON.stringify({ code: giftCode.trim() }),
+      });
+      setGiftCode('');
+      setMsg(
+        isFa
+          ? `🎁 کد هدیه فعال شد! ${r.durationDays} روز اشتراک به حساب شما اضافه گردید.`
+          : `🎁 Gift code redeemed! +${r.durationDays} days added to your subscription.`
+      );
+      await loadData();
+      await onRefreshDashboard();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Gift code invalid');
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -193,9 +237,9 @@ export function SubscriptionPage({
         </div>
       )}
 
-      {/* 3 Plan Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {plans.map((p) => {
+      {/* Paid & Free Plans Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {plans.filter((p) => p.price_usd > 0).map((p) => {
           let feats: string[] = [];
           try {
             feats = JSON.parse(p.features_json) as string[];
@@ -279,6 +323,88 @@ export function SubscriptionPage({
             </div>
           );
         })}
+      </div>
+
+      {/* Gift Code + Referral Invite Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <form onSubmit={redeemGift} className="panel rounded-[26px] p-5 space-y-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl btn-gold grid place-items-center shrink-0">
+              <Gift className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-sm text-main">
+                {isFa ? 'کد هدیه یا تخفیف دارید؟ 🎁' : 'Have a Gift Code? 🎁'}
+              </h3>
+              <p className="text-[11px] text-dim">
+                {isFa ? 'کد را وارد کنید تا اشتراک شما فوراً فعال شود' : 'Redeem your instant activation code'}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={giftCode}
+              onChange={(e) => setGiftCode(e.target.value.toUpperCase())}
+              placeholder="DLRXXXXXX"
+              dir="ltr"
+              className="field font-mono-num text-xs flex-1"
+            />
+            <button
+              type="submit"
+              disabled={redeeming || !giftCode.trim()}
+              className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black shrink-0"
+            >
+              {redeeming ? '...' : isFa ? 'فعالسازی' : 'Redeem'}
+            </button>
+          </div>
+        </form>
+
+        <div className="panel rounded-[26px] p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl btn-cobalt grid place-items-center shrink-0">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-sm text-main">
+                  {isFa ? 'دعوت از دوستان = اشتراک رایگان 🤝' : 'Invite Friends = Free Days 🤝'}
+                </h3>
+                <p className="text-[11px] text-dim">
+                  {isFa
+                    ? `${referral?.totalReferred ?? 0} دعوت موفق · ${referral?.rewardDaysEarned ?? 0} روز هدیه`
+                    : `${referral?.totalReferred ?? 0} invited · ${referral?.rewardDaysEarned ?? 0} bonus days`}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              readOnly
+              dir="ltr"
+              value={
+                typeof window !== 'undefined' && referral?.referralCode
+                  ? `${window.location.origin}/?ref=${referral.referralCode}`
+                  : 'Loading...'
+              }
+              className="field font-mono-num text-xs flex-1"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                copyText(
+                  typeof window !== 'undefined' && referral?.referralCode
+                    ? `${window.location.origin}/?ref=${referral.referralCode}`
+                    : '',
+                  'ref'
+                )
+              }
+              className="btn-cobalt px-4 py-2.5 rounded-xl text-xs font-black shrink-0 inline-flex items-center gap-1"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>{copied === 'ref' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'کپی لینک' : 'Copy'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Checkout Panel */}

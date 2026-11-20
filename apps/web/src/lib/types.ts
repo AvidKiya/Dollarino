@@ -127,6 +127,7 @@ export interface DashboardPayload {
     block_weekends?: number;
     macro_blackout?: number;
     use_signal_leverage?: number;
+    notifications_enabled?: number;
   };
   balance: { free: string; used: string; total: string; currency: string };
   activeExchange: { provider: string; label: string };

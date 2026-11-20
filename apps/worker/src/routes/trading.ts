@@ -350,7 +350,7 @@ tradingRoutes.post('/wallet/reset', async (c) => {
   return c.json({ ok: true, balanceAfter: targetBal });
 });
 
-tradingRoutes.patch('/config', async (c) => {
+tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<Record<string, unknown>>();
 

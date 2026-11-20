@@ -1,5 +1,5 @@
-export type ReplyKeyboardButton = { text: string };
-export type InlineKeyboardButton = { text: string; callback_data?: string; url?: string };
+export type ReplyKeyboardButton = { text: string; web_app?: { url: string } };
+export type InlineKeyboardButton = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
 
 export class TelegramBotClient {
   constructor(private token: string) {}

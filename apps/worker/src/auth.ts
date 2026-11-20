@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, Next } from 'hono';
 import type { AuthUser, Env } from './env.js';
-import { hashPassword, randomId, signJwt, verifyJwt, verifyPassword } from './crypto.js';
+import { hashPassword, randomId, signJwt, verifyJwt, verifyPassword, verifyTelegramWebAppInitData } from './crypto.js';
 
 export type AppVariables = {
   user: AuthUser;
@@ -68,8 +68,8 @@ export async function ensureUserDefaults(db: D1Database, userId: string) {
   const webhookSecret = randomId('tv');
   await db.prepare(
     `INSERT OR IGNORE INTO bot_configs
-     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_scan_top, scan_scope, allow_auto_flip, webhook_secret)
-     VALUES (?, 'dollarino_v01', 5, 5, 6, 40, 30, 30, 1, 'ALL_MARKET', 1, ?)`
+     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, webhook_secret)
+     VALUES (?, 'dollarino_v01', 10, 10, 6, 50, 25, 25, 1, 1, 1, 'ALL_MARKET', 1, ?)`
   ).bind(userId, webhookSecret).run();
 
   await db.prepare(
@@ -82,10 +82,13 @@ export async function ensureUserDefaults(db: D1Database, userId: string) {
 export const authRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 authRoutes.post('/register', async (c) => {
-  const body = await c.req.json<{ email?: string; username?: string; password?: string }>().catch(() => ({} as { email?: string; username?: string; password?: string }));
+  const body = await c.req.json<{ email?: string; username?: string; password?: string; referralCode?: string }>().catch(
+    () => ({} as { email?: string; username?: string; password?: string; referralCode?: string })
+  );
   const email = (body.email ?? '').trim().toLowerCase();
   const username = (body.username ?? '').trim() || email.split('@')[0] || 'trader';
   const password = body.password ?? '';
+  const referralCode = (body.referralCode ?? '').trim().toUpperCase();
 
   if (!email.includes('@') || password.length < 6) {
     return c.json({ error: 'Valid email and password (min 6 chars) are required' }, 400);
@@ -105,6 +108,17 @@ authRoutes.post('/register', async (c) => {
   ).bind(id, email, username, passwordHash, role).run();
 
   await ensureUserDefaults(c.env.DB, id);
+
+  if (referralCode) {
+    const referrerId = await c.env.DB.prepare(
+      `SELECT id FROM users WHERE ('DLR-' || UPPER(SUBSTR(id, -6))) = ? OR UPPER(SUBSTR(id, 1, 10)) = ? LIMIT 1`
+    ).bind(referralCode, referralCode).first<{ id: string }>().catch(() => null);
+    if (referrerId?.id && referrerId.id !== id) {
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REWARDED')`
+      ).bind(randomId('ref'), referrerId.id, id, referralCode).run();
+    }
+  }
 
   const isHttps = isHttpsRequest(c);
   const token = await signJwt({ sub: id, email, role }, c.env.SESSION_JWT_SECRET);
@@ -282,5 +296,74 @@ authRoutes.post('/upgrade-demo', requireAuth, async (c) => {
   return c.json({
     token,
     user: { id: u.id, email, username, role: u.role, telegram_id: u.telegramId },
+  });
+});
+
+// Telegram Mini App cryptographic initData authentication (HMAC-SHA256)
+authRoutes.post('/telegram-webapp', async (c) => {
+  const body = await c.req.json<{ initData?: string }>().catch(() => ({} as { initData?: string }));
+  const initData = (body.initData ?? '').trim();
+  const botToken = c.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) {
+    return c.json({ error: 'TELEGRAM_BOT_TOKEN not configured on server' }, 503);
+  }
+  const verified = await verifyTelegramWebAppInitData(initData, botToken);
+  if (!verified.valid || !verified.user) {
+    return c.json({ error: verified.error || 'Invalid Telegram initData signature' }, 401);
+  }
+
+  const tgId = String(verified.user.id);
+  const ownerId = c.env.OWNER_TELEGRAM_ID || '944021185';
+  let row = await c.env.DB.prepare(
+    `SELECT id, email, username, role, is_blocked, telegram_id FROM users WHERE telegram_id = ?`
+  ).bind(tgId).first<{
+    id: string;
+    email: string;
+    username: string;
+    role: string;
+    is_blocked: number;
+    telegram_id: string | null;
+  }>();
+
+  if (!row) {
+    const id = randomId('usr');
+    const role = tgId === ownerId ? 'owner' : 'user';
+    const username = verified.user.username || verified.user.first_name || `tg_${tgId}`;
+    const email = `tg_${tgId}@telegram.dollarino.local`;
+    const pwd = await hashPassword(randomId('tg_pwd'));
+
+    await c.env.DB.prepare(
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, email, username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null).run();
+
+    await ensureUserDefaults(c.env.DB, id);
+    row = { id, email, username, role, is_blocked: 0, telegram_id: tgId };
+  }
+
+  if (row.is_blocked) {
+    return c.json({ error: 'Account is suspended by admin' }, 403);
+  }
+
+  await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
+  const isHttps = isHttpsRequest(c);
+  const token = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', token, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  return c.json({
+    token,
+    user: {
+      id: row.id,
+      email: row.email,
+      username: row.username,
+      role: row.role,
+      telegram_id: row.telegram_id,
+    },
   });
 });

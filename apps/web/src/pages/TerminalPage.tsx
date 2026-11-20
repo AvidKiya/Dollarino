@@ -4,6 +4,8 @@ import {
   ArrowUpRight,
   BrainCircuit,
   CandlestickChart as CandleIcon,
+  Edit3,
+  Eye,
   History,
   Layers,
   Send,
@@ -14,11 +16,12 @@ import {
 } from 'lucide-react';
 import type { Candle, Timeframe } from '@dollarino/core';
 import { CandlestickChart, type ChartLevels, type ChartOverlays, type KbosChartOverlays } from '../components/CandlestickChart';
-import { CoinIcon } from '../components/CoinIcon';
+import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
-import type { DashboardPayload } from '../lib/types';
+import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
+import type { DashboardPayload, OpenTradeRow } from '../lib/types';
 
 interface OverviewResponse {
   market24h: {
@@ -67,6 +70,8 @@ function fmtPx(v?: number | string): string {
 
 export function TerminalPage({
   lang,
+  uiMode = 'pro',
+  onToggleUiMode,
   symbol,
   setSymbol,
   data,
@@ -74,6 +79,8 @@ export function TerminalPage({
   onRefresh,
 }: {
   lang: Lang;
+  uiMode?: 'simple' | 'pro';
+  onToggleUiMode?: (m: 'simple' | 'pro') => void;
   symbol: string;
   setSymbol: (sym: string) => void;
   data: DashboardPayload;
@@ -84,6 +91,9 @@ export function TerminalPage({
   const [tf, setTf] = useState<Timeframe>('15m');
   const [rightIntel, setRightIntel] = useState<'ai' | 'book'>('ai');
   const [snap, setSnap] = useState<OverviewResponse | null>(null);
+  const [showEma, setShowEma] = useState(true);
+  const [showKbos, setShowKbos] = useState(true);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingTradeConfirmation | null>(null);
 
   // Order ticket state
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
@@ -98,7 +108,11 @@ export function TerminalPage({
   const [submitting, setSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState('');
 
-  // Chart AI state
+  // Inline Edit TP/SL modal
+  const [editPos, setEditPos] = useState<OpenTradeRow | null>(null);
+  const [editForm, setEditForm] = useState({ stopLoss: '', tp1: '', tp2: '', tp3: '' });
+
+  // Chart AI state + persistent saved chat loader
   const [prompt, setPrompt] = useState(
     isFa
       ? 'ساختار چارت، حمایت و مقاومت‌ها، و ستاپ ورود همراه با حد ضرر و ۳ تارگت را مشخص کن.'
@@ -156,10 +170,35 @@ export function TerminalPage({
       setChatId(res.chatId);
       setAiAnalysis(res.analysis);
       setMessages(res.messages);
+      await loadMarket(false);
     } catch (e) {
       setOrderMsg(e instanceof Error ? e.message : 'Chart AI error');
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const loadSavedChat = async (id: string) => {
+    try {
+      const d = await apiFetch<{
+        chat: { id: string; symbol: string; timeframe: Timeframe; messages_json: string; annotations_json: string };
+      }>(`/api/chart-ai/chats/${id}`);
+      setChatId(d.chat.id);
+      if (d.chat.symbol) setSymbol(d.chat.symbol);
+      if (d.chat.timeframe) setTf(d.chat.timeframe);
+      try {
+        setMessages(JSON.parse(d.chat.messages_json || '[]') as Array<{ role: string; content: string }>);
+      } catch {
+        setMessages([]);
+      }
+      try {
+        const ann = JSON.parse(d.chat.annotations_json || 'null') as ChartAIResult | null;
+        if (ann) setAiAnalysis(ann);
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      /* ignore */
     }
   };
 
@@ -174,8 +213,26 @@ export function TerminalPage({
     setOrderMsg(isFa ? 'سطوح پیشنهادی چارت AI به فرم سفارش منتقل شد ✅' : 'AI levels copied to order ticket ✅');
   };
 
-  const placeOrder = async (e: React.FormEvent) => {
+  const prepareOrderConfirmation = (e: React.FormEvent) => {
     e.preventDefault();
+    tgHaptic('medium');
+    setOrderMsg('');
+    setPendingConfirm({
+      symbol,
+      direction: side,
+      orderType,
+      entryPrice: orderType === 'LIMIT' ? limitPrice : snap?.market24h.lastPrice,
+      leverage: lev,
+      amountUsd: marginEst,
+      stopLoss,
+      tp1,
+      tp2: tp2 || undefined,
+      tp3: tp3 || undefined,
+      tradingMode: data.config.trading_mode,
+    });
+  };
+
+  const placeOrder = async () => {
     setSubmitting(true);
     setOrderMsg('');
     try {
@@ -194,6 +251,9 @@ export function TerminalPage({
           tp3: tp3 || undefined,
         }),
       });
+      setPendingConfirm(null);
+      if (res.ok) tgNotifyHaptic('success');
+      else tgNotifyHaptic('error');
       setOrderMsg(
         res.ok
           ? res.pendingOrderId
@@ -203,6 +263,8 @@ export function TerminalPage({
       );
       await onRefresh();
     } catch (err) {
+      setPendingConfirm(null);
+      tgNotifyHaptic('error');
       setOrderMsg(err instanceof Error ? err.message : 'Order failed');
     } finally {
       setSubmitting(false);
@@ -214,15 +276,36 @@ export function TerminalPage({
     await onRefresh();
   };
 
+  const cancelPending = async (id: string) => {
+    await apiFetch(`/api/trading/pending/${id}`, { method: 'DELETE' });
+    await onRefresh();
+  };
+
+  const saveEditTpSl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editPos) return;
+    await apiFetch(`/api/trading/positions/${editPos.id}/tpsl`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        stopLoss: editForm.stopLoss,
+        tp1: editForm.tp1,
+        tp2: editForm.tp2 || undefined,
+        tp3: editForm.tp3 || undefined,
+      }),
+    });
+    setEditPos(null);
+    await onRefresh();
+  };
+
   const lastPx = Number(snap?.market24h.lastPrice || 0);
   const chg24 = Number(snap?.market24h.changePct24h || 0);
   const freeCash = Number(data.balance.free || 0);
   const marginEst = (freeCash * Number(data.config.margin_pct || 5)) / 100;
 
   const chartOverlays: ChartOverlays | undefined = useMemo(() => {
-    if (!snap?.indicators) return undefined;
+    if (!showEma || !snap?.indicators) return undefined;
     return snap.indicators;
-  }, [snap?.indicators]);
+  }, [snap?.indicators, showEma]);
 
   const chartLevels: ChartLevels = useMemo(() => {
     const pos = data.openTrades.find((p) => p.symbol === symbol);
@@ -246,9 +329,146 @@ export function TerminalPage({
     };
   }, [aiAnalysis, data.openTrades, symbol]);
 
+  if (uiMode === 'simple') {
+    return (
+      <div className="space-y-5">
+        <div className="panel rounded-[28px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <SymbolPicker
+              lang={lang}
+              value={symbol}
+              markets={markets}
+              provider={data.activeExchange?.provider || 'paper'}
+              onChange={(sym) => setSymbol(sym)}
+            />
+            <div>
+              <p dir="ltr" className="font-display font-bold text-2xl tabular text-main">${fmtPx(lastPx)}</p>
+              <p dir="ltr" className={`text-xs font-bold tabular ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
+                {chg24 >= 0 ? '▲' : '▼'} {Math.abs(chg24).toFixed(2)}% {isFa ? 'تغییر ۲۴ ساعته' : '24h change'}
+              </p>
+            </div>
+          </div>
+          {onToggleUiMode && (
+            <button
+              type="button"
+              onClick={() => onToggleUiMode('pro')}
+              className="btn-ghost px-4 py-2 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5"
+            >
+              <CandleIcon className="w-4 h-4" style={{ color: 'var(--gold-soft)' }} />
+              <span>{isFa ? 'رفتن به چارت حرفه‌ای ⚡' : 'Pro Chart Mode ⚡'}</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4 items-start">
+          <div className="panel rounded-[28px] p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-black text-main">
+                {isFa ? `نمودار زنده ${symbol.replace('USDT', '')}` : `${symbol.replace('USDT', '')} Live Price`}
+              </p>
+              <div className="flex gap-1">
+                {(['15m', '1h', '4h', '1d'] as Timeframe[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTf(t)}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold ${tf === t ? 'ios-pill-active' : 'surface-soft text-dim'}`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <CandlestickChart candles={snap?.candles ?? []} height={330} />
+          </div>
+
+          <form onSubmit={prepareOrderConfirmation} className="panel rounded-[28px] p-5 sm:p-6 space-y-4">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wider" style={{ color: 'var(--gold-soft)' }}>
+                {isFa ? 'معامله آسان با محافظت خودکار' : 'EASY PROTECTED TRADE'}
+              </p>
+              <h3 className="font-display font-bold text-xl text-main mt-0.5">
+                {isFa ? 'انتخاب جهت و ثبت معامله' : 'Pick Direction & Confirm'}
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              {(['LONG', 'SHORT'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    setSide(s);
+                    if (lastPx > 0) applyAutoLevels(lastPx, s);
+                  }}
+                  className={`py-4 px-3 rounded-2xl font-black text-xs flex flex-col items-center gap-1.5 border-2 transition ${
+                    side === s
+                      ? s === 'LONG'
+                        ? 'bg-[#12E35D]/15 border-[#12E35D] text-main'
+                        : 'bg-rose-500/15 border-rose-500 text-main'
+                      : 'surface-soft border-transparent text-dim'
+                  }`}
+                >
+                  {s === 'LONG' ? <ArrowUpRight className="w-6 h-6 text-jade" /> : <ArrowDownRight className="w-6 h-6 text-loss" />}
+                  <span>{s === 'LONG' ? (isFa ? 'بالا میره (خرید 📈)' : 'Going UP 📈') : isFa ? 'پایین میاد (فروش 📉)' : 'Going DOWN 📉'}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-sub">{isFa ? 'میزان سرعت / ریسک:' : 'Comfort Level:'}</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { v: 3, l: isFa ? 'امن 🛡️ (3×)' : 'Safe 🛡️ 3×' },
+                  { v: 5, l: isFa ? 'متعادل ⚖️ (5×)' : 'Normal ⚖️ 5×' },
+                  { v: 10, l: isFa ? 'سریع ⚡ (10×)' : 'Fast ⚡ 10×' },
+                ].map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setLev(opt.v)}
+                    className={`py-2.5 px-2 rounded-2xl text-[11px] font-black transition ${lev === opt.v ? 'ios-pill-active' : 'surface-soft text-dim'}`}
+                  >
+                    {opt.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="surface-soft rounded-2xl p-3.5 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-dim">{isFa ? 'سپر توقف ضرر خودکار:' : 'Auto Safety Stop:'}</span>
+                <span dir="ltr" className="font-num font-bold text-loss">${stopLoss || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-dim">{isFa ? 'تارگت سود خودکار:' : 'Auto Profit Target:'}</span>
+                <span dir="ltr" className="font-num font-bold text-jade">${tp1 || '—'}</span>
+              </div>
+            </div>
+
+            {orderMsg && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{orderMsg}</div>}
+
+            <button type="submit" disabled={submitting} className="btn-cobalt w-full py-4 rounded-2xl text-sm font-black">
+              👈 دلارینو ترید کن برام 👉
+            </button>
+          </form>
+        </div>
+
+        <ConfirmTradeSheet
+          open={Boolean(pendingConfirm)}
+          lang={lang}
+          order={pendingConfirm}
+          busy={submitting}
+          onConfirm={placeOrder}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {/* Header Bar (timetrade.live PRO TERMINAL style) */}
+      {/* Header Bar */}
       <div className="panel rounded-[24px] px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <SymbolPicker
@@ -288,9 +508,7 @@ export function TerminalPage({
           </div>
           <div className="hidden sm:block">
             <span className="text-dim block text-[10px]">{isFa ? 'فاندینگ' : 'Funding'}</span>
-            <span dir="ltr" className="font-num font-bold text-main">
-              {snap?.market24h.fundingRate ?? '0.008%'}
-            </span>
+            <span dir="ltr" className="font-num font-bold text-main">{snap?.market24h.fundingRate ?? '0.008%'}</span>
           </div>
           <div className="flex gap-1">
             {(['1m', '5m', '15m', '1h', '4h'] as Timeframe[]).map((x) => (
@@ -298,9 +516,7 @@ export function TerminalPage({
                 key={x}
                 type="button"
                 onClick={() => setTf(x)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
-                  tf === x ? 'btn-gold' : 'btn-ghost text-dim'
-                }`}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${tf === x ? 'btn-gold' : 'btn-ghost text-dim'}`}
               >
                 {x}
               </button>
@@ -309,31 +525,47 @@ export function TerminalPage({
         </div>
       </div>
 
-      {/* Main 3-Column TimeTrade Pro Terminal Grid */}
+      {/* Main 3-Column Pro Terminal Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* Left/Center Chart (6 cols on xl) */}
+        {/* Chart (6 cols) */}
         <div className="xl:col-span-6 panel rounded-[26px] p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <CandleIcon className="w-4 h-4" style={{ color: 'var(--gold)' }} />
               <span className="font-bold text-main">{symbol} · Perpetual · {tf}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => void askChartAI()}
-              disabled={aiLoading}
-              className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1.5"
-            >
-              <BrainCircuit className="w-3.5 h-3.5" />
-              <span>{aiLoading ? '...' : isFa ? 'تحلیل فوری AI روی چارت' : 'AI Analyze Chart'}</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowEma((v) => !v)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showEma ? 'badge-signal' : 'btn-ghost text-dim'}`}
+              >
+                <Eye className="w-3 h-3" /> EMA
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowKbos((v) => !v)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showKbos ? 'badge-signal' : 'btn-ghost text-dim'}`}
+              >
+                <Eye className="w-3 h-3" /> KBOS
+              </button>
+              <button
+                type="button"
+                onClick={() => void askChartAI()}
+                disabled={aiLoading}
+                className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1.5"
+              >
+                <BrainCircuit className="w-3.5 h-3.5" />
+                <span>{aiLoading ? '...' : isFa ? 'تحلیل AI' : 'AI Analyze'}</span>
+              </button>
+            </div>
           </div>
 
           {snap?.candles?.length ? (
             <CandlestickChart
               candles={snap.candles}
               overlays={chartOverlays}
-              kbosOverlays={snap.kbosOverlays}
+              kbosOverlays={showKbos ? snap.kbosOverlays : undefined}
               levels={chartLevels}
               height={430}
             />
@@ -344,7 +576,7 @@ export function TerminalPage({
           )}
         </div>
 
-        {/* Middle Column: Switchable Chart AI vs Order Book (3 cols on xl) */}
+        {/* Middle Column: Chart AI + Saved Threads vs Order Book (3 cols) */}
         <div className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3 text-xs">
           <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-black/25 border hairline">
             <button
@@ -418,7 +650,7 @@ export function TerminalPage({
                 ))}
               </div>
 
-              <div className="flex-1 min-h-[120px] max-h-[200px] overflow-y-auto space-y-2">
+              <div className="flex-1 min-h-[110px] max-h-[180px] overflow-y-auto space-y-2">
                 {messages.map((m, i) => (
                   <div
                     key={i}
@@ -430,18 +662,32 @@ export function TerminalPage({
                   </div>
                 ))}
                 {messages.length === 0 && !aiAnalysis && (
-                  <p className="text-[11px] text-dim text-center py-6">
+                  <p className="text-[11px] text-dim text-center py-5">
                     {isFa
-                      ? 'سوالی درباره این چارت بپرسید یا دکمه تحلیل فوری را بزنید.'
+                      ? 'سوالی درباره این چارت بپرسید یا دکمه تحلیل AI را بزنید.'
                       : 'Ask any question about this chart to draw levels & thesis.'}
                   </p>
                 )}
               </div>
 
               {chatHistory.length > 0 && (
-                <div className="text-[10px] text-dim flex items-center gap-1.5 truncate">
-                  <History className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{chatHistory[0]?.title}</span>
+                <div className="space-y-1 border-t hairline pt-2">
+                  <div className="text-[10px] text-dim font-bold flex items-center gap-1">
+                    <History className="w-3 h-3" />
+                    <span>{isFa ? 'تحلیل‌های ذخیره‌شده:' : 'Saved Analyses:'}</span>
+                  </div>
+                  <div className="flex gap-1 overflow-x-auto no-scrollbar">
+                    {chatHistory.slice(0, 4).map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => void loadSavedChat(c.id)}
+                        className="px-2 py-1 rounded-lg surface-soft text-[10px] font-bold shrink-0 hover:border-[var(--gold)]"
+                      >
+                        {c.symbol} · {c.timeframe}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -488,8 +734,8 @@ export function TerminalPage({
           )}
         </div>
 
-        {/* Right Column: Unified Order Ticket (3 cols on xl) */}
-        <form onSubmit={placeOrder} className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3.5 text-xs">
+        {/* Order Ticket (3 cols) */}
+        <form onSubmit={prepareOrderConfirmation} className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="font-display font-bold text-base text-main">{isFa ? 'ثبت معامله' : 'Order Ticket'}</span>
             <span className="text-[10px] font-bold text-dim">{data.config.trading_mode}</span>
@@ -607,7 +853,7 @@ export function TerminalPage({
             }`}
           >
             <Zap className="w-4 h-4" />
-            <span>{submitting ? '...' : `${isFa ? 'ثبت سفارش' : 'Place Order'} · ${symbol}`}</span>
+            <span>{submitting ? '...' : '👈 دلارینو ترید کن برام 👉'}</span>
           </button>
 
           <p className="text-[10px] text-dim flex items-center gap-1.5">
@@ -617,7 +863,7 @@ export function TerminalPage({
         </form>
       </div>
 
-      {/* Bottom: Active Positions & Pending Orders */}
+      {/* Bottom: Active Positions (with Edit TP/SL) & Pending Orders */}
       <div className="panel rounded-[26px] p-4 sm:p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-display font-bold text-base text-main">
@@ -640,11 +886,7 @@ export function TerminalPage({
               const u = Number(p.unrealized_pnl || 0);
               return (
                 <div key={p.id} className="rounded-2xl bg-[var(--soft)] border hairline px-4 py-3 flex flex-wrap items-center gap-3 text-xs">
-                  <span
-                    className={`px-2 py-0.5 rounded-md font-black text-[10px] ${
-                      p.direction === 'LONG' ? 'bg-jade/15 text-jade' : 'bg-rose-500/15 text-loss'
-                    }`}
-                  >
+                  <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${p.direction === 'LONG' ? 'bg-jade/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
                     {p.direction} {p.leverage}×
                   </span>
                   <button type="button" onClick={() => setSymbol(p.symbol)} className="font-bold text-main hover:underline">
@@ -661,6 +903,16 @@ export function TerminalPage({
                   </span>
                   <button
                     type="button"
+                    onClick={() => {
+                      setEditPos(p);
+                      setEditForm({ stopLoss: p.current_stop_loss || '', tp1: p.tp1 || '', tp2: p.tp2 || '', tp3: p.tp3 || '' });
+                    }}
+                    className="btn-ghost px-2.5 py-1.5 rounded-xl font-bold inline-flex items-center gap-1"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" /> TP/SL
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void closePosition(p.id)}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white font-black transition"
                   >
@@ -672,7 +924,47 @@ export function TerminalPage({
             })}
           </div>
         )}
+
+        {data.pendingOrders && data.pendingOrders.length > 0 && (
+          <div className="pt-2 border-t hairline space-y-1.5">
+            {data.pendingOrders.map((po) => (
+              <div key={po.id} className="surface-soft rounded-xl px-3.5 py-2 flex items-center justify-between text-xs">
+                <span><strong>{po.symbol}</strong> · {po.direction} Limit @ ${po.limit_price}</span>
+                <button type="button" onClick={() => void cancelPending(po.id)} className="text-loss font-bold hover:underline">
+                  {isFa ? 'لغو' : 'Cancel'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {editPos && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => setEditPos(null)}>
+          <form onSubmit={saveEditTpSl} className="pop-in panel !bg-[var(--panel)] rounded-[26px] w-full max-w-sm p-6 space-y-3 text-xs" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-display font-bold text-base text-main">{isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}</h3>
+              <button type="button" onClick={() => setEditPos(null)}><X className="w-4 h-4" /></button>
+            </div>
+            <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} placeholder="Stop Loss" className="field font-num" required />
+            <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} placeholder="TP1" className="field font-num" required />
+            <div className="grid grid-cols-2 gap-2">
+              <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} placeholder="TP2" className="field font-num" />
+              <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} placeholder="TP3" className="field font-num" />
+            </div>
+            <button type="submit" className="btn-gold w-full py-3 rounded-xl font-black">{isFa ? 'ذخیره TP/SL' : 'Save TP/SL'}</button>
+          </form>
+        </div>
+      )}
+
+      <ConfirmTradeSheet
+        open={Boolean(pendingConfirm)}
+        lang={lang}
+        order={pendingConfirm}
+        busy={submitting}
+        onConfirm={placeOrder}
+        onCancel={() => setPendingConfirm(null)}
+      />
     </div>
   );
 }

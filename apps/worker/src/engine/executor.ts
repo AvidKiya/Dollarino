@@ -125,7 +125,12 @@ export async function logAudit(
   ).run();
 }
 
-export async function notifyUserTelegram(env: Env, userId: string, text: string) {
+export async function notifyUserTelegram(
+  env: Env,
+  userId: string,
+  text: string,
+  inlineKeyboard?: Array<Array<{ text: string; callback_data?: string; url?: string; web_app?: { url: string } }>>
+) {
   try {
     const user = await env.DB.prepare('SELECT telegram_id FROM users WHERE id = ?')
       .bind(userId).first<{ telegram_id: string | null }>();
@@ -148,7 +153,7 @@ export async function notifyUserTelegram(env: Env, userId: string, text: string)
     if (!token) return;
 
     const client = new TelegramBotClient(token);
-    await client.sendMessage(user.telegram_id, text);
+    await client.sendMessage(user.telegram_id, text, inlineKeyboard ? { inlineKeyboard } : undefined);
   } catch {
     // Non-fatal notification failure
   }

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Download, Layers, Sparkles, Target, TrendingUp, Trophy, WandSparkles } from 'lucide-react';
+import { Download, Layers, Sparkles, Target, TrendingUp, WandSparkles } from 'lucide-react';
 import type { Lang } from '../lib/i18n';
 import type { DashboardPayload } from '../lib/types';
+import { DollarinoBrandMark } from '../components/BrandGraphics';
 
 const THEMES = [
   { id: 'gold', labelFa: 'طلایی لوکس', labelEn: 'Obsidian Gold', from: '#3b2a08', to: '#11130a', accent: '#e8c15a', text: '#f5e8bd' },
@@ -95,6 +96,19 @@ export function WeeklyCardPage({
 
       const ink = light ? '#101827' : '#f5f2e8';
       const muted = light ? 'rgba(16,24,39,0.55)' : 'rgba(245,242,232,0.55)';
+      // Draw real Dollarino logo on top-right
+      try {
+        const logoImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const im = new Image();
+          im.crossOrigin = 'anonymous';
+          im.onload = () => resolve(im);
+          im.onerror = reject;
+          im.src = '/logo.png';
+        });
+        ctx.drawImage(logoImg, W - 190, 74, 110, 110);
+      } catch {
+        /* ignore */
+      }
       ctx.textAlign = 'left';
       ctx.fillStyle = theme.accent;
       ctx.font = '800 26px Manrope, sans-serif';
@@ -239,7 +253,7 @@ export function WeeklyCardPage({
             </span>
             <div className="relative flex items-center justify-between">
               <span className="text-[9px] font-black tracking-[0.2em]" style={{ color: theme.accent }}>DOLLARINO · WEEKLY</span>
-              <Trophy className="w-5 h-5" style={{ color: theme.accent }} />
+              <DollarinoBrandMark size={38} glow />
             </div>
             <div className="relative mt-6">
               <p className="text-xs opacity-60 font-semibold">{name || 'Trader'}</p>

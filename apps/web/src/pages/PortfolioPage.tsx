@@ -7,6 +7,7 @@ import {
   Download,
   PiggyBank,
   RefreshCw,
+  RotateCcw,
   Search,
   Trophy,
   X,
@@ -27,6 +28,15 @@ interface AuditLog {
   created_at: string;
 }
 
+interface WalletLedgerEntry {
+  id: string;
+  event_type: string;
+  amount_usd: number;
+  balance_after: number;
+  note: string | null;
+  created_at: string;
+}
+
 export function PortfolioPage({
   lang,
   data,
@@ -40,8 +50,10 @@ export function PortfolioPage({
 }) {
   const isFa = lang === 'fa';
   const [range, setRange] = useState<'1D' | '1W' | '1M' | 'ALL'>('1W');
-  const [ledgerTab, setLedgerTab] = useState<'open' | 'closed' | 'logs'>('open');
+  const [ledgerTab, setLedgerTab] = useState<'open' | 'closed' | 'wallet' | 'logs'>('open');
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [walletLedger, setWalletLedger] = useState<WalletLedgerEntry[]>([]);
+  const [logCategory, setLogCategory] = useState<string>('ALL');
   const [logQ, setLogQ] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -49,6 +61,10 @@ export function PortfolioPage({
     if (ledgerTab === 'logs') {
       void apiFetch<{ logs: AuditLog[] }>('/api/trading/logs')
         .then((r) => setLogs(r.logs))
+        .catch(() => {});
+    } else if (ledgerTab === 'wallet') {
+      void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
+        .then((r) => setWalletLedger(r.ledger))
         .catch(() => {});
     }
   }, [ledgerTab]);
@@ -90,6 +106,17 @@ export function PortfolioPage({
     await onRefresh();
   };
 
+  const resetDemo = async () => {
+    await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
+    setNotice(isFa ? 'حساب دمو به $۱۰,۰۰۰ بازنشانی شد ✅' : 'Paper balance reset to $10,000 ✅');
+    await onRefresh();
+    if (ledgerTab === 'wallet') {
+      void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
+        .then((r) => setWalletLedger(r.ledger))
+        .catch(() => {});
+    }
+  };
+
   const exportCsv = () => {
     const rows = [
       ['Type', 'Symbol', 'Direction', 'Leverage', 'Entry', 'Exit/Mark', 'PnL USD'],
@@ -108,25 +135,33 @@ export function PortfolioPage({
 
   const filteredLogs = useMemo(() => {
     const q = logQ.trim().toLowerCase();
-    if (!q) return logs;
-    return logs.filter((l) => l.message.toLowerCase().includes(q) || (l.symbol ?? '').toLowerCase().includes(q) || l.category.toLowerCase().includes(q));
-  }, [logs, logQ]);
+    return logs.filter((l) => {
+      if (logCategory !== 'ALL' && l.category.toUpperCase() !== logCategory) return false;
+      if (!q) return true;
+      return l.message.toLowerCase().includes(q) || (l.symbol ?? '').toLowerCase().includes(q) || l.category.toLowerCase().includes(q);
+    });
+  }, [logs, logQ, logCategory]);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center gap-2" style={{ color: 'var(--gold)' }}>
             <span className="live-gold h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold)' }} />
-            <span>PORTFOLIO & AUDIT LOGS</span>
+            <span>PORTFOLIO · WALLET LEDGER · AUDIT LOGS</span>
           </p>
           <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-            {isFa ? 'پورتفوی، تاریخچه و گزارش ربات' : 'Portfolio & Trading Logs'}
+            {isFa ? 'پورتفوی، دفتر تراکنش و گزارش ربات' : 'Portfolio, Ledger & Trading Logs'}
           </h2>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {data.config.trading_mode === 'PAPER' && (
+            <button type="button" onClick={() => void resetDemo()} className="btn-ghost inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold">
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{isFa ? 'ریست دمو' : 'Reset Demo'}</span>
+            </button>
+          )}
           <button type="button" onClick={exportCsv} className="btn-ghost inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold">
             <Download className="w-3.5 h-3.5" style={{ color: 'var(--gold)' }} />
             <span>{isFa ? 'خروجی CSV' : 'Export CSV'}</span>
@@ -146,7 +181,6 @@ export function PortfolioPage({
 
       {notice && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{notice}</div>}
 
-      {/* 4 KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { icon: Briefcase, l: isFa ? 'کل دارایی' : 'Total Equity', v: `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`, c: 'text-goldsoft' },
@@ -165,7 +199,6 @@ export function PortfolioPage({
         })}
       </div>
 
-      {/* Allocation Donut + Equity Curve */}
       <div className="grid lg:grid-cols-[310px_1fr] gap-4">
         <div className="panel rounded-[26px] p-5 flex flex-col items-center">
           <h3 className="font-display font-bold text-lg text-main self-start mb-4">{isFa ? 'توزیع سرمایه' : 'Allocation'}</h3>
@@ -206,20 +239,21 @@ export function PortfolioPage({
         </div>
       </div>
 
-      {/* Unified Open / Closed / Logs Ledger */}
+      {/* Unified Open / Closed / Wallet Ledger / Activity Logs */}
       <div className="panel rounded-[26px] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex p-1 surface-soft rounded-xl">
+          <div className="inline-flex p-1 surface-soft rounded-xl overflow-x-auto no-scrollbar">
             {[
               { id: 'open' as const, l: isFa ? `باز (${data.openTrades.length})` : `Open (${data.openTrades.length})` },
               { id: 'closed' as const, l: isFa ? `بسته‌شده (${data.closedTrades.length})` : `Closed (${data.closedTrades.length})` },
-              { id: 'logs' as const, l: isFa ? 'گزارش زنده ربات' : 'Bot Activity Logs' },
+              { id: 'wallet' as const, l: isFa ? 'دفتر کیف پول' : 'Wallet Ledger' },
+              { id: 'logs' as const, l: isFa ? 'گزارش زنده ربات' : 'Activity Logs' },
             ].map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setLedgerTab(t.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition whitespace-nowrap ${
                   ledgerTab === t.id ? 'btn-gold' : 'text-dim hover:text-main'
                 }`}
               >
@@ -306,8 +340,43 @@ export function PortfolioPage({
           )
         )}
 
+        {ledgerTab === 'wallet' && (
+          walletLedger.length === 0 ? (
+            <div className="py-10 text-center text-xs text-dim">{isFa ? 'تراکنش مالی ثبت نشده است.' : 'No wallet transactions yet.'}</div>
+          ) : (
+            <div className="space-y-2 max-h-[400px] overflow-y-auto text-xs">
+              {walletLedger.map((w) => (
+                <div key={w.id} className="surface-soft rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="font-bold text-main">{w.event_type}</span>
+                    {w.note && <p className="text-[11px] text-dim">{w.note}</p>}
+                  </div>
+                  <div dir="ltr" className="text-end font-num">
+                    <span className={`font-bold ${w.amount_usd >= 0 ? 'text-jade' : 'text-loss'}`}>
+                      {w.amount_usd >= 0 ? '+' : ''}${Number(w.amount_usd).toFixed(2)}
+                    </span>
+                    <p className="text-[10px] text-dim">Bal: ${Number(w.balance_after).toFixed(2)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
         {ledgerTab === 'logs' && (
           <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {['ALL', 'TRADE', 'SIGNAL', 'BOT', 'RISK', 'AI', 'TELEGRAM'].map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setLogCategory(cat)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold ${logCategory === cat ? 'btn-gold' : 'surface-soft text-dim'}`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-2 text-xs">
               <div className="relative flex-1">
                 <Search className="w-3.5 h-3.5 text-dim absolute start-3 top-1/2 -translate-y-1/2" />

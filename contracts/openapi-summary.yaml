@@ -1,0 +1,82 @@
+openapi: 3.1.0
+info:
+  title: Dollarino Unified Platform API
+  version: 6.0.0
+  description: Single-source-of-truth API powering Website PWA, Telegram Mini App, and Telegram Bot.
+servers:
+  - url: /api
+paths:
+  /health:
+    get:
+      summary: Platform health and capability metadata
+  /public/plans:
+    get:
+      summary: Public subscription plans ($0, $20, $50, $90, $160)
+  /public/market-snapshot:
+    get:
+      summary: Public ticker and live candle snapshot
+  /auth/register:
+    post:
+      summary: Register email/password account with optional referralCode
+  /auth/login:
+    post:
+      summary: Email/password login returning HS256 JWT
+  /auth/quick-demo:
+    post:
+      summary: Provision instant $10,000 Paper Demo session
+  /auth/telegram-webapp:
+    post:
+      summary: Authenticate Telegram Mini App via WebAppData HMAC-SHA256 initData
+  /auth/me:
+    get:
+      summary: Return current user profile and entitlement summary
+  /trading/dashboard:
+    get:
+      summary: Unified dashboard payload (config, balance, positions, signals, logs)
+  /trading/markets:
+    get:
+      summary: Listed USDT-M perpetual pairs with live quotes
+  /trading/config:
+    patch:
+      summary: Update strategy, margin_pct, leverage, 3-TP splits, KBOS/mixer params
+    put:
+      summary: Full replacement update of bot_configs
+  /trading/orders/manual:
+    post:
+      summary: Execute manual Market/Limit order with mandatory SL/TP1
+  /trading/positions/{id}/close:
+    post:
+      summary: Close an open position and realize PnL
+  /trading/positions/{id}/tpsl:
+    patch:
+      summary: Update Stop-Loss and TP1/TP2/TP3 on active position
+  /trading/bot/start:
+    post:
+      summary: Start autonomous Durable Object scanning
+  /trading/bot/stop:
+    post:
+      summary: Pause autonomous bot (optionally close open trades)
+  /trading/bot/kill-switch:
+    post:
+      summary: Emergency halt and flatten all open positions
+  /subscriptions/me:
+    get:
+      summary: User entitlement, plans, payment coordinates, order history
+  /subscriptions/checkout:
+    post:
+      summary: Submit USDT TRC20 TXID or Card-to-Card payment reference
+  /subscriptions/referrals:
+    get:
+      summary: Get user referral code (DLR-XXXXXX), count, and reward days
+  /subscriptions/redeem-gift:
+    post:
+      summary: Redeem single-use subscription gift code
+  /subscriptions/admin/gift-codes:
+    post:
+      summary: Create gift codes (Admin/Owner RBAC required)
+  /webhook/tv/{secret}:
+    post:
+      summary: TradingView webhook ingress (AUTO or MANUAL_CONFIRM inline Telegram card)
+  /webhook/telegram:
+    post:
+      summary: Instance Telegram Bot webhook endpoint

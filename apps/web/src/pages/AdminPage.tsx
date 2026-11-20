@@ -181,10 +181,10 @@ export function AdminPage({
         iranCardNumber: subMe.paymentConfig.iran_card_number || '',
         iranCardHolder: subMe.paymentConfig.iran_card_holder || '',
         telegramSupport: subMe.paymentConfig.telegram_support || '@Dollarinoofficial',
-        proPriceUsd: pro?.price_usd ?? 29,
-        proPriceToman: pro?.price_toman ?? 1950000,
-        vipPriceUsd: vip?.price_usd ?? 59,
-        vipPriceToman: vip?.price_toman ?? 3950000,
+        proPriceUsd: pro?.price_usd ?? 20,
+        proPriceToman: pro?.price_toman ?? 1400000,
+        vipPriceUsd: vip?.price_usd ?? 50,
+        vipPriceToman: vip?.price_toman ?? 3500000,
       });
     }
   };
@@ -233,6 +233,24 @@ export function AdminPage({
       onUserUpdated();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Order review failed');
+    }
+  };
+
+  const [giftDays, setGiftDays] = useState(30);
+  const [giftMaxUses, setGiftMaxUses] = useState(1);
+  const [generatedGiftCode, setGeneratedGiftCode] = useState<string | null>(null);
+
+  const createGiftCode = async () => {
+    setMsg(null);
+    try {
+      const res = await apiFetch<{ ok: boolean; code: string; durationDays: number }>('/api/subscriptions/admin/gift-codes', {
+        method: 'POST',
+        body: JSON.stringify({ planCode: grantPlan, durationDays: giftDays, maxUses: giftMaxUses }),
+      });
+      setGeneratedGiftCode(res.code);
+      setMsg(`🎁 Gift Code Created: ${res.code} (${res.durationDays}d)`);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Gift code creation failed');
     }
   };
 
@@ -773,8 +791,10 @@ export function AdminPage({
               />
               <div className="grid grid-cols-2 gap-2">
                 <select value={grantPlan} onChange={(e) => setGrantPlan(e.target.value)} className="surface-input rounded-xl px-3 py-2.5">
-                  <option value="pro_monthly">Pro Monthly</option>
-                  <option value="vip_quarterly">VIP Quarterly</option>
+                  <option value="pro_monthly">1-Month ($20)</option>
+                  <option value="vip_quarterly">3-Month ($50)</option>
+                  <option value="pro_semiannual">6-Month ($90)</option>
+                  <option value="pro_annual">1-Year ($160)</option>
                 </select>
                 <input
                   type="number"
@@ -788,6 +808,24 @@ export function AdminPage({
               <button type="submit" className="w-full py-2.5 rounded-xl btn-emerald font-extrabold">
                 {isFa ? 'اعطای اشتراک فعال' : 'Grant Active Subscription'}
               </button>
+
+              <div className="pt-3 mt-2 border-t hairline space-y-2">
+                <div className="text-[11px] font-bold text-sub">
+                  {isFa ? 'تولید کد هدیه اشتراک (Gift Code):' : 'Generate Subscription Gift Code:'}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input type="number" min={1} max={3650} value={giftDays} onChange={(e) => setGiftDays(Number(e.target.value))} placeholder="Days" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
+                  <input type="number" min={1} max={500} value={giftMaxUses} onChange={(e) => setGiftMaxUses(Number(e.target.value))} placeholder="Uses" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
+                  <button type="button" onClick={() => void createGiftCode()} className="btn-cobalt rounded-xl font-black text-xs">
+                    {isFa ? 'ساخت کد 🎁' : 'Create 🎁'}
+                  </button>
+                </div>
+                {generatedGiftCode && (
+                  <div className="p-2.5 rounded-xl surface-soft font-mono-num text-center font-black text-jade">
+                    {generatedGiftCode}
+                  </div>
+                )}
+              </div>
             </form>
 
             <form onSubmit={savePayConfig} className="surface-card p-5 space-y-3">

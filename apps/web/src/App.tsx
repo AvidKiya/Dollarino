@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppearanceModal, type LookId } from './components/AppearanceModal';
-import { DollarinoCoinMark, Layout } from './components/Layout';
+import { DollarinoBrandMark } from './components/BrandGraphics';
+import { Layout, type UiMode } from './components/Layout';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
 import { apiFetch, setStoredToken } from './lib/api';
 import type { Lang } from './lib/i18n';
+import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
 import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
 import { AdminPage } from './pages/AdminPage';
 import { AuthPage } from './pages/AuthPage';
@@ -36,6 +38,11 @@ export function App() {
     if (saved === 'obsidian' || saved === 'paper' || saved === 'cosmic' || saved === 'midnight') return saved;
     return localStorage.getItem('dollarino_theme') === 'light' ? 'paper' : 'cosmic';
   });
+  const [uiMode, setUiMode] = useState<UiMode>(() => {
+    const saved = localStorage.getItem('dollarino_ui_mode');
+    if (saved === 'simple' || saved === 'pro') return saved;
+    return 'simple';
+  });
   const [appearanceOpen, setAppearanceOpen] = useState(false);
 
   const [user, setUser] = useState<AuthUserInfo | null>(null);
@@ -53,9 +60,18 @@ export function App() {
     applyLookToRoot(look);
   }, [look]);
 
+  useEffect(() => {
+    initTelegramMiniApp(look === 'paper' ? '#F3F7FF' : '#040917');
+  }, [look]);
+
   const handleSetLang = (l: Lang) => {
     setLang(l);
     localStorage.setItem('dollarino_lang', l);
+  };
+
+  const handleSetUiMode = (next: UiMode) => {
+    setUiMode(next);
+    localStorage.setItem('dollarino_ui_mode', next);
   };
 
   const handleSelectLook = (next: LookId) => {
@@ -70,7 +86,26 @@ export function App() {
   const loadSessionAndDashboard = useCallback(async () => {
     try {
       setAuthError(null);
-      const me = await apiFetch<{ user: AuthUserInfo }>('/api/auth/me');
+      let me: { user: AuthUserInfo };
+      try {
+        me = await apiFetch<{ user: AuthUserInfo }>('/api/auth/me');
+      } catch (firstErr) {
+        if (isInsideTelegramMiniApp()) {
+          const tg = getTelegramWebApp();
+          if (tg?.initData) {
+            const authRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-webapp', {
+              method: 'POST',
+              body: JSON.stringify({ initData: tg.initData }),
+            });
+            setStoredToken(authRes.token);
+            me = { user: authRes.user };
+          } else {
+            throw firstErr;
+          }
+        } else {
+          throw firstErr;
+        }
+      }
       setUser(me.user);
       const [dash, mkts] = await Promise.all([
         apiFetch<DashboardPayload>('/api/trading/dashboard'),
@@ -129,12 +164,12 @@ export function App() {
   };
 
   const handleKillSwitch = async () => {
-    await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: true }) });
+    await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
     await loadSessionAndDashboard();
   };
 
   const handleResetDemo = async () => {
-    await apiFetch('/api/trading/wallet/topup', { method: 'POST', body: JSON.stringify({ amountUsd: 2500 }) });
+    await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
     await loadSessionAndDashboard();
   };
 
@@ -147,7 +182,7 @@ export function App() {
     return (
       <div className="min-h-screen app-shell flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <DollarinoCoinMark size={52} />
+          <DollarinoBrandMark size={52} glow />
           <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
         </div>
       </div>
@@ -198,7 +233,7 @@ export function App() {
     return (
       <div className="min-h-screen app-shell flex items-center justify-center p-4">
         <div className="panel rounded-3xl p-6 text-center space-y-3 max-w-sm w-full">
-          <DollarinoCoinMark size={44} />
+          <DollarinoBrandMark size={44} glow />
           <p className="text-sm font-bold text-main">
             {lang === 'fa' ? 'در حال آماده‌سازی میز کار معاملاتی...' : 'Loading your trading desk...'}
           </p>
@@ -216,6 +251,8 @@ export function App() {
       setLang={handleSetLang}
       currentLook={look}
       onSelectLook={handleSelectLook}
+      uiMode={uiMode}
+      onToggleUiMode={handleSetUiMode}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       user={user}
@@ -237,6 +274,8 @@ export function App() {
       {activeTab === 'overview' && (
         <OverviewPage
           lang={lang}
+          uiMode={uiMode}
+          onToggleUiMode={handleSetUiMode}
           user={user}
           data={dashboard}
           markets={markets}
@@ -249,6 +288,8 @@ export function App() {
       {activeTab === 'terminal' && (
         <TerminalPage
           lang={lang}
+          uiMode={uiMode}
+          onToggleUiMode={handleSetUiMode}
           symbol={terminalSymbol}
           setSymbol={setTerminalSymbol}
           data={dashboard}
@@ -259,6 +300,7 @@ export function App() {
       {activeTab === 'markets' && (
         <MarketsPage
           lang={lang}
+          uiMode={uiMode}
           markets={markets}
           onTradeSymbol={(sym) => openTerminalWithSymbol(sym)}
         />

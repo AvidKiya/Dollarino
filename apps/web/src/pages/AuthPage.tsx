@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, Globe, Lock, Mail, Moon, ShieldCheck, Sparkles, Sun, User } from 'lucide-react';
 import { apiFetch, setStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
-import { DollarinoCoinMark } from '../components/Layout';
+import { DollarinoBrandMark } from '../components/BrandGraphics';
 
 export function AuthPage({
   lang,
@@ -55,9 +55,15 @@ export function AuthPage({
         throw new Error(lang === 'fa' ? 'رمز عبور باید حداقل ۶ رقم یا حرف باشد' : 'Password must be at least 6 characters');
       }
       const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const refParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('ref') : null;
       const res = await apiFetch<{ token: string }>(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ email: cleanEmail, username: username.trim(), password }),
+        body: JSON.stringify({
+          email: cleanEmail,
+          username: username.trim(),
+          password,
+          referralCode: mode === 'register' && refParam ? refParam : undefined,
+        }),
       });
       setStoredToken(res.token);
       await onSuccess();
@@ -111,7 +117,7 @@ export function AuthPage({
         <div className="panel rounded-[28px] p-6 sm:p-7 space-y-5 shadow-2xl">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <DollarinoCoinMark size={44} />
+              <DollarinoBrandMark size={44} glow />
               <div>
                 <h1 className="font-display font-bold text-xl text-main">Dollarino</h1>
                 <p className="text-xs text-dim">{isFa ? 'میز معامله هوشمند و کپی‌ترید' : 'Autonomous Trading OS'}</p>

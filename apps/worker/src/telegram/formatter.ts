@@ -15,8 +15,8 @@ export function welcomeMessage(firstName: string): string {
 export function mainMenuKeyboard() {
   return [
     [{ text: 'اتصال به صرافی 🔗' }, { text: 'تنظیمات ⚙️' }],
-    [{ text: 'حساب کاربری 👤' }, { text: 'ربات و هوش مصنوعی من 🤖' }],
-    [{ text: 'راهنما 📚' }],
+    [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
+    [{ text: 'ربات و هوش مصنوعی من 🤖' }, { text: 'راهنما 📚' }],
   ];
 }
 

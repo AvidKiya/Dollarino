@@ -368,3 +368,71 @@ subscriptionRoutes.patch('/admin/config', async (c) => {
 
   return c.json({ ok: true });
 });
+
+subscriptionRoutes.get('/referrals', async (c) => {
+  const user = c.get('user');
+  const code = `DLR-${user.id.slice(-6).toUpperCase()}`;
+  const refs = await c.env.DB.prepare(
+    `SELECT r.id, r.reward_days, r.status, r.created_at, u.username
+     FROM referrals r JOIN users u ON u.id = r.referred_user_id
+     WHERE r.referrer_user_id = ? ORDER BY r.created_at DESC LIMIT 50`
+  ).bind(user.id).all<{ id: string; reward_days: number; status: string; created_at: string; username: string }>().catch(() => ({ results: [] }));
+  const totalReferred = refs.results.length;
+  const rewardDaysEarned = refs.results.reduce((acc, r) => acc + Number(r.reward_days || 0), 0);
+  return c.json({ referralCode: code, totalReferred, rewardDaysEarned, referrals: refs.results });
+});
+
+subscriptionRoutes.post('/redeem-gift', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
+  const code = (body.code || '').trim().toUpperCase();
+  if (!code) return c.json({ error: 'Gift code is required' }, 400);
+
+  const gift = await c.env.DB.prepare(
+    `SELECT * FROM gift_codes WHERE code = ? AND is_active = 1`
+  ).bind(code).first<{
+    code: string;
+    plan_code: string;
+    duration_days: number;
+    max_uses: number;
+    uses_count: number;
+    expires_at: string | null;
+  }>().catch(() => null);
+
+  if (!gift) return c.json({ error: 'Gift code is invalid or inactive' }, 404);
+  if (gift.uses_count >= gift.max_uses) return c.json({ error: 'Gift code usage limit reached' }, 400);
+  if (gift.expires_at && Date.parse(gift.expires_at) < Date.now()) {
+    return c.json({ error: 'Gift code has expired' }, 400);
+  }
+
+  const already = await c.env.DB.prepare(
+    `SELECT id FROM gift_redemptions WHERE code = ? AND user_id = ?`
+  ).bind(code, user.id).first();
+  if (already) return c.json({ error: 'You have already redeemed this gift code' }, 409);
+
+  const subId = randomId('sub');
+  const redId = randomId('red');
+  await c.env.DB.prepare(`INSERT INTO gift_redemptions (id, code, user_id) VALUES (?, ?, ?)`).bind(redId, code, user.id).run();
+  await c.env.DB.prepare(`UPDATE gift_codes SET uses_count = uses_count + 1 WHERE code = ?`).bind(code).run();
+  await c.env.DB.prepare(
+    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
+     VALUES (?, ?, ?, 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'Gift code redeemed')`
+  ).bind(subId, user.id, gift.plan_code, `GIFT:${code}`, gift.duration_days).run();
+
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Redeemed gift code ${code} (${gift.duration_days}d)`);
+  return c.json({ ok: true, durationDays: gift.duration_days, planCode: gift.plan_code });
+});
+
+subscriptionRoutes.post('/admin/gift-codes', async (c) => {
+  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  const actor = c.get('user');
+  const body = await c.req.json<{ code?: string; planCode?: string; durationDays?: number; maxUses?: number }>();
+  const code = (body.code || `DLR${Math.random().toString(36).slice(2, 8)}`).trim().toUpperCase();
+  const durationDays = Math.max(1, Math.min(365, Number(body.durationDays ?? 30)));
+  const maxUses = Math.max(1, Math.min(1000, Number(body.maxUses ?? 1)));
+  await c.env.DB.prepare(
+    `INSERT OR REPLACE INTO gift_codes (code, plan_code, duration_days, max_uses, is_active, created_by)
+     VALUES (?, ?, ?, ?, 1, ?)`
+  ).bind(code, body.planCode || 'pro_monthly', durationDays, maxUses, actor.id).run();
+  return c.json({ ok: true, code, durationDays, maxUses }, 201);
+});

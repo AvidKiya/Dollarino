@@ -399,6 +399,26 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       });
       return { ok: true };
     }
+    if (state.step === 'AWAIT_ADD_ADMIN' && (String(msg.from.id) === (env.OWNER_TELEGRAM_ID || '944021185') || user.role === 'owner')) {
+      const targetTg = text.replace(/[^0-9]/g, '');
+      await clearState();
+      if (!targetTg) {
+        await bot.sendMessage(chatId, '❌ آیدی عددی تلگرام نامعتبر است.', { replyKeyboard: settingsKeyboard(admin) });
+        return { ok: true };
+      }
+      const existingTarget = await env.DB.prepare('SELECT id, username FROM users WHERE telegram_id = ?').bind(targetTg).first<{ id: string; username: string }>();
+      if (!existingTarget) {
+        await bot.sendMessage(chatId, `⚠️ کاربر با آیدی ${targetTg} هنوز ربات را استارت نزده است. ابتدا یک بار /start بزند.`, {
+          replyKeyboard: settingsKeyboard(admin),
+        });
+        return { ok: true };
+      }
+      await env.DB.prepare(`UPDATE users SET role = 'admin' WHERE id = ? AND role != 'owner'`).bind(existingTarget.id).run();
+      await bot.sendMessage(chatId, `✅ کاربر ${existingTarget.username} (${targetTg}) با موفقیت به لیست مدیران اضافه شد.`, {
+        replyKeyboard: settingsKeyboard(admin),
+      });
+      return { ok: true };
+    }
   }
 
   // Main Menu Handlers
@@ -550,6 +570,40 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       `🔹 ربات‌های کپی ترید دلارینو متصل: ${bots?.cnt ?? 0}\n\n` +
       `شما بدون نیاز به خرید API هوش مصنوعی، مستقیماً از پنل وب می‌توانید ربات را با یک دکمه روی کل بازار روشن کنید.`
     );
+    return { ok: true };
+  }
+
+  if (text === 'خرید اشتراک 💎') {
+    const plans = await env.DB.prepare(
+      `SELECT name_fa, price_usd, duration_days FROM subscription_plans WHERE is_active = 1 AND price_usd > 0 ORDER BY sort_order ASC`
+    ).all<{ name_fa: string; price_usd: number; duration_days: number }>().catch(() => ({ results: [] }));
+    const ent = await resolveUserEntitlement(env.DB, {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      role: (user.role as AuthUser['role']) || 'user',
+      telegramId: String(msg.from.id),
+    });
+    const planLines = plans.results.length
+      ? plans.results.map((p) => `• ${p.name_fa}: ${p.price_usd} USDT (${p.duration_days} روز)`).join('\n')
+      : '• ماهانه: 20 USDT\n• ۳ ماهه: 50 USDT\n• ۶ ماهه: 90 USDT\n• سالانه: 160 USDT';
+    await bot.sendMessage(
+      chatId,
+      `💎 تعرفه‌های اشتراک دلارینو:\n\n${planLines}\n\n` +
+      `وضعیت فعلی شما: ${ent.planNameFa}${ent.hasPaidPlan ? ` (${ent.daysRemaining} روز باقیمانده)` : ''}\n\n` +
+      `برای پرداخت آنی USDT (TRC20) یا کارت به کارت و ثبت کد پیگیری، از مینی‌اپ یا پنل وب دلارینو بخش «تعرفه‌ها و اشتراک» اقدام کنید.`
+    );
+    return { ok: true };
+  }
+
+  if (text === 'افزودن مدیر 🔑') {
+    const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
+    if (String(msg.from.id) !== ownerId && user.role !== 'owner') {
+      await bot.sendMessage(chatId, '⛔️ فقط مالک اصلی سیستم (Super Admin) مجاز به افزودن مدیر جدید است.');
+      return { ok: true };
+    }
+    await setState({ step: 'AWAIT_ADD_ADMIN' });
+    await bot.sendMessage(chatId, '🔑 لطفاً آیدی عددی تلگرام فردی که می‌خواهید مدیر شود را ارسال کنید:');
     return { ok: true };
   }
 
