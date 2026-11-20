@@ -31,6 +31,10 @@ interface TelegramUpdate {
   };
   channel_post?: {
     message_id: number;
+    date?: number;
+    forward_date?: number;
+    forward_from?: unknown;
+    forward_from_chat?: unknown;
     chat: { id: number; username?: string; title?: string };
     text?: string;
   };
@@ -81,8 +85,30 @@ async function getOrProvisionTelegramUser(env: Env, tgUser: { id: number; first_
 export async function handleTelegramUpdate(env: Env, botToken: string, update: TelegramUpdate) {
   const bot = new TelegramBotClient(botToken);
 
-  // 1. Handle Channel Posts containing Dollarino Signals
+  // 1. Handle Channel Posts containing Dollarino Signals (Official origin validation, no forwards)
   if (update.channel_post?.text) {
+    const post = update.channel_post;
+    if (post.forward_date || post.forward_from || post.forward_from_chat) {
+      return { ok: true, ignored: 'forwarded signal rejected' };
+    }
+    const chatIdStr = String(post.chat.id);
+    const chatUser = (post.chat.username || '').toLowerCase();
+    const defaultHandle = (env.DEFAULT_SIGNAL_CHANNEL || '@Dollarinoofficial').replace(/^@/, '').toLowerCase();
+    const isOfficial =
+      chatIdStr === '-1002263982097' ||
+      chatUser === 'dollarino_official' ||
+      chatUser === 'dollarinoofficial' ||
+      chatUser === defaultHandle;
+
+    if (!isOfficial) {
+      const configuredBotChannel = await env.DB.prepare(
+        `SELECT id FROM telegram_bots WHERE is_active = 1 AND (LOWER(REPLACE(COALESCE(signal_channel_id, ''), '@', '')) = ? OR signal_channel_id = ?) LIMIT 1`
+      ).bind(chatUser || '__none__', chatIdStr).first<{ id: string }>();
+      if (!configuredBotChannel) {
+        return { ok: true, ignored: 'unauthorized signal channel' };
+      }
+    }
+
     const signal = parseDollarinoSignal(update.channel_post.text);
     if (!signal) return { ok: true, ignored: 'not a signal' };
 
@@ -203,9 +229,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         tp1: string;
         tp2: string | null;
         tp3: string | null;
+        created_at: string;
       }>();
       if (!sigRow) {
         await bot.answerCallbackQuery(cq.id, 'سیگنال منقضی شده است', true);
+        return { ok: true };
+      }
+      const ageMs = Date.now() - Date.parse(sigRow.created_at + 'Z');
+      if (Number.isFinite(ageMs) && ageMs > 60 * 60_000) {
+        await bot.answerCallbackQuery(cq.id, 'این سیگنال منقضی شده است (بیش از ۱ ساعت گذشته).', true);
         return { ok: true };
       }
       const res = await executeSignalForUser(

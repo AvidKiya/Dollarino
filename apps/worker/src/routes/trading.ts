@@ -1354,3 +1354,37 @@ tradingRoutes.get('/logs', async (c) => {
       ).bind(user.id).all();
   return c.json({ logs: rows.results });
 });
+
+tradingRoutes.get('/notifications', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`
+  ).bind(user.id).all().catch(() => ({ results: [] }));
+  const unread = rows.results.filter((n) => (n as { is_read: number }).is_read === 0).length;
+  return c.json({ notifications: rows.results, unread });
+});
+
+tradingRoutes.post('/notifications/read', async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare(`UPDATE notifications SET is_read = 1 WHERE user_id = ?`).bind(user.id).run().catch(() => {});
+  return c.json({ ok: true });
+});
+
+tradingRoutes.get('/events/snapshot', async (c) => {
+  const user = c.get('user');
+  const [cfg, openCount, unreadNtf, latestSig] = await Promise.all([
+    c.env.DB.prepare(`SELECT bot_state, trading_mode, paper_balance FROM bot_configs WHERE user_id = ?`).bind(user.id).first(),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN'`).bind(user.id).first<{ cnt: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM notifications WHERE user_id = ? AND is_read = 0`).bind(user.id).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT id, symbol, direction, created_at FROM signals ORDER BY created_at DESC LIMIT 1`).first(),
+  ]);
+  return c.json({
+    events: [
+      { type: 'balance.updated', data: { paperBalance: (cfg as { paper_balance?: string } | null)?.paper_balance ?? '0' } },
+      { type: 'position.updated', data: { openCount: openCount?.cnt ?? 0 } },
+      { type: 'notification.created', data: { unread: unreadNtf?.cnt ?? 0 } },
+      ...(latestSig ? [{ type: 'signal.received', data: latestSig }] : []),
+    ],
+    timestamp: new Date().toISOString(),
+  });
+});

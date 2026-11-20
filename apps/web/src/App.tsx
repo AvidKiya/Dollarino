@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppearanceModal, type LookId } from './components/AppearanceModal';
+import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { Layout, type UiMode } from './components/Layout';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
@@ -16,6 +16,7 @@ import { MarketsPage } from './pages/MarketsPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PortfolioPage } from './pages/PortfolioPage';
 import { RadarLabPage } from './pages/RadarLabPage';
+import { ServicesPage } from './pages/ServicesPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { TerminalPage } from './pages/TerminalPage';
 import { WeeklyCardPage } from './pages/WeeklyCardPage';
@@ -35,15 +36,15 @@ export function App() {
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('dollarino_lang') === 'en' ? 'en' : 'fa'));
   const [look, setLook] = useState<LookId>(() => {
     const saved = localStorage.getItem('dollarino_look');
-    if (saved === 'obsidian' || saved === 'paper' || saved === 'cosmic' || saved === 'midnight') return saved;
-    return localStorage.getItem('dollarino_theme') === 'light' ? 'paper' : 'cosmic';
+    if (saved === 'paper' || saved === 'cosmic') return saved;
+    if (saved === 'obsidian' || saved === 'midnight') return 'cosmic';
+    return 'paper';
   });
   const [uiMode, setUiMode] = useState<UiMode>(() => {
     const saved = localStorage.getItem('dollarino_ui_mode');
     if (saved === 'simple' || saved === 'pro') return saved;
     return 'simple';
   });
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
 
   const [user, setUser] = useState<AuthUserInfo | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -197,7 +198,6 @@ export function App() {
             lang={lang}
             setLang={handleSetLang}
             look={look}
-            onOpenAppearance={() => setAppearanceOpen(true)}
             onToggleDaylight={handleToggleDaylight}
             onQuickDemo={handleQuickDemo}
             onGoAuth={(mode) => {
@@ -217,14 +217,6 @@ export function App() {
             onSuccess={loadSessionAndDashboard}
           />
         )}
-
-        <AppearanceModal
-          open={appearanceOpen}
-          lang={lang}
-          currentLook={look}
-          onSelectLook={handleSelectLook}
-          onClose={() => setAppearanceOpen(false)}
-        />
       </>
     );
   }
@@ -331,6 +323,19 @@ export function App() {
           onRefresh={loadSessionAndDashboard}
         />
       )}
+      {activeTab === 'services' && (
+        <ServicesPage
+          lang={lang}
+          uiMode={uiMode}
+          onToggleUiMode={handleSetUiMode}
+          currentLook={look}
+          onToggleDaylight={handleToggleDaylight}
+          user={user}
+          data={dashboard}
+          onNavigate={setActiveTab}
+          onLogout={handleLogout}
+        />
+      )}
       {activeTab === 'card' && (
         <WeeklyCardPage
           lang={lang}
@@ -342,7 +347,7 @@ export function App() {
         <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} />
       )}
       {activeTab === 'faq' && <FaqPage lang={lang} />}
-      {activeTab === 'admin' && user.role.toUpperCase() === 'ADMIN' && (
+      {activeTab === 'admin' && (user.role.toUpperCase() === 'ADMIN' || user.role.toUpperCase() === 'OWNER') && (
         <AdminPage lang={lang} currentUser={user} onUserUpdated={() => void loadSessionAndDashboard()} />
       )}
     </Layout>

@@ -159,6 +159,22 @@ export async function notifyUserTelegram(
   }
 }
 
+export async function pushNotification(
+  db: D1Database,
+  userId: string,
+  category: 'TRADE' | 'TP_SL' | 'SUBSCRIPTION' | 'SECURITY' | 'SYSTEM',
+  title: string,
+  body: string
+) {
+  try {
+    await db.prepare(
+      `INSERT INTO notifications (id, user_id, category, title, body, is_read) VALUES (?, ?, ?, ?, ?, 0)`
+    ).bind(randomId('ntf'), userId, category, title, body).run();
+  } catch {
+    // Non-fatal if migration not yet applied
+  }
+}
+
 export async function executeSignalForUser(
   env: Env,
   userId: string,
@@ -171,6 +187,15 @@ export async function executeSignalForUser(
     aiReasoning?: string | null;
   }
 ): Promise<{ ok: boolean; tradeId?: string; error?: string }> {
+  if (options?.signalId) {
+    const dup = await env.DB.prepare(
+      `SELECT id FROM trades WHERE user_id = ? AND signal_id = ? LIMIT 1`
+    ).bind(userId, options.signalId).first<{ id: string }>();
+    if (dup) {
+      return { ok: false, error: 'Duplicate execution blocked: signal already executed for this account' };
+    }
+  }
+
   const cfgRow = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
     .bind(userId).first<UserBotConfigRow>();
   if (!cfgRow) return { ok: false, error: 'Bot config not found for user' };
@@ -311,6 +336,14 @@ export async function executeSignalForUser(
     `Opened ${effectiveSignal.direction} ${effectiveSignal.symbol} qty=${decision.quantity} @ ${order.filledPrice} (${decision.effectiveLeverage}x)`,
     effectiveSignal.symbol,
     { tradeId, marginUsed: decision.marginUsed }
+  );
+
+  await pushNotification(
+    env.DB,
+    userId,
+    'TRADE',
+    `${effectiveSignal.direction === 'LONG' ? '📈' : '📉'} ${effectiveSignal.symbol} (${decision.effectiveLeverage}x)`,
+    `Opened @ $${order.filledPrice} · Margin $${decision.marginUsed} · SL $${effectiveSignal.stopLoss}`
   );
 
   await notifyUserTelegram(
@@ -466,6 +499,13 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
         ).bind(cls.filledPrice, newRealized.toFixed(4), newFees.toFixed(4), reason, t.id).run();
 
         const pnlPct = Number(t.margin_used) > 0 ? (newRealized / Number(t.margin_used)) * 100 : 0;
+        await pushNotification(
+          env.DB,
+          userId,
+          reason.includes('SL') ? 'TP_SL' : 'TRADE',
+          `${newRealized >= 0 ? '✅' : '🔻'} ${t.symbol} Closed (${reason})`,
+          `PnL: ${newRealized >= 0 ? '+' : ''}$${newRealized.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`
+        );
         await notifyUserTelegram(
           env,
           userId,
@@ -527,6 +567,7 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
         `UPDATE trades SET tp1_hit = 1, current_stop_loss = ?, risk_free_active = ? WHERE id = ?`
       ).bind(newSl, rf, t.id).run();
       await logAudit(env.DB, userId, 'ORDER', 'INFO', `TP1 hit for ${t.symbol}! Closed ${cfg.tp1_close_pct}% & Risk-Free active`, t.symbol);
+      await pushNotification(env.DB, userId, 'TP_SL', `TP1 Hit · ${t.symbol}`, `Closed ${cfg.tp1_close_pct}%${rf ? ' · SL moved to Entry (Risk-Free)' : ''}`);
       if (rf) {
         await notifyUserTelegram(env, userId, `🟢 تارگت ۱ (${t.symbol}) تاچ شد! ${cfg.tp1_close_pct}% بسته شد و استاپ به نقطه ورود (${newSl}) منتقل گردید (ریسک‌فری ✅)`);
       }

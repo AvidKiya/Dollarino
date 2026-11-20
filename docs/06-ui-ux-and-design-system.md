@@ -1,4 +1,4 @@
-# UI/UX & Apple Cupertino Liquid-Glass Design System (`06-ui-ux-and-design-system`)
+# UI/UX & Apple iOS Cupertino Design System (`06-ui-ux-and-design-system`)
 
 ---
 
@@ -8,26 +8,22 @@
 |---|---|---|
 | **Target User** | First-time users, beginners, seniors, mobile Telegram Mini App users | Experienced futures & quant traders |
 | **Language** | Plain Persian & English (*"موجودی امن"، "بالا میره 📈"، "سپر ضرر خودکار 🛡️"*) — zero jargon | Full futures terminology (`LONG/SHORT`, `EMA 20/50/200`, `KBOS`, `ISOLATED/CROSS`, `Funding`, `R:R`) |
-| **Navigation** | Clean 4-item iPhone dock (`خانه` / `بازار` / `معامله` / `تنظیمات`) | Full multi-module desk (`Overview`, `Terminal`, `Markets`, `Radar & Backtest`, `Copy & APIs`, `Portfolio`, `Weekly Card`, `Pricing`, `FAQ`, `Admin`) |
-| **Trading Flow** | 3 taps: Pick Coin (BTC/ETH/SOL/BNB) → Pick Direction + Risk Comfort (`امن` / `متعادل` / `سریع`) → `ConfirmTradeSheet` (`تایید میکنم ✅`) | Order Ticket (`Market/Limit`, `1x–50x`, `SL`, `TP1/TP2/TP3`), Chart AI copilot, Order Book, inline TP/SL editor |
-| **Switch Mechanism** | One-tap Apple `.ios-segmented` pill in top bar, bottom banner, and Terminal header | Same instant toggle; persists in `localStorage['dollarino_ui_mode']` |
+| **Mobile Navigation** | Kifpool-inspired curved SVG notch bottom tab bar (`خانه` · `بازار` · center Cobalt trade CTA `معامله` · `کیف پول` · `خدمات`) | Same curved bottom dock on mobile + full desktop sidebar (`Overview`, `Terminal`, `Markets`, `Radar & Lab`, `Copy & Connect`, `Portfolio`, `Services`, `Weekly Card`, `Pricing`, `FAQ`, `Admin`) |
+| **Trading Flow** | 3 taps: Pick Coin → `خرید / فروش` + `۱۰٪/۲۵٪/۵۰٪/۱۰۰٪` margin chips → `ConfirmTradeSheet` (`👈 دلارینو ترید کن برام 👉` → `تایید میکنم ✅`) | Order Ticket (`Market/Limit`, `1x–50x`, `SL`, `TP1/TP2/TP3`), Chart AI copilot, Order Book, inline TP/SL editor |
+| **Switch Mechanism** | One-tap Apple `.ios-segmented` pill (`معامله آسان | معامله حرفه‌ای`) in top bar, Terminal header, and Services hub | Same instant toggle; persists in `localStorage['dollarino_ui_mode']` |
 
 ---
 
-## 2. Logo-Derived Color Tokens (`apps/web/src/index.css`)
+## 2. Unified Apple iOS Day & Night Theme (`apps/web/src/index.css`)
 
-Extracted directly from `/apps/web/public/logo.png`:
+Single cohesive Cupertino visual language with crisp Day (`paper`) and Night (`cosmic`) toggling (no fragmented multi-theme picker):
 
-- **Cosmic Cobalt (Default Dark)**:
-  - `--bg`: `#040917`, `--panel`: `rgba(11, 22, 50, 0.80)`, `--cobalt`: `#0A46E4`, `--cyan`: `#00C2FF`, `--jade`: `#12E35D`, `--amber`: `#FF8200`
-- **iOS Daylight Frost (`paper`)**:
-  - `--bg`: `#F3F7FF`, `--panel`: `rgba(255, 255, 255, 0.88)`, `--text`: `#08142E` (activates `.theme-light` observer for `Lightweight-Charts`)
-- **Midnight Sapphire (`midnight`)** & **Obsidian Gold (`obsidian`)**:
-  - Preserved user-selectable themes in `AppearanceModal.tsx`, unified under Apple Cupertino glass geometry (`backdrop-filter: blur(22px) saturate(165%)`, `1px` specular inner edge, rounded `26px–32px` cards, tabular numeric monospace `.font-num`).
-
----
-
-## 3. Preserved Brand Integrity
-
-- `DollarinoBrandMark` renders `/logo.png` directly inside rounded cobalt containers without substituting generic icons.
-- `CandlestickChart.tsx` keeps full compatibility with `.theme-light` mutation observers across all four visual looks.
+- **Apple Day Mode (`paper` — Default)**:
+  - `--bg`: `#F3F6FB`, `--panel`: `#FFFFFF` (solid high-contrast Apple cards), `--text`: `#0F172A`, `--muted`: `#475569`
+- **Apple Night Mode (`cosmic`)**:
+  - `--bg`: `#070E20`, `--panel`: `rgba(14, 24, 51, 0.88)`, `--text`: `#F8FAFC`, `--muted`: `#CBD5E1`
+- **Shared Brand & Status Tokens**:
+  - Cobalt Primary: `#1652F0` / `#2563EB` (CTA buttons, Cobalt Wallet card, center floating dock button)
+  - Warm Amber Active Tab: `#F59E0B` (`bg-[#F59E0B]/15` icon pill + glowing bottom bar indicator)
+  - Bullish Emerald: `#10B981`, Loss Crimson: `#EF4444`
+  - Dark Instrument Console (`.console-lab`): Always `#0B1636 → #050C20` so `HybridLab` maintains high contrast across Day & Night modes.

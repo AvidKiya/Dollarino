@@ -5,6 +5,8 @@ import {
   Briefcase,
   CircleDollarSign,
   Download,
+  Eye,
+  EyeOff,
   PiggyBank,
   RefreshCw,
   RotateCcw,
@@ -56,6 +58,7 @@ export function PortfolioPage({
   const [logCategory, setLogCategory] = useState<string>('ALL');
   const [logQ, setLogQ] = useState('');
   const [notice, setNotice] = useState('');
+  const [hideBal, setHideBal] = useState(false);
 
   useEffect(() => {
     if (ledgerTab === 'logs') {
@@ -180,6 +183,80 @@ export function PortfolioPage({
       </div>
 
       {notice && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{notice}</div>}
+
+      {/* Kifpool-inspired Curved Cobalt Wallet Hero Card */}
+      <div className="ios-wallet-card rounded-[30px] p-6 sm:p-7 space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold text-white/80">
+              <span>{isFa ? 'دارایی کل حساب' : 'Total Wallet Equity'}</span>
+              <button
+                type="button"
+                onClick={() => setHideBal((v) => !v)}
+                className="p-1 rounded-lg bg-white/15 hover:bg-white/25 transition"
+                aria-label="Toggle balance"
+              >
+                {hideBal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular mt-1.5 text-white">
+              {hideBal ? '••••••' : `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+            </p>
+            <p className="text-[11px] text-white/75 mt-1">
+              {isFa
+                ? `آزاد: $${freeCash.toLocaleString(undefined, { maximumFractionDigits: 0 })} · درگیر در معامله: $${usedMargin.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                : `Free: $${freeCash.toLocaleString(undefined, { maximumFractionDigits: 0 })} · In Margin: $${usedMargin.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            </p>
+          </div>
+          <span className="px-3 py-1 rounded-full bg-white/15 text-white text-[11px] font-black">
+            {data.config.trading_mode === 'PAPER' ? (isFa ? 'حالت دمو' : 'PAPER') : 'LIVE'}
+          </span>
+        </div>
+
+        {/* Circular Action Buttons matching Kifpool Wallet */}
+        <div className="grid grid-cols-4 gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => onOpenTerminal('BTCUSDT')}
+            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
+          >
+            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
+              <Zap className="w-5 h-5" />
+            </span>
+            <span>{isFa ? 'معامله جدید' : 'Trade'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetDemo()}
+            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
+          >
+            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
+              <RotateCcw className="w-5 h-5" />
+            </span>
+            <span>{isFa ? 'ریست $۱۰k' : 'Reset'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
+          >
+            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
+              <Download className="w-5 h-5" />
+            </span>
+            <span>{isFa ? 'خروجی CSV' : 'CSV'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void closeAll()}
+            className="flex flex-col items-center gap-1.5 text-[11px] font-bold text-white/95"
+          >
+            <span className="w-11 h-11 rounded-full bg-white/18 hover:bg-white/28 grid place-items-center transition">
+              <X className="w-5 h-5" />
+            </span>
+            <span>{isFa ? 'بستن همه' : 'Settle'}</span>
+          </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[

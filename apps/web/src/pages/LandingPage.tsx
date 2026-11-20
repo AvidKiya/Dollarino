@@ -17,7 +17,6 @@ import {
   Layers,
   Menu,
   Moon,
-  Palette,
   Play,
   Radar,
   Rocket,
@@ -64,7 +63,6 @@ export function LandingPage({
   lang,
   setLang,
   look,
-  onOpenAppearance,
   onToggleDaylight,
   onQuickDemo,
   onGoAuth,
@@ -72,7 +70,6 @@ export function LandingPage({
   lang: Lang;
   setLang: (l: Lang) => void;
   look: LookId;
-  onOpenAppearance: () => void;
   onToggleDaylight: () => void;
   onQuickDemo: () => Promise<void>;
   onGoAuth: (mode: 'login' | 'register') => void;
@@ -160,45 +157,25 @@ export function LandingPage({
 
   return (
     <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell relative overflow-x-clip">
-      {/* Ambient Hero Aura & Dots (01.zip Site.tsx) */}
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-[920px] z-0 overflow-hidden">
+      {/* Subtle Apple Cupertino Backdrop */}
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-[760px] z-0 overflow-hidden">
         <div
-          className="absolute inset-0 opacity-55"
+          className={`absolute inset-0 ${look === 'paper' ? 'opacity-25' : 'opacity-45'}`}
           style={{
-            backgroundImage: 'radial-gradient(color-mix(in srgb, var(--text) 16%, transparent) 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(color-mix(in srgb, var(--text) 14%, transparent) 1px, transparent 1px)',
             backgroundSize: '28px 28px',
             maskImage: 'radial-gradient(ellipse 80% 65% at 72% 20%, #000, transparent 78%)',
           }}
         />
         <div
-          className="absolute -top-32 end-[10%] h-[420px] w-[420px] rounded-full blur-[125px] opacity-28"
+          className={`absolute -top-32 end-[10%] h-[380px] w-[380px] rounded-full blur-[130px] ${
+            look === 'paper' ? 'opacity-10' : 'opacity-22'
+          }`}
           style={{ background: 'var(--gold)' }}
         />
-        <div
-          className="absolute top-[380px] start-[6%] h-[280px] w-[280px] rounded-full blur-[110px] opacity-18"
-          style={{ background: 'var(--lime)' }}
-        />
       </div>
 
-      {/* Top Announcement Ribbon (01.zip) */}
-      <div
-        className="relative z-30 text-center py-2 px-3 text-[11px] font-bold border-b hairline"
-        style={{ background: 'var(--gold)', color: '#fff' }}
-      >
-        <span className="inline-flex items-center gap-2 flex-wrap justify-center">
-          <Sparkles className="h-3.5 w-3.5" />
-          <span>
-            {isFa
-              ? 'نسخه ۶.۰ دلارینو منتشر شد — پایانه چارت AI، ۳ موتور خودکار، ۸۰۷ جفت‌ارز و اهرم آزاد تا ۵۰×'
-              : 'Dollarino OS v6.0 — Pro Chart AI Terminal, 3 Autonomous Engines, 807 Pairs & up to 50× Leverage'}
-          </span>
-          <button type="button" onClick={() => scrollTo('pricing')} className="underline underline-offset-2 font-black">
-            {isFa ? 'مشاهده تعرفه‌ها →' : 'See Pricing →'}
-          </button>
-        </span>
-      </div>
-
-      {/* Sticky Floating Pill Navbar (01.zip Header with Real Logo) */}
+      {/* Sticky Floating Pill Navbar */}
       <header className="sticky top-0 z-40 px-3 sm:px-6 pt-3">
         <div
           className="mx-auto max-w-6xl panel rounded-full px-3 sm:px-5 py-2 flex items-center gap-2 shadow-xl backdrop-blur-2xl"
@@ -244,19 +221,21 @@ export function LandingPage({
             </button>
             <button
               type="button"
-              onClick={onOpenAppearance}
-              title={isFa ? '۴ تم ظاهری' : 'Looks'}
-              className="h-9 w-9 grid place-items-center rounded-full btn-ghost"
-            >
-              <Palette className="h-4 w-4" style={{ color: 'var(--gold)' }} />
-            </button>
-            <button
-              type="button"
               onClick={onToggleDaylight}
-              title={isFa ? 'تغییر حالت روز/شب' : 'Day/Night'}
-              className="h-9 w-9 grid place-items-center rounded-full btn-ghost"
+              title={isFa ? 'تغییر حالت روز و شب' : 'Day / Night'}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-full btn-ghost text-xs font-bold"
             >
-              {look === 'paper' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4 text-[#f7c85c]" />}
+              {look === 'paper' ? (
+                <>
+                  <Moon className="h-4 w-4 text-[var(--gold)]" />
+                  <span className="hidden sm:inline">{isFa ? 'حالت شب' : 'Night'}</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="h-4 w-4 text-[#f59e0b]" />
+                  <span className="hidden sm:inline">{isFa ? 'حالت روز' : 'Day'}</span>
+                </>
+              )}
             </button>
             <button
               type="button"
@@ -827,12 +806,12 @@ export function LandingPage({
             {(isFa
               ? [
                   ['آیا برای شروع نیاز به کلید API صرافی یا هوش مصنوعی دارم؟', 'خیر! بلافاصله پس از کلیک روی ورود دمو، حساب $۱۰,۰۰۰ رایگان با قیمت لحظه‌ای صرافی در اختیارتان است و هوش مصنوعی دُرّبین نیز مرکزی است.'],
-                  ['کدام صرافی‌ها پشتیبانی می‌شوند؟', 'صرافی‌های Toobit Futures و KCEX Futures (با کارمزد میکر ۰٪) به‌صورت کامل با کلید رمزنگاری‌شده AES-256 و فقط مجوز معامله (بدون برداشت) پشتیبانی می‌شوند.'],
+                  ['کدام صرافی‌ها پشتیبانی می‌شوند؟', 'صرافی Toobit Futures به‌صورت مستقیم و خودکار با کلید رمزنگاری‌شده AES-256 (فقط مجوز معامله و بدون دسترسی برداشت) متصل می‌شود و برای KCEX Mirror نیز سیگنال‌دهی هماهنگ و کارمزد میکر ۰٪ فعال است.'],
                   ['آیا می‌توانم اپلیکیشن را روی موبایل و دسکتاپ نصب کنم؟', 'بله! دلارینو یک وب‌اپ پیشرفته (PWA) است و با یک کلیک روی ویندوز، مک، آیفون و اندروید نصب می‌شود.'],
                 ]
               : [
                   ['Do I need exchange or LLM API keys to start?', 'No — Paper Demo gives $10,000 live-quote credit instantly, and Dorrbin Multi-AI runs centrally on the platform.'],
-                  ['Which live exchanges are supported?', 'Toobit Futures and KCEX Futures using AES-256 encrypted Trade-Only keys with zero withdrawal scope.'],
+                  ['Which live exchanges are supported?', 'Toobit USDT-M Futures connects directly via AES-256 encrypted Trade-Only API keys (zero withdrawal scope), alongside KCEX Signal-Mirror (0% maker fee).'],
                   ['Can I install Dollarino as an app?', 'Yes — installable PWA across iOS, Android, macOS, and Windows.'],
                 ]
             ).map(([q, a], i) => (

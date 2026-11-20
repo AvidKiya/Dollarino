@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
+  BarChart3,
+  Bell,
   CandlestickChart,
   CircleHelp,
   Command,
@@ -11,15 +13,17 @@ import {
   Home,
   Image,
   LayoutDashboard,
+  LayoutGrid,
   LogOut,
   Menu,
-  Palette as PaletteIcon,
+  Moon,
   Power,
   Radar,
   RotateCcw,
   Search,
   Shield,
   Sparkles,
+  Sun,
   Users,
   Wallet,
   X,
@@ -29,7 +33,7 @@ import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import type { AuthUserInfo, EntitlementSummary, NavTab } from '../lib/types';
-import { AppearanceModal, type LookId } from './AppearanceModal';
+import type { LookId } from './AppearanceModal';
 import { DollarinoBrandMark } from './BrandGraphics';
 import { CoinIcon } from './CoinIcon';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from './ConfirmTradeSheet';
@@ -44,9 +48,10 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'خانه و ربات من', labelEn: 'Home & Bot', icon: Home },
-  { id: 'markets', labelFa: 'بازار ارزها', labelEn: 'Coins & Prices', icon: Globe },
+  { id: 'markets', labelFa: 'بازار ارزها', labelEn: 'Coins & Prices', icon: BarChart3 },
   { id: 'terminal', labelFa: 'معامله آسان', labelEn: 'Easy Trade', icon: Zap },
   { id: 'portfolio', labelFa: 'کیف پول و سودها', labelEn: 'Wallet & Profit', icon: Wallet },
+  { id: 'services', labelFa: 'خدمات و ابزارها', labelEn: 'Services Hub', icon: LayoutGrid },
   { id: 'pricing', labelFa: 'اشتراک و پشتیبانی', labelEn: 'Plans & Help', icon: CreditCard },
   { id: 'faq', labelFa: 'راهنمای ساده', labelEn: 'Simple Guide', icon: CircleHelp },
 ];
@@ -58,6 +63,7 @@ const MAIN_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: ty
   { id: 'radar', labelFa: 'رادار و آزمایشگاه', labelEn: 'Radar & Lab', icon: Radar },
   { id: 'copy', labelFa: 'کپی‌ترید و اتصالات', labelEn: 'Copy & Connect', icon: Users },
   { id: 'portfolio', labelFa: 'پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
+  { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
 ];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
@@ -67,6 +73,7 @@ const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon:
 
 export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
+  if (id === 'services') return isFa ? 'خدمات' : 'Services';
   if (id === 'card') return isFa ? 'کارت هفتگی' : 'Weekly Card';
   if (id === 'admin') return isFa ? 'مدیریت' : 'Admin';
   const found = [...MAIN_VIEWS, ...ACCOUNT_VIEWS].find((x) => x.id === id);
@@ -132,7 +139,9 @@ export function Layout({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQ, setPaletteQ] = useState('');
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{ id: string; category: string; title: string; body: string; is_read: number; created_at: string }>>([]);
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
   const [qtOpen, setQtOpen] = useState(false);
   const [qtSymbol, setQtSymbol] = useState('BTCUSDT');
   const [qtSide, setQtSide] = useState<'LONG' | 'SHORT'>('LONG');
@@ -141,6 +150,25 @@ export function Layout({
   const [qtErr, setQtErr] = useState('');
   const [pendingConfirm, setPendingConfirm] = useState<PendingTradeConfirmation | null>(null);
   const [clock, setClock] = useState('');
+
+  const loadNotifications = async () => {
+    try {
+      const r = await apiFetch<{ notifications: typeof notifications; unread: number }>('/api/trading/notifications');
+      setNotifications(r.notifications || []);
+      setUnreadNotifs(r.unread || 0);
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    void loadNotifications();
+    const iv = setInterval(() => void loadNotifications(), 20_000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const toggleDayNight = () => {
+    tgHaptic('light');
+    onSelectLook(currentLook === 'paper' ? 'cosmic' : 'paper');
+  };
 
   useEffect(() => {
     const f = () =>
@@ -437,14 +465,11 @@ export function Layout({
 
             <button
               type="button"
-              onClick={() => {
-                setDrawerOpen(false);
-                setAppearanceOpen(true);
-              }}
+              onClick={toggleDayNight}
               className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-[13px] font-semibold text-dim hover:text-main hover:bg-[var(--soft)] transition"
             >
-              <PaletteIcon className="w-[18px] h-[18px] shrink-0" />
-              <span className="truncate">{isFa ? 'ظاهر آیفونی (۴ تم)' : 'iOS Themes'}</span>
+              {currentLook === 'paper' ? <Moon className="w-[18px] h-[18px] shrink-0" /> : <Sun className="w-[18px] h-[18px] shrink-0 text-[#F59E0B]" />}
+              <span className="truncate">{currentLook === 'paper' ? (isFa ? 'حالت شب آیفونی' : 'Night Mode') : isFa ? 'حالت روز آیفونی' : 'Day Mode'}</span>
             </button>
           </div>
 
@@ -506,14 +531,20 @@ export function Layout({
           </p>
           <button
             type="button"
-            onClick={() => {
-              setDrawerOpen(false);
-              setAppearanceOpen(true);
-            }}
+            onClick={toggleDayNight}
             className="mt-2.5 w-full py-1.5 px-2.5 rounded-xl surface-soft text-[11px] font-bold text-main flex items-center justify-center gap-1.5 hover:border-[var(--line-strong)] transition"
           >
-            <PaletteIcon className="w-3.5 h-3.5" style={{ color: 'var(--gold-soft)' }} />
-            <span>{isFa ? 'تغییر تم روشن / تاریک' : 'Theme & Looks'}</span>
+            {currentLook === 'paper' ? (
+              <>
+                <Moon className="w-3.5 h-3.5 text-[var(--gold)]" />
+                <span>{isFa ? 'تغییر به حالت شب 🌙' : 'Switch to Night 🌙'}</span>
+              </>
+            ) : (
+              <>
+                <Sun className="w-3.5 h-3.5 text-[#F59E0B]" />
+                <span>{isFa ? 'تغییر به حالت روز ☀️' : 'Switch to Day ☀️'}</span>
+              </>
+            )}
           </button>
         </div>
 
@@ -611,11 +642,33 @@ export function Layout({
 
                 <button
                   type="button"
-                  onClick={() => setAppearanceOpen(true)}
-                  title={isFa ? 'تم روشن / تاریک آیفونی' : 'iOS Appearance'}
+                  onClick={() => {
+                    setNotifOpen((v) => !v);
+                    if (!notifOpen && unreadNotifs > 0) {
+                      void apiFetch('/api/trading/notifications/read', { method: 'POST' }).catch(() => {});
+                      setUnreadNotifs(0);
+                    }
+                  }}
+                  title={isFa ? 'اعلان‌ها' : 'Notifications'}
+                  className="relative h-9 w-9 grid place-items-center rounded-2xl btn-ghost"
+                >
+                  <Bell className="w-4 h-4 text-main" />
+                  {unreadNotifs > 0 && (
+                    <span className="absolute top-1.5 end-1.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--panel)]" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleDayNight}
+                  title={isFa ? 'حالت روز / شب' : 'Day / Night'}
                   className="h-9 w-9 grid place-items-center rounded-2xl btn-ghost"
                 >
-                  <PaletteIcon className="w-4 h-4" style={{ color: 'var(--gold-soft)' }} />
+                  {currentLook === 'paper' ? (
+                    <Moon className="w-4 h-4 text-[var(--gold)]" />
+                  ) : (
+                    <Sun className="w-4 h-4 text-[#F59E0B]" />
+                  )}
                 </button>
 
                 {onGoLanding && (
@@ -702,65 +755,153 @@ export function Layout({
             )}
           </header>
 
-          <main className="flex-1 mx-auto w-full max-w-6xl px-3 sm:px-6 py-5 pb-28 lg:pb-10">{children}</main>
+          <main className="flex-1 mx-auto w-full max-w-6xl px-3 sm:px-6 py-5 pb-32 lg:pb-10">{children}</main>
         </div>
       </div>
 
-      {/* Apple iPhone Glass Floating Bottom Dock */}
-      <nav className="lg:hidden fixed bottom-3 inset-x-3 z-40">
-        <div className="panel rounded-[28px] px-2 py-2 grid grid-cols-[1fr_1fr_64px_1fr_1fr] items-center shadow-2xl">
-          {([
-            { id: 'overview' as NavTab, icon: Home, l: isFa ? 'خانه' : 'Home' },
-            { id: 'markets' as NavTab, icon: Globe, l: isFa ? 'بازار' : 'Coins' },
-          ]).map((x) => {
-            const Icon = x.icon;
-            return (
-              <button
-                key={x.id}
-                type="button"
-                onClick={() => selectTab(x.id)}
-                className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl transition ${
-                  activeTab === x.id ? 'text-brand' : 'text-dim'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="text-[10px] font-bold">{x.l}</span>
+      {/* Notifications Popover */}
+      {notifOpen && (
+        <div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px]" onClick={() => setNotifOpen(false)}>
+          <div
+            className="pop-in fixed top-16 end-3 sm:end-8 w-[92vw] max-w-sm panel rounded-[26px] p-4 shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b hairline pb-2.5">
+              <span className="font-display font-bold text-sm text-main flex items-center gap-2">
+                <Bell className="w-4 h-4 text-[#F59E0B]" />
+                {isFa ? 'اعلان‌ها و رویدادها' : 'Live Notifications'}
+              </span>
+              <button type="button" onClick={() => setNotifOpen(false)} className="h-7 w-7 rounded-full btn-ghost grid place-items-center">
+                <X className="w-3.5 h-3.5" />
               </button>
-            );
-          })}
+            </div>
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {notifications.length === 0 ? (
+                <p className="text-xs text-dim py-6 text-center">
+                  {isFa ? 'اعلان جدیدی ثبت نشده است.' : 'No notifications yet.'}
+                </p>
+              ) : (
+                notifications.slice(0, 12).map((n) => (
+                  <div key={n.id} className="surface-soft rounded-2xl p-3 space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-black text-main truncate">{n.title}</span>
+                      <span className="text-[10px] text-dim shrink-0">{n.created_at.slice(11, 16)}</span>
+                    </div>
+                    <p className="text-[11px] text-sub leading-relaxed">{n.body}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Kifpool-inspired Apple iOS Curved Notch Floating Bottom Tab Bar */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 pointer-events-none select-none">
+        <div className="relative mx-auto max-w-md pointer-events-auto">
+          {/* Sculpted SVG Curved Notch Cradle */}
+          <svg
+            viewBox="0 0 390 78"
+            preserveAspectRatio="none"
+            className="w-full h-[76px] block"
+            style={{ filter: 'drop-shadow(0 -8px 22px rgba(15, 23, 42, 0.12))' }}
+            aria-hidden="true"
+          >
+            <path
+              d="M0,18 Q0,0 18,0 L132,0 C150,0 156,28 195,28 C234,28 240,0 258,0 L372,0 Q390,0 390,18 L390,78 L0,78 Z"
+              fill="var(--panel)"
+            />
+          </svg>
+
+          {/* Floating Center Cobalt Circle Button */}
           <button
             type="button"
-            onClick={() => openQuickTradeModal()}
-            aria-label="Quick Trade"
-            className="relative -mt-7 mx-auto rounded-full btn-cobalt grid place-items-center shrink-0 overflow-hidden shadow-xl"
-            style={{ width: 58, height: 58 }}
+            onClick={() => {
+              tgHaptic('medium');
+              if (activeTab === 'terminal') {
+                openQuickTradeModal();
+              } else {
+                selectTab('terminal');
+              }
+            }}
+            aria-label={isFa ? 'معامله' : 'Trade'}
+            className="absolute left-1/2 -translate-x-1/2 -top-5 w-[56px] h-[56px] rounded-full grid place-items-center shadow-[0_10px_26px_rgba(22,82,240,0.52)] active:scale-95 transition-transform"
+            style={{
+              background: 'linear-gradient(145deg, #2563EB 0%, #1652F0 58%, #0B3BB8 100%)',
+              border: '3px solid var(--bg)',
+            }}
           >
-            <span className="absolute inset-0 shine" />
-            <Zap className="w-6 h-6 relative text-white" />
+            <DollarinoBrandMark size={30} />
           </button>
 
-          {([
-            uiMode === 'simple'
-              ? { id: 'terminal' as NavTab, icon: Sparkles, l: isFa ? 'معامله' : 'Trade' }
-              : { id: 'radar' as NavTab, icon: Radar, l: isFa ? 'رادار' : 'Radar' },
-            { id: 'portfolio' as NavTab, icon: Wallet, l: isFa ? 'کیف‌پول' : 'Wallet' },
-          ]).map((x) => {
-            const Icon = x.icon;
-            return (
-              <button
-                key={x.id}
-                type="button"
-                onClick={() => selectTab(x.id)}
-                className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl transition ${
-                  activeTab === x.id ? 'text-brand' : 'text-dim'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="text-[10px] font-bold">{x.l}</span>
-              </button>
-            );
-          })}
+          {/* 4 Surrounding Balanced Tabs: خانه | بازار | [🔵] | کیف پول | خدمات */}
+          <div className="absolute inset-x-0 bottom-0 h-[72px] grid grid-cols-[1fr_1fr_76px_1fr_1fr] items-center px-2">
+            {([
+              { id: 'overview' as NavTab, icon: Home, l: isFa ? 'خانه' : 'Home' },
+              { id: 'markets' as NavTab, icon: BarChart3, l: isFa ? 'بازار' : 'Markets' },
+            ]).map((x) => {
+              const Icon = x.icon;
+              const active = activeTab === x.id;
+              return (
+                <button
+                  key={x.id}
+                  type="button"
+                  onClick={() => selectTab(x.id)}
+                  className="relative flex flex-col items-center justify-center gap-1 h-full"
+                >
+                  <span
+                    className={`w-8 h-8 rounded-xl grid place-items-center transition-all ${
+                      active ? 'bg-[#F59E0B]/15 text-[#F59E0B]' : 'text-dim'
+                    }`}
+                  >
+                    <Icon className="w-[18px] h-[18px]" strokeWidth={active ? 2.4 : 2} />
+                  </span>
+                  <span className={`text-[10px] font-bold leading-none ${active ? 'text-[#F59E0B]' : 'text-dim'}`}>
+                    {x.l}
+                  </span>
+                  {active && (
+                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
+                  )}
+                </button>
+              );
+            })}
+
+            <div className="flex flex-col items-center justify-end h-full pb-2 pointer-events-none">
+              <span className={`text-[10px] font-bold leading-none ${activeTab === 'terminal' ? 'text-[var(--gold)]' : 'text-dim'}`}>
+                {isFa ? 'معامله' : 'Trade'}
+              </span>
+            </div>
+
+            {([
+              { id: 'portfolio' as NavTab, icon: Wallet, l: isFa ? 'کیف پول' : 'Wallet' },
+              { id: 'services' as NavTab, icon: LayoutGrid, l: isFa ? 'خدمات' : 'Services' },
+            ]).map((x) => {
+              const Icon = x.icon;
+              const active = activeTab === x.id;
+              return (
+                <button
+                  key={x.id}
+                  type="button"
+                  onClick={() => selectTab(x.id)}
+                  className="relative flex flex-col items-center justify-center gap-1 h-full"
+                >
+                  <span
+                    className={`w-8 h-8 rounded-xl grid place-items-center transition-all ${
+                      active ? 'bg-[#F59E0B]/15 text-[#F59E0B]' : 'text-dim'
+                    }`}
+                  >
+                    <Icon className="w-[18px] h-[18px]" strokeWidth={active ? 2.4 : 2} />
+                  </span>
+                  <span className={`text-[10px] font-bold leading-none ${active ? 'text-[#F59E0B]' : 'text-dim'}`}>
+                    {x.l}
+                  </span>
+                  {active && (
+                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </nav>
 
@@ -939,14 +1080,6 @@ export function Layout({
         busy={qtBusy}
         onConfirm={executeConfirmedQuickTrade}
         onCancel={() => setPendingConfirm(null)}
-      />
-
-      <AppearanceModal
-        open={appearanceOpen}
-        lang={lang}
-        currentLook={currentLook}
-        onSelectLook={onSelectLook}
-        onClose={() => setAppearanceOpen(false)}
       />
     </div>
   );

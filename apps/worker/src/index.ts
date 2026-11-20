@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { authRoutes } from './auth.js';
+import { authRoutes, requireAuth, type AppVariables } from './auth.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
 import { reconcileOpenPositionsForUser } from './engine/executor.js';
 import type { Env } from './env.js';
@@ -14,7 +14,7 @@ import { webhookRoutes } from './routes/webhooks.js';
 
 export { TradingBotCoordinator };
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 app.use('*', cors({
   origin: (origin) => origin || '*',
@@ -102,6 +102,36 @@ app.route('/api/trading', tradingRoutes);
 app.route('/api/chart-ai', chartAiRoutes);
 app.route('/api/webhook', webhookRoutes);
 app.route('/api/admin', adminRoutes);
+
+app.get('/api/events/stream', requireAuth, async (c) => {
+  const user = c.get('user');
+  const [cfg, openCount, unreadNtf, latestSig] = await Promise.all([
+    c.env.DB.prepare(`SELECT bot_state, trading_mode, paper_balance FROM bot_configs WHERE user_id = ?`).bind(user.id).first<{ bot_state: string; trading_mode: string; paper_balance: string }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN'`).bind(user.id).first<{ cnt: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM notifications WHERE user_id = ? AND is_read = 0`).bind(user.id).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT id, symbol, direction, created_at FROM signals ORDER BY created_at DESC LIMIT 1`).first(),
+  ]);
+  const enc = new TextEncoder();
+  const body = new ReadableStream({
+    start(controller) {
+      const send = (ev: string, data: unknown) => {
+        controller.enqueue(enc.encode(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+      send('balance.updated', { paperBalance: cfg?.paper_balance ?? '0', tradingMode: cfg?.trading_mode ?? 'PAPER' });
+      send('position.updated', { openCount: openCount?.cnt ?? 0, botState: cfg?.bot_state ?? 'STOPPED' });
+      send('notification.created', { unread: unreadNtf?.cnt ?? 0 });
+      if (latestSig) send('signal.received', latestSig);
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+});
 
 // Explicit aliases so both `/api/telegram/webhook/:botId` and `/api/webhook/telegram/:botId` work cleanly
 app.post('/api/telegram/webhook', async (c) => {

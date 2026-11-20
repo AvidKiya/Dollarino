@@ -101,6 +101,7 @@ export function TerminalPage({
   const [marginMode, setMarginMode] = useState<'ISOLATED' | 'CROSS'>(data.config.margin_mode || 'ISOLATED');
   const [limitPrice, setLimitPrice] = useState('');
   const [lev, setLev] = useState(10);
+  const [marginPct, setMarginPct] = useState<number>(Math.max(5, Math.min(100, Number(data.config.margin_pct || 10))));
   const [stopLoss, setStopLoss] = useState('');
   const [tp1, setTp1] = useState('');
   const [tp2, setTp2] = useState('');
@@ -300,7 +301,7 @@ export function TerminalPage({
   const lastPx = Number(snap?.market24h.lastPrice || 0);
   const chg24 = Number(snap?.market24h.changePct24h || 0);
   const freeCash = Number(data.balance.free || 0);
-  const marginEst = (freeCash * Number(data.config.margin_pct || 5)) / 100;
+  const marginEst = (freeCash * marginPct) / 100;
 
   const chartOverlays: ChartOverlays | undefined = useMemo(() => {
     if (!showEma || !snap?.indicators) return undefined;
@@ -332,6 +333,28 @@ export function TerminalPage({
   if (uiMode === 'simple') {
     return (
       <div className="space-y-5">
+        {/* Kifpool-inspired Top Segmented Switch: معامله آسان | معامله حرفه‌ای */}
+        {onToggleUiMode && (
+          <div className="flex justify-center">
+            <div className="ios-segmented p-1">
+              <button
+                type="button"
+                onClick={() => onToggleUiMode('simple')}
+                className="px-5 py-2 rounded-full text-xs font-black ios-pill-active"
+              >
+                {isFa ? 'معامله آسان' : 'Easy Trade'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onToggleUiMode('pro')}
+                className="px-5 py-2 rounded-full text-xs font-bold text-dim hover:text-main transition"
+              >
+                {isFa ? 'معامله حرفه‌ای' : 'Pro Trade'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="panel rounded-[28px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <SymbolPicker
@@ -348,16 +371,9 @@ export function TerminalPage({
               </p>
             </div>
           </div>
-          {onToggleUiMode && (
-            <button
-              type="button"
-              onClick={() => onToggleUiMode('pro')}
-              className="btn-ghost px-4 py-2 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5"
-            >
-              <CandleIcon className="w-4 h-4" style={{ color: 'var(--gold-soft)' }} />
-              <span>{isFa ? 'رفتن به چارت حرفه‌ای ⚡' : 'Pro Chart Mode ⚡'}</span>
-            </button>
-          )}
+          <span className="text-[11px] font-bold px-3 py-1.5 rounded-full surface-soft text-sub">
+            {isFa ? 'حالت محافظت‌شده + حدضرر خودکار 🛡️' : 'Auto Stop-Loss Protected 🛡️'}
+          </span>
         </div>
 
         <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4 items-start">
@@ -430,6 +446,29 @@ export function TerminalPage({
                     className={`py-2.5 px-2 rounded-2xl text-[11px] font-black transition ${lev === opt.v ? 'ios-pill-active' : 'surface-soft text-dim'}`}
                   >
                     {opt.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-sub">{isFa ? 'مقدار سرمایه درگیر:' : 'Trade Margin:'}</p>
+                <span dir="ltr" className="font-num text-xs font-black text-main">${marginEst.toFixed(0)} ({marginPct}%)</span>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {[10, 25, 50, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => setMarginPct(pct)}
+                    className={`py-2 rounded-full text-xs font-black border border-dashed transition ${
+                      marginPct === pct
+                        ? 'border-[var(--gold)] bg-[color:color-mix(in_srgb,var(--gold)_14%,transparent)] text-[var(--gold)]'
+                        : 'border-[var(--line-strong)] text-dim hover:text-main'
+                    }`}
+                  >
+                    {pct}%
                   </button>
                 ))}
               </div>

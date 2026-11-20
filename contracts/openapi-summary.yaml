@@ -59,6 +59,15 @@ paths:
   /trading/bot/kill-switch:
     post:
       summary: Emergency halt and flatten all open positions
+  /trading/notifications:
+    get:
+      summary: Retrieve persistent trade, TP/SL, security, and subscription alerts
+  /trading/notifications/read:
+    post:
+      summary: Mark notifications as read for the authenticated user
+  /events/stream:
+    get:
+      summary: Authenticated Server-Sent Events (SSE) snapshot stream
   /subscriptions/me:
     get:
       summary: User entitlement, plans, payment coordinates, order history

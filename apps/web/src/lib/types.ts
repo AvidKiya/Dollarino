@@ -7,6 +7,7 @@ export type NavTab =
   | 'radar'
   | 'copy'
   | 'portfolio'
+  | 'services'
   | 'card'
   | 'pricing'
   | 'faq'
