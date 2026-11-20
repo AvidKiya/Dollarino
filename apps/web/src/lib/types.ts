@@ -19,6 +19,7 @@ export interface AuthUserInfo {
   username: string;
   role: string;
   telegram_id: string | null;
+  avatar_url?: string | null;
 }
 
 export interface EntitlementSummary {

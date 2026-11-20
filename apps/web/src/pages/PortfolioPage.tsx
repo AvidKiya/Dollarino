@@ -224,17 +224,18 @@ export function PortfolioPage({
           </div>
         </div>
 
-        {/* Carousel indicator dots matching Screenshot 3 */}
+        {/* Carousel dashed bars matching image-4.png */}
         <div className="relative z-10 flex items-center justify-center gap-1.5 pt-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-white/40" />
-          <span className="h-1.5 w-5 rounded-full bg-white" />
-          <span className="h-1.5 w-1.5 rounded-full bg-white/40" />
+          <span className="h-1 w-3 rounded-full bg-white/35" />
+          <span className="h-1 w-3 rounded-full bg-white/35" />
+          <span className="h-1 w-5 rounded-full bg-white" />
+          <span className="h-1 w-3 rounded-full bg-white/35" />
         </div>
       </div>
 
-      {/* 2. Dotted Allocation Strip + Color Legend matching Screenshot 3 */}
-      <div className="panel rounded-[22px] p-4 space-y-2.5">
-        <div className="flex h-2.5 w-full gap-1 rounded-full overflow-hidden">
+      {/* 2. Open Dotted Allocation Strip + Color Legend matching image-4.png */}
+      <div className="px-2 space-y-2">
+        <div className="flex h-1.5 w-full gap-1 rounded-full overflow-hidden">
           {slices.map((s) => (
             <div
               key={s.label}
@@ -247,15 +248,15 @@ export function PortfolioPage({
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] font-bold text-sub">
           {slices.slice(0, 5).map((s) => (
             <span key={s.label} className="inline-flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
               <span>{s.label}</span>
-              <span dir="ltr" className="text-dim font-num">{Math.round((s.value / sliceTotal) * 100)}%</span>
+              <span dir="ltr" className="text-dim font-num">{((s.value / sliceTotal) * 100).toFixed(1)}%</span>
             </span>
           ))}
         </div>
       </div>
 
-      {/* 3. 4 Circular Action Buttons matching Screenshot 3 (Primary Amber + 3 Clean Circles) */}
+      {/* 3. 4 Circular Action Buttons matching image-4.png (Primary Amber + 3 Clean White Circles) */}
       <div className="grid grid-cols-4 gap-2 text-center py-1">
         <button
           type="button"
@@ -273,7 +274,7 @@ export function PortfolioPage({
           onClick={() => void resetDemo()}
           className="flex flex-col items-center gap-1.5 group"
         >
-          <span className="w-12 h-12 rounded-full panel text-[#1652F0] grid place-items-center transition group-hover:scale-105">
+          <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
             <RotateCcw className="w-5 h-5" />
           </span>
           <span className="text-[11px] font-extrabold text-main">{isFa ? 'ریست $۱۰K' : 'Reset $10K'}</span>
@@ -284,10 +285,10 @@ export function PortfolioPage({
           onClick={exportCsv}
           className="flex flex-col items-center gap-1.5 group"
         >
-          <span className="w-12 h-12 rounded-full panel text-[#1652F0] grid place-items-center transition group-hover:scale-105">
+          <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
             <Download className="w-5 h-5" />
           </span>
-          <span className="text-[11px] font-extrabold text-main">{isFa ? 'خروجی CSV' : 'Export'}</span>
+          <span className="text-[11px] font-extrabold text-main">{isFa ? 'پورتفولیو CSV' : 'Export'}</span>
         </button>
 
         <button
@@ -295,34 +296,34 @@ export function PortfolioPage({
           onClick={() => void closeAll()}
           className="flex flex-col items-center gap-1.5 group"
         >
-          <span className="w-12 h-12 rounded-full panel text-loss grid place-items-center transition group-hover:scale-105">
+          <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
             <X className="w-5 h-5" />
           </span>
           <span className="text-[11px] font-extrabold text-main">{isFa ? 'بستن همه' : 'Settle All'}</span>
         </button>
       </div>
 
-      {/* 4. Search & Zero Balance Filter Row + 2-Column Asset Cards matching Screenshot 3 */}
+      {/* 4. Filter Pills + Search Row + 2-Column Asset Cards matching image-4.png */}
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="panel rounded-2xl px-3 py-2 flex items-center gap-2 flex-1 min-w-[180px]">
-            <Search className="w-4 h-4 text-dim" />
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setHideZero((v) => !v)}
+            className={`px-3.5 py-2 rounded-full text-xs font-bold transition border ${
+              hideZero ? 'bg-[#1652F0] text-white border-[#1652F0]' : 'panel text-sub hairline'
+            }`}
+          >
+            {isFa ? (hideZero ? 'نمایش همه ارزها' : 'مخفی‌سازی دارایی خرد') : hideZero ? 'Show All' : 'Hide Zero'}
+          </button>
+          <div className="panel rounded-full px-3.5 py-2 flex items-center gap-2 flex-1 max-w-xs">
+            <Search className="w-4 h-4 text-dim shrink-0" />
             <input
               value={assetQ}
               onChange={(e) => setAssetQ(e.target.value)}
-              placeholder={isFa ? 'جستجو در دارایی...' : 'Search assets...'}
+              placeholder={isFa ? 'جستجوی ارز...' : 'Search coin...'}
               className="bg-transparent flex-1 text-xs text-main outline-none placeholder:text-dim"
             />
           </div>
-          <label className="inline-flex items-center gap-2 text-xs font-bold text-sub cursor-pointer px-2">
-            <input
-              type="checkbox"
-              checked={hideZero}
-              onChange={(e) => setHideZero(e.target.checked)}
-              className="accent-[#1652F0] rounded"
-            />
-            <span>{isFa ? 'مخفی‌سازی موجودی صفر' : 'Hide zero'}</span>
-          </label>
         </div>
 
         <div className="grid grid-cols-2 gap-3">

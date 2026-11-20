@@ -223,10 +223,57 @@ authRoutes.post('/logout', (c) => {
 authRoutes.get('/me', requireAuth, async (c) => {
   const u = c.get('user');
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, created_at
+    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, avatar_url, created_at
      FROM users WHERE id = ?`
   ).bind(u.id).first();
   return c.json({ user: full });
+});
+
+authRoutes.patch('/profile', requireAuth, async (c) => {
+  const u = c.get('user');
+  const body = await c.req.json<{ username?: string; avatarUrl?: string | null }>().catch(
+    () => ({} as { username?: string; avatarUrl?: string | null })
+  );
+
+  const updates: string[] = [];
+  const binds: Array<string | null> = [];
+
+  if (typeof body.username === 'string') {
+    const cleanName = body.username.trim();
+    if (cleanName.length < 2 || cleanName.length > 40) {
+      return c.json({ error: 'نام کاربری باید بین ۲ تا ۴۰ کاراکتر باشد' }, 400);
+    }
+    updates.push('username = ?');
+    binds.push(cleanName);
+  }
+
+  if (body.avatarUrl !== undefined) {
+    if (body.avatarUrl === null || body.avatarUrl === '') {
+      updates.push('avatar_url = NULL');
+    } else if (typeof body.avatarUrl === 'string') {
+      const val = body.avatarUrl.trim();
+      if (!val.startsWith('data:image/') && !val.startsWith('https://')) {
+        return c.json({ error: 'فرمت تصویر نامعتبر است' }, 400);
+      }
+      if (val.length > 260_000) {
+        return c.json({ error: 'حجم تصویر پروفایل بیش از حد مجاز است (حداکثر ۲۰۰ کیلوبایت)' }, 400);
+      }
+      updates.push('avatar_url = ?');
+      binds.push(val);
+    }
+  }
+
+  if (updates.length > 0) {
+    binds.push(u.id);
+    await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+  }
+
+  const full = await c.env.DB.prepare(
+    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, avatar_url, created_at
+     FROM users WHERE id = ?`
+  ).bind(u.id).first();
+
+  return c.json({ ok: true, user: full });
 });
 
 authRoutes.post('/telegram-link-code', requireAuth, async (c) => {
@@ -304,15 +351,6 @@ authRoutes.post('/telegram/merge-code', requireAuth, async (c) => {
   });
 });
 
-authRoutes.patch('/profile', requireAuth, async (c) => {
-  const u = c.get('user');
-  const body = await c.req.json<{ username?: string }>();
-  const username = (body.username ?? '').trim();
-  if (username.length < 2) return c.json({ error: 'Username must be at least 2 characters' }, 400);
-  await c.env.DB.prepare('UPDATE users SET username = ? WHERE id = ?').bind(username, u.id).run();
-  return c.json({ ok: true, username });
-});
-
 authRoutes.patch('/password', requireAuth, async (c) => {
   const u = c.get('user');
   const body = await c.req.json<{ currentPassword?: string; newPassword?: string }>();
@@ -379,7 +417,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
   const tgId = String(verified.user.id);
   const ownerId = c.env.OWNER_TELEGRAM_ID || '944021185';
   let row = await c.env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_id FROM users WHERE telegram_id = ?`
+    `SELECT id, email, username, role, is_blocked, telegram_id, avatar_url FROM users WHERE telegram_id = ?`
   ).bind(tgId).first<{
     id: string;
     email: string;
@@ -387,6 +425,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
     role: string;
     is_blocked: number;
     telegram_id: string | null;
+    avatar_url?: string | null;
   }>();
 
   if (!row) {
@@ -402,7 +441,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
     ).bind(id, email, username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null).run();
 
     await ensureUserDefaults(c.env.DB, id);
-    row = { id, email, username, role, is_blocked: 0, telegram_id: tgId };
+    row = { id, email, username, role, is_blocked: 0, telegram_id: tgId, avatar_url: null };
   }
 
   if (row.is_blocked) {
@@ -428,6 +467,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
       username: row.username,
       role: row.role,
       telegram_id: row.telegram_id,
+      avatar_url: row.avatar_url ?? null,
     },
   });
 });
@@ -440,7 +480,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
     return c.json({ error: 'Magic login token is required' }, 400);
   }
   const row = await c.env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_id, web_magic_expires_at
+    `SELECT id, email, username, role, is_blocked, telegram_id, avatar_url, web_magic_expires_at
      FROM users WHERE web_magic_token = ? LIMIT 1`
   ).bind(magic).first<{
     id: string;
@@ -449,6 +489,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
     role: string;
     is_blocked: number;
     telegram_id: string | null;
+    avatar_url?: string | null;
     web_magic_expires_at: string | null;
   }>();
 
@@ -484,6 +525,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
       username: row.username,
       role: row.role,
       telegram_id: row.telegram_id,
+      avatar_url: row.avatar_url ?? null,
     },
   });
 });

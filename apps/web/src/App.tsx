@@ -174,13 +174,20 @@ export function App() {
 
   const handleTopbarStartStop = async () => {
     if (!dashboard) return;
-    const running = dashboard.config.bot_state.startsWith('RUNNING');
-    if (running) {
-      await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: false }) });
-    } else {
-      await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
+    const prevState = dashboard.config.bot_state;
+    const running = prevState.startsWith('RUNNING');
+    const optimisticState = running ? 'STOPPED' : dashboard.config.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+    setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: optimisticState } } : cur));
+    try {
+      if (running) {
+        await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: false }) });
+      } else {
+        await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
+      }
+      await loadSessionAndDashboard();
+    } catch {
+      setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: prevState } } : cur));
     }
-    await loadSessionAndDashboard();
   };
 
   const handleKillSwitch = async () => {
@@ -376,6 +383,7 @@ export function App() {
           user={user}
           data={dashboard}
           onNavigate={setActiveTab}
+          onUpdateUser={(u) => setUser(u)}
           onLogout={handleLogout}
         />
       )}

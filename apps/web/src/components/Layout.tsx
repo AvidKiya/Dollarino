@@ -169,27 +169,8 @@ export function Layout({
   useEffect(() => {
     void loadNotifications();
     const iv = setInterval(() => void loadNotifications(), 20_000);
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource('/api/events/stream', { withCredentials: true });
-      const onStreamUpdate = () => {
-        void loadNotifications();
-        void onRefresh?.();
-      };
-      es.addEventListener('notification.created', onStreamUpdate);
-      es.addEventListener('position.updated', () => {
-        void onRefresh?.();
-      });
-      es.onerror = () => {
-        es?.close();
-        es = null;
-      };
-    } catch {
-      /* fallback polling remains active */
-    }
     return () => {
       clearInterval(iv);
-      es?.close();
     };
   }, [onRefresh]);
 
@@ -644,12 +625,16 @@ export function Layout({
                       onClick={() => selectTab('services')}
                       className="flex items-center gap-2 text-start group min-w-0"
                     >
-                      <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border hairline shrink-0">
-                        {user.username.slice(0, 1).toUpperCase()}
+                      <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border hairline shrink-0 overflow-hidden">
+                        {user.avatar_url ? (
+                          <img src={user.avatar_url} alt={user.username} className="w-full h-full object-cover" />
+                        ) : (
+                          user.username.slice(0, 1).toUpperCase()
+                        )}
                       </span>
                       <div className="leading-tight truncate">
                         <span className="flex items-center gap-1 text-[11px] font-bold text-main">
-                          <span className={`h-2 w-2 rounded-full shrink-0 ${isRunning ? 'bg-[#10B981] live-dot' : 'bg-[#0D9455]'}`} />
+                          <span className={`h-2 w-2 rounded-full shrink-0 ${isRunning ? 'bg-[#10B981] live-dot' : 'bg-slate-400'}`} />
                           <span className="truncate">{isFa ? getPersianToday() : clock}</span>
                         </span>
                         <span className="text-[10px] text-dim hidden sm:inline">{user.username}</span>
@@ -934,35 +919,36 @@ export function Layout({
             />
           </svg>
 
-          {/* Floating Center Cobalt / Amber Circle Button */}
+          {/* Floating Center Bot Power Logo Button: B&W when OFF, Full Color + Green Ring when ON */}
           <button
             type="button"
             onClick={() => {
               tgHaptic('medium');
-              if (activeTab === 'terminal') {
-                openQuickTradeModal();
-              } else {
-                selectTab('terminal');
-              }
+              void onStartStop();
             }}
-            aria-label={isFa ? 'معامله' : 'Trade'}
-            className="z-20 absolute left-1/2 -translate-x-1/2 -top-5 w-[56px] h-[56px] rounded-full grid place-items-center active:scale-95 transition-all"
+            aria-label={isRunning ? (isFa ? 'خاموش کردن ربات' : 'Turn Off Bot') : isFa ? 'روشن کردن ربات' : 'Turn On Bot'}
+            title={isRunning ? (isFa ? 'ربات روشن است (لمس برای توقف)' : 'Bot is ON (tap to pause)') : isFa ? 'ربات خاموش است (لمس برای شروع)' : 'Bot is OFF (tap to start)'}
+            className="z-20 absolute left-1/2 -translate-x-1/2 -top-5 w-[58px] h-[58px] rounded-full overflow-hidden grid place-items-center active:scale-95 transition-all"
             style={{
-              background:
-                activeTab === 'terminal'
-                  ? 'linear-gradient(145deg, #FBBF24 0%, #F59E0B 60%, #D97706 100%)'
-                  : 'linear-gradient(145deg, #3B82F6 0%, #1652F0 58%, #0B3BB8 100%)',
-              boxShadow:
-                activeTab === 'terminal'
-                  ? '0 10px 26px rgba(245,158,11,0.48), 0 0 0 4px rgba(245,158,11,0.16)'
-                  : '0 10px 26px rgba(22,82,240,0.48), 0 0 0 4px rgba(59,130,246,0.16)',
-              border: '3px solid var(--bg)',
+              background: isRunning
+                ? 'radial-gradient(circle at center, #082a88 0%, #051646 100%)'
+                : 'radial-gradient(circle at center, #334155 0%, #1e293b 100%)',
+              border: isRunning ? '3.5px solid #10B981' : '3px solid #cbd5e1',
+              boxShadow: isRunning
+                ? '0 0 0 4px rgba(16, 185, 129, 0.24), 0 10px 24px rgba(16, 185, 129, 0.40)'
+                : '0 8px 20px rgba(15, 23, 42, 0.22)',
             }}
           >
-            <DollarinoBrandMark size={30} />
+            <img
+              src="/logo.png"
+              alt="Dollarino Bot"
+              className={`w-[46px] h-[46px] object-contain transition-all duration-300 select-none ${
+                isRunning ? 'scale-105' : 'grayscale contrast-125 opacity-75'
+              }`}
+            />
           </button>
 
-          {/* 4 Surrounding Balanced Tabs: خانه | بازار | ترید | کیف پول | خدمات */}
+          {/* 4 Surrounding Balanced Tabs: خانه | بازار | وضعیت ربات | کیف پول | خدمات */}
           <div className="absolute inset-x-0 bottom-0 h-[72px] grid grid-cols-[1fr_1fr_76px_1fr_1fr] items-center px-2">
             {([
               { id: 'overview' as NavTab, icon: Home, l: isFa ? 'خانه' : 'Home' },
@@ -979,7 +965,7 @@ export function Layout({
                 >
                   <span
                     className={`w-8 h-8 rounded-xl grid place-items-center transition-all ${
-                      active ? 'bg-[#F59E0B]/15 text-[#F59E0B]' : 'text-dim'
+                      active ? 'bg-[#F59E0B]/18 text-[#F59E0B]' : 'text-dim'
                     }`}
                   >
                     <Icon className="w-[18px] h-[18px]" strokeWidth={active ? 2.4 : 2} />
@@ -988,15 +974,15 @@ export function Layout({
                     {x.l}
                   </span>
                   {active && (
-                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
+                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_12px_rgba(245,158,11,0.85)]" />
                   )}
                 </button>
               );
             })}
 
-            <div className="flex flex-col items-center justify-end h-full pb-2 pointer-events-none">
-              <span className={`text-[10px] font-bold leading-none ${activeTab === 'terminal' ? 'text-[var(--gold)]' : 'text-dim'}`}>
-                {isFa ? 'معامله' : 'Trade'}
+            <div className="flex flex-col items-center justify-end h-full pb-1.5 pointer-events-none">
+              <span className={`text-[10px] font-black leading-none ${isRunning ? 'text-[#0D9455]' : 'text-dim'}`}>
+                {isRunning ? (isFa ? 'ربات روشن' : 'Bot ON') : isFa ? 'ربات خاموش' : 'Bot OFF'}
               </span>
             </div>
 
@@ -1015,7 +1001,7 @@ export function Layout({
                 >
                   <span
                     className={`w-8 h-8 rounded-xl grid place-items-center transition-all ${
-                      active ? 'bg-[#F59E0B]/15 text-[#F59E0B]' : 'text-dim'
+                      active ? 'bg-[#F59E0B]/18 text-[#F59E0B]' : 'text-dim'
                     }`}
                   >
                     <Icon className="w-[18px] h-[18px]" strokeWidth={active ? 2.4 : 2} />
@@ -1024,7 +1010,7 @@ export function Layout({
                     {x.l}
                   </span>
                   {active && (
-                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
+                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_12px_rgba(245,158,11,0.85)]" />
                   )}
                 </button>
               );

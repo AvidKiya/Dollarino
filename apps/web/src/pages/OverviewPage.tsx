@@ -151,6 +151,7 @@ export function OverviewPage({
   const [editForm, setEditForm] = useState({ stopLoss: '', tp1: '', tp2: '', tp3: '' });
 
   // Simple Mode Guided 4-Step Launcher (TimeTrade parity)
+  const [watchlistTab, setWatchlistTab] = useState<'popular' | 'favs' | 'gainers' | 'active'>('popular');
   const [homePanel, setHomePanel] = useState<'bot' | 'trade' | 'positions'>('bot');
   const [simpleWizTab, setSimpleWizTab] = useState<'bot' | 'exchange'>('bot');
   const [simpleStep, setSimpleStep] = useState(0);
@@ -615,7 +616,6 @@ export function OverviewPage({
     const selectedMkt = markets.find((m) => m.symbol === simpleCoin);
     const livePx = Number(selectedMkt?.lastPrice || 0);
     const ch24 = Number(selectedMkt?.changePct24h || 0);
-    const watchlistCoins = (markets.length ? markets : SIMPLE_COINS.map((c) => ({ symbol: c.symbol, base: c.symbol.replace('USDT', ''), lastPrice: 0, changePct24h: 0 }))).slice(0, 6);
 
     return (
       <div className="space-y-5 max-w-3xl mx-auto">
@@ -696,50 +696,59 @@ export function OverviewPage({
           )}
         </section>
 
-        {/* 2. Screenshot 2 — 3x2 Crisp Bordered Action Grid */}
-        <section className="grid grid-cols-3 gap-2.5 sm:gap-3">
+        {/* 2. Unified Kifpool-style 3x2 Divided Action Card matching image-5.png */}
+        <section className="panel rounded-[26px] overflow-hidden grid grid-cols-3">
           {[
+            {
+              id: 'bot',
+              icon: Bot,
+              label: isRunning ? (isFa ? 'توقف ربات' : 'Pause Bot') : isFa ? 'شروع ربات' : 'Start Bot',
+              accent: isRunning,
+              onClick: () => void handleStartStop(),
+              borderCls: 'border-b border-e hairline',
+            },
             {
               id: 'trade',
               icon: ArrowUpDown,
               label: isFa ? 'معامله آسان' : 'Easy Trade',
               accent: false,
               onClick: () => onNavigate('terminal'),
+              borderCls: 'border-b border-e hairline',
             },
             {
-              id: 'bot',
-              icon: Bot,
-              label: isRunning ? (isFa ? 'ربات فعال' : 'Bot Active') : isFa ? 'ربات خودکار' : 'Auto Bot',
-              accent: isRunning,
-              onClick: () => setHomePanel('bot'),
-            },
-            {
-              id: 'radar',
-              icon: Radar,
-              label: isFa ? 'رادار و AI' : 'Radar & AI',
-              accent: false,
-              onClick: () => onNavigate('radar'),
-            },
-            {
-              id: 'wallet',
-              icon: Wallet,
-              label: isFa ? 'کیف پول' : 'Wallet',
-              accent: false,
-              onClick: () => onNavigate('portfolio'),
-            },
-            {
-              id: 'copy',
-              icon: Users,
-              label: isFa ? 'کپی‌ترید و تلگرام' : 'Copy & Bot',
+              id: 'exchange',
+              icon: KeyRound,
+              label: isFa ? 'اتصال صرافی' : 'Exchanges',
               accent: false,
               onClick: () => onNavigate('copy'),
+              borderCls: 'border-b hairline',
+            },
+            {
+              id: 'history',
+              icon: Activity,
+              label: isFa ? 'تاریخچه فعالیت‌ها' : 'Activity',
+              accent: false,
+              onClick: () => onNavigate('portfolio'),
+              borderCls: 'border-e hairline',
+            },
+            {
+              id: 'pro',
+              icon: CandlestickChart,
+              label: isFa ? 'معاملات حرفه‌ای' : 'Pro Trade',
+              accent: false,
+              onClick: () => {
+                onToggleUiMode?.('pro');
+                onNavigate('terminal');
+              },
+              borderCls: 'border-e hairline',
             },
             {
               id: 'services',
               icon: LayoutGrid,
-              label: isFa ? 'صرافی و بیشتر' : 'More',
+              label: isFa ? 'بیشتر' : 'More',
               accent: false,
               onClick: () => onNavigate('services'),
+              borderCls: '',
             },
           ].map((tile) => {
             const Icon = tile.icon;
@@ -751,90 +760,129 @@ export function OverviewPage({
                   tgHaptic('light');
                   tile.onClick();
                 }}
-                className={`panel panel-hover rounded-[22px] p-3.5 sm:p-4 flex flex-col items-center justify-center gap-2 text-center transition ${
-                  tile.accent ? 'ring-2 ring-[#0D9455]/45' : ''
-                }`}
+                className={`py-4 px-2 flex flex-col items-center justify-center gap-2 text-center hover:bg-[var(--soft)] transition ${tile.borderCls}`}
               >
-                <div
-                  className={`w-10 h-10 rounded-2xl grid place-items-center ${
-                    tile.accent ? 'bg-[#0D9455]/12 text-[#0D9455]' : 'bg-[#1652F0]/8 text-[#1652F0]'
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                </div>
-                <span className="text-[11px] sm:text-xs font-extrabold text-main leading-tight">{tile.label}</span>
+                <Icon
+                  className={`w-5 h-5 ${tile.accent ? 'text-[#0D9455]' : 'text-main'}`}
+                  strokeWidth={1.9}
+                />
+                <span className={`text-[11px] font-bold leading-tight ${tile.accent ? 'text-[#0D9455]' : 'text-main'}`}>
+                  {tile.label}
+                </span>
               </button>
             );
           })}
         </section>
 
-        {/* 3. Curved Cobalt Promotional & Bot Status Banner matching Screenshot 2 */}
-        <section
-          className="rounded-[26px] p-5 sm:p-6 relative overflow-hidden text-white shadow-lg"
-          style={{ background: 'linear-gradient(125deg, #1652F0 0%, #0D3CC4 55%, #06247A 100%)' }}
-        >
-          <div className="pointer-events-none absolute -end-10 -bottom-10 w-44 h-44 rounded-full bg-white/10" />
-          <div className="pointer-events-none absolute end-16 -top-12 w-32 h-32 rounded-full bg-white/8" />
+        {/* 3. Custom Artwork Cobalt Promotional Banner matching image-5.png */}
+        <div className="space-y-2">
+          <section
+            className="rounded-[24px] relative overflow-hidden text-white shadow-lg min-h-[126px] flex items-center"
+            style={{ background: '#0E49DF' }}
+          >
+            <img
+              src="/assets/banner-bot-gold.png"
+              alt=""
+              aria-hidden="true"
+              className="absolute inset-0 w-full h-full object-cover object-left pointer-events-none select-none"
+            />
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: isFa
+                  ? 'linear-gradient(90deg, rgba(14,73,223,0.12) 0%, rgba(14,73,223,0.78) 46%, rgba(11,55,180,0.96) 100%)'
+                  : 'linear-gradient(270deg, rgba(14,73,223,0.12) 0%, rgba(14,73,223,0.78) 46%, rgba(11,55,180,0.96) 100%)',
+              }}
+            />
 
-          <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1.5">
-              <div className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15">
-                <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'bg-[#4ADE80] live-dot' : 'bg-[#FACC15]'}`} />
-                <span>{isRunning ? (isFa ? 'اسکن زنده کل بازار فعال است' : '24/7 Live Scanner Active') : isFa ? 'کسب سود هوشمند ۲۴ ساعته' : '24/7 Smart Auto Trading'}</span>
+            <div className="relative z-10 w-full px-5 py-4 flex items-center justify-between gap-4">
+              <div className="space-y-1.5 max-w-[66%]">
+                <h2 className="font-display font-extrabold text-sm sm:text-base leading-snug">
+                  {isFa ? 'ربات معامله‌گر خودکار در دلارینو' : 'Dollarino Autonomous 24/7 Bot'}
+                </h2>
+                <p className="text-[11px] text-white/85 leading-relaxed">
+                  {isFa ? 'ارز، فیوچرز، اسپات، اسکن هوشمند کل بازار، هر لحظه و هرجا' : 'Spot, Futures & AI market scanner anytime'}
+                </p>
+                <div className="pt-1 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWizardOpen(true)}
+                    className="px-3.5 py-1.5 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-[11px] font-black inline-flex items-center gap-1 transition"
+                  >
+                    <span>{isFa ? 'تنظیم ربات' : 'Setup Bot'}</span>
+                    {isFa ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
-              <h2 className="font-display font-bold text-lg sm:text-xl leading-snug">
-                {isFa ? 'ربات معامله‌گر خودکار دلارینو' : 'Dollarino Autonomous AI Bot'}
-              </h2>
-              <p className="text-xs text-white/80 max-w-md">
-                {isFa
-                  ? 'با اتصال به صرافی واقعی یا دمو رایگان $۱۰K، در تلگرام و وب بدون نیاز به مانیتورینگ معامله کنید.'
-                  : 'Scan Toobit/KCEX or Paper $10K markets 24/7 with auto risk-free TP/SL protection.'}
-              </p>
             </div>
+          </section>
 
-            <div className="flex flex-wrap sm:flex-col gap-2 shrink-0">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  tgHaptic('medium');
-                  void handleStartStop();
-                }}
-                className={`px-5 py-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5 shadow-md transition ${
-                  isRunning ? 'bg-[#F59E0B] hover:bg-[#D97706] text-white' : 'bg-[#10B981] hover:bg-[#059669] text-white'
-                }`}
-              >
-                {isRunning ? <PauseCircle className="w-4 h-4" /> : <Rocket className="w-4 h-4" />}
-                <span>{isRunning ? (isFa ? 'توقف ربات' : 'Pause Bot') : isFa ? 'شروع خودکار ربات' : 'Start Bot'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setWizardOpen(true)}
-                className="px-4 py-2 rounded-2xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold inline-flex items-center justify-center gap-1.5 transition"
-              >
-                <WandSparkles className="w-3.5 h-3.5" />
-                <span>{isFa ? 'راهنمای ۱ دقیقه‌ای' : '1-Min Wizard'}</span>
-              </button>
-            </div>
+          <div className="flex items-center justify-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#1652F0]/25" />
+            <span className="h-1.5 w-4 rounded-full bg-[#1652F0]" />
+            <span className="h-1.5 w-1.5 rounded-full bg-[#1652F0]/25" />
           </div>
-        </section>
+        </div>
 
-        {/* 4. Screenshot 2 — Bottom Market Watchlist Card */}
-        <section className="panel rounded-[26px] p-4 sm:p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-display font-bold text-base text-main">{isFa ? 'بازارها' : 'Markets'}</h3>
+        {/* 4. Kifpool-style Tabbed Market Watchlist Card matching image-5.png */}
+        <section className="panel rounded-[26px] overflow-hidden">
+          <div className="px-4 pt-3.5 border-b hairline flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-4 text-xs font-bold shrink-0">
+              {[
+                { id: 'favs' as const, lbl: isFa ? 'علاقه‌مندی‌ها' : 'Favorites' },
+                { id: 'popular' as const, lbl: isFa ? 'محبوب‌ترین‌ها' : 'Popular' },
+                { id: 'active' as const, lbl: isFa ? 'ارزهای من' : 'My Coins' },
+                { id: 'gainers' as const, lbl: isFa ? 'بیشترین سود' : 'Top Gainers' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setWatchlistTab(t.id)}
+                  className={`pb-2.5 whitespace-nowrap border-b-2 transition ${
+                    watchlistTab === t.id
+                      ? 'border-[#0F172A] dark:border-white text-main font-black'
+                      : 'border-transparent text-dim hover:text-main'
+                  }`}
+                >
+                  {t.lbl}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => onNavigate('markets')}
-              className="text-xs font-black text-[#1652F0] inline-flex items-center gap-1 hover:opacity-80"
+              className="pb-2.5 text-[11px] font-black text-[#1652F0] shrink-0 inline-flex items-center gap-0.5"
             >
-              <span>{isFa ? 'مشاهده همه' : 'View All'}</span>
-              {isFa ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <span>{isFa ? 'همه' : 'All'}</span>
+              {isFa ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </button>
           </div>
 
-          <div className="divide-y hairline">
-            {watchlistCoins.map((c) => {
+          <div className="px-4 py-2 flex items-center justify-between text-[11px] font-bold text-dim border-b hairline">
+            <span>{isFa ? 'نام ارز' : 'Coin'}</span>
+            <span>{isFa ? 'قیمت لحظه‌ای' : 'Live Price'}</span>
+            <span>24h</span>
+          </div>
+
+          <div className="divide-y hairline px-2">
+            {(() => {
+              const basePool: Array<{ symbol: string; base?: string; lastPrice: string | number; changePct24h?: string | number }> = markets.length
+                ? markets
+                : SIMPLE_COINS.map((c) => ({ symbol: c.symbol, base: c.symbol.replace('USDT', ''), lastPrice: 0, changePct24h: 0 }));
+              let filtered = basePool;
+              if (watchlistTab === 'gainers') {
+                filtered = [...basePool].sort((a, b) => Number(b.changePct24h || 0) - Number(a.changePct24h || 0));
+              } else if (watchlistTab === 'active' && data.openTrades.length > 0) {
+                const openSyms = new Set(data.openTrades.map((p) => p.symbol));
+                const matched = basePool.filter((m) => openSyms.has(m.symbol));
+                if (matched.length > 0) filtered = matched;
+              } else if (watchlistTab === 'favs') {
+                const favSyms = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT']);
+                const matched = basePool.filter((m) => favSyms.has(m.symbol));
+                if (matched.length > 0) filtered = matched;
+              }
+              return filtered.slice(0, 6);
+            })().map((c) => {
               const px = Number(c.lastPrice || 0);
               const ch = Number(c.changePct24h || 0);
               const up = ch >= 0;
@@ -845,15 +893,15 @@ export function OverviewPage({
                   type="button"
                   onClick={() => {
                     setSimpleCoin(c.symbol);
-                    onNavigate('terminal');
+                    onSelectTerminalSymbol(c.symbol);
                   }}
                   className="w-full py-3 flex items-center justify-between gap-3 text-start hover:bg-[var(--soft)] rounded-xl px-2 transition"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <CoinIcon symbol={c.symbol} size={34} />
                     <div className="min-w-0">
-                      <p className="font-display font-bold text-sm text-main truncate">{coinDisplayName(base, isFa)}</p>
-                      <p className="text-[11px] font-bold text-dim">{base}</p>
+                      <p className="font-display font-bold text-sm text-main truncate">{base}</p>
+                      <p className="text-[11px] font-medium text-dim truncate">{coinDisplayName(base, isFa)}</p>
                     </div>
                   </div>
                   <div className="text-center">
