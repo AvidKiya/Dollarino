@@ -83,7 +83,7 @@ export function parseDollarinoSignal(input: string | Record<string, unknown>): D
     text.match(/time\s*frame\s*[:：]\s*([A-Za-z0-9]+)/i) ||
     text.match(/\|\s*([0-9]+[mhdw]?)\b/i);
 
-  const priceMatch = text.match(/(?:^|\n)[^\n]*?(?:\bprice|\bentry(?:\s*price)?|نقطه\s*ورود|ورود)\s*[:：]\s*\$?([0-9.,]+)/i);
+  const priceMatch = text.match(/(?:^|\n)[^\n]*?(?:\bprice|\bentry(?:\s*price)?|نقطه\s*ورود|ورود)\s*[:：]\s*\$?([0-9.,]+|market|مارکت|لحظه‌ای|لحظه\s*ای)/i);
   const stopMatch = text.match(/(?:^|\n)[^\n]*?(?:\bstop(?:\s*loss)?|\bsl\b|حد\s*ضرر|استاپ)\s*[:：]\s*\$?([0-9.,]+)/i);
   const levMatch = text.match(/(?:\bleverage|\blev|اهرم)\s*[:：]?\s*(\d+)x?/i) || text.match(/(\d+)\s*x\b/i);
   const tp1Match = text.match(/(?:\btp\s*1|\btake\s*profit\s*1|تارگت\s*1)\s*[:：]\s*\$?([0-9.,]+)/i);
@@ -91,7 +91,7 @@ export function parseDollarinoSignal(input: string | Record<string, unknown>): D
   const tp3Match = text.match(/(?:\btp\s*3|\btake\s*profit\s*3|تارگت\s*3)\s*[:：]\s*\$?([0-9.,]+)/i);
   const handleMatch = text.match(/(@[A-Za-z0-9_]+)/);
 
-  if (!symbolMatch?.[1] || !priceMatch?.[1] || !stopMatch?.[1] || !tp1Match?.[1]) {
+  if (!symbolMatch?.[1] || !stopMatch?.[1] || !tp1Match?.[1]) {
     return null;
   }
 
@@ -100,17 +100,20 @@ export function parseDollarinoSignal(input: string | Record<string, unknown>): D
     symbol = `${symbol}USDT`;
   }
 
+  const rawPrice = priceMatch?.[1] ?? '0';
+  const normalizedPrice = /^(market|مارکت|لحظه‌ای|لحظه\s*ای)$/i.test(rawPrice) ? '0' : cleanNumeric(rawPrice);
+
   const signal: DollarinoSignal = {
     symbol,
     direction,
-    timeframe: tfMatch?.[1]?.trim() ?? '30',
-    price: cleanNumeric(priceMatch[1]),
+    timeframe: tfMatch?.[1]?.trim() ?? '15m',
+    price: normalizedPrice,
     stopLoss: cleanNumeric(stopMatch[1]),
     leverage: Math.max(1, Number(levMatch?.[1] ?? '1')),
     tp1: cleanNumeric(tp1Match[1]),
     tp2: tp2Match?.[1] ? cleanNumeric(tp2Match[1]) : undefined,
     tp3: tp3Match?.[1] ? cleanNumeric(tp3Match[1]) : undefined,
-    channelHandle: handleMatch?.[1] ?? '@Dollarinoofficial',
+    channelHandle: handleMatch?.[1] ?? '@Dollarino_official',
   };
 
   return enrichSignalPercentages(signal);
@@ -128,7 +131,7 @@ export function enrichSignalPercentages(signal: DollarinoSignal): DollarinoSigna
     tp1Pct: signal.tp1Pct ?? calcLeveragedPct(entry, tp1, lev),
     tp2Pct: signal.tp2Pct ?? (signal.tp2 ? calcLeveragedPct(entry, Number(signal.tp2), lev) : undefined),
     tp3Pct: signal.tp3Pct ?? (signal.tp3 ? calcLeveragedPct(entry, Number(signal.tp3), lev) : undefined),
-    channelHandle: signal.channelHandle ?? '@Dollarinoofficial',
+    channelHandle: signal.channelHandle ?? '@Dollarino_official',
   };
 }
 
@@ -143,21 +146,21 @@ export function formatDollarinoSignal(rawSignal: DollarinoSignal): string {
   const lines = [
     header,
     divider,
-    `💲 Symbol: ${sig.symbol}`,
+    `💲Symbol: ${sig.symbol}`,
     divider,
-    `⌛️ Time Frame: ${sig.timeframe}`,
+    `⌛️Time Frame: ${sig.timeframe}`,
     divider,
-    `🔔 Price: ${sig.price}`,
-    divider,
-    `⛔️ Stop: ${sig.stopLoss}`,
+    `🔔 Price: ${sig.price === '0' ? 'Market' : sig.price}`,
     divider,
     `🔘 Leverage: ${sig.leverage}`,
     divider,
-    `🟢 TP1: ${sig.tp1}`,
+    `⛔️ Stop: ${sig.stopLoss}`,
+    divider,
+    `🟢Tp1: ${sig.tp1}`,
   ];
 
-  if (sig.tp2) lines.push(`🟡 TP2: ${sig.tp2}`);
-  if (sig.tp3) lines.push(`🟠 TP3: ${sig.tp3}`);
+  if (sig.tp2) lines.push(`🟡Tp2: ${sig.tp2}`);
+  if (sig.tp3) lines.push(`🟠Tp3: ${sig.tp3}`);
 
   lines.push(divider);
   lines.push(`🧨 SL: %${sig.slPct ?? '0.00'}`);
@@ -165,7 +168,7 @@ export function formatDollarinoSignal(rawSignal: DollarinoSignal): string {
   if (sig.tp2 && sig.tp2Pct !== undefined) lines.push(`🎯 TP2: %${sig.tp2Pct}`);
   if (sig.tp3 && sig.tp3Pct !== undefined) lines.push(`🎯 TP3: %${sig.tp3Pct}`);
   lines.push(divider);
-  lines.push(`🆔 ${sig.channelHandle ?? '@Dollarinoofficial'}`);
+  lines.push(`🆔 ${sig.channelHandle ?? '@Dollarino_official'}`);
 
   return lines.join('\n');
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Globe, Lock, Mail, Moon, ShieldCheck, Sparkles, Sun, User } from 'lucide-react';
+import { ArrowLeft, Bot, Globe, Lock, Mail, Moon, Send, ShieldCheck, Sparkles, Sun, User } from 'lucide-react';
 import { apiFetch, setStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
@@ -140,6 +140,16 @@ export function AuthPage({
             <span>{demoLoading ? '...' : isFa ? 'شروع فوری با $۱۰,۰۰۰ دمو رایگان (۱ کلیک)' : 'Instant $10,000 Paper Demo (1-Click)'}</span>
           </button>
 
+          <a
+            href="https://t.me/Dollarino_bot?start=web_auth"
+            target="_blank"
+            rel="noreferrer"
+            className="btn-cobalt w-full py-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2"
+          >
+            <Send className="w-4 h-4" />
+            <span>{isFa ? 'ورود و ثبت‌نام ۱-کلیکی با ربات تلگرام (@Dollarino_bot)' : '1-Click Sign In via @Dollarino_bot'}</span>
+          </a>
+
           <div className="flex items-center gap-2 text-[11px] text-dim">
             <div className="h-px flex-1 bg-white/10" />
             <span>{isFa ? 'یا با ایمیل خود وارد شوید' : 'or sign in with email'}</span>
@@ -217,8 +227,12 @@ export function AuthPage({
           </form>
 
           <p className="text-[11px] text-dim flex items-center justify-center gap-1.5 pt-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-jade" />
-            <span>{isFa ? 'شروع کاملاً رایگان · اطلاعات کلید صرافی با AES-256 رمزنگاری می‌شود' : 'Free Paper Desk · API keys encrypted with AES-256'}</span>
+            <ShieldCheck className="w-3.5 h-3.5 text-jade shrink-0" />
+            <span>{isFa ? 'پس از ثبت‌نام، با ۱ کلیک از بخش سرویس‌ها تلگرام خود را همگام کنید' : 'Free Paper Desk · Sync Telegram in 1 click after signup'}</span>
+          </p>
+          <p className="text-[10px] text-dim flex items-center justify-center gap-1.5">
+            <Bot className="w-3.5 h-3.5 text-brand shrink-0" />
+            <span dir="ltr">@Dollarino_bot · @Dollarino_official</span>
           </p>
         </div>
       </div>

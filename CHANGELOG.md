@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.1.0] - 2026-11-20
+### Added
+- `migrations/0012_telegram_bot_admin_suite.sql`: Added `wallet_balance_usdt`, `admin_panel_last_active_at`, `web_magic_token`, `web_magic_expires_at` on `users`, `code_type` / `credit_usdt` on `gift_codes`, and bot system defaults (`bot_help_text`, `bot_help_media_url`, `bot_private_admin_only`, `signal_channel_handle`, `default_margin_pct`, `default_max_leverage`, `usdt_to_toman_rate`).
+- **Full Telegram Bot (`@Dollarino_bot`) & Channel (`@Dollarino_official` / `-1002263982097`) Specification**:
+  - Updated Persian welcome (`سلام خوش اومدی {name} 🌹`), main keyboard (`اتصال به صرافی 🔗`, `تنظیمات ⚙️`, `حساب کاربری 👤`, `خرید اشتراک 💎`, `راهنما 📚`, Mini App), and full inline **Toobit & KCEX** API Key/Secret onboarding + Paper Demo (`Free/Used/Total` balance card).
+  - Added interactive **تنظیم مقادیر معاملات 🪛** submenu (margin %, TP1/TP2/TP3 split presets & custom entry, max leverage, `@Dollarino_official` signal channel, Risk-Free BE/TP1 toggles).
+  - Upgraded **اعلان معاملات بسته (`formatTradeClosedCard`)** and `executor.ts` with exact `تبریک میگم 🤑` / `ضرر هم جزئی از بازار🥲` templates, Iran/Tehran timestamps, and strategy SL/TP/leverage details.
+  - Added full **حساب کاربری 👤** (USDT + Toman wallet balance, numeric ID, Persian subscription dates, `افزایش موجودی 💰`, `خرید اشتراک 💎`), 4-plan TRC20 checkout (`$20`/`$50`/`$90`/`$160`), `✅ بررسی پرداخت / ثبت TXID` -> Super Admin approval alert, wallet payment, and subscription/wallet gift code redemption.
+  - Added **9-Section Telegram Admin Panel (`apps/worker/src/telegram/admin-menu.ts`)**: Financial & Stats Dashboard, User Search/List/VIP/Downgrade/Charge/Block/Stats, Audience-Targeted Broadcast (text/photo), Transaction Filters + Approve/Reject, Gift Code Wizard & Toggle, Live System Settings Editor (plan prices, margin, leverage, channel, TRC20 wallet, Toman rate, help text/media, `bot_private_admin_only` switch), Time-Filtered Reports with **real downloadable JSON & Excel/CSV (`sendDocument`)**, and **Super Admin (`944021185`)-locked Admin & Permissions Management** with 15-minute idle auto-exit and audit logging.
+- **Bidirectional Easy Registration, Login & Account Linking**:
+  - Added `/start LINK-XXXXXX` deep-link auto-merge, `/weblogin` + `POST /api/auth/telegram-magic-login` 1-click magic browser login, and `AuthPage.tsx` + `ServicesPage.tsx` + `CopyConnectPage.tsx` 1-click `@Dollarino_bot` links (`t.me/Dollarino_bot?start=...`).
+- **Automated Telegram Bot Integration Tests (`apps/worker/src/__tests__/telegram-bot.test.ts`)**: Full Miniflare D1 + mocked Telegram API test suite covering onboarding, Toobit/KCEX, trade quantities, 9-section admin panel, CSV/JSON document export, Super Admin isolation, 15-min timeout, and signal manual confirmation.
+
 ## [7.0.0] - 2026-11-20
 ### Added
 - `migrations/0011_custom_strategies.sql`: Added `user_strategies` table (`pine`, `python`, `visual` strategies) and `bot_configs.active_custom_strategy_id` for 24/7 autonomous custom code execution.

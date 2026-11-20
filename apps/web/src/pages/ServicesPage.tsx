@@ -16,6 +16,8 @@ import {
   LogOut,
   CheckCircle2,
   Link2,
+  Send,
+  ExternalLink,
 } from 'lucide-react';
 import { useState } from 'react';
 import { apiFetch, setStoredToken } from '../lib/api';
@@ -51,6 +53,7 @@ export function ServicesPage({
   const isTelegramPseudo = user.email.endsWith('@telegram.dollarino.local');
   const [mergeCode, setMergeCode] = useState('');
   const [linkCmd, setLinkCmd] = useState('');
+  const [deepLinkUrl, setDeepLinkUrl] = useState('');
   const [linkStatus, setLinkStatus] = useState('');
   const [linkBusy, setLinkBusy] = useState(false);
 
@@ -58,9 +61,10 @@ export function ServicesPage({
     setLinkBusy(true);
     setLinkStatus('');
     try {
-      const r = await apiFetch<{ code: string; command: string }>('/api/auth/telegram-link-code', { method: 'POST' });
+      const r = await apiFetch<{ code: string; command: string; deepLinkUrl?: string }>('/api/auth/telegram-link-code', { method: 'POST' });
       setLinkCmd(r.command);
-      setLinkStatus(isFa ? `کد اتصال ساخته شد: ${r.code} (در ربات تلگرام ارسال یا در مینی‌اپ وارد کنید)` : `Code created: ${r.code}`);
+      setDeepLinkUrl(r.deepLinkUrl || `https://t.me/Dollarino_bot?start=${r.code}`);
+      setLinkStatus(isFa ? `کد اتصال ساخته شد: ${r.code} (روی دکمه باز کردن ربات بزنید تا خودکار متصل شود)` : `Code created: ${r.code}`);
     } catch (e) {
       setLinkStatus(e instanceof Error ? e.message : 'Error');
     } finally {
@@ -315,11 +319,23 @@ export function ServicesPage({
                 type="button"
                 disabled={linkBusy}
                 onClick={() => void handleGenerateLinkCode()}
-                className="btn-ghost px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                className="btn-cobalt px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
               >
                 <Link2 className="w-3.5 h-3.5" />
-                <span>{linkBusy ? '...' : isFa ? 'ساخت کد اتصال تلگرام' : 'Generate Link Code'}</span>
+                <span>{linkBusy ? '...' : isFa ? 'اتصال ۱-کلیکی به @Dollarino_bot' : '1-Click Connect @Dollarino_bot'}</span>
               </button>
+              {deepLinkUrl && (
+                <a
+                  href={deepLinkUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-emerald px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'باز کردن تلگرام و اتصال خودکار' : 'Open Telegram & Auto-Link'}</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
               {linkCmd && (
                 <code dir="ltr" className="px-3 py-1.5 rounded-xl surface-soft font-mono-num text-xs font-black text-jade">
                   {linkCmd}

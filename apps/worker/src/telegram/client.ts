@@ -9,7 +9,7 @@ export class TelegramBotClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(12_000),
     });
     const json = await res.json() as { ok: boolean; result?: T; description?: string };
     if (!json.ok) {
@@ -48,6 +48,20 @@ export class TelegramBotClient {
     });
   }
 
+  private buildMarkup(options?: {
+    replyKeyboard?: ReplyKeyboardButton[][];
+    inlineKeyboard?: InlineKeyboardButton[][];
+    removeKeyboard?: boolean;
+  }) {
+    return options?.inlineKeyboard
+      ? { inline_keyboard: options.inlineKeyboard }
+      : options?.replyKeyboard
+        ? { keyboard: options.replyKeyboard, resize_keyboard: true }
+        : options?.removeKeyboard
+          ? { remove_keyboard: true }
+          : undefined;
+  }
+
   sendMessage(
     chatId: string | number,
     text: string,
@@ -57,20 +71,70 @@ export class TelegramBotClient {
       removeKeyboard?: boolean;
     }
   ) {
-    const reply_markup = options?.inlineKeyboard
-      ? { inline_keyboard: options.inlineKeyboard }
-      : options?.replyKeyboard
-        ? { keyboard: options.replyKeyboard, resize_keyboard: true }
-        : options?.removeKeyboard
-          ? { remove_keyboard: true }
-          : undefined;
-
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text,
-      reply_markup,
+      reply_markup: this.buildMarkup(options),
       disable_web_page_preview: true,
     });
+  }
+
+  sendPhoto(
+    chatId: string | number,
+    photoUrl: string,
+    caption?: string,
+    options?: {
+      replyKeyboard?: ReplyKeyboardButton[][];
+      inlineKeyboard?: InlineKeyboardButton[][];
+    }
+  ) {
+    return this.call<{ message_id: number }>('sendPhoto', {
+      chat_id: chatId,
+      photo: photoUrl,
+      caption,
+      reply_markup: this.buildMarkup(options),
+    });
+  }
+
+  sendVideo(
+    chatId: string | number,
+    videoUrl: string,
+    caption?: string,
+    options?: {
+      replyKeyboard?: ReplyKeyboardButton[][];
+      inlineKeyboard?: InlineKeyboardButton[][];
+    }
+  ) {
+    return this.call<{ message_id: number }>('sendVideo', {
+      chat_id: chatId,
+      video: videoUrl,
+      caption,
+      reply_markup: this.buildMarkup(options),
+    });
+  }
+
+  async sendDocument(
+    chatId: string | number,
+    filename: string,
+    content: string,
+    mimeType: string,
+    caption?: string
+  ) {
+    const fd = new FormData();
+    fd.append('chat_id', String(chatId));
+    if (caption) fd.append('caption', caption);
+    fd.append('document', new Blob([content], { type: mimeType }), filename);
+
+    const res = await fetch(`https://api.telegram.org/bot${this.token}/sendDocument`, {
+      method: 'POST',
+      body: fd,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = await res.json() as { ok: boolean; result?: { message_id: number }; description?: string };
+    if (!json.ok) {
+      throw new Error(`Telegram sendDocument failed: ${json.description ?? res.status}`);
+    }
+    return json.result;
   }
 
   editMessageText(

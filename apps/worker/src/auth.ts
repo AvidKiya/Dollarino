@@ -223,7 +223,7 @@ authRoutes.post('/logout', (c) => {
 authRoutes.get('/me', requireAuth, async (c) => {
   const u = c.get('user');
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, created_at
+    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, created_at
      FROM users WHERE id = ?`
   ).bind(u.id).first();
   return c.json({ user: full });
@@ -237,7 +237,12 @@ authRoutes.post('/telegram-link-code', requireAuth, async (c) => {
     `UPDATE users SET telegram_link_code = ?, telegram_link_expires_at = ? WHERE id = ?`
   ).bind(code, expiresAt, u.id).run();
 
-  return c.json({ code, expiresAt, command: `/link ${code}` });
+  return c.json({
+    code,
+    expiresAt,
+    command: `/link ${code}`,
+    deepLinkUrl: `https://t.me/Dollarino_bot?start=${code}`,
+  });
 });
 
 authRoutes.post('/telegram/merge-code', requireAuth, async (c) => {
@@ -417,6 +422,62 @@ authRoutes.post('/telegram-webapp', async (c) => {
 
   return c.json({
     token,
+    user: {
+      id: row.id,
+      email: row.email,
+      username: row.username,
+      role: row.role,
+      telegram_id: row.telegram_id,
+    },
+  });
+});
+
+// One-click Magic Login from @Dollarino_bot (`/?tg_login=...`)
+authRoutes.post('/telegram-magic-login', async (c) => {
+  const body = await c.req.json<{ token?: string }>().catch(() => ({} as { token?: string }));
+  const magic = (body.token ?? '').trim();
+  if (!magic) {
+    return c.json({ error: 'Magic login token is required' }, 400);
+  }
+  const row = await c.env.DB.prepare(
+    `SELECT id, email, username, role, is_blocked, telegram_id, web_magic_expires_at
+     FROM users WHERE web_magic_token = ? LIMIT 1`
+  ).bind(magic).first<{
+    id: string;
+    email: string;
+    username: string;
+    role: string;
+    is_blocked: number;
+    telegram_id: string | null;
+    web_magic_expires_at: string | null;
+  }>();
+
+  if (!row) {
+    return c.json({ error: 'لینک ورود نامعتبر است یا قبلاً استفاده شده است' }, 401);
+  }
+  if (row.web_magic_expires_at && Date.parse(row.web_magic_expires_at) < Date.now()) {
+    return c.json({ error: 'لینک ورود منقضی شده است؛ لطفاً دوباره از ربات تلگرام درخواست دهید' }, 401);
+  }
+  if (row.is_blocked) {
+    return c.json({ error: 'Account is suspended by admin' }, 403);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE users SET web_magic_token = NULL, web_magic_expires_at = NULL, last_active_at = datetime('now') WHERE id = ?`
+  ).bind(row.id).run();
+
+  const isHttps = isHttpsRequest(c);
+  const jwt = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', jwt, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  return c.json({
+    token: jwt,
     user: {
       id: row.id,
       email: row.email,

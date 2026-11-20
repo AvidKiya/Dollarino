@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 OWNER_TELEGRAM_ID = "944021185"
-DEFAULT_SIGNAL_CHANNEL = "@Dollarinoofficial"
+DEFAULT_SIGNAL_CHANNEL = "@Dollarino_official"
 ALLOW_LIVE_TRADING = "true"
 
 [[d1_databases]]

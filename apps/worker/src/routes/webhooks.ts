@@ -49,7 +49,7 @@ webhookRoutes.post('/tv/:secret', async (c) => {
 
   const formatted = formatDollarinoSignal({
     ...signal,
-    channelHandle: signal.channelHandle || cfg.signal_channel_handle || '@Dollarinoofficial',
+    channelHandle: signal.channelHandle || cfg.signal_channel_handle || '@Dollarino_official',
   });
 
   const sigId = randomId('sig');

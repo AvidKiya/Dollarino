@@ -93,6 +93,19 @@ export function App() {
   const loadSessionAndDashboard = useCallback(async () => {
     try {
       setAuthError(null);
+      const urlParams = new URLSearchParams(window.location.search);
+      const tgLoginToken = urlParams.get('tg_login');
+      if (tgLoginToken) {
+        const magicRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-magic-login', {
+          method: 'POST',
+          body: JSON.stringify({ token: tgLoginToken }),
+        });
+        setStoredToken(magicRes.token);
+        urlParams.delete('tg_login');
+        const nextQuery = urlParams.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+      }
+
       let me: { user: AuthUserInfo };
       try {
         me = await apiFetch<{ user: AuthUserInfo }>('/api/auth/me');

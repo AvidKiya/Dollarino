@@ -104,7 +104,7 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     macroBlackout: Boolean(r.macro_blackout),
     aiGateEnabled: Boolean(r.ai_gate_enabled),
     aiMinConfidence: r.ai_min_confidence,
-    signalChannelHandle: r.signal_channel_handle || '@Dollarinoofficial',
+    signalChannelHandle: r.signal_channel_handle || '@Dollarino_official',
     mixerThreshold: r.mixer_threshold ?? 65,
     mixerWeights,
     kbosParams,
@@ -402,6 +402,8 @@ interface OpenTradeRow {
   leverage: number;
   margin_used: string;
   current_stop_loss: string;
+  initial_stop_loss?: string;
+  opened_at?: string;
   tp1: string;
   tp2: string | null;
   tp3: string | null;
@@ -538,6 +540,11 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
             pnlUsd: newRealized,
             pnlPct,
             reason,
+            openedAt: t.opened_at,
+            closedAt: new Date().toISOString(),
+            stopLoss: t.initial_stop_loss ?? t.current_stop_loss,
+            tp1: t.tp1,
+            leverage: t.leverage,
           })
         );
       } else {

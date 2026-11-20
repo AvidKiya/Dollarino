@@ -13,6 +13,6 @@
     "dev:web": "npm run dev --workspace=apps/web",
     "build": "npm run build --workspace=packages/core && npm run build --workspace=apps/web",
     "typecheck": "npm run typecheck --workspace=packages/core && npm run typecheck --workspace=apps/worker && npm run typecheck --workspace=apps/web",
-    "test": "npm test --workspace=packages/core"
+    "test": "npm test --workspace=packages/core && npm test --workspace=apps/worker"
   }
 }
