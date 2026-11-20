@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="fa" dir="rtl" class="dark">
+<html lang="fa" dir="rtl" data-theme="cosmic" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>دلارینو (Dollarino) — هوش مصنوعی دلارینو، استراتژی منتخب دلارینو و کپی ترید دلارینو</title>
-    <meta name="description" content="ترید خودکار چندارزی با هوش مصنوعی دلارینو (دُرّبین)، استراتژی منتخب دلارینو (دُرنا V1) و کپی ترید دلارینو در Toobit، KCEX و حساب دمو" />
-    <meta name="theme-color" content="#0C44C8" />
+    <title>دلارینو (Dollarino) — پایانه و موتورهای معاملاتی هوشمند</title>
+    <meta name="description" content="پایانه معاملاتی فیوچرز، چارت AI، کپی‌ترید تلگرام و ربات چندارزی دلارینو در حساب دمو و Toobit / KCEX" />
+    <meta name="theme-color" content="#050a1a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Dollarino" />
@@ -16,18 +16,24 @@
     <script>
       (function () {
         try {
-          var t = localStorage.getItem('dollarino_theme') === 'light' ? 'light' : 'dark';
+          var saved = localStorage.getItem('dollarino_look');
+          var valid = ['obsidian', 'paper', 'cosmic', 'midnight'];
+          var look = valid.indexOf(saved) >= 0
+            ? saved
+            : (localStorage.getItem('dollarino_theme') === 'light' ? 'paper' : 'cosmic');
           var d = document.documentElement;
-          d.classList.toggle('theme-light', t === 'light');
-          d.classList.toggle('dark', t === 'dark');
-          d.style.colorScheme = t;
+          d.setAttribute('data-theme', look);
+          var isLight = look === 'paper';
+          d.classList.toggle('theme-light', isLight);
+          d.classList.toggle('dark', !isLight);
+          d.style.colorScheme = isLight ? 'light' : 'dark';
         } catch (e) {}
       })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700;800;900&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,600&family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Vazirmatn:wght@400;500;600;700;800;900&display=swap"
       rel="stylesheet"
     />
   </head>

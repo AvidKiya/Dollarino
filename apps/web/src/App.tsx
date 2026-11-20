@@ -1,103 +1,89 @@
 import { useCallback, useEffect, useState } from 'react';
-import { DollarinoBrandMark } from './components/BrandGraphics';
-import { Layout, type NavTab } from './components/Layout';
-import { SetupWizardModal } from './components/SetupWizardModal';
+import { AppearanceModal, type LookId } from './components/AppearanceModal';
+import { DollarinoCoinMark, Layout } from './components/Layout';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
 import { apiFetch, setStoredToken } from './lib/api';
 import type { Lang } from './lib/i18n';
+import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
 import { AdminPage } from './pages/AdminPage';
 import { AuthPage } from './pages/AuthPage';
-import { BacktestPage } from './pages/BacktestPage';
-import { ChartAIPage } from './pages/ChartAIPage';
-import { ConnectionsPage } from './pages/ConnectionsPage';
-import { CopyTradePage } from './pages/CopyTradePage';
-import { DashboardPage, type DashboardPayload } from './pages/DashboardPage';
-import { ExchangePage } from './pages/ExchangePage';
+import { CopyConnectPage } from './pages/CopyConnectPage';
+import { FaqPage } from './pages/FaqPage';
 import { LandingPage } from './pages/LandingPage';
-import { LogsPage } from './pages/LogsPage';
-import { RiskStudioPage } from './pages/RiskStudioPage';
-import { SignalsPage } from './pages/SignalsPage';
-import { StrategyFlowPage } from './pages/StrategyFlowPage';
-import { SubscriptionPage, type UserEntitlement } from './pages/SubscriptionPage';
+import { MarketsPage } from './pages/MarketsPage';
+import { OverviewPage } from './pages/OverviewPage';
+import { PortfolioPage } from './pages/PortfolioPage';
+import { RadarLabPage } from './pages/RadarLabPage';
+import { SubscriptionPage } from './pages/SubscriptionPage';
+import { TerminalPage } from './pages/TerminalPage';
+import { WeeklyCardPage } from './pages/WeeklyCardPage';
 
-interface MeUser {
-  id: string;
-  email: string;
-  username: string;
-  role: string;
-  telegram_id: string | null;
-}
-
-type FullDashboard = DashboardPayload & {
-  config: DashboardPayload['config'] & { signal_channel_handle?: string };
-  entitlement?: UserEntitlement | null;
-  recentSignals: Array<{
-    id: string;
-    source: string;
-    symbol: string;
-    direction: string;
-    price: string;
-    status: string;
-    raw_text: string;
-    created_at: string;
-  }>;
-};
-
-function applyThemeToRoot(t: 'dark' | 'light') {
+function applyLookToRoot(look: LookId) {
   const root = document.documentElement;
-  root.classList.toggle('theme-light', t === 'light');
-  root.classList.toggle('dark', t === 'dark');
-  root.style.colorScheme = t;
+  root.setAttribute('data-theme', look);
+  const isLight = look === 'paper';
+  root.classList.toggle('theme-light', isLight);
+  root.classList.toggle('dark', !isLight);
+  root.style.colorScheme = isLight ? 'light' : 'dark';
+  localStorage.setItem('dollarino_look', look);
+  localStorage.setItem('dollarino_theme', isLight ? 'light' : 'dark');
 }
 
 export function App() {
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('dollarino_lang') === 'en' ? 'en' : 'fa'));
-  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    localStorage.getItem('dollarino_theme') === 'light' ? 'light' : 'dark'
-  );
-  const [user, setUser] = useState<MeUser | null>(null);
+  const [look, setLook] = useState<LookId>(() => {
+    const saved = localStorage.getItem('dollarino_look');
+    if (saved === 'obsidian' || saved === 'paper' || saved === 'cosmic' || saved === 'midnight') return saved;
+    return localStorage.getItem('dollarino_theme') === 'light' ? 'paper' : 'cosmic';
+  });
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+
+  const [user, setUser] = useState<AuthUserInfo | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
-  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [dashboard, setDashboard] = useState<FullDashboard | null>(null);
+
+  const [activeTab, setActiveTab] = useState<NavTab>('overview');
+  const [terminalSymbol, setTerminalSymbol] = useState('BTCUSDT');
+  const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
-  const [wizardOpen, setWizardOpen] = useState(false);
 
   useEffect(() => {
-    applyThemeToRoot(theme);
-  }, [theme]);
+    applyLookToRoot(look);
+  }, [look]);
 
   const handleSetLang = (l: Lang) => {
     setLang(l);
     localStorage.setItem('dollarino_lang', l);
   };
 
-  const handleSetTheme = (t: 'dark' | 'light') => {
-    setTheme(t);
-    localStorage.setItem('dollarino_theme', t);
-    applyThemeToRoot(t);
+  const handleSelectLook = (next: LookId) => {
+    setLook(next);
+    applyLookToRoot(next);
+  };
+
+  const handleToggleDaylight = () => {
+    handleSelectLook(look === 'paper' ? 'cosmic' : 'paper');
   };
 
   const loadSessionAndDashboard = useCallback(async () => {
     try {
       setAuthError(null);
-      const me = await apiFetch<{ user: MeUser }>('/api/auth/me');
+      const me = await apiFetch<{ user: AuthUserInfo }>('/api/auth/me');
       setUser(me.user);
       const [dash, mkts] = await Promise.all([
-        apiFetch<FullDashboard>('/api/trading/dashboard'),
+        apiFetch<DashboardPayload>('/api/trading/dashboard'),
         apiFetch<{ markets: ExchangeMarket[] }>('/api/trading/markets').catch(() => ({ markets: [] })),
       ]);
       setDashboard(dash);
+      if (dash.config?.symbol) setTerminalSymbol((prev) => prev || dash.config.symbol);
       if (mkts.markets.length) setMarkets(mkts.markets);
     } catch (err) {
       setUser(null);
       setDashboard(null);
       const msg = err instanceof Error ? err.message : '';
-      if (msg && !msg.includes('Authentication required')) {
-        setAuthError(msg);
-      }
+      if (msg && !msg.includes('Authentication required')) setAuthError(msg);
     } finally {
       setAuthChecked(true);
     }
@@ -107,96 +93,120 @@ export function App() {
     void loadSessionAndDashboard();
   }, [loadSessionAndDashboard]);
 
+  useEffect(() => {
+    if (!user) return;
+    const iv = setInterval(() => {
+      void apiFetch<DashboardPayload>('/api/trading/dashboard')
+        .then((d) => setDashboard(d))
+        .catch(() => {});
+    }, 12_000);
+    return () => clearInterval(iv);
+  }, [user]);
+
+  const handleQuickDemo = async () => {
+    const res = await apiFetch<{ token: string }>('/api/auth/quick-demo', { method: 'POST' });
+    setStoredToken(res.token);
+    await loadSessionAndDashboard();
+  };
+
   const handleLogout = async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     setStoredToken(null);
     setUser(null);
     setDashboard(null);
+    setPublicScreen('landing');
   };
 
-  const handleStartStop = async () => {
+  const handleTopbarStartStop = async () => {
     if (!dashboard) return;
-    const isRunning = dashboard.config.bot_state.startsWith('RUNNING');
-    try {
-      await apiFetch(isRunning ? '/api/trading/bot/stop' : '/api/trading/bot/start', { method: 'POST' });
-      await loadSessionAndDashboard();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unable to change bot state';
-      if (msg.includes('subscription') || msg.includes('Pro') || msg.includes('VIP') || msg.includes('SUBSCRIPTION_REQUIRED')) {
-        setActiveTab('subscription');
-        window.alert(
-          lang === 'fa'
-            ? 'برای استفاده از هوش مصنوعی دلارینو یا معامله واقعی صرافی، ابتدا اشتراک Pro را فعال کنید. استراتژی منتخب دلارینو در دمو رایگان است!'
-            : msg
-        );
-      } else if (msg.includes('NO_ACTIVE_AI_KEY') || msg.includes('هوش مصنوعی')) {
-        window.alert(
-          lang === 'fa'
-            ? 'هوش مصنوعی دلارینو در حال تنظیم توسط مدیریت است. همین الان می‌توانید با «استراتژی منتخب دلارینو» شروع کنید!'
-            : msg
-        );
-      } else {
-        window.alert(msg);
-      }
+    const running = dashboard.config.bot_state.startsWith('RUNNING');
+    if (running) {
+      await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: false }) });
+    } else {
+      await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
     }
+    await loadSessionAndDashboard();
   };
 
   const handleKillSwitch = async () => {
-    if (
-      !window.confirm(
-        lang === 'fa'
-          ? 'توقف اضطراری و بستن تمام پوزیشن‌های باز؟'
-          : 'Activate Emergency Kill Switch and close all open positions?'
-      )
-    ) {
-      return;
-    }
-    try {
-      await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
-      await loadSessionAndDashboard();
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'Kill switch failed');
-    }
+    await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: true }) });
+    await loadSessionAndDashboard();
+  };
+
+  const handleResetDemo = async () => {
+    await apiFetch('/api/trading/wallet/topup', { method: 'POST', body: JSON.stringify({ amountUsd: 2500 }) });
+    await loadSessionAndDashboard();
+  };
+
+  const openTerminalWithSymbol = (sym?: string) => {
+    if (sym) setTerminalSymbol(sym);
+    setActiveTab('terminal');
   };
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen app-shell flex flex-col items-center justify-center gap-3 text-sm text-sub">
-        <DollarinoBrandMark size={64} glow />
-        <span className="font-bold">Loading Dollarino...</span>
+      <div className="min-h-screen app-shell flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <DollarinoCoinMark size={52} />
+          <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
+        </div>
       </div>
     );
   }
 
-  if (!user || !dashboard) {
-    if (publicScreen === 'landing' && !authError) {
-      return (
-        <LandingPage
-          lang={lang}
-          setLang={handleSetLang}
-          theme={theme}
-          setTheme={handleSetTheme}
-          onOpenAuth={(mode) => {
-            setAuthMode(mode);
-            setPublicScreen('auth');
-          }}
-        />
-      );
-    }
+  if (!user) {
     return (
-      <AuthPage
-        lang={lang}
-        setLang={handleSetLang}
-        theme={theme}
-        setTheme={handleSetTheme}
-        initialMode={authMode}
-        externalError={authError}
-        onBack={() => {
-          setAuthError(null);
-          setPublicScreen('landing');
-        }}
-        onSuccess={loadSessionAndDashboard}
-      />
+      <>
+        {publicScreen === 'landing' ? (
+          <LandingPage
+            lang={lang}
+            setLang={handleSetLang}
+            look={look}
+            onOpenAppearance={() => setAppearanceOpen(true)}
+            onToggleDaylight={handleToggleDaylight}
+            onQuickDemo={handleQuickDemo}
+            onGoAuth={(mode) => {
+              setAuthMode(mode);
+              setPublicScreen('auth');
+            }}
+          />
+        ) : (
+          <AuthPage
+            lang={lang}
+            setLang={handleSetLang}
+            isLight={look === 'paper'}
+            onToggleDaylight={handleToggleDaylight}
+            initialMode={authMode}
+            externalError={authError}
+            onBack={() => setPublicScreen('landing')}
+            onSuccess={loadSessionAndDashboard}
+          />
+        )}
+
+        <AppearanceModal
+          open={appearanceOpen}
+          lang={lang}
+          currentLook={look}
+          onSelectLook={handleSelectLook}
+          onClose={() => setAppearanceOpen(false)}
+        />
+      </>
+    );
+  }
+
+  if (!dashboard) {
+    return (
+      <div className="min-h-screen app-shell flex items-center justify-center p-4">
+        <div className="panel rounded-3xl p-6 text-center space-y-3 max-w-sm w-full">
+          <DollarinoCoinMark size={44} />
+          <p className="text-sm font-bold text-main">
+            {lang === 'fa' ? 'در حال آماده‌سازی میز کار معاملاتی...' : 'Loading your trading desk...'}
+          </p>
+          <button type="button" onClick={() => void loadSessionAndDashboard()} className="btn-gold px-4 py-2 rounded-xl text-xs">
+            {lang === 'fa' ? 'تلاش مجدد' : 'Retry'}
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -204,114 +214,96 @@ export function App() {
     <Layout
       lang={lang}
       setLang={handleSetLang}
-      theme={theme}
-      setTheme={handleSetTheme}
+      currentLook={look}
+      onSelectLook={handleSelectLook}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       user={user}
       entitlement={dashboard.entitlement}
       botState={dashboard.config.bot_state}
       tradingMode={dashboard.config.trading_mode}
-      activeExchangeLabel={dashboard.activeExchange.label}
-      freeBalance={dashboard.balance.free}
-      onStartStop={handleStartStop}
+      activeExchangeLabel={dashboard.activeExchange?.label || dashboard.activeExchange?.provider || 'Paper Desk'}
+      freeBalance={dashboard.balance.free || '10000'}
+      markets={markets}
+      openTradesCount={dashboard.openTrades.length}
+      recentSignalsCount={dashboard.recentSignals.length}
+      onStartStop={handleTopbarStartStop}
       onKillSwitch={handleKillSwitch}
-      onOpenWizard={() => setWizardOpen(true)}
+      onResetDemo={handleResetDemo}
+      onSelectSymbolForTerminal={openTerminalWithSymbol}
+      onRefresh={loadSessionAndDashboard}
       onLogout={handleLogout}
     >
-      {activeTab === 'dashboard' && (
-        <DashboardPage
+      {activeTab === 'overview' && (
+        <OverviewPage
           lang={lang}
+          user={user}
+          data={dashboard}
+          markets={markets}
+          onNavigate={setActiveTab}
+          onSelectTerminalSymbol={openTerminalWithSymbol}
+          onRefresh={loadSessionAndDashboard}
+          onUpgradeUser={(u) => setUser(u)}
+        />
+      )}
+      {activeTab === 'terminal' && (
+        <TerminalPage
+          lang={lang}
+          symbol={terminalSymbol}
+          setSymbol={setTerminalSymbol}
           data={dashboard}
           markets={markets}
           onRefresh={loadSessionAndDashboard}
-          onOpenConnections={() => setActiveTab('connections')}
-          onOpenTab={setActiveTab}
         />
       )}
-      {activeTab === 'copytrade' && (
-        <CopyTradePage
+      {activeTab === 'markets' && (
+        <MarketsPage
           lang={lang}
-          webhookSecret={dashboard.config.webhook_secret}
-          executionMode={dashboard.config.trade_execution_mode}
-          channelHandle={dashboard.config.signal_channel_handle || '@Dollarinoofficial'}
-          recentSignals={dashboard.recentSignals}
-          entitlement={dashboard.entitlement ?? undefined}
-          onExecuted={loadSessionAndDashboard}
-          onOpenSubscription={() => setActiveTab('subscription')}
-        />
-      )}
-      {activeTab === 'subscription' && (
-        <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} />
-      )}
-      {activeTab === 'flow' && (
-        <StrategyFlowPage
-          lang={lang}
-          config={dashboard.config}
           markets={markets}
-          provider={dashboard.activeExchange.provider}
-          mixerSnapshot={dashboard.mixerSnapshot ?? null}
+          onTradeSymbol={(sym) => openTerminalWithSymbol(sym)}
+        />
+      )}
+      {activeTab === 'radar' && (
+        <RadarLabPage
+          lang={lang}
+          data={dashboard}
+          markets={markets}
+          onTradeSymbol={(sym) => openTerminalWithSymbol(sym)}
           onRefresh={loadSessionAndDashboard}
         />
       )}
-      {activeTab === 'risk' && (
-        <RiskStudioPage
+      {activeTab === 'copy' && (
+        <CopyConnectPage
           lang={lang}
-          config={dashboard.config}
-          markets={markets}
-          provider={dashboard.activeExchange.provider}
-          balanceFree={dashboard.balance.free}
-          refresh={loadSessionAndDashboard}
-        />
-      )}
-      {activeTab === 'backtest' && (
-        <BacktestPage lang={lang} markets={markets} provider={dashboard.activeExchange.provider} />
-      )}
-      {activeTab === 'chartAi' && (
-        <ChartAIPage
-          lang={lang}
-          markets={markets}
-          provider={dashboard.activeExchange.provider}
-          onExecuted={loadSessionAndDashboard}
-        />
-      )}
-      {activeTab === 'signals' && (
-        <SignalsPage
-          lang={lang}
-          webhookSecret={dashboard.config.webhook_secret}
-          recentSignals={dashboard.recentSignals}
-          onExecuted={loadSessionAndDashboard}
-        />
-      )}
-      {activeTab === 'exchange' && (
-        <ExchangePage
-          lang={lang}
-          activeExchange={dashboard.activeExchange}
-          markets={markets}
-          onExecuted={loadSessionAndDashboard}
-        />
-      )}
-      {activeTab === 'connections' && (
-        <ConnectionsPage
-          lang={lang}
+          data={dashboard}
           entitlement={dashboard.entitlement}
-          onOpenSubscription={() => setActiveTab('subscription')}
-          onRefreshDashboard={loadSessionAndDashboard}
+          onNavigate={setActiveTab}
+          onRefresh={loadSessionAndDashboard}
         />
       )}
-      {activeTab === 'logs' && <LogsPage lang={lang} />}
-      {activeTab === 'admin' && (
-        <AdminPage lang={lang} currentUser={user} onUserUpdated={loadSessionAndDashboard} />
-      )}
-
-      {wizardOpen && (
-        <SetupWizardModal
+      {activeTab === 'portfolio' && (
+        <PortfolioPage
           lang={lang}
-          availableBalance={Number(dashboard.balance.free || 10000)}
-          onClose={() => setWizardOpen(false)}
-          onCompleted={() => void loadSessionAndDashboard()}
+          data={dashboard}
+          onOpenTerminal={openTerminalWithSymbol}
+          onRefresh={loadSessionAndDashboard}
         />
+      )}
+      {activeTab === 'card' && (
+        <WeeklyCardPage
+          lang={lang}
+          username={user.username || user.email.split('@')[0] || 'Trader'}
+          data={dashboard}
+        />
+      )}
+      {activeTab === 'pricing' && (
+        <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} />
+      )}
+      {activeTab === 'faq' && <FaqPage lang={lang} />}
+      {activeTab === 'admin' && user.role.toUpperCase() === 'ADMIN' && (
+        <AdminPage lang={lang} currentUser={user} onUserUpdated={() => void loadSessionAndDashboard()} />
       )}
     </Layout>
   );
 }
+export default App;

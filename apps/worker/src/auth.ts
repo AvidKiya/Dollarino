@@ -250,3 +250,37 @@ authRoutes.patch('/password', requireAuth, async (c) => {
   await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hash, u.id).run();
   return c.json({ ok: true });
 });
+
+authRoutes.post('/upgrade-demo', requireAuth, async (c) => {
+  const u = c.get('user');
+  const body = await c.req.json<{ email?: string; username?: string; password?: string }>().catch(() => ({} as { email?: string; username?: string; password?: string }));
+  const email = (body.email ?? '').trim().toLowerCase();
+  const username = (body.username ?? '').trim() || email.split('@')[0] || u.username;
+  const password = body.password ?? '';
+
+  if (!email.includes('@') || email.endsWith('@dollarino.app') || password.length < 6) {
+    return c.json({ error: 'Valid personal email and password (min 6 chars) are required' }, 400);
+  }
+  const taken = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?').bind(email, u.id).first();
+  if (taken) return c.json({ error: 'Email is already registered' }, 409);
+
+  const hash = await hashPassword(password);
+  await c.env.DB.prepare('UPDATE users SET email = ?, username = ?, password_hash = ? WHERE id = ?')
+    .bind(email, username, hash, u.id)
+    .run();
+
+  const isHttps = isHttpsRequest(c);
+  const token = await signJwt({ sub: u.id, email, role: u.role }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', token, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  return c.json({
+    token,
+    user: { id: u.id, email, username, role: u.role, telegram_id: u.telegramId },
+  });
+});

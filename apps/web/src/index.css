@@ -1,328 +1,459 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700;800;900&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   FOUR SIGNATURE LOOKS (01 + 02 Unified Token System)
+   ========================================================================== */
+:root,
+html[data-theme='cosmic'] {
+  --bg: #050a1a;
+  --panel: #0a1328;
+  --soft: rgba(120, 160, 255, 0.06);
+  --text: #f3f7fd;
+  --muted: rgba(226, 236, 255, 0.68);
+  --faint: rgba(226, 236, 255, 0.42);
+  --line: rgba(140, 180, 255, 0.14);
+  --line-strong: rgba(140, 180, 255, 0.28);
+  --gold: #1f63ff;
+  --gold-soft: #8fb6ff;
+  --gold-deep: #0c44c8;
+  --gold-a: #6f9bff;
+  --gold-b: #1f63ff;
+  --gold-c: #0c44c8;
+  --jade: #16e664;
+  --rose: #f43f5e;
+  --blue: #00b4ff;
+  --lime: #16e664;
+
+  --bg-app: var(--bg);
+  --bg-surface: var(--panel);
+  --bg-soft: rgba(120, 160, 255, 0.08);
+  --border-app: var(--line);
+  --border-strong: var(--line-strong);
+  --text-main: var(--text);
+  --text-sub: var(--muted);
+  --text-dim: var(--faint);
+  --brand: #3b7bff;
+  --signal: #16e664;
+  --loss: #f43f5e;
+  --flame: #ff8a00;
+}
+
+html[data-theme='obsidian'] {
+  --bg: #070906;
+  --panel: #0e120b;
+  --soft: rgba(255, 255, 255, 0.045);
+  --text: #f2f0e6;
+  --muted: rgba(242, 240, 230, 0.64);
+  --faint: rgba(242, 240, 230, 0.4);
+  --line: rgba(232, 193, 90, 0.16);
+  --line-strong: rgba(232, 193, 90, 0.34);
+  --gold: #e8c15a;
+  --gold-soft: #f5dd9a;
+  --gold-deep: #9a7420;
+  --gold-a: #f7e3a5;
+  --gold-b: #e8c15a;
+  --gold-c: #c9982f;
+  --jade: #10d9a3;
+  --rose: #ff4d6d;
+  --blue: #38e1ff;
+  --lime: #d7f83c;
+
+  --bg-app: var(--bg);
+  --bg-surface: var(--panel);
+  --bg-soft: rgba(232, 193, 90, 0.06);
+  --border-app: var(--line);
+  --border-strong: var(--line-strong);
+  --text-main: var(--text);
+  --text-sub: var(--muted);
+  --text-dim: var(--faint);
+  --brand: #e8c15a;
+  --signal: #10d9a3;
+  --loss: #ff4d6d;
+  --flame: #ff8a00;
+}
+
+html[data-theme='midnight'] {
+  --bg: #070a12;
+  --panel: #0d1220;
+  --soft: rgba(150, 170, 255, 0.055);
+  --text: #eef2ff;
+  --muted: rgba(226, 232, 255, 0.65);
+  --faint: rgba(226, 232, 255, 0.4);
+  --line: rgba(150, 170, 255, 0.14);
+  --line-strong: rgba(150, 170, 255, 0.28);
+  --gold: #6d8bff;
+  --gold-soft: #b6c8ff;
+  --gold-deep: #3a5bd9;
+  --gold-a: #9db2ff;
+  --gold-b: #6d8bff;
+  --gold-c: #3a5bd9;
+  --jade: #37d6a5;
+  --rose: #ff7185;
+  --blue: #62c6ff;
+  --lime: #c9f24e;
+
+  --bg-app: var(--bg);
+  --bg-surface: var(--panel);
+  --bg-soft: rgba(109, 139, 255, 0.07);
+  --border-app: var(--line);
+  --border-strong: var(--line-strong);
+  --text-main: var(--text);
+  --text-sub: var(--muted);
+  --text-dim: var(--faint);
+  --brand: #6d8bff;
+  --signal: #37d6a5;
+  --loss: #ff7185;
+  --flame: #ff8a00;
+}
+
+html[data-theme='paper'],
+html.theme-light {
+  --bg: #f4f1ea;
+  --panel: #fffdf7;
+  --soft: rgba(16, 19, 26, 0.04);
+  --text: #10131a;
+  --muted: rgba(16, 19, 26, 0.68);
+  --faint: rgba(16, 19, 26, 0.45);
+  --line: rgba(16, 19, 26, 0.11);
+  --line-strong: rgba(47, 91, 255, 0.28);
+  --gold: #2f5bff;
+  --gold-soft: #1c41d4;
+  --gold-deep: #2f5bff;
+  --gold-a: #7d9bff;
+  --gold-b: #2f5bff;
+  --gold-c: #1d3ed8;
+  --jade: #04875a;
+  --rose: #e23c58;
+  --blue: #00a2e8;
+  --lime: #d9f73c;
+
+  --bg-app: #f4f1ea;
+  --bg-surface: #fffdf7;
+  --bg-soft: rgba(16, 19, 26, 0.04);
+  --border-app: rgba(16, 19, 26, 0.11);
+  --border-strong: rgba(47, 91, 255, 0.28);
+  --text-main: #10131a;
+  --text-sub: rgba(16, 19, 26, 0.68);
+  --text-dim: rgba(16, 19, 26, 0.45);
+  --brand: #2f5bff;
+  --signal: #04875a;
+  --loss: #e23c58;
+  --flame: #ea6a00;
+}
+
 @layer base {
-  /* =====================================================================
-     DARK THEME — Cosmic Space Cobalt (iOS Midnight Luxury)
-     ===================================================================== */
-  :root {
-    --bg-app: #040814;
-    --bg-surface: #0a1328;
-    --bg-surface-2: #0f1b38;
-    --bg-glass: rgba(8, 16, 38, 0.88);
-    --border-app: #1b2d56;
-    --text-main: #f3f7ff;
-    --text-sub: #a6badf;
-    --text-muted: #7088b5;
-
-    --brand: #2574ff;
-    --brand-deep: #0c44c8;
-    --brand-cyan: #00b4ff;
-    --signal-green: #16e664;
-    --signal-green-deep: #059669;
-    --signal-dot: #16e664;
-    --signal-badge-bg: rgba(16, 216, 86, 0.16);
-    --signal-badge-border: rgba(22, 230, 100, 0.34);
-    --flame-orange: #ff8a00;
-    --danger: #f43f5e;
-
-    --background: 224 67% 5%;
-    --foreground: 220 100% 97%;
-    --card: 222 60% 10%;
-    --card-foreground: 220 100% 97%;
-    --popover: 222 60% 11%;
-    --popover-foreground: 220 100% 97%;
-    --primary: 219 93% 52%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 222 58% 14%;
-    --secondary-foreground: 219 52% 85%;
-    --muted: 222 50% 14%;
-    --muted-foreground: 219 30% 60%;
-    --accent: 196 100% 50%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 350 89% 60%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 142 82% 49%;
-    --success-foreground: 224 67% 5%;
-    --warning: 32 100% 50%;
-    --warning-foreground: 224 67% 5%;
-    --border: 222 53% 22%;
-    --input: 222 58% 13%;
-    --ring: 219 93% 52%;
-    --radius: 1.5rem;
-
-    --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 14px 34px rgba(2, 6, 23, 0.45);
-    --glow-primary: 0 10px 28px rgba(20, 100, 246, 0.36);
-    --glow-success: 0 10px 26px rgba(22, 230, 100, 0.25);
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
   }
 
-  /* =====================================================================
-     LIGHT THEME — Apple iOS / Kifpool Crisp Daylight Edition
-     ===================================================================== */
-  html.theme-light,
-  .theme-light {
-    --bg-app: #f3f7fd;
-    --bg-surface: #ffffff;
-    --bg-surface-2: #edf2fb;
-    --bg-glass: rgba(255, 255, 255, 0.92);
-    --border-app: #dce6f7;
-    --text-main: #091534;
-    --text-sub: #3b4f78;
-    --text-muted: #6579a0;
-
-    --brand: #0c44c8;
-    --brand-deep: #072f94;
-    --brand-cyan: #0284c7;
-    --signal-green: #047857;
-    --signal-green-deep: #065f46;
-    --signal-dot: #059669;
-    --signal-badge-bg: #dcfce7;
-    --signal-badge-border: #86efac;
-    --flame-orange: #d97706;
-    --danger: #dc2626;
-
-    --background: 218 100% 97%;
-    --foreground: 224 75% 13%;
-    --card: 0 0% 100%;
-    --card-foreground: 224 75% 13%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 224 75% 13%;
-    --primary: 222 89% 42%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 218 88% 95%;
-    --secondary-foreground: 224 45% 24%;
-    --muted: 218 75% 94%;
-    --muted-foreground: 220 26% 48%;
-    --border: 218 65% 89%;
-    --input: 218 85% 96%;
-    --ring: 222 89% 42%;
-
-    --shadow-card: 0 2px 10px rgba(15, 35, 95, 0.04), 0 10px 26px rgba(12, 68, 200, 0.055);
-    --glow-primary: 0 10px 24px rgba(12, 68, 200, 0.24);
-    --glow-success: 0 8px 20px rgba(4, 120, 87, 0.28);
-  }
-
-  * {
-    border-color: var(--border-app);
-  }
-
-  html,
   body {
-    background-color: var(--bg-app);
-    color: var(--text-main);
-    font-family: 'Vazirmatn', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: 'Vazirmatn', 'Manrope', 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    overflow-x: hidden;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    overflow-x: clip;
+  }
+
+  ::selection {
+    background: var(--lime);
+    color: #08120a;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 }
 
-.font-mono-num {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-/* =====================================================================
-   iOS SQUIRCLE & KIFPOOL DESIGN TOKENS
-   ===================================================================== */
 .app-shell {
-  background-color: var(--bg-app);
-  color: var(--text-main);
+  background: var(--bg);
+  color: var(--text);
 }
 
-.app-header {
-  background-color: var(--bg-glass);
-  border-color: var(--border-app);
+.panel {
+  background: linear-gradient(155deg, var(--soft), var(--panel));
+  border: 1px solid var(--line);
   backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
 }
 
-.app-sidebar {
-  background-color: var(--bg-surface);
-  border-color: var(--border-app);
+.panel-hover {
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s, box-shadow 0.25s;
+}
+.panel-hover:hover {
+  transform: translateY(-2px);
+  border-color: var(--gold);
+  box-shadow: 0 22px 52px -28px color-mix(in srgb, var(--gold) 32%, transparent);
 }
 
-.card-tt,
 .surface-card {
-  background-color: var(--bg-surface);
+  background: var(--bg-surface);
   border: 1px solid var(--border-app);
-  border-radius: 1.5rem;
-  box-shadow: var(--shadow-card);
-  color: var(--text-main);
+  border-radius: 26px;
 }
 
 .surface-soft {
-  background-color: var(--bg-surface-2);
+  background: var(--bg-soft);
   border: 1px solid var(--border-app);
-  color: var(--text-main);
 }
 
 .surface-input {
-  background-color: var(--bg-surface-2);
+  background: var(--bg-soft);
   border: 1px solid var(--border-app);
   color: var(--text-main);
+  outline: none;
+  transition: border-color 0.2s ease;
 }
-.surface-input::placeholder {
-  color: var(--text-muted);
-}
-
-.ios-dock {
-  background-color: var(--bg-glass);
-  border: 1px solid var(--border-app);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  box-shadow: 0 -4px 30px rgba(8, 22, 66, 0.14);
+.surface-input:focus {
+  border-color: var(--gold);
 }
 
-/* Cosmic Cobalt Heroes & Dark Preserved Cards (Never altered in Light Mode!) */
-.hero-cobalt,
-.dark-preserve {
-  --text-main: #ffffff;
-  --text-sub: rgba(255, 255, 255, 0.88);
-  --text-muted: rgba(255, 255, 255, 0.72);
+.field {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 11px 14px;
+  width: 100%;
+  outline: none;
+  color: var(--text);
+  transition: border-color 0.2s;
+}
+.field:focus {
+  border-color: var(--gold);
+}
+.field::placeholder {
+  color: var(--faint);
+}
+
+.text-main { color: var(--text-main); }
+.text-sub { color: var(--text-sub); }
+.text-dim { color: var(--text-dim); }
+.text-brand { color: var(--brand); }
+.text-signal { color: var(--signal); }
+.text-loss { color: var(--loss); }
+.text-flame { color: var(--flame); }
+
+.text-gold-grad {
+  background: linear-gradient(100deg, var(--gold-soft), var(--gold) 50%, var(--gold-deep) 85%, var(--gold-soft));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.text-gradient-cobalt {
+  background: linear-gradient(90deg, #7fb2ff 0%, #2b74ff 45%, #00b4ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+[dir='rtl'] .font-display {
+  font-family: 'Vazirmatn', sans-serif;
+  letter-spacing: 0;
+  font-weight: 800;
+}
+.font-display {
+  font-family: 'Fraunces', 'Vazirmatn', Georgia, serif;
+  letter-spacing: -0.01em;
+}
+.font-latin {
+  font-family: 'Manrope', 'Space Grotesk', 'Inter', sans-serif;
+}
+.font-mono-num,
+.font-num,
+.tabular {
+  font-family: 'Space Grotesk', 'JetBrains Mono', 'Vazirmatn', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.hairline { border-color: var(--line); }
+
+.btn-gold {
+  background: linear-gradient(135deg, var(--gold-a), var(--gold-b) 45%, var(--gold-c));
+  color: #10130a;
+  font-weight: 800;
+  box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--gold) 65%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: transform 0.2s, filter 0.2s, box-shadow 0.25s;
+}
+html[data-theme='cosmic'] .btn-gold,
+html[data-theme='paper'] .btn-gold,
+html[data-theme='midnight'] .btn-gold,
+html.theme-light .btn-gold {
   color: #ffffff;
 }
-
-.hero-cobalt {
-  background: linear-gradient(135deg, #07277a 0%, #0e4ad4 52%, #1d70ff 100%);
-  box-shadow: 0 18px 42px rgba(12, 68, 200, 0.28);
-  border: 1px solid rgba(56, 189, 248, 0.32);
-}
-.hero-cobalt * {
-  border-color: rgba(255, 255, 255, 0.18);
-}
-
-.banner-cobalt-soft {
-  background: linear-gradient(135deg, rgba(12, 68, 200, 0.12) 0%, rgba(0, 180, 255, 0.08) 100%);
-  border: 1px solid rgba(20, 100, 246, 0.26);
-}
+.btn-gold:hover { filter: brightness(1.07); }
+.btn-gold:active { transform: scale(0.97); }
 
 .btn-cobalt {
-  background: linear-gradient(135deg, #0c44c8 0%, #1668ff 100%);
-  color: #ffffff !important;
-  box-shadow: var(--glow-primary);
-  transition: transform 0.15s ease, filter 0.15s ease;
-}
-.btn-cobalt:hover {
-  filter: brightness(1.07);
-  transform: translateY(-1px);
-}
-.btn-cobalt:active {
-  transform: scale(0.985);
-}
-
-/* Crisp Emerald Buttons: Bright Neon in Dark Mode, Rich Deep Emerald + White Text in Light Mode */
-.btn-emerald {
-  background: linear-gradient(135deg, #059669 0%, #16e664 100%);
-  color: #031b0e !important;
+  background: linear-gradient(135deg, #2b74ff 0%, #1f63ff 50%, #0c44c8 100%);
+  color: #ffffff;
   font-weight: 800;
-  box-shadow: var(--glow-success);
-  transition: transform 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 14px 34px -10px rgba(31, 99, 255, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform 0.2s, filter 0.2s;
 }
-.btn-emerald:hover {
-  filter: brightness(1.06);
-  transform: translateY(-1px);
-}
-.btn-emerald:active {
-  transform: scale(0.985);
-}
+.btn-cobalt:hover { filter: brightness(1.08); }
+.btn-cobalt:active { transform: scale(0.97); }
 
-html.theme-light .btn-emerald {
-  background: linear-gradient(135deg, #047857 0%, #059669 100%) !important;
-  color: #ffffff !important;
-  box-shadow: 0 10px 22px rgba(4, 120, 87, 0.28);
+.btn-lime {
+  background: var(--lime);
+  color: #0b1405;
+  font-weight: 900;
+  box-shadow: 0 14px 36px -12px color-mix(in srgb, var(--lime) 70%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.2s, filter 0.2s;
 }
-html.theme-light .btn-emerald * {
-  color: #ffffff !important;
-}
+.btn-lime:hover { filter: brightness(1.06); }
+.btn-lime:active { transform: scale(0.97); }
 
-/* Always-visible Green Status Dot & Badge (Dark Emerald in Light Mode, Neon Green in Dark Mode) */
-.dot-signal {
-  display: inline-block;
-  border-radius: 9999px;
-  background-color: var(--signal-dot);
-  box-shadow: 0 0 8px rgba(22, 230, 100, 0.65);
+.btn-emerald {
+  background: linear-gradient(135deg, #10d9a3 0%, #04875a 100%);
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 12px 28px -10px rgba(16, 217, 163, 0.45);
+  transition: transform 0.2s, filter 0.2s;
 }
-html.theme-light .dot-signal {
-  background-color: #059669 !important;
-  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.22) !important;
+.btn-emerald:hover { filter: brightness(1.07); }
+
+.btn-ghost {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--text);
+  transition: all 0.2s;
+}
+.btn-ghost:hover {
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  border-color: var(--gold);
 }
 
 .badge-signal {
-  background-color: var(--signal-badge-bg);
-  border: 1px solid var(--signal-badge-border);
-  color: var(--signal-green);
-}
-html.theme-light .badge-signal {
-  background-color: #dcfce7 !important;
-  border-color: #4ade80 !important;
-  color: #065f46 !important;
+  background: color-mix(in srgb, var(--jade) 16%, transparent);
+  color: var(--jade);
+  border: 1px solid color-mix(in srgb, var(--jade) 32%, transparent);
 }
 
-.text-main {
-  color: var(--text-main);
-}
-.text-sub {
-  color: var(--text-sub);
-}
-.text-dim {
-  color: var(--text-muted);
-}
-.text-brand {
-  color: var(--brand);
-}
-.text-signal {
-  color: var(--signal-green);
-}
-.text-flame {
-  color: var(--flame-orange);
-}
-.text-loss {
-  color: var(--danger);
+.banner-cobalt-soft {
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent);
 }
 
-.glow-primary {
-  box-shadow: var(--glow-primary);
-}
-.glow-success {
-  box-shadow: var(--glow-success);
-}
-
-/* Light-Theme form controls & scrollbars (Zero dangerous class prefix wildcards!) */
-html.theme-light body {
-  background-color: #f3f7fd;
-  color: #091534;
+.mark-lime {
+  background: #d9f73c;
+  color: #0b1405;
+  border-radius: 12px;
+  padding: 0.02em 0.28em 0.08em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
-html.theme-light input:not([type="checkbox"]):not([type="radio"]),
-html.theme-light select,
-html.theme-light textarea,
-html.theme-light pre {
-  background-color: #edf2fb;
-  color: #091534;
-  border-color: #cfddf5;
+.coin-card-wallet {
+  background: linear-gradient(135deg, #2b4bf2 0%, #15279f 55%, #0c185e 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
-html.theme-light .bg-slate-500\/20 {
-  background-color: #e2e8f0;
-  color: #475569;
+.hero-cobalt {
+  background: linear-gradient(135deg, #1f63ff 0%, #0c44c8 60%, #082d8c 100%);
 }
 
-::-webkit-scrollbar {
-  width: 6px;
+.dot-grid {
+  background-image: radial-gradient(rgba(14, 23, 20, 0.14) 0.7px, transparent 0.7px);
+  background-size: 18px 18px;
+}
+.dot-grid-light {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.16) 0.8px, transparent 0.8px);
+  background-size: 20px 20px;
+}
+.grid-bg {
+  background-image: linear-gradient(color-mix(in srgb, var(--gold) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--gold) 6%, transparent) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 25%, transparent 78%);
+}
+
+.stars {
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.75), transparent 60%),
+    radial-gradient(1px 1px at 72% 12%, rgba(255, 255, 255, 0.55), transparent 60%),
+    radial-gradient(1.4px 1.4px at 38% 62%, rgba(255, 255, 255, 0.6), transparent 60%),
+    radial-gradient(1px 1px at 88% 48%, rgba(255, 255, 255, 0.5), transparent 60%),
+    radial-gradient(1.2px 1.2px at 22% 84%, rgba(160, 200, 255, 0.6), transparent 60%),
+    radial-gradient(1.6px 1.6px at 64% 78%, rgba(120, 180, 255, 0.55), transparent 60%);
+  background-size: 420px 420px;
+  animation: twinkle 7s ease-in-out infinite alternate;
+}
+
+.orbit {
+  border: 1px dashed rgba(120, 160, 255, 0.22);
+  border-radius: 9999px;
+  animation: spin 60s linear infinite;
+}
+
+/* Motion */
+@keyframes twinkle { from { opacity: 0.55; } to { opacity: 1; } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes ticker-rtl { from { transform: translateX(-50%); } to { transform: translateX(0); } }
+@keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 217, 163, 0.5); } 50% { opacity: 0.65; box-shadow: 0 0 0 7px transparent; } }
+@keyframes pulse-gold { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--gold) 50%, transparent); } 50% { opacity: 0.65; box-shadow: 0 0 0 7px transparent; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes slide-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes shine { from { background-position: 200% center; } to { background-position: -200% center; } }
+
+.animate-ticker { animation: ticker 38s linear infinite; }
+.animate-ticker:hover { animation-play-state: paused; }
+.animate-floaty { animation: floaty 6s ease-in-out infinite; }
+.animate-floaty-slow { animation: floaty 9s ease-in-out infinite; }
+.live-dot { animation: pulse-dot 2s ease-in-out infinite; }
+.live-gold { animation: pulse-gold 2s ease-in-out infinite; }
+.pop-in { animation: pop-in 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+.signal-in { animation: slide-in 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+.shine {
+  background: linear-gradient(110deg, transparent 40%, rgba(255, 255, 255, 0.3) 50%, transparent 60%);
+  background-size: 200% 100%;
+  animation: shine 3.2s linear infinite;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
   height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold) var(--fill, 50%), var(--line) var(--fill, 50%));
+  outline: none;
 }
-::-webkit-scrollbar-track {
-  background: var(--bg-app);
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--lime);
+  border: 3px solid var(--bg);
+  cursor: pointer;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--border-app);
-  border-radius: 4px;
+
+/* Light/Paper contrast compatibility */
+html[data-theme='paper'] .text-white\/50,
+html[data-theme='paper'] .text-white\/45,
+html[data-theme='paper'] .text-white\/40,
+html[data-theme='paper'] .text-white\/35,
+html[data-theme='paper'] .text-white\/30 {
+  color: var(--muted) !important;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--brand);
+html[data-theme='paper'] .text-white\/60,
+html[data-theme='paper'] .text-white\/70,
+html[data-theme='paper'] .text-white\/85 {
+  color: var(--text) !important;
+}
+html[data-theme='paper'] .site-dark [class*='text-white'] {
+  color: #ffffff !important;
+}
+html[data-theme='paper'] .site-dark .text-white\/50,
+html[data-theme='paper'] .site-dark .text-white\/55,
+html[data-theme='paper'] .site-dark .text-white\/60 {
+  color: rgba(255, 255, 255, 0.72) !important;
 }
