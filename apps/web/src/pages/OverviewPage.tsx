@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowDownRight,
   ArrowRight,
+  ArrowUpDown,
   ArrowUpRight,
   BadgeCheck,
   BarChart3,
@@ -15,15 +16,23 @@ import {
   Eye,
   EyeOff,
   Flame,
+  Globe,
   KeyRound,
   Layers,
+  PauseCircle,
   PlusCircle,
   Power,
   Radar,
   RefreshCw,
+  Rocket,
   RotateCcw,
+  Scale,
+  Shield,
   ShieldCheck,
   Sparkles,
+  Star,
+  TrendingDown,
+  TrendingUp,
   Trophy,
   Wallet,
   WandSparkles,
@@ -214,7 +223,7 @@ export function OverviewPage({
         method: 'POST',
         body: JSON.stringify({ scanScope }),
       });
-      toastMsg(isFa ? 'ربات با موفقیت روشن شد و اسکن زنده آغاز گردید 🚀' : 'Bot started — scanning markets 🚀');
+      toastMsg(isFa ? 'ربات با موفقیت روشن شد و اسکن زنده آغاز گردید' : 'Bot started — scanning markets');
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Start failed', true);
@@ -253,7 +262,7 @@ export function OverviewPage({
     setBusy(true);
     try {
       await apiFetch(`/api/trading/positions/${tradeId}/close`, { method: 'POST' });
-      toastMsg(isFa ? 'معامله بسته و سود/زیان تسویه شد ✅' : 'Position closed ✅');
+      toastMsg(isFa ? 'معامله بسته و سود/زیان تسویه شد' : 'Position closed');
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Close failed', true);
@@ -266,7 +275,7 @@ export function OverviewPage({
     setBusy(true);
     try {
       await apiFetch(`/api/trading/pending/${orderId}`, { method: 'DELETE' });
-      toastMsg(isFa ? 'سفارش لیمیت لغو شد ✅' : 'Pending order canceled ✅');
+      toastMsg(isFa ? 'سفارش لیمیت لغو شد' : 'Pending order canceled');
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Cancel failed', true);
@@ -279,7 +288,7 @@ export function OverviewPage({
     setBusy(true);
     try {
       await apiFetch('/api/trading/positions/reconcile', { method: 'POST' });
-      toastMsg(isFa ? 'همگام‌سازی پوزیشن‌ها با صرافی انجام شد ✅' : 'Positions reconciled ✅');
+      toastMsg(isFa ? 'همگام‌سازی پوزیشن‌ها با صرافی انجام شد' : 'Positions reconciled');
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Reconcile failed', true);
@@ -292,7 +301,7 @@ export function OverviewPage({
     setBusy(true);
     try {
       await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
-      toastMsg(isFa ? 'حساب دمو به $۱۰,۰۰۰ بازنشانی شد ✅' : 'Paper balance reset to $10,000 ✅');
+      toastMsg(isFa ? 'حساب دمو به $۱۰,۰۰۰ بازنشانی شد' : 'Paper balance reset to $10,000');
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Reset failed', true);
@@ -316,7 +325,7 @@ export function OverviewPage({
         }),
       });
       setEditPos(null);
-      toastMsg(isFa ? 'حد ضرر و تارگت‌های پوزیشن بروزرسانی شد ✅' : 'Position TP/SL updated ✅');
+      toastMsg(isFa ? 'حد ضرر و تارگت‌های پوزیشن بروزرسانی شد' : 'Position TP/SL updated');
       await onRefresh();
     } catch (err) {
       toastMsg(err instanceof Error ? err.message : 'TP/SL update failed', true);
@@ -351,7 +360,7 @@ export function OverviewPage({
       setStoredToken(res.token);
       onUpgradeUser(res.user);
       setSaveGuestOpen(false);
-      toastMsg(isFa ? 'حساب کاربری با ایمیل شخصی شما ثبت دائمی شد ✅' : 'Account saved permanently ✅');
+      toastMsg(isFa ? 'حساب کاربری با ایمیل شخصی شما ثبت دائمی شد' : 'Account saved permanently');
     } catch (err) {
       setSaveErr(err instanceof Error ? err.message : 'Error');
     }
@@ -370,18 +379,21 @@ export function OverviewPage({
 
   const prepareSimpleTrade = () => {
     tgHaptic('medium');
+    const isSpot = data.config.market_type === 'SPOT';
+    const effectiveSimpleSide = isSpot ? 'LONG' : simpleSide;
     const mkt = markets.find((m) => m.symbol === simpleCoin);
     const px = Number(mkt?.lastPrice || 65000);
     const dec = px >= 1000 ? 2 : px >= 1 ? 4 : 6;
-    const isLong = simpleSide === 'LONG';
+    const isLong = effectiveSimpleSide === 'LONG';
     const slDist = simpleComfort === 'safe' ? 0.025 : simpleComfort === 'balanced' ? 0.02 : 0.015;
     const tpDist = simpleComfort === 'safe' ? 0.035 : simpleComfort === 'balanced' ? 0.03 : 0.025;
     setSimpleConfirmOrder({
       symbol: simpleCoin,
-      direction: simpleSide,
+      direction: effectiveSimpleSide,
       orderType: 'MARKET',
+      marketType: isSpot ? 'SPOT' : 'FUTURES',
       entryPrice: px.toFixed(dec),
-      leverage: simpleLevMap[simpleComfort],
+      leverage: isSpot ? 1 : simpleLevMap[simpleComfort],
       amountUsd: simpleAmount,
       stopLoss: (isLong ? px * (1 - slDist) : px * (1 + slDist)).toFixed(dec),
       tp1: (isLong ? px * (1 + tpDist) : px * (1 - tpDist)).toFixed(dec),
@@ -401,8 +413,10 @@ export function OverviewPage({
           symbol: simpleConfirmOrder.symbol,
           direction: simpleConfirmOrder.direction,
           orderType: 'MARKET',
+          marketType: simpleConfirmOrder.marketType || data.config.market_type || 'FUTURES',
           leverage: simpleConfirmOrder.leverage,
           marginMode: 'ISOLATED',
+          marginPct: Math.max(1, Math.min(25, Math.round(((simpleConfirmOrder.amountUsd ?? simpleAmount) / Math.max(freeBal, 100)) * 100))),
           stopLoss: simpleConfirmOrder.stopLoss,
           tp1: simpleConfirmOrder.tp1,
           tp2: simpleConfirmOrder.tp2,
@@ -415,7 +429,7 @@ export function OverviewPage({
         toastMsg(res.error || 'Rejected', true);
       } else {
         tgNotifyHaptic('success');
-        toastMsg(isFa ? 'آفرین! معامله شما با سپر محافظت خودکار باز شد ✅' : 'Trade opened safely with auto-protection ✅');
+        toastMsg(isFa ? 'معامله شما با سپر محافظت خودکار باز شد' : 'Trade opened safely with auto-protection');
         await onRefresh();
       }
     } catch (e) {
@@ -620,8 +634,8 @@ export function OverviewPage({
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-[11px] font-bold">
                     <span className={`h-2 w-2 rounded-full ${isRunning ? 'bg-[#12E35D] live-dot' : 'bg-[#4AD8FF]'}`} />
                     {isRunning
-                      ? isFa ? 'ربات هوشمند روشن است 🚀' : 'Auto Bot Running 🚀'
-                      : isFa ? 'حساب آماده شروع است ✨' : 'Ready to Start ✨'}
+                      ? isFa ? 'ربات هوشمند روشن است' : 'Auto Bot Running'
+                      : isFa ? 'حساب آماده شروع است' : 'Ready to Start'}
                   </span>
                   <h1 className="font-display font-bold text-xl sm:text-2xl mt-1.5">
                     {isFa ? `سلام ${user.username} عزیز!` : `Welcome, ${user.username}!`}
@@ -642,11 +656,12 @@ export function OverviewPage({
                   </span>
                   <span
                     dir="ltr"
-                    className={`px-3 py-1 rounded-full text-xs font-black tabular ${
+                    className={`px-3 py-1 rounded-full text-xs font-black tabular inline-flex items-center gap-1 ${
                       todayPnl >= 0 ? 'bg-[#12E35D]/25 text-[#8EFFB6]' : 'bg-rose-500/25 text-rose-200'
                     }`}
                   >
-                    {todayPnl >= 0 ? '▲' : '▼'} {todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)} {isFa ? 'امروز' : 'today'}
+                    {todayPnl >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                    <span>{todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)} {isFa ? 'امروز' : 'today'}</span>
                   </span>
                 </div>
               </div>
@@ -663,11 +678,11 @@ export function OverviewPage({
                     isRunning ? 'bg-[#FF8200] hover:bg-[#eb7700] text-white' : 'btn-lime'
                   }`}
                 >
-                  <Power className="w-4 h-4" />
+                  {isRunning ? <PauseCircle className="w-4 h-4" /> : <Rocket className="w-4 h-4" />}
                   <span>
                     {isRunning
-                      ? isFa ? 'توقف ربات خودکار ⏸️' : 'Pause Auto Bot'
-                      : isFa ? 'ربات هوشمند رو روشن کن 🚀' : 'Turn ON Smart Auto Bot 🚀'}
+                      ? isFa ? 'توقف ربات خودکار' : 'Pause Auto Bot'
+                      : isFa ? 'ربات هوشمند رو روشن کن' : 'Turn ON Smart Auto Bot'}
                   </span>
                 </button>
 
@@ -699,25 +714,25 @@ export function OverviewPage({
                 {
                   active: activeStrategy === 'ai_autonomous_agent',
                   icon: BrainCircuit,
-                  title: isFa ? '۱. معامله با هوش مصنوعی 🤖' : '1. AI Smart Trading',
+                  title: isFa ? '۱. معامله با هوش مصنوعی' : '1. AI Smart Trading',
                   desc: isFa ? 'هوش مصنوعی بازار را می‌بیند و خودکار معامله می‌کند' : 'AI reads market and trades for you',
-                  onClick: () => void patchConfig({ strategy_key: 'ai_autonomous_agent', auto_scan_top: 1, scan_scope: 'ALL_MARKET' }, isFa ? 'حالت هوش مصنوعی فعال شد 🤖' : 'AI Auto enabled'),
+                  onClick: () => void patchConfig({ strategy_key: 'ai_autonomous_agent', auto_scan_top: 1, scan_scope: 'ALL_MARKET' }, isFa ? 'حالت هوش مصنوعی فعال شد' : 'AI Auto enabled'),
                 },
                 {
                   active: currentPresetId === 'conservative',
                   icon: ShieldCheck,
-                  title: isFa ? '۲. حالت خیلی کم‌ریسک و امن 🛡️' : '2. Extra Safe Shield',
+                  title: isFa ? '۲. حالت خیلی کم‌ریسک و امن' : '2. Extra Safe Shield',
                   desc: isFa ? 'حجم کم و حد ضرر خودکار برای آرامش خاطر' : 'Small size & tight auto stop-loss',
                   onClick: () =>
                     void patchConfig(
                       { margin_pct: 2, max_leverage: 3, daily_max_loss_pct: 3, max_open_positions: 4, risk_profile_json: JSON.stringify({ preset: 'conservative' }) },
-                      isFa ? 'سپر کم‌ریسک و امن فعال شد 🛡️' : 'Safe Shield enabled 🛡️'
+                      isFa ? 'سپر کم‌ریسک و امن فعال شد' : 'Safe Shield enabled'
                     ),
                 },
                 {
                   active: false,
                   icon: Wallet,
-                  title: isFa ? '۳. شارژ رایگان پول آزمایشی 💎' : '3. Add Free Demo Money',
+                  title: isFa ? '۳. شارژ رایگان پول آزمایشی' : '3. Add Free Demo Money',
                   desc: isFa ? 'هر وقت خواستید اعتبار دمو اضافه کنید' : 'Top up paper practice money anytime',
                   onClick: () => setTopupOpen(true),
                 },
@@ -754,17 +769,18 @@ export function OverviewPage({
                 {isFa ? 'ساده‌ترین راه معامله در دنیا' : '3-TAP SIMPLE TRADE'}
               </p>
               <h2 className="font-display font-bold text-2xl text-main">
-                {isFa ? 'خودت در ۳ قدم معامله باز کن ✨' : 'Open a Protected Trade in 3 Taps ✨'}
+                {isFa ? 'خودت در ۳ قدم معامله باز کن' : 'Open a Protected Trade in 3 Taps'}
               </h2>
             </div>
             {livePx > 0 && (
               <div className="surface-soft rounded-2xl px-4 py-2 flex items-center gap-2.5 text-xs">
                 <CoinIcon symbol={simpleCoin} size={24} />
-                <div>
+                <div className="flex items-center gap-2">
                   <span className="font-bold text-main">{isFa ? selectedCoinInfo.fa : selectedCoinInfo.en}</span>
-                  <span dir="ltr" className="ms-2 font-num font-black text-main">${livePx.toLocaleString()}</span>
-                  <span dir="ltr" className={`ms-2 font-num font-bold ${ch24 >= 0 ? 'text-jade' : 'text-loss'}`}>
-                    {ch24 >= 0 ? '▲' : '▼'} {Math.abs(ch24).toFixed(2)}%
+                  <span dir="ltr" className="font-num font-black text-main">${livePx.toLocaleString()}</span>
+                  <span dir="ltr" className={`font-num font-bold inline-flex items-center gap-0.5 ${ch24 >= 0 ? 'text-jade' : 'text-loss'}`}>
+                    {ch24 >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                    <span>{Math.abs(ch24).toFixed(2)}%</span>
                   </span>
                 </div>
               </div>
@@ -802,10 +818,25 @@ export function OverviewPage({
           {/* Step 2 & Step 3 */}
           <div className="grid lg:grid-cols-2 gap-4">
             <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <p className="text-xs font-extrabold text-sub">
                 {isFa ? 'قدم دوم: فکر می‌کنی قیمت به کدام سمت می‌رود؟' : 'Step 2: Which way will the price move?'}
               </p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="ios-segmented">
+                {(['FUTURES', 'SPOT'] as const).map((mt) => (
+                  <button
+                    key={mt}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void patchConfig({ market_type: mt }, isFa ? `بازار ${mt === 'SPOT' ? 'اسپات' : 'فیوچرز'} انتخاب شد` : `${mt} mode active`)}
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black transition ${(data.config.market_type || 'FUTURES') === mt ? 'ios-pill-active' : 'text-dim'}`}
+                  >
+                    {mt === 'FUTURES' ? (isFa ? 'فیوچرز' : 'Futures') : isFa ? 'اسپات' : 'Spot'}
+                  </button>
+                ))}
+              </div>
+            </div>
+              <div className={data.config.market_type === 'SPOT' ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-2 gap-3'}>
                 <button
                   type="button"
                   onClick={() => {
@@ -813,7 +844,7 @@ export function OverviewPage({
                     setSimpleSide('LONG');
                   }}
                   className={`rounded-3xl p-4 sm:p-5 text-start transition border-2 flex flex-col justify-between gap-2 ${
-                    simpleSide === 'LONG'
+                    simpleSide === 'LONG' || data.config.market_type === 'SPOT'
                       ? 'bg-[#12E35D]/15 border-[#12E35D] text-main shadow-lg'
                       : 'surface-soft border-transparent text-dim hover:text-main'
                   }`}
@@ -822,14 +853,18 @@ export function OverviewPage({
                     <span className="h-10 w-10 rounded-2xl bg-[#12E35D] text-black grid place-items-center">
                       <ArrowUpRight className="w-6 h-6" />
                     </span>
-                    {simpleSide === 'LONG' && <CheckCircle2 className="w-5 h-5 text-jade" />}
+                    {(simpleSide === 'LONG' || data.config.market_type === 'SPOT') && <CheckCircle2 className="w-5 h-5 text-jade" />}
                   </div>
                   <div>
-                    <p className="font-display font-bold text-base text-main">{isFa ? 'بالا میره 📈' : 'Going UP 📈'}</p>
+                    <p className="font-display font-bold text-base text-main inline-flex items-center gap-1.5">
+                      <TrendingUp className="w-4 h-4 text-jade" />
+                      <span>{data.config.market_type === 'SPOT' ? (isFa ? 'خرید اسپات (بدون اهرم)' : 'Spot Buy (1x)') : isFa ? 'بالا میره' : 'Going UP'}</span>
+                    </p>
                     <p className="text-[11px] text-sub mt-0.5">{isFa ? 'اگر قیمت رشد کند سود می‌بری' : 'Profit when price rises'}</p>
                   </div>
                 </button>
 
+                {data.config.market_type !== 'SPOT' && (
                 <button
                   type="button"
                   onClick={() => {
@@ -849,10 +884,14 @@ export function OverviewPage({
                     {simpleSide === 'SHORT' && <CheckCircle2 className="w-5 h-5 text-loss" />}
                   </div>
                   <div>
-                    <p className="font-display font-bold text-base text-main">{isFa ? 'پایین میاد 📉' : 'Going DOWN 📉'}</p>
+                    <p className="font-display font-bold text-base text-main inline-flex items-center gap-1.5">
+                      <TrendingDown className="w-4 h-4 text-loss" />
+                      <span>{isFa ? 'پایین میاد' : 'Going DOWN'}</span>
+                    </p>
                     <p className="text-[11px] text-sub mt-0.5">{isFa ? 'اگر قیمت بریزد سود می‌بری' : 'Profit when price drops'}</p>
                   </div>
                 </button>
+                )}
               </div>
             </div>
 
@@ -862,22 +901,28 @@ export function OverviewPage({
               </p>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: 'safe' as const, l: isFa ? 'خیلی امن 🛡️' : 'Very Safe 🛡️', s: isFa ? '۳ برابر' : '3×' },
-                  { id: 'balanced' as const, l: isFa ? 'متعادل ⚖️' : 'Balanced ⚖️', s: isFa ? '۵ برابر' : '5×' },
-                  { id: 'fast' as const, l: isFa ? 'سریع ⚡' : 'Fast ⚡', s: isFa ? '۱۰ برابر' : '10×' },
-                ].map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setSimpleComfort(c.id)}
-                    className={`rounded-2xl p-3 text-center transition ${
-                      simpleComfort === c.id ? 'ios-pill-active' : 'surface-soft text-sub'
-                    }`}
-                  >
-                    <p className="text-xs font-black">{c.l}</p>
-                    <p className="text-[10px] opacity-80 mt-0.5">{c.s}</p>
-                  </button>
-                ))}
+                  { id: 'safe' as const, icon: Shield, l: isFa ? 'خیلی امن' : 'Very Safe', s: isFa ? '۳ برابر' : '3×' },
+                  { id: 'balanced' as const, icon: Scale, l: isFa ? 'متعادل' : 'Balanced', s: isFa ? '۵ برابر' : '5×' },
+                  { id: 'fast' as const, icon: Zap, l: isFa ? 'سریع' : 'Fast', s: isFa ? '۱۰ برابر' : '10×' },
+                ].map((c) => {
+                  const Icon = c.icon;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setSimpleComfort(c.id)}
+                      className={`rounded-2xl p-3 text-center transition ${
+                        simpleComfort === c.id ? 'ios-pill-active' : 'surface-soft text-sub'
+                      }`}
+                    >
+                      <p className="text-xs font-black inline-flex items-center justify-center gap-1">
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{c.l}</span>
+                      </p>
+                      <p className="text-[10px] opacity-80 mt-0.5">{c.s}</p>
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="flex items-center gap-2">
@@ -901,7 +946,8 @@ export function OverviewPage({
                 onClick={prepareSimpleTrade}
                 className="btn-cobalt w-full py-4 rounded-2xl text-sm sm:text-base font-black flex items-center justify-center gap-2 shadow-xl"
               >
-                <span>👈 دلارینو ترید کن برام 👉</span>
+                <Rocket className="w-4 h-4" />
+                <span>{isFa ? 'دلارینو ترید کن برام' : 'Execute Protected Trade'}</span>
               </button>
             </div>
           </div>
@@ -926,7 +972,7 @@ export function OverviewPage({
           {data.openTrades.length === 0 ? (
             <div className="rounded-3xl surface-soft p-8 text-center space-y-2">
               <p className="text-sm font-bold text-main">
-                {isFa ? 'الان هیچ معامله بازی ندارید 😊' : 'No open trades right now 😊'}
+                {isFa ? 'الان هیچ معامله بازی ندارید' : 'No open trades right now'}
               </p>
               <p className="text-xs text-dim">
                 {isFa
@@ -944,19 +990,21 @@ export function OverviewPage({
                     <div className="flex items-center gap-3">
                       <CoinIcon symbol={pos.symbol} size={40} />
                       <div>
-                        <p className="font-black text-sm text-main">
-                          {pos.symbol.replace('USDT', '')}{' '}
-                          <span className="text-xs font-bold text-dim">
-                            · {pos.direction === 'LONG' ? (isFa ? 'بالا میره 📈' : 'UP 📈') : isFa ? 'پایین میاد 📉' : 'DOWN 📉'}
+                        <p className="font-black text-sm text-main flex items-center gap-1.5">
+                          <span>{pos.symbol.replace('USDT', '')}</span>
+                          <span className="text-xs font-bold text-dim inline-flex items-center gap-1">
+                            {pos.direction === 'LONG' ? <TrendingUp className="w-3.5 h-3.5 text-jade" /> : <TrendingDown className="w-3.5 h-3.5 text-loss" />}
+                            {pos.direction === 'LONG' ? (isFa ? 'بالا میره' : 'UP') : isFa ? 'پایین میاد' : 'DOWN'}
                           </span>
                         </p>
                         <p className={`text-xs font-black mt-0.5 ${isProfit ? 'text-jade' : 'text-loss'}`}>
                           {isProfit
-                            ? isFa ? `در حال سود: +$${pnl.toFixed(2)} 🟢` : `Profit: +$${pnl.toFixed(2)} 🟢`
+                            ? isFa ? `در حال سود: +$${pnl.toFixed(2)}` : `Profit: +$${pnl.toFixed(2)}`
                             : isFa ? `در نوسان: -$${Math.abs(pnl).toFixed(2)}` : `-${Math.abs(pnl).toFixed(2)} USD`}
                         </p>
-                        <p className="text-[10px] text-dim mt-0.5">
-                          {pos.risk_free_active ? (isFa ? '🛡️ بدون ریسک شد (Risk-Free)' : '🛡️ Risk-Free Protected') : isFa ? '🛡️ سپر ضرر فعال' : '🛡️ Stop-Loss Protected'}
+                        <p className="text-[10px] text-dim mt-0.5 inline-flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-jade" />
+                          <span>{pos.risk_free_active ? (isFa ? 'بدون ریسک شد (Risk-Free)' : 'Risk-Free Protected') : isFa ? 'سپر ضرر فعال' : 'Stop-Loss Protected'}</span>
                         </p>
                       </div>
                     </div>
@@ -965,9 +1013,10 @@ export function OverviewPage({
                       type="button"
                       disabled={busy}
                       onClick={() => void closePosition(pos.id)}
-                      className={`px-4 py-2.5 rounded-2xl text-xs font-black shrink-0 ${isProfit ? 'btn-emerald' : 'bg-rose-500 text-white'}`}
+                      className={`px-4 py-2.5 rounded-2xl text-xs font-black shrink-0 inline-flex items-center gap-1.5 ${isProfit ? 'btn-emerald' : 'bg-rose-500 text-white'}`}
                     >
-                      {isProfit ? (isFa ? 'برداشت سود ✅' : 'Collect ✅') : isFa ? 'بستن معامله' : 'Close'}
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{isProfit ? (isFa ? 'برداشت سود' : 'Collect') : isFa ? 'بستن معامله' : 'Close'}</span>
                     </button>
                   </div>
                 );
@@ -985,7 +1034,7 @@ export function OverviewPage({
               </div>
               <div>
                 <h3 className="font-display font-bold text-base text-main">
-                  {isFa ? 'معامله‌گر حرفه‌ای هستی؟ ⚡' : 'Want Full Pro Quant Controls? ⚡'}
+                  {isFa ? 'معامله‌گر حرفه‌ای هستی؟' : 'Want Full Pro Quant Controls?'}
                 </h3>
                 <p className="text-xs text-sub mt-0.5">
                   {isFa
@@ -1056,8 +1105,8 @@ export function OverviewPage({
             <span>
               {isRunning
                 ? isFa
-                  ? `ربات فعال · اسکن ${scanScope === 'ALL_MARKET' ? '۳۰+ بازار' : data.config.symbol}`
-                  : `BOT LIVE · SCANNING ${scanScope}`
+                  ? `ربات فعال · اسکن ${scanScope === 'ALL_MARKET' ? `کل بازار (${markets.length || '500+'})` : data.config.symbol}`
+                  : `BOT LIVE · SCANNING ${scanScope === 'ALL_MARKET' ? `ALL ${markets.length || '500+'} PAIRS` : scanScope}`
                 : isFa
                   ? 'میز آماده معامله خودکار · دمو و واقعی'
                   : 'AUTONOMOUS EXCHANGE DESK · READY'}
@@ -1313,7 +1362,7 @@ export function OverviewPage({
               onChange={(e) =>
                 void patchConfig(
                   { strategy_key: e.target.value, ai_gate_enabled: e.target.value === 'ai_autonomous_agent' ? 1 : 0 },
-                  isFa ? 'استراتژی فعال تغییر کرد ✅' : 'Strategy updated ✅'
+                  isFa ? 'استراتژی فعال تغییر کرد' : 'Strategy updated'
                 )
               }
               className="field py-2 px-3 text-xs font-bold w-auto"
@@ -1402,7 +1451,10 @@ export function OverviewPage({
               </div>
               <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
               <div className="flex items-center justify-between text-xs font-black pt-1" style={{ color: e.color }}>
-                <span>{e.active ? (isFa ? '✓ انتخاب‌شده و فعال' : '✓ Active Engine') : isFa ? 'انتخاب این موتور' : 'Activate'}</span>
+                <span className="inline-flex items-center gap-1">
+                  {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
+                  <span>{e.active ? (isFa ? 'انتخاب‌شده و فعال' : 'Active Engine') : isFa ? 'انتخاب این موتور' : 'Activate'}</span>
+                </span>
                 <span>{e.win}% WR</span>
               </div>
             </div>
@@ -1457,42 +1509,116 @@ export function OverviewPage({
           </div>
         </div>
 
-        <div className="panel rounded-[26px] p-5 space-y-3">
+        <div className="panel rounded-[26px] p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-display font-bold text-lg text-main">
-              {isFa ? '۳. ارزهای تحت معامله' : '3. Market Scan Scope'}
+              {isFa ? '۳. ارزها، نوع بازار و جهت ربات' : '3. Market Scope & Direction'}
             </h3>
             <SymbolPicker
               lang={lang}
               markets={markets}
               value={data.config.symbol}
               provider={data.activeExchange?.provider || 'paper'}
+              marketType={data.config.market_type || 'FUTURES'}
               onChange={(sym) => void patchConfig({ scan_scope: 'SINGLE', symbol: sym }, isFa ? `نماد تک‌ارز روی ${sym} تنظیم شد` : `Symbol set to ${sym}`)}
               compact
             />
           </div>
           <div className="grid grid-cols-3 gap-2.5">
             {[
-              { id: 'ALL_MARKET' as const, title: isFa ? '🌐 کل بازار (۳۰+)' : '🌐 All Markets', sub: isFa ? 'اسکن خودکار کامل' : 'Full scan' },
-              { id: 'TOP_COINS' as const, title: isFa ? '⭐ ۱۰ ارز برتر' : '⭐ Top 10', sub: isFa ? 'نقدینگی بالا' : 'High volume' },
-              { id: 'SINGLE' as const, title: isFa ? '🎯 تک‌ارز' : '🎯 Single Coin', sub: data.config.symbol },
+              { id: 'ALL_MARKET' as const, icon: Globe, title: isFa ? `کل بازار (${markets.length || '500+'})` : `All Markets (${markets.length || '500+'})`, sub: isFa ? 'اسکن بدون محدودیت' : 'Uncapped rotation' },
+              { id: 'TOP_COINS' as const, icon: Star, title: isFa ? 'ارزهای برتر' : 'Top Coins', sub: isFa ? 'نقدینگی بالا' : 'High volume' },
+              { id: 'SINGLE' as const, icon: Crosshair, title: isFa ? 'تک‌ارز' : 'Single Coin', sub: data.config.symbol },
             ].map((s) => {
               const on = scanScope === s.id;
+              const Icon = s.icon;
               return (
                 <button
                   key={s.id}
                   type="button"
                   disabled={busy}
                   onClick={() => void patchConfig({ scan_scope: s.id }, isFa ? 'محدوده اسکن ربات بروزرسانی شد' : 'Scope updated')}
-                  className={`p-3.5 rounded-2xl border text-start transition ${
+                  className={`p-3 rounded-2xl border text-start transition ${
                     on ? 'border-[var(--gold)] bg-[color:color-mix(in_srgb,var(--gold)_14%,transparent)]' : 'surface-soft hover:border-[var(--gold)]/50'
                   }`}
                 >
-                  <div className="text-xs font-black text-main">{s.title}</div>
+                  <div className="text-xs font-black text-main inline-flex items-center gap-1.5">
+                    <Icon className="w-3.5 h-3.5 text-brand shrink-0" />
+                    <span className="truncate">{s.title}</span>
+                  </div>
                   <div className="text-[11px] text-dim mt-1 truncate">{s.sub}</div>
                 </button>
               );
             })}
+          </div>
+
+          {/* Spot vs Futures + Direction Mode (BOTH / LONG_ONLY / SHORT_ONLY) + Hedge Mode */}
+          <div className="pt-2 border-t hairline grid sm:grid-cols-3 gap-2.5 text-xs">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black text-dim uppercase">{isFa ? 'نوع بازار' : 'Market Type'}</p>
+              <div className="ios-segmented w-full flex">
+                {(['FUTURES', 'SPOT'] as const).map((mt) => (
+                  <button
+                    key={mt}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void patchConfig({ market_type: mt }, isFa ? `نوع بازار روی ${mt === 'SPOT' ? 'اسپات' : 'فیوچرز'} تنظیم شد` : `Market set to ${mt}`)}
+                    className={`flex-1 py-1.5 rounded-full text-[11px] font-black transition ${(data.config.market_type || 'FUTURES') === mt ? 'ios-pill-active' : 'text-dim'}`}
+                  >
+                    {mt === 'FUTURES' ? (isFa ? 'فیوچرز' : 'Futures') : isFa ? 'اسپات' : 'Spot'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1 sm:col-span-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black text-dim uppercase">{isFa ? 'جهت معاملات ربات' : 'Bot Direction Mode'}</p>
+                {(data.config.market_type || 'FUTURES') === 'FUTURES' && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void patchConfig(
+                        { hedge_mode: data.config.hedge_mode ? 0 : 1 },
+                        data.config.hedge_mode
+                          ? isFa ? 'حالت تک‌جهت (One-Way) فعال شد' : 'One-Way mode active'
+                          : isFa ? 'حالت هج دوطرفه همزمان (Hedge Mode) فعال شد' : 'Hedge Mode active'
+                      )
+                    }
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black transition inline-flex items-center gap-1 ${
+                      data.config.hedge_mode ? 'badge-signal' : 'btn-ghost text-dim'
+                    }`}
+                  >
+                    <ArrowUpDown className="w-3 h-3" />
+                    <span>{isFa ? (data.config.hedge_mode ? 'Hedge فعال' : 'One-Way') : data.config.hedge_mode ? 'Hedge ON' : 'One-Way'}</span>
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {([
+                  { id: 'BOTH' as const, label: isFa ? 'دوطرفه (L+S)' : 'Both (L+S)' },
+                  { id: 'LONG_ONLY' as const, label: isFa ? 'فقط لانگ' : 'Long Only' },
+                  { id: 'SHORT_ONLY' as const, label: isFa ? 'فقط شورت' : 'Short Only' },
+                ]).map((dm) => {
+                  const disabledSpotShort = (data.config.market_type || 'FUTURES') === 'SPOT' && dm.id === 'SHORT_ONLY';
+                  const activeDir = (data.config.direction_mode || 'BOTH') === dm.id;
+                  return (
+                    <button
+                      key={dm.id}
+                      type="button"
+                      disabled={busy || disabledSpotShort}
+                      onClick={() => void patchConfig({ direction_mode: dm.id }, isFa ? 'جهت معاملات ربات ذخیره شد' : 'Direction mode updated')}
+                      className={`py-1.5 px-2 rounded-xl text-[11px] font-black transition ${
+                        activeDir ? 'btn-cobalt' : 'surface-soft text-dim hover:text-main'
+                      } disabled:opacity-40`}
+                    >
+                      {dm.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1526,8 +1652,8 @@ export function OverviewPage({
               <p className="font-bold text-main">
                 {isRunning
                   ? isFa
-                    ? 'ربات در حال اسکن زنده ۳۰+ ارز برای شکار بهترین نقطه ورود است...'
-                    : 'Bot is scanning 30+ pairs for the next clean setup...'
+                    ? `ربات در حال اسکن زنده کل بازار (${markets.length || '500+'} ارز) برای شکار بهترین نقطه ورود است...`
+                    : `Bot is scanning all ${markets.length || '500+'} pairs for the next clean setup...`
                   : isFa
                     ? 'هنوز معامله بازی وجود ندارد.'
                     : 'No open positions yet.'}

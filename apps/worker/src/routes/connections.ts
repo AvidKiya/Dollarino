@@ -403,6 +403,17 @@ connectionRoutes.post('/telegram-bots', async (c) => {
       .then(() => { webhookConfigured = true; })
       .catch(() => {});
   }
+  await client.setMyCommands([
+    { command: 'start', description: 'شروع و منوی اصلی دلارینو' },
+    { command: 'app', description: 'باز کردن مینی‌اپ معاملاتی دلارینو' },
+    { command: 'positions', description: 'مشاهده و مدیریت معاملات باز' },
+    { command: 'balance', description: 'نمایش موجودی لحظه‌ای حساب' },
+    { command: 'settings', description: 'تنظیمات بازار و جهت' },
+  ]).catch(() => {});
+  const webAppUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
+  if (webAppUrl.startsWith('https://')) {
+    await client.setChatMenuButton(webAppUrl, 'پنل دلارینو').catch(() => {});
+  }
 
   return c.json({
     id: botId,

@@ -1,4 +1,4 @@
-import type { Candle, ExchangeProviderId, Timeframe } from '@dollarino/core';
+import type { Candle, ExchangeProviderId, MarketType, Timeframe } from '@dollarino/core';
 import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
 
 export const MAJOR_LIQUID_COINS = [
@@ -10,7 +10,8 @@ export const MAJOR_LIQUID_COINS = [
 
 export interface ExchangeMarketInfo {
   symbol: string; // Canonical e.g. BTCUSDT
-  exchangeSymbol: string; // Native e.g. BTC-SWAP-USDT (Toobit), BTC_USDT (KCEX), BTCUSDT (Bitunix)
+  exchangeSymbol: string; // Native e.g. BTC-SWAP-USDT (Toobit Futures), BTCUSDT (Toobit Spot)
+  marketType?: MarketType;
   base: string;
   quote: string;
   lastPrice: string;
@@ -216,12 +217,137 @@ const FALLBACK_MARKETS: ExchangeMarketInfo[] = [
   { symbol: 'TONUSDT', exchangeSymbol: 'TON-SWAP-USDT', base: 'TON', quote: 'USDT', lastPrice: '4.80', changePct24h: '0.00', high24h: '5.00', low24h: '4.60', volume24h: 80_000_000, maxLeverage: 50, basePrecision: 1, quotePrecision: 3, minTradeVolume: '1', status: 'OPEN' },
 ];
 
+async function fetchToobitSpotUniverse(proxyConfig?: ToobitProxyConfig): Promise<ExchangeMarketInfo[]> {
+  const infoReq = buildToobitRequest('/api/v1/exchangeInfo', proxyConfig);
+  const tickReq = buildToobitRequest('/quote/v1/ticker/24hr', proxyConfig);
+  const [infoRes, tickRes] = await Promise.all([
+    fetch(infoReq.url, { headers: infoReq.headers, signal: AbortSignal.timeout(7000) }).catch(() => null),
+    fetch(tickReq.url, { headers: tickReq.headers, signal: AbortSignal.timeout(7000) }).catch(() => null),
+  ]);
+
+  type SpotSymbol = {
+    symbol: string;
+    baseAsset?: string;
+    quoteAsset?: string;
+    status?: string;
+    baseAssetPrecision?: string;
+    filters?: Array<{ filterType?: string; tickSize?: string; stepSize?: string; minQty?: string }>;
+  };
+  type SpotTicker = { s?: string; c?: string; h?: string; l?: string; qv?: string; pcp?: string };
+
+  const infoMap = new Map<string, SpotSymbol>();
+  if (infoRes?.ok) {
+    const infoJson = (await infoRes.json()) as { symbols?: SpotSymbol[] };
+    for (const s of infoJson.symbols ?? []) {
+      if (s.symbol && s.symbol.toUpperCase().endsWith('USDT')) {
+        infoMap.set(s.symbol.toUpperCase(), s);
+      }
+    }
+  }
+
+  const out: ExchangeMarketInfo[] = [];
+  if (tickRes?.ok) {
+    const tickers = (await tickRes.json()) as SpotTicker[];
+    if (Array.isArray(tickers)) {
+      for (const t of tickers) {
+        const sym = (t.s || '').toUpperCase();
+        if (!sym.endsWith('USDT') || sym.includes('-SWAP-') || sym.startsWith('TBV_')) continue;
+        const meta = infoMap.get(sym);
+        const priceFilter = meta?.filters?.find((f) => f.filterType === 'PRICE_FILTER');
+        const lotFilter = meta?.filters?.find((f) => f.filterType === 'LOT_SIZE');
+        const base = meta?.baseAsset || sym.slice(0, -4);
+        const pct = t.pcp ? (Number(t.pcp) * 100).toFixed(2) : '0.00';
+        out.push({
+          symbol: sym,
+          exchangeSymbol: sym,
+          marketType: 'SPOT',
+          base,
+          quote: 'USDT',
+          lastPrice: t.c ?? '0',
+          changePct24h: pct,
+          high24h: t.h ?? t.c ?? '0',
+          low24h: t.l ?? t.c ?? '0',
+          volume24h: Number(t.qv ?? 0),
+          maxLeverage: 1,
+          basePrecision: Math.max(0, countDecimals(lotFilter?.stepSize ?? meta?.baseAssetPrecision ?? '0.001')),
+          quotePrecision: Math.max(1, countDecimals(priceFilter?.tickSize ?? '0.01')),
+          minTradeVolume: lotFilter?.minQty ?? '0.001',
+          status: meta?.status ?? 'TRADING',
+        });
+      }
+    }
+  }
+
+  if (out.length === 0 && infoMap.size > 0) {
+    for (const [sym, meta] of infoMap.entries()) {
+      const base = meta.baseAsset || sym.slice(0, -4);
+      out.push({
+        symbol: sym,
+        exchangeSymbol: sym,
+        marketType: 'SPOT',
+        base,
+        quote: 'USDT',
+        lastPrice: '0',
+        changePct24h: '0.00',
+        high24h: '0',
+        low24h: '0',
+        volume24h: 0,
+        maxLeverage: 1,
+        basePrecision: countDecimals(meta.baseAssetPrecision ?? '0.001'),
+        quotePrecision: 2,
+        minTradeVolume: '0.001',
+        status: meta.status ?? 'TRADING',
+      });
+    }
+  }
+  return out.sort((a, b) => b.volume24h - a.volume24h);
+}
+
+async function fetchPublicSpotFallback(): Promise<ExchangeMarketInfo[]> {
+  try {
+    const res = await fetch('https://api.binance.com/api/v3/ticker/24hr', { signal: AbortSignal.timeout(7000) });
+    if (!res.ok) return [];
+    const rows = (await res.json()) as Array<{
+      symbol: string;
+      lastPrice?: string;
+      priceChangePercent?: string;
+      highPrice?: string;
+      lowPrice?: string;
+      quoteVolume?: string;
+    }>;
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter((r) => r.symbol.endsWith('USDT') && Number(r.lastPrice ?? 0) > 0 && Number(r.quoteVolume ?? 0) > 100_000)
+      .map((r) => ({
+        symbol: r.symbol,
+        exchangeSymbol: r.symbol,
+        marketType: 'SPOT' as const,
+        base: r.symbol.slice(0, -4),
+        quote: 'USDT',
+        lastPrice: r.lastPrice ?? '0',
+        changePct24h: Number(r.priceChangePercent ?? 0).toFixed(2),
+        high24h: r.highPrice ?? '0',
+        low24h: r.lowPrice ?? '0',
+        volume24h: Number(r.quoteVolume ?? 0),
+        maxLeverage: 1,
+        basePrecision: Number(r.lastPrice) >= 100 ? 3 : 2,
+        quotePrecision: Number(r.lastPrice) >= 1 ? 2 : 5,
+        minTradeVolume: Number(r.lastPrice) >= 100 ? '0.001' : '0.1',
+        status: 'TRADING',
+      }))
+      .sort((a, b) => b.volume24h - a.volume24h);
+  } catch {
+    return [];
+  }
+}
+
 export async function getExchangeMarkets(
   provider: ExchangeProviderId,
-  proxyConfig?: ToobitProxyConfig
+  proxyConfig?: ToobitProxyConfig,
+  marketType: MarketType = 'FUTURES'
 ): Promise<ExchangeMarketInfo[]> {
   const proxyKey = normalizeProxyBaseUrl(proxyConfig?.proxyUrl) ?? 'direct';
-  const cacheKey = `${provider}:${proxyKey}`;
+  const cacheKey = `${provider}:${marketType}:${proxyKey}`;
   const cached = MARKET_CACHE.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS && cached.data.length > 0) {
     return cached.data;
@@ -229,7 +355,17 @@ export async function getExchangeMarkets(
 
   let list: ExchangeMarketInfo[] = [];
 
-  if (provider === 'toobit') {
+  if (marketType === 'SPOT') {
+    if (proxyKey !== 'direct') {
+      list = await fetchToobitSpotUniverse(proxyConfig);
+    }
+    if (list.length === 0) list = await fetchPublicSpotFallback();
+    if (list.length === 0 && proxyKey === 'direct') list = await fetchToobitSpotUniverse(proxyConfig);
+    if (list.length === 0) {
+      const futs = await fetchBitunixUniverse();
+      list = futs.map((m) => ({ ...m, marketType: 'SPOT', maxLeverage: 1 }));
+    }
+  } else if (provider === 'toobit') {
     if (proxyKey !== 'direct') {
       list = await fetchToobitUniverse(proxyConfig);
     }
@@ -251,12 +387,19 @@ export async function getExchangeMarkets(
     }
     list = Array.from(merged.values()).map((item) => ({
       ...item,
+      marketType: 'FUTURES',
       exchangeSymbol: provider === 'kcex' ? `${item.base}_${item.quote}` : item.symbol,
     }));
     list.sort((a, b) => b.volume24h - a.volume24h);
   }
 
-  if (list.length === 0) list = FALLBACK_MARKETS;
+  if (list.length === 0) {
+    list = FALLBACK_MARKETS.map((m) => ({
+      ...m,
+      marketType,
+      maxLeverage: marketType === 'SPOT' ? 1 : m.maxLeverage,
+    }));
+  }
   MARKET_CACHE.set(cacheKey, { ts: Date.now(), data: list });
   return list;
 }
@@ -264,10 +407,11 @@ export async function getExchangeMarkets(
 export async function findMarketSpec(
   provider: ExchangeProviderId,
   symbol: string,
-  proxyConfig?: ToobitProxyConfig
+  proxyConfig?: ToobitProxyConfig,
+  marketType: MarketType = 'FUTURES'
 ): Promise<ExchangeMarketInfo | undefined> {
   const canonical = normalizeCanonicalSymbol(symbol);
-  const all = await getExchangeMarkets(provider, proxyConfig);
+  const all = await getExchangeMarkets(provider, proxyConfig, marketType);
   return all.find((m) => m.symbol === canonical || m.exchangeSymbol.toUpperCase() === symbol.toUpperCase());
 }
 

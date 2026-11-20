@@ -248,7 +248,7 @@ export function AdminPage({
         body: JSON.stringify({ planCode: grantPlan, durationDays: giftDays, maxUses: giftMaxUses }),
       });
       setGeneratedGiftCode(res.code);
-      setMsg(`🎁 Gift Code Created: ${res.code} (${res.durationDays}d)`);
+      setMsg(isFa ? `کد هدیه ساخته شد: ${res.code} (${res.durationDays} روز)` : `Gift Code Created: ${res.code} (${res.durationDays}d)`);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Gift code creation failed');
     }
@@ -330,7 +330,7 @@ export function AdminPage({
         results: Array<{ slot_order: number; label: string; model: string; ok: boolean; latencyMs: number; reply: string }>;
       }>('/api/admin/ai-engines/test', { method: 'POST' });
       setAiTestResults(res.results || []);
-      setMsg(res.ok ? (isFa ? 'تست موتورهای هوش مصنوعی دلارینو موفق بود ✅' : 'Dollarino AI test passed!') : 'One or more AI models failed');
+      setMsg(res.ok ? (isFa ? 'تست موتورهای هوش مصنوعی دلارینو موفق بود' : 'Dollarino AI test passed!') : 'One or more AI models failed');
       await load();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Test failed');
@@ -816,8 +816,9 @@ export function AdminPage({
                 <div className="grid grid-cols-3 gap-2">
                   <input type="number" min={1} max={3650} value={giftDays} onChange={(e) => setGiftDays(Number(e.target.value))} placeholder="Days" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
                   <input type="number" min={1} max={500} value={giftMaxUses} onChange={(e) => setGiftMaxUses(Number(e.target.value))} placeholder="Uses" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
-                  <button type="button" onClick={() => void createGiftCode()} className="btn-cobalt rounded-xl font-black text-xs">
-                    {isFa ? 'ساخت کد 🎁' : 'Create 🎁'}
+                  <button type="button" onClick={() => void createGiftCode()} className="btn-cobalt rounded-xl font-black text-xs inline-flex items-center justify-center gap-1">
+                    <Gift className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'ساخت کد' : 'Create'}</span>
                   </button>
                 </div>
                 {generatedGiftCode && (

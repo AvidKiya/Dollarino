@@ -30,6 +30,24 @@ export class TelegramBotClient {
     });
   }
 
+  getWebhookInfo() {
+    return this.call<{ url: string; pending_update_count: number; last_error_message?: string }>('getWebhookInfo', {});
+  }
+
+  setMyCommands(commands: Array<{ command: string; description: string }>) {
+    return this.call('setMyCommands', { commands });
+  }
+
+  setChatMenuButton(webAppUrl: string, text = 'پنل دلارینو') {
+    return this.call('setChatMenuButton', {
+      menu_button: {
+        type: 'web_app',
+        text,
+        web_app: { url: webAppUrl },
+      },
+    });
+  }
+
   sendMessage(
     chatId: string | number,
     text: string,

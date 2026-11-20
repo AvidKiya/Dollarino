@@ -1,4 +1,4 @@
-import type { Candle, Direction, InstrumentSpec, Timeframe } from '@dollarino/core';
+import type { Candle, Direction, InstrumentSpec, MarketType, Timeframe } from '@dollarino/core';
 import type { ExchangePosition, FuturesBalance, IExchangeAdapter, Market24hStats, OrderResult, PlaceOrderParams } from './base.js';
 import { findMarketSpec, normalizeCanonicalSymbol } from './markets.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook, fetchPublicTickerPrice } from './paper.js';
@@ -66,32 +66,32 @@ export class KcexFuturesAdapter implements IExchangeAdapter {
     return fetchPublicOrderBook(symbol, limit);
   }
 
-  async getInstrumentSpec(symbol: string): Promise<InstrumentSpec> {
+  async getInstrumentSpec(symbol: string, marketType: MarketType = 'FUTURES'): Promise<InstrumentSpec> {
     const clean = normalizeCanonicalSymbol(symbol);
-    const live = await findMarketSpec('kcex', clean).catch(() => undefined);
+    const live = await findMarketSpec('kcex', clean, undefined, marketType).catch(() => undefined);
     if (live) {
       return {
-        symbol: KcexFuturesAdapter.toKcexPair(clean),
+        symbol: marketType === 'SPOT' ? clean : KcexFuturesAdapter.toKcexPair(clean),
         basePrecision: live.basePrecision,
         quotePrecision: live.quotePrecision,
         minTradeVolume: live.minTradeVolume,
         maxMarketVolume: '1000000',
         minNotional: '5',
         minLeverage: 1,
-        maxLeverage: live.maxLeverage,
+        maxLeverage: marketType === 'SPOT' ? 1 : live.maxLeverage,
         status: 'OPEN',
       };
     }
     const isBtc = clean.startsWith('BTC');
     return {
-      symbol: KcexFuturesAdapter.toKcexPair(clean),
+      symbol: marketType === 'SPOT' ? clean : KcexFuturesAdapter.toKcexPair(clean),
       basePrecision: isBtc ? 3 : 2,
       quotePrecision: 2,
       minTradeVolume: isBtc ? '0.001' : '0.01',
       maxMarketVolume: '100',
       minNotional: '5',
       minLeverage: 1,
-      maxLeverage: 100,
+      maxLeverage: marketType === 'SPOT' ? 1 : 100,
       status: 'OPEN',
     };
   }
@@ -117,7 +117,7 @@ export class KcexFuturesAdapter implements IExchangeAdapter {
 
   async updatePositionStopLoss(): Promise<void> {}
 
-  async closePositionPartialOrFull(symbol: string, _direction: Direction, quantity: string, clientOrderId: string): Promise<OrderResult> {
+  async closePositionPartialOrFull(symbol: string, _direction: Direction, quantity: string, clientOrderId: string, _marketType: MarketType = 'FUTURES'): Promise<OrderResult> {
     const price = await this.getTickerPrice(symbol);
     const fee = (Number(price) * Number(quantity) * 0.0001).toFixed(4);
     return {

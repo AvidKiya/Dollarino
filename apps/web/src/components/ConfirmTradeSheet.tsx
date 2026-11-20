@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, CheckCircle2, ShieldCheck, X } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, CheckCircle2, ShieldCheck, X, XCircle } from 'lucide-react';
 import type { Lang } from '../lib/i18n';
 import { CoinIcon } from './CoinIcon';
 
@@ -6,6 +6,7 @@ export interface PendingTradeConfirmation {
   symbol: string;
   direction: 'LONG' | 'SHORT';
   orderType: 'MARKET' | 'LIMIT';
+  marketType?: 'SPOT' | 'FUTURES';
   entryPrice?: string;
   leverage: number;
   amountUsd?: number;
@@ -52,7 +53,7 @@ export function ConfirmTradeSheet({
             <CoinIcon symbol={order.symbol} size={42} />
             <div>
               <p className="text-[11px] font-black uppercase tracking-wider" style={{ color: 'var(--gold-soft)' }}>
-                {isFa ? 'بازبینی نهایی قبل از اجرا' : 'FINAL TRADE REVIEW'}
+                {isFa ? 'بازبینی نهایی قبل از اجرا' : 'FINAL TRADE REVIEW'} · {order.marketType || 'FUTURES'}
               </p>
               <h3 className="font-display font-bold text-xl text-main">{order.symbol}</h3>
             </div>
@@ -145,8 +146,9 @@ export function ConfirmTradeSheet({
         </p>
 
         <div className="grid grid-cols-[1fr_1.4fr] gap-2.5">
-          <button type="button" onClick={onCancel} className="btn-ghost py-3.5 rounded-2xl text-xs font-bold">
-            {isFa ? 'نه، منصرف شدم ❌' : 'Cancel'}
+          <button type="button" onClick={onCancel} className="btn-ghost py-3.5 rounded-2xl text-xs font-bold inline-flex items-center justify-center gap-1.5">
+            <XCircle className="w-4 h-4 text-loss" />
+            <span>{isFa ? 'نه، منصرف شدم' : 'Cancel'}</span>
           </button>
           <button
             type="button"
@@ -155,7 +157,7 @@ export function ConfirmTradeSheet({
             className="btn-emerald py-3.5 rounded-2xl text-sm font-black inline-flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <CheckCircle2 className="w-4 h-4" />
-            <span>{busy ? '...' : 'تایید میکنم ✅'}</span>
+            <span>{busy ? '...' : isFa ? 'تایید می‌کنم' : 'Confirm'}</span>
           </button>
         </div>
       </div>

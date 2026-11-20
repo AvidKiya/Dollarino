@@ -19,6 +19,7 @@ import { RadarLabPage } from './pages/RadarLabPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { TerminalPage } from './pages/TerminalPage';
+import { VerifyCardPage } from './pages/VerifyCardPage';
 import { WeeklyCardPage } from './pages/WeeklyCardPage';
 
 function applyLookToRoot(look: LookId) {
@@ -53,9 +54,14 @@ export function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
 
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
+  const [marketType, setMarketType] = useState<'SPOT' | 'FUTURES'>('FUTURES');
   const [terminalSymbol, setTerminalSymbol] = useState('BTCUSDT');
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
+  const [verifyCardId, setVerifyCardId] = useState<string | null>(() => {
+    const m = window.location.pathname.match(/^\/verify-card\/([A-Za-z0-9_-]+)/);
+    return m?.[1] ?? null;
+  });
 
   useEffect(() => {
     applyLookToRoot(look);
@@ -108,10 +114,10 @@ export function App() {
         }
       }
       setUser(me.user);
-      const [dash, mkts] = await Promise.all([
-        apiFetch<DashboardPayload>('/api/trading/dashboard'),
-        apiFetch<{ markets: ExchangeMarket[] }>('/api/trading/markets').catch(() => ({ markets: [] })),
-      ]);
+      const dash = await apiFetch<DashboardPayload>('/api/trading/dashboard');
+      const activeMkt: 'SPOT' | 'FUTURES' = dash.config?.market_type === 'SPOT' ? 'SPOT' : 'FUTURES';
+      setMarketType(activeMkt);
+      const mkts = await apiFetch<{ markets: ExchangeMarket[] }>(`/api/trading/markets?marketType=${activeMkt}`).catch(() => ({ markets: [] }));
       setDashboard(dash);
       if (dash.config?.symbol) setTerminalSymbol((prev) => prev || dash.config.symbol);
       if (mkts.markets.length) setMarkets(mkts.markets);
@@ -174,10 +180,30 @@ export function App() {
     await loadSessionAndDashboard();
   };
 
-  const openTerminalWithSymbol = (sym?: string) => {
+  const handleChangeMarketType = useCallback(async (nextMkt: 'SPOT' | 'FUTURES') => {
+    setMarketType(nextMkt);
+    const mkts = await apiFetch<{ markets: ExchangeMarket[] }>(`/api/trading/markets?marketType=${nextMkt}`).catch(() => ({ markets: [] }));
+    if (mkts.markets.length) setMarkets(mkts.markets);
+  }, []);
+
+  const openTerminalWithSymbol = (sym?: string, mkt?: 'SPOT' | 'FUTURES') => {
     if (sym) setTerminalSymbol(sym);
+    if (mkt && mkt !== marketType) void handleChangeMarketType(mkt);
     setActiveTab('terminal');
   };
+
+  if (verifyCardId) {
+    return (
+      <VerifyCardPage
+        cardId={verifyCardId}
+        lang={lang}
+        onBackHome={() => {
+          window.history.pushState({}, '', '/');
+          setVerifyCardId(null);
+        }}
+      />
+    );
+  }
 
   if (!authChecked) {
     return (
@@ -284,6 +310,8 @@ export function App() {
           onToggleUiMode={handleSetUiMode}
           symbol={terminalSymbol}
           setSymbol={setTerminalSymbol}
+          marketType={marketType}
+          onChangeMarketType={handleChangeMarketType}
           data={dashboard}
           markets={markets}
           onRefresh={loadSessionAndDashboard}
@@ -294,7 +322,9 @@ export function App() {
           lang={lang}
           uiMode={uiMode}
           markets={markets}
-          onTradeSymbol={(sym) => openTerminalWithSymbol(sym)}
+          marketType={marketType}
+          onChangeMarketType={handleChangeMarketType}
+          onTradeSymbol={(sym) => openTerminalWithSymbol(sym, marketType)}
         />
       )}
       {activeTab === 'radar' && (

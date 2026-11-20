@@ -529,3 +529,134 @@ describe('@dollarino/core causal backtester', () => {
     expect(Number.isFinite(bt.metrics.finalEquity)).toBe(true);
   });
 });
+
+describe('@dollarino/core Spot/Futures & direction mode risk gates', () => {
+  const btcSpec: InstrumentSpec = {
+    symbol: 'BTCUSDT',
+    basePrecision: 3,
+    quotePrecision: 2,
+    minTradeVolume: '0.001',
+    maxMarketVolume: '50',
+    minNotional: '5',
+    minLeverage: 1,
+    maxLeverage: 50,
+    status: 'OPEN',
+  };
+
+  const baseCfg: BotConfig = {
+    tradingMode: 'PAPER',
+    executionMode: 'AUTO',
+    marketType: 'FUTURES',
+    directionMode: 'BOTH',
+    hedgeMode: false,
+    symbol: 'BTCUSDT',
+    strategyKey: 'dollarino_v01',
+    entryTimeframe: '15m',
+    higherTimeframe: '1h',
+    marginPct: 10,
+    useSignalLeverage: false,
+    maxLeverage: 10,
+    tp1ClosePct: 40,
+    tp2ClosePct: 30,
+    tp3ClosePct: 30,
+    autoBreakevenOnTp1: true,
+    moveSlToTp1OnTp2: true,
+    dailyMaxLossPct: 5,
+    maxOpenPositions: 5,
+    blockWeekends: false,
+    macroBlackout: false,
+    aiGateEnabled: false,
+    aiMinConfidence: 65,
+    signalChannelHandle: '@Dollarinoofficial',
+  };
+
+  it('enforces 1x leverage and blocks SHORT in SPOT mode', () => {
+    const spotLong = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: { ...baseCfg, marketType: 'SPOT' },
+      signal: {
+        symbol: 'BTCUSDT',
+        direction: 'LONG',
+        timeframe: '15m',
+        price: '50000',
+        stopLoss: '49000',
+        leverage: 15,
+        tp1: '51000',
+      },
+      availableBalance: '1000',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 0,
+      instrument: btcSpec,
+    });
+    expect(spotLong.approved).toBe(true);
+    expect(spotLong.effectiveLeverage).toBe(1);
+    expect(spotLong.notionalValue).toBe('100');
+
+    const spotShort = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: { ...baseCfg, marketType: 'SPOT' },
+      signal: {
+        symbol: 'BTCUSDT',
+        direction: 'SHORT',
+        timeframe: '15m',
+        price: '50000',
+        stopLoss: '51000',
+        leverage: 5,
+        tp1: '49000',
+      },
+      availableBalance: '1000',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 0,
+      instrument: btcSpec,
+    });
+    expect(spotShort.approved).toBe(false);
+    expect(spotShort.reasonCode).toBe('SPOT_NO_MARGIN_SHORT');
+  });
+
+  it('respects LONG_ONLY, SHORT_ONLY, and BOTH direction modes', () => {
+    const longOnlyShort = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: { ...baseCfg, directionMode: 'LONG_ONLY' },
+      signal: {
+        symbol: 'BTCUSDT',
+        direction: 'SHORT',
+        timeframe: '15m',
+        price: '50000',
+        stopLoss: '51000',
+        leverage: 5,
+        tp1: '49000',
+      },
+      availableBalance: '1000',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 0,
+      instrument: btcSpec,
+    });
+    expect(longOnlyShort.approved).toBe(false);
+    expect(longOnlyShort.reasonCode).toBe('DIRECTION_FILTERED');
+
+    const shortOnlyLong = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: { ...baseCfg, directionMode: 'SHORT_ONLY' },
+      signal: {
+        symbol: 'BTCUSDT',
+        direction: 'LONG',
+        timeframe: '15m',
+        price: '50000',
+        stopLoss: '49000',
+        leverage: 5,
+        tp1: '51000',
+      },
+      availableBalance: '1000',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 0,
+      instrument: btcSpec,
+    });
+    expect(shortOnlyLong.approved).toBe(false);
+    expect(shortOnlyLong.reasonCode).toBe('DIRECTION_FILTERED');
+  });
+});
+

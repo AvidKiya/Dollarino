@@ -152,7 +152,7 @@ export function RadarLabPage({
       });
       setNotice(
         res.ok
-          ? isFa ? `معامله اسکنر (${res.tradeId}) باز شد ✅` : `Scanner trade ${res.tradeId} opened ✅`
+          ? isFa ? `معامله اسکنر (${res.tradeId}) باز شد` : `Scanner trade ${res.tradeId} opened`
           : res.error || 'Rejected'
       );
       await onRefresh();
@@ -169,7 +169,7 @@ export function RadarLabPage({
         mixer_threshold: mixerThreshold,
       }),
     });
-    setNotice(isFa ? 'پارامترهای استراتژی و KBOS در ربات ذخیره شد ✅' : 'KBOS & Mixer parameters saved ✅');
+    setNotice(isFa ? 'پارامترهای استراتژی و KBOS در ربات ذخیره شد' : 'KBOS & Mixer parameters saved');
     await onRefresh();
   };
 
@@ -182,7 +182,7 @@ export function RadarLabPage({
         mixer_threshold: mixerThreshold,
       }),
     });
-    setNotice(isFa ? 'مدل ترکیبی در حساب ربات شما فعال شد ✅' : 'Hybrid setup applied ✅');
+    setNotice(isFa ? 'مدل ترکیبی در حساب ربات شما فعال شد' : 'Hybrid setup applied');
     await onRefresh();
   };
 

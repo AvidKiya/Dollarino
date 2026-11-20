@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   BarChart3,
   Bell,
+  Bot,
   CandlestickChart,
   CircleHelp,
   Command,
@@ -19,11 +20,15 @@ import {
   Moon,
   Power,
   Radar,
+  Rocket,
   RotateCcw,
   Search,
   Shield,
   Sparkles,
+  Sprout,
   Sun,
+  TrendingDown,
+  TrendingUp,
   Users,
   Wallet,
   X,
@@ -162,8 +167,29 @@ export function Layout({
   useEffect(() => {
     void loadNotifications();
     const iv = setInterval(() => void loadNotifications(), 20_000);
-    return () => clearInterval(iv);
-  }, []);
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/events/stream', { withCredentials: true });
+      const onStreamUpdate = () => {
+        void loadNotifications();
+        void onRefresh?.();
+      };
+      es.addEventListener('notification.created', onStreamUpdate);
+      es.addEventListener('position.updated', () => {
+        void onRefresh?.();
+      });
+      es.onerror = () => {
+        es?.close();
+        es = null;
+      };
+    } catch {
+      /* fallback polling remains active */
+    }
+    return () => {
+      clearInterval(iv);
+      es?.close();
+    };
+  }, [onRefresh]);
 
   const toggleDayNight = () => {
     tgHaptic('light');
@@ -301,7 +327,7 @@ export function Layout({
             uiMode === 'simple' ? 'ios-pill-active' : 'text-dim hover:text-main'
           }`}
         >
-          <span>🌱</span>
+          <Sprout className="w-3.5 h-3.5" />
           <span>{isFa ? 'ساده' : 'Simple'}</span>
         </button>
         <button
@@ -383,7 +409,8 @@ export function Layout({
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-main flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4" style={{ color: 'var(--gold-soft)' }} />
-                {isFa ? 'حالت حرفه‌ای‌ها ⚡' : 'Unlock Pro Desk ⚡'}
+                <span>{isFa ? 'حالت حرفه‌ای‌ها' : 'Unlock Pro Desk'}</span>
+                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
               </span>
             </div>
             <p className="text-[11px] text-dim leading-relaxed">
@@ -537,12 +564,12 @@ export function Layout({
             {currentLook === 'paper' ? (
               <>
                 <Moon className="w-3.5 h-3.5 text-[var(--gold)]" />
-                <span>{isFa ? 'تغییر به حالت شب 🌙' : 'Switch to Night 🌙'}</span>
+                <span>{isFa ? 'تغییر به حالت شب' : 'Switch to Night'}</span>
               </>
             ) : (
               <>
                 <Sun className="w-3.5 h-3.5 text-[#F59E0B]" />
-                <span>{isFa ? 'تغییر به حالت روز ☀️' : 'Switch to Day ☀️'}</span>
+                <span>{isFa ? 'تغییر به حالت روز' : 'Switch to Day'}</span>
               </>
             )}
           </button>
@@ -744,8 +771,9 @@ export function Layout({
                         <span dir="ltr" className="text-dim tabular">
                           ${px >= 100 ? px.toLocaleString(undefined, { maximumFractionDigits: 2 }) : px.toFixed(px >= 1 ? 3 : 5)}
                         </span>
-                        <span dir="ltr" className={`tabular font-bold ${ch >= 0 ? 'text-jade' : 'text-loss'}`}>
-                          {ch >= 0 ? '▲' : '▼'} {Math.abs(ch).toFixed(2)}%
+                        <span dir="ltr" className={`tabular font-bold inline-flex items-center gap-0.5 ${ch >= 0 ? 'text-jade' : 'text-loss'}`}>
+                          {ch >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                          <span>{Math.abs(ch).toFixed(2)}%</span>
                         </span>
                       </button>
                     );
@@ -834,7 +862,7 @@ export function Layout({
             <DollarinoBrandMark size={30} />
           </button>
 
-          {/* 4 Surrounding Balanced Tabs: خانه | بازار | [🔵] | کیف پول | خدمات */}
+          {/* 4 Surrounding Balanced Tabs: خانه | بازار | ترید | کیف پول | خدمات */}
           <div className="absolute inset-x-0 bottom-0 h-[72px] grid grid-cols-[1fr_1fr_76px_1fr_1fr] items-center px-2">
             {([
               { id: 'overview' as NavTab, icon: Home, l: isFa ? 'خانه' : 'Home' },
@@ -1067,7 +1095,8 @@ export function Layout({
               onClick={prepareQuickConfirm}
               className="btn-cobalt w-full py-3.5 rounded-2xl text-sm font-black flex items-center justify-center gap-2"
             >
-              <span>👈 دلارینو ترید کن برام 👉</span>
+              <Rocket className="w-4 h-4" />
+              <span>{isFa ? 'دلارینو ترید کن برام' : 'Execute Protected Trade'}</span>
             </button>
           </div>
         </div>

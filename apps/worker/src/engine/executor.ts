@@ -3,8 +3,10 @@ import {
   quantizeDown,
   type BotConfig,
   type Direction,
+  type DirectionMode,
   type DollarinoSignal,
   type ExecutionMode,
+  type MarketType,
   type StrategyKey,
   type Timeframe,
   type TradingMode,
@@ -20,6 +22,9 @@ export interface UserBotConfigRow {
   user_id: string;
   bot_state: 'STOPPED' | 'RUNNING_PAPER' | 'RUNNING_LIVE' | 'PAUSED_DAILY_LOSS';
   trading_mode: TradingMode;
+  market_type?: MarketType;
+  direction_mode?: DirectionMode;
+  hedge_mode?: number;
   trade_execution_mode: ExecutionMode;
   notifications_enabled: number;
   symbol: string;
@@ -73,6 +78,9 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
   }
   return {
     tradingMode: r.trading_mode,
+    marketType: r.market_type ?? 'FUTURES',
+    directionMode: r.direction_mode ?? 'BOTH',
+    hedgeMode: Boolean(r.hedge_mode ?? 0),
     executionMode: r.trade_execution_mode,
     symbol: r.symbol,
     strategyKey: r.strategy_key,
@@ -185,6 +193,9 @@ export async function executeSignalForUser(
     strategyKey?: string;
     aiConfidence?: number | null;
     aiReasoning?: string | null;
+    marketType?: MarketType;
+    orderType?: 'MARKET' | 'LIMIT';
+    marginPctOverride?: number;
   }
 ): Promise<{ ok: boolean; tradeId?: string; error?: string }> {
   if (options?.signalId) {
@@ -200,6 +211,7 @@ export async function executeSignalForUser(
     .bind(userId).first<UserBotConfigRow>();
   if (!cfgRow) return { ok: false, error: 'Bot config not found for user' };
 
+  const marketType: MarketType = options?.marketType ?? cfgRow.market_type ?? 'FUTURES';
   const forceProvider = cfgRow.trading_mode === 'PAPER' ? 'paper' : undefined;
   const { adapter, provider } = await resolveUserExchangeAdapter(env, userId, forceProvider);
 
@@ -211,8 +223,8 @@ export async function executeSignalForUser(
   }
 
   const [bal, spec, openCountRow, todayPnlRow, livePrice] = await Promise.all([
-    adapter.getBalance(),
-    adapter.getInstrumentSpec(signal.symbol),
+    adapter.getBalance(marketType),
+    adapter.getInstrumentSpec(signal.symbol, marketType),
     env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN'`)
       .bind(userId).first<{ cnt: number }>(),
     env.DB.prepare(
@@ -227,6 +239,10 @@ export async function executeSignalForUser(
   };
 
   const botConfig = rowToBotConfig(cfgRow);
+  botConfig.marketType = marketType;
+  if (options?.marginPctOverride && Number.isFinite(options.marginPctOverride)) {
+    botConfig.marginPct = Math.max(0.5, Math.min(100, options.marginPctOverride));
+  }
   const decision = evaluateRiskGates({
     botState: options?.forceBypassState ? 'RUNNING_PAPER' : cfgRow.bot_state,
     config: botConfig,
@@ -276,7 +292,8 @@ export async function executeSignalForUser(
   const order = await adapter.placeMarketOrder({
     symbol: effectiveSignal.symbol,
     direction: effectiveSignal.direction,
-    type: 'MARKET',
+    type: options?.orderType ?? 'MARKET',
+    marketType,
     quantity: decision.quantity,
     price: effectiveSignal.price,
     leverage: decision.effectiveLeverage,
@@ -288,17 +305,18 @@ export async function executeSignalForUser(
   const tradeId = randomId('trd');
   await env.DB.prepare(
     `INSERT INTO trades (
-      id, user_id, signal_id, mode, exchange_provider, symbol, strategy_key, direction, status,
+      id, user_id, signal_id, mode, market_type, exchange_provider, symbol, strategy_key, direction, status,
       entry_price, initial_quantity, remaining_quantity, leverage, margin_used,
       current_stop_loss, initial_stop_loss, tp1, tp2, tp3,
       highest_price, lowest_price, trailing_active,
       fees_paid, exchange_order_id, client_id, ai_confidence, ai_reasoning
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`
   ).bind(
     tradeId,
     userId,
     options?.signalId ?? null,
     cfgRow.trading_mode,
+    marketType,
     provider,
     effectiveSignal.symbol,
     options?.strategyKey ?? cfgRow.strategy_key,
@@ -342,7 +360,7 @@ export async function executeSignalForUser(
     env.DB,
     userId,
     'TRADE',
-    `${effectiveSignal.direction === 'LONG' ? '📈' : '📉'} ${effectiveSignal.symbol} (${decision.effectiveLeverage}x)`,
+    `${marketType} ${effectiveSignal.direction} ${effectiveSignal.symbol} (${decision.effectiveLeverage}x)`,
     `Opened @ $${order.filledPrice} · Margin $${decision.marginUsed} · SL $${effectiveSignal.stopLoss}`
   );
 
@@ -373,6 +391,7 @@ interface OpenTradeRow {
   id: string;
   user_id: string;
   mode: TradingMode;
+  market_type?: MarketType;
   exchange_provider: string;
   symbol: string;
   direction: Direction;
@@ -406,10 +425,10 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
 
   let processed = 0;
 
-  // 0. Check pending LIMIT orders (Manual Limit / SP2L / Grid)
+  // 0. Check pending LIMIT orders matching the current trading mode (never leak PAPER orders into LIVE or vice versa)
   const pendingRows = await env.DB.prepare(
-    `SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING'`
-  ).bind(userId).all<{
+    `SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' AND mode = ?`
+  ).bind(userId, cfg.trading_mode).all<{
     id: string;
     symbol: string;
     direction: Direction;
@@ -443,7 +462,7 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
           tp2: po.tp2 ?? undefined,
           tp3: po.tp3 ?? undefined,
         },
-        { forceBypassState: true, strategyKey: po.strategy_key }
+        { forceBypassState: true, strategyKey: po.strategy_key, marketType: cfg.market_type ?? 'FUTURES' }
       );
       processed++;
     }
@@ -456,6 +475,7 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
   if (!openTrades.results.length) return processed;
 
   for (const t of openTrades.results) {
+    const tradeMarketType: MarketType = t.market_type ?? 'FUTURES';
     const forceProvider = t.mode === 'PAPER' ? 'paper' : undefined;
     const { adapter } = await resolveUserExchangeAdapter(env, userId, forceProvider);
     const markStr = await adapter.getTickerPrice(t.symbol);
@@ -469,13 +489,13 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
     const tp3 = t.tp3 ? Number(t.tp3) : null;
     const entry = Number(t.entry_price);
 
-    const spec = await adapter.getInstrumentSpec(t.symbol);
+    const spec = await adapter.getInstrumentSpec(t.symbol, tradeMarketType);
 
     const closeChunk = async (qtyToClose: string, reason: string, finalClose: boolean) => {
       const q = Math.min(Number(qtyToClose), Number(t.remaining_quantity));
       if (q <= 0) return;
       const qStr = quantizeDown(q.toFixed(spec.basePrecision + 2), spec.basePrecision);
-      const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, qStr, `dlr_cls_${Date.now()}`);
+      const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, qStr, `dlr_cls_${Date.now()}`, tradeMarketType);
       const fill = Number(cls.filledPrice);
       const grossPnl = isLong ? (fill - entry) * q : (entry - fill) * q;
       const fee = Number(cls.fee);
@@ -503,7 +523,7 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
           env.DB,
           userId,
           reason.includes('SL') ? 'TP_SL' : 'TRADE',
-          `${newRealized >= 0 ? '✅' : '🔻'} ${t.symbol} Closed (${reason})`,
+          `${newRealized >= 0 ? 'WIN' : 'LOSS'} · ${t.symbol} Closed (${reason})`,
           `PnL: ${newRealized >= 0 ? '+' : ''}$${newRealized.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`
         );
         await notifyUserTelegram(
@@ -559,7 +579,9 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
       if (!noMoreTps && cfg.auto_breakeven_on_tp1) {
         newSl = t.entry_price;
         rf = 1;
-        await adapter.updatePositionStopLoss(t.symbol, t.direction, newSl).catch(() => {});
+        if (tradeMarketType === 'FUTURES') {
+          await adapter.updatePositionStopLoss(t.symbol, t.direction, newSl).catch(() => {});
+        }
       }
       t.tp1_hit = 1;
       t.current_stop_loss = newSl;
@@ -581,7 +603,9 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
       let newSl = t.current_stop_loss;
       if (!finalHere && cfg.move_sl_to_tp1_on_tp2) {
         newSl = t.tp1;
-        await adapter.updatePositionStopLoss(t.symbol, t.direction, newSl).catch(() => {});
+        if (tradeMarketType === 'FUTURES') {
+          await adapter.updatePositionStopLoss(t.symbol, t.direction, newSl).catch(() => {});
+        }
       }
       t.tp2_hit = 1;
       t.current_stop_loss = newSl;
@@ -601,7 +625,9 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
         const tightened = isLong ? candidateSl > curSlNum : candidateSl < curSlNum;
         if (tightened) {
           const slStr = candidateSl.toFixed(spec.quotePrecision);
-          await adapter.updatePositionStopLoss(t.symbol, t.direction, slStr).catch(() => {});
+          if (tradeMarketType === 'FUTURES') {
+            await adapter.updatePositionStopLoss(t.symbol, t.direction, slStr).catch(() => {});
+          }
           await env.DB.prepare(
             `UPDATE trades SET current_stop_loss = ?, trailing_active = 1 WHERE id = ?`
           ).bind(slStr, t.id).run();

@@ -1,4 +1,4 @@
-import type { Candle, Direction, InstrumentSpec, Timeframe } from '@dollarino/core';
+import type { Candle, Direction, InstrumentSpec, MarketType, Timeframe } from '@dollarino/core';
 import { hmacSha256Hex } from '../crypto.js';
 import type { ExchangePosition, FuturesBalance, IExchangeAdapter, Market24hStats, OrderResult, PlaceOrderParams } from './base.js';
 import { findMarketSpec, normalizeCanonicalSymbol } from './markets.js';
@@ -94,7 +94,24 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     }
   }
 
-  async getBalance(): Promise<FuturesBalance> {
+  async getBalance(marketType: MarketType = 'FUTURES'): Promise<FuturesBalance> {
+    if (marketType === 'SPOT') {
+      const acct = await this.signedRequest<{
+        balances?: Array<{ coin?: string; asset?: string; free?: string; locked?: string; total?: string }>;
+      }>('GET', '/api/v1/account');
+      const list = Array.isArray(acct?.balances) ? acct.balances : [];
+      const usdt = list.find((r) => (r.coin ?? r.asset ?? '').toUpperCase() === 'USDT');
+      const free = Number(usdt?.free ?? 0);
+      const used = Number(usdt?.locked ?? 0);
+      const total = Number(usdt?.total ?? free + used);
+      return {
+        free: free.toFixed(2),
+        used: used.toFixed(2),
+        total: total.toFixed(2),
+        currency: 'USDT',
+      };
+    }
+
     const rows = await this.signedRequest<
       Array<{
         asset?: string;
@@ -138,9 +155,10 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     return fetchPublicOrderBook(symbol, limit, this.proxyConfig);
   }
 
-  async getInstrumentSpec(symbol: string): Promise<InstrumentSpec> {
-    const contract = ToobitFuturesAdapter.toContractSymbol(symbol);
-    const live = await findMarketSpec('toobit', symbol, this.proxyConfig).catch(() => undefined);
+  async getInstrumentSpec(symbol: string, marketType: MarketType = 'FUTURES'): Promise<InstrumentSpec> {
+    const clean = normalizeCanonicalSymbol(symbol);
+    const contract = marketType === 'SPOT' ? clean : ToobitFuturesAdapter.toContractSymbol(symbol);
+    const live = await findMarketSpec('toobit', symbol, this.proxyConfig, marketType).catch(() => undefined);
     if (live) {
       return {
         symbol: live.exchangeSymbol || contract,
@@ -149,7 +167,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
         minTradeVolume: live.minTradeVolume,
         maxMarketVolume: '1000000',
         minLeverage: 1,
-        maxLeverage: live.maxLeverage,
+        maxLeverage: marketType === 'SPOT' ? 1 : live.maxLeverage,
         contractMultiplier: '1',
         status: live.status === 'TRADING' || !live.status ? 'OPEN' : 'HALTED',
       };
@@ -161,7 +179,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
       minTradeVolume: '0.001',
       maxMarketVolume: '100',
       minLeverage: 1,
-      maxLeverage: 50,
+      maxLeverage: marketType === 'SPOT' ? 1 : 50,
       status: 'OPEN',
     };
   }
@@ -202,11 +220,40 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
   }
 
   async placeMarketOrder(params: PlaceOrderParams): Promise<OrderResult> {
+    if (params.marketType === 'SPOT') {
+      const spotSym = normalizeCanonicalSymbol(params.symbol);
+      const pxStr = params.price && Number(params.price) > 0 ? params.price : await this.getTickerPrice(spotSym);
+      const isBuy = params.direction === 'LONG';
+      // Official Toobit Spot Docs: when type=MARKET and side=BUY, `quantity` is quote asset (USDT) amount
+      const quoteAmt = (Number(params.quantity) * Number(pxStr)).toFixed(2);
+      const resp = await this.signedRequest<{
+        orderId?: string | number;
+        clientOrderId?: string;
+        price?: string;
+        executedQty?: string;
+        origQty?: string;
+      }>('POST', '/api/v1/spot/order', {
+        symbol: spotSym,
+        side: isBuy ? 'BUY' : 'SELL',
+        type: params.type === 'LIMIT' ? 'LIMIT' : 'MARKET',
+        ...(params.type === 'LIMIT' ? { timeInForce: 'GTC', price: params.price, quantity: params.quantity } : { quantity: isBuy ? quoteAmt : params.quantity }),
+        newClientOrderId: params.clientOrderId,
+      });
+      const filledPrice = resp.price && Number(resp.price) > 0 ? resp.price : pxStr;
+      return {
+        orderId: String(resp.orderId ?? `tb_spot_${Date.now()}`),
+        clientOrderId: resp.clientOrderId ?? params.clientOrderId,
+        filledPrice,
+        filledQty: params.quantity,
+        fee: '0',
+      };
+    }
+
     const contract = ToobitFuturesAdapter.toContractSymbol(params.symbol);
     await this.setLeverage(params.symbol, params.leverage);
     const side = params.direction === 'LONG' ? 'BUY_OPEN' : 'SELL_OPEN';
 
-    // Toobit USDT-M Futures API requires type='LIMIT' + priceType='MARKET' for market execution
+    // Toobit USDT-M Futures API requires type='LIMIT' + priceType='MARKET' for market execution, or priceType='INPUT' for LIMIT
     const resp = await this.signedRequest<{
       orderId?: string | number;
       clientOrderId?: string;
@@ -219,6 +266,7 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
       priceType: params.type === 'MARKET' ? 'MARKET' : 'INPUT',
       quantity: params.quantity,
       price: params.type === 'LIMIT' ? params.price : undefined,
+      ...(params.type === 'LIMIT' ? { timeInForce: 'GTC' } : {}),
       stopLoss: params.stopLoss,
       takeProfit: params.takeProfit,
       newClientOrderId: params.clientOrderId,
@@ -246,7 +294,29 @@ export class ToobitFuturesAdapter implements IExchangeAdapter {
     });
   }
 
-  async closePositionPartialOrFull(symbol: string, direction: Direction, quantity: string, clientOrderId: string): Promise<OrderResult> {
+  async closePositionPartialOrFull(symbol: string, direction: Direction, quantity: string, clientOrderId: string, marketType: MarketType = 'FUTURES'): Promise<OrderResult> {
+    if (marketType === 'SPOT') {
+      const spotSym = normalizeCanonicalSymbol(symbol);
+      const resp = await this.signedRequest<{ orderId?: string; price?: string; executedQty?: string }>(
+        'POST',
+        '/api/v1/spot/order',
+        {
+          symbol: spotSym,
+          side: 'SELL',
+          type: 'MARKET',
+          quantity,
+          newClientOrderId: clientOrderId,
+        }
+      );
+      return {
+        orderId: String(resp.orderId ?? `tb_spot_cls_${Date.now()}`),
+        clientOrderId,
+        filledPrice: resp.price && Number(resp.price) > 0 ? resp.price : await this.getTickerPrice(symbol),
+        filledQty: resp.executedQty ?? quantity,
+        fee: '0',
+      };
+    }
+
     const contract = ToobitFuturesAdapter.toContractSymbol(symbol);
     const side = direction === 'LONG' ? 'SELL_CLOSE' : 'BUY_CLOSE';
     const resp = await this.signedRequest<{ orderId?: string; avgPrice?: string; executedQty?: string }>(

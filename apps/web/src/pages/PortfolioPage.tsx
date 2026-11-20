@@ -100,7 +100,7 @@ export function PortfolioPage({
 
   const closeAll = async () => {
     await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: true }) });
-    setNotice(isFa ? 'همه معاملات باز بسته و تسویه شدند ✅' : 'All open trades settled ✅');
+    setNotice(isFa ? 'همه معاملات باز بسته و تسویه شدند' : 'All open trades settled');
     await onRefresh();
   };
 
@@ -111,7 +111,7 @@ export function PortfolioPage({
 
   const resetDemo = async () => {
     await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
-    setNotice(isFa ? 'حساب دمو به $۱۰,۰۰۰ بازنشانی شد ✅' : 'Paper balance reset to $10,000 ✅');
+    setNotice(isFa ? 'حساب دمو به $۱۰,۰۰۰ بازنشانی شد' : 'Paper balance reset to $10,000');
     await onRefresh();
     if (ledgerTab === 'wallet') {
       void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
@@ -133,7 +133,7 @@ export function PortfolioPage({
     a.download = 'dollarino-portfolio.csv';
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice(isFa ? 'فایل CSV پورتفوی دانلود شد ✅' : 'Portfolio CSV exported ✅');
+    setNotice(isFa ? 'فایل CSV پورتفوی دانلود شد' : 'Portfolio CSV exported');
   };
 
   const filteredLogs = useMemo(() => {

@@ -12,17 +12,36 @@ export function welcomeMessage(firstName: string): string {
   );
 }
 
-export function mainMenuKeyboard() {
+export function mainMenuKeyboard(webAppUrl?: string) {
+  const safeUrl = webAppUrl?.startsWith('https://') ? webAppUrl : undefined;
   return [
     [{ text: 'اتصال به صرافی 🔗' }, { text: 'تنظیمات ⚙️' }],
+    [{ text: '📈 معاملات باز' }, { text: 'ربات و هوش مصنوعی من 🤖' }],
     [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
-    [{ text: 'ربات و هوش مصنوعی من 🤖' }, { text: 'راهنما 📚' }],
+    safeUrl
+      ? [{ text: '🚀 مینی‌اپ دلارینو', web_app: { url: safeUrl } }, { text: 'راهنما 📚' }]
+      : [{ text: 'راهنما 📚' }],
+  ];
+}
+
+export function miniAppInlineKeyboard(webAppUrl: string, path = '') {
+  const base = webAppUrl.replace(/\/$/, '');
+  const fullUrl = `${base}${path}`;
+  if (!fullUrl.startsWith('https://')) {
+    return [
+      [{ text: '📈 معاملات باز', callback_data: 'tg_positions' }, { text: '🤖 روشن/خاموش ربات', callback_data: 'tg_bot_toggle' }],
+    ];
+  }
+  return [
+    [{ text: '🚀 باز کردن پنل کامل در مینی‌اپ', web_app: { url: fullUrl } }],
+    [{ text: '📈 معاملات باز', callback_data: 'tg_positions' }, { text: '🤖 روشن/خاموش ربات', callback_data: 'tg_bot_toggle' }],
   ];
 }
 
 export function settingsKeyboard(isAdmin: boolean) {
   const rows = [
     [{ text: 'اتوترید 🤖' }, { text: 'دستی ترید 💪' }],
+    [{ text: 'تنظیم نوع بازار (اسپات/فیوچرز) ⚖️' }, { text: 'جهت معاملات (لانگ/شورت) ↕️' }],
     [{ text: 'دریافت موجودی صرافی 💳' }, { text: 'تنظیم مقادیر معاملات 🪛' }],
     [{ text: 'دریافت اعلان 🔔' }, { text: 'تغییر API صرافی 📡' }],
   ];

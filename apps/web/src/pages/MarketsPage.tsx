@@ -1,5 +1,16 @@
 import { useMemo, useState } from 'react';
-import { ArrowDownRight, ArrowUpDown, ArrowUpRight, Flame, Search, Star, TrendingUp, Zap } from 'lucide-react';
+import {
+  ArrowDownRight,
+  ArrowUpDown,
+  ArrowUpRight,
+  Coins,
+  Flame,
+  Search,
+  Star,
+  TrendingDown,
+  TrendingUp,
+  Zap,
+} from 'lucide-react';
 import type { Lang } from '../lib/i18n';
 import type { ExchangeMarket } from '../components/SymbolPickerModal';
 import { CoinIcon } from '../components/CoinIcon';
@@ -19,17 +30,22 @@ export function MarketsPage({
   lang,
   uiMode = 'pro',
   markets,
+  marketType = 'FUTURES',
+  onChangeMarketType,
   onTradeSymbol,
 }: {
   lang: Lang;
   uiMode?: 'simple' | 'pro';
   markets: ExchangeMarket[];
+  marketType?: 'SPOT' | 'FUTURES';
+  onChangeMarketType?: (next: 'SPOT' | 'FUTURES') => void;
   onTradeSymbol: (sym: string) => void;
 }) {
   const isFa = lang === 'fa';
   const [q, setQ] = useState('');
   const [category, setCategory] = useState<'all' | 'favs' | 'layer1' | 'meme'>('all');
   const [sortBy, setSortBy] = useState<'volume' | 'gainers' | 'losers'>('volume');
+  const [visibleCount, setVisibleCount] = useState(60);
   const [favs, setFavs] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem('dollarino_fav_pairs');
@@ -59,59 +75,95 @@ export function MarketsPage({
     else if (category === 'layer1') arr = arr.filter((m) => MAJOR_BASES.has(m.base));
     else if (category === 'meme') arr = arr.filter((m) => MEME_BASES.has(m.base));
     if (query) {
-      arr = arr.filter((m) => m.symbol.includes(query) || m.base.includes(query));
+      arr = arr.filter((m) => m.symbol.includes(query) || m.base.includes(query) || m.exchangeSymbol.toUpperCase().includes(query));
     }
     if (sortBy === 'gainers') arr.sort((a, b) => Number(b.changePct24h) - Number(a.changePct24h));
     else if (sortBy === 'losers') arr.sort((a, b) => Number(a.changePct24h) - Number(b.changePct24h));
-    return arr.slice(0, 75);
+    return arr;
   }, [markets, q, sortBy, category, favs]);
 
+  const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount]);
+
   if (uiMode === 'simple') {
-    const topList = list.slice(0, 18);
     return (
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
             <p className="text-[11px] font-black uppercase tracking-wider mb-1" style={{ color: 'var(--gold-soft)' }}>
-              {isFa ? 'قیمت زنده ارزها · بدون اصطلاح پیچیده' : 'LIVE COIN PRICES'}
+              {isFa
+                ? `قیمت زنده تمام ارزهای صرافی (${markets.length} جفت‌ارز)`
+                : `LIVE COIN PRICES (${markets.length} PAIRS)`}
             </p>
-            <h2 className="font-display font-bold text-3xl text-main">
-              {isFa ? 'انتخاب ارز برای معامله آسان 🪙' : 'Pick a Coin to Trade 🪙'}
+            <h2 className="font-display font-bold text-3xl text-main flex items-center gap-2.5">
+              <Coins className="w-7 h-7" style={{ color: 'var(--gold-soft)' }} />
+              <span>{isFa ? 'انتخاب ارز برای معامله آسان' : 'Pick a Coin to Trade'}</span>
             </h2>
           </div>
           <div className="relative w-full sm:w-64">
             <Search className="absolute start-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dim" />
             <input
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setVisibleCount(60);
+              }}
               placeholder={isFa ? 'مثلاً BTC یا SOL...' : 'Search BTC, ETH, SOL...'}
               className="field ps-10 text-xs"
             />
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {[
-            ['all', isFa ? 'همه ارزهای برتر' : 'Popular Coins'],
-            ['favs', isFa ? '★ مورد علاقه‌ها' : '★ Favorites'],
-            ['layer1', isFa ? 'ارزهای معتبر (BTC/ETH...)' : 'Top Majors'],
-            ['meme', isFa ? 'میم‌کوین‌ها (DOGE/PEPE...)' : 'Meme Coins'],
-          ].map(([k, lbl]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setCategory(k as typeof category)}
-              className={`px-4 py-2 rounded-2xl text-xs font-black transition ${
-                category === k ? 'ios-pill-active' : 'panel text-sub'
-              }`}
-            >
-              {lbl}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'all', lbl: isFa ? 'همه ارزهای بازار' : 'All Coins' },
+              { id: 'favs', lbl: isFa ? 'مورد علاقه‌ها' : 'Favorites', star: true },
+              { id: 'layer1', lbl: isFa ? 'ارزهای معتبر (BTC/ETH...)' : 'Top Majors' },
+              { id: 'meme', lbl: isFa ? 'میم‌کوین‌ها (DOGE/PEPE...)' : 'Meme Coins' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setCategory(item.id as typeof category);
+                  setVisibleCount(60);
+                }}
+                className={`px-4 py-2 rounded-2xl text-xs font-black transition inline-flex items-center gap-1.5 ${
+                  category === item.id ? 'ios-pill-active' : 'panel text-sub'
+                }`}
+              >
+                {item.star && <Star className="w-3.5 h-3.5" />}
+                <span>{item.lbl}</span>
+              </button>
+            ))}
+          </div>
+
+          {onChangeMarketType && (
+            <div className="ios-segmented">
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('FUTURES')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${
+                  marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'
+                }`}
+              >
+                {isFa ? 'فیوچرز' : 'Futures'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('SPOT')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${
+                  marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'
+                }`}
+              >
+                {isFa ? 'اسپات' : 'Spot'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {topList.map((c) => {
+          {visibleList.map((c) => {
             const px = Number(c.lastPrice || 0);
             const ch = Number(c.changePct24h || 0);
             const up = ch >= 0;
@@ -123,7 +175,10 @@ export function MarketsPage({
                     <CoinIcon symbol={c.symbol} size={40} />
                     <div>
                       <p className="font-display font-bold text-base text-main">{c.base}</p>
-                      <p className="text-[11px] text-dim">{up ? (isFa ? 'امروز سبز بوده 📈' : 'Up today 📈') : isFa ? 'امروز افت داشته 📉' : 'Down today 📉'}</p>
+                      <p className="text-[11px] text-dim inline-flex items-center gap-1">
+                        {up ? <TrendingUp className="w-3 h-3 text-jade" /> : <TrendingDown className="w-3 h-3 text-loss" />}
+                        <span>{up ? (isFa ? 'رشد امروز' : 'Up today') : isFa ? 'افت امروز' : 'Down today'}</span>
+                      </p>
                     </div>
                   </div>
                   <button type="button" onClick={() => toggleFav(c.symbol)} className="text-dim hover:text-[var(--gold)]">
@@ -138,25 +193,41 @@ export function MarketsPage({
                   </div>
                   <span
                     dir="ltr"
-                    className={`px-3 py-1 rounded-full text-xs font-black tabular ${
+                    className={`px-3 py-1 rounded-full text-xs font-black tabular inline-flex items-center gap-1 ${
                       up ? 'bg-[#12E35D]/15 text-jade' : 'bg-rose-500/15 text-loss'
                     }`}
                   >
-                    {up ? '▲' : '▼'} {Math.abs(ch).toFixed(2)}%
+                    {up ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+                    <span>{Math.abs(ch).toFixed(2)}%</span>
                   </span>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => onTradeSymbol(c.symbol)}
-                  className="btn-cobalt w-full py-3 rounded-2xl text-xs font-black"
+                  className="btn-cobalt w-full py-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
                 >
-                  {isFa ? `شروع معامله ${c.base} ⚡` : `Trade ${c.base} ⚡`}
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{isFa ? `شروع معامله ${c.base}` : `Trade ${c.base}`}</span>
                 </button>
               </div>
             );
           })}
         </div>
+
+        {list.length > visibleList.length && (
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setVisibleCount((n) => n + 60)}
+              className="btn-ghost px-6 py-3 rounded-2xl text-xs font-black"
+            >
+              {isFa
+                ? `نمایش ۶۰ ارز بیشتر (${visibleList.length} از ${list.length})`
+                : `Load 60 more (${visibleList.length} of ${list.length})`}
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -167,19 +238,47 @@ export function MarketsPage({
         <div>
           <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center gap-2" style={{ color: 'var(--gold)' }}>
             <span className="live-gold h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold)' }} />
-            <span>LIVE MARKET UNIVERSE</span>
+            <span>LIVE {marketType} MARKET UNIVERSE</span>
           </p>
           <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-            {isFa ? `بازارهای فیوچرز (${markets.length} جفت‌ارز)` : `Perpetual Markets (${markets.length})`}
+            {isFa
+              ? `بازارهای ${marketType === 'SPOT' ? 'اسپات' : 'فیوچرز'} (${markets.length} جفت‌ارز)`
+              : `${marketType === 'SPOT' ? 'Spot' : 'Perpetual'} Markets (${markets.length})`}
           </h2>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          {onChangeMarketType && (
+            <div className="ios-segmented">
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('FUTURES')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${
+                  marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'
+                }`}
+              >
+                {isFa ? 'فیوچرز (Futures)' : 'Futures'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('SPOT')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${
+                  marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'
+                }`}
+              >
+                {isFa ? 'اسپات (Spot)' : 'Spot'}
+              </button>
+            </div>
+          )}
+
           <div className="relative flex-1 sm:flex-none">
             <Search className="absolute start-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dim" />
             <input
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setVisibleCount(60);
+              }}
               placeholder={isFa ? 'جستجوی ارز...' : 'Search coin...'}
               className="field ps-10 text-xs sm:w-52"
             />
@@ -203,7 +302,7 @@ export function MarketsPage({
         </div>
       </div>
 
-      {/* Kifpool-inspired Global Market Pulse Strip */}
+      {/* Market Pulse Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <div className="panel rounded-2xl p-3.5 space-y-1.5">
           <span className="text-dim">{isFa ? 'شاخص مومنتوم بازار' : 'Market Breadth'}</span>
@@ -225,34 +324,41 @@ export function MarketsPage({
         </div>
         <div className="panel rounded-2xl p-3.5">
           <span className="text-dim">{isFa ? 'علاقه‌مندی‌های من' : 'My Watchlist'}</span>
-          <p dir="ltr" className="font-display font-bold text-xl text-goldsoft mt-1">{favs.length} ★</p>
+          <p dir="ltr" className="font-display font-bold text-xl text-goldsoft mt-1 inline-flex items-center gap-1.5">
+            <span>{favs.length}</span>
+            <Star className="w-4 h-4 fill-[var(--gold)] text-[var(--gold)]" />
+          </p>
         </div>
       </div>
 
-      {/* Category Filter Pills (Kifpool Markets) */}
+      {/* Category Filter Pills */}
       <div className="flex flex-wrap gap-2">
         {[
-          ['all', isFa ? 'همه ارزها' : 'All Pairs'],
-          ['favs', isFa ? '★ علاقه‌مندی‌ها' : '★ Favorites'],
-          ['layer1', isFa ? 'برترین‌های لایه ۱' : 'Layer 1 Majors'],
-          ['meme', isFa ? 'میم‌کوین‌ها' : 'Meme Coins'],
-        ].map(([k, lbl]) => (
+          { id: 'all', lbl: isFa ? 'همه ارزها' : 'All Pairs' },
+          { id: 'favs', lbl: isFa ? 'علاقه‌مندی‌ها' : 'Favorites', star: true },
+          { id: 'layer1', lbl: isFa ? 'برترین‌های لایه ۱' : 'Layer 1 Majors' },
+          { id: 'meme', lbl: isFa ? 'میم‌کوین‌ها' : 'Meme Coins' },
+        ].map((item) => (
           <button
-            key={k}
+            key={item.id}
             type="button"
-            onClick={() => setCategory(k as typeof category)}
-            className={`px-4 py-2 rounded-full text-xs font-black transition ${
-              category === k ? 'btn-gold' : 'panel text-dim hover:text-main'
+            onClick={() => {
+              setCategory(item.id as typeof category);
+              setVisibleCount(60);
+            }}
+            className={`px-4 py-2 rounded-full text-xs font-black transition inline-flex items-center gap-1.5 ${
+              category === item.id ? 'btn-gold' : 'panel text-dim hover:text-main'
             }`}
           >
-            {lbl}
+            {item.star && <Star className="w-3.5 h-3.5" />}
+            <span>{item.lbl}</span>
           </button>
         ))}
       </div>
 
       <div className="panel rounded-[26px] overflow-hidden">
         <div className="hidden md:grid grid-cols-[auto_1.4fr_1fr_.9fr_1fr_1fr_.7fr] gap-4 px-6 py-3.5 text-[10px] font-black tracking-[0.15em] text-dim uppercase border-b hairline">
-          <span>★</span>
+          <Star className="w-3.5 h-3.5" />
           <span>{isFa ? 'نماد' : 'ASSET'}</span>
           <span>{isFa ? 'قیمت' : 'PRICE'}</span>
           <span>{isFa ? '۲۴ ساعت' : '24H CHG'}</span>
@@ -262,7 +368,7 @@ export function MarketsPage({
         </div>
 
         <div className="divide-y hairline">
-          {list.map((c) => {
+          {visibleList.map((c) => {
             const px = Number(c.lastPrice || 0);
             const ch = Number(c.changePct24h || 0);
             const up = ch >= 0;
@@ -288,7 +394,7 @@ export function MarketsPage({
                       <span className="text-dim text-[10px]"> /USDT</span>
                     </p>
                     <p dir="ltr" className="text-[10px] text-dim tabular">
-                      Max {c.maxLeverage}×
+                      {marketType === 'SPOT' ? 'Spot 1×' : `Max ${c.maxLeverage}×`}
                     </p>
                   </div>
                 </div>
@@ -359,6 +465,20 @@ export function MarketsPage({
           )}
         </div>
       </div>
+
+      {list.length > visibleList.length && (
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => setVisibleCount((n) => n + 100)}
+            className="btn-gold px-6 py-3 rounded-2xl text-xs font-black"
+          >
+            {isFa
+              ? `نمایش ۱۰۰ ارز بیشتر (${visibleList.length} از ${list.length})`
+              : `Load 100 more (${visibleList.length} of ${list.length})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

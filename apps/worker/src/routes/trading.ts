@@ -14,14 +14,16 @@ import {
   selectClosedCandles,
   strategyOutputToDollarinoSignal,
   type Direction,
+  type DirectionMode,
   type MarginMode,
+  type MarketType,
   type SignalMixerWeights,
   type StrategyKey,
   type Timeframe,
 } from '@dollarino/core';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
-import { decryptVaultJson, randomId } from '../crypto.js';
+import { decryptVaultJson, hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
 import { resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
@@ -78,11 +80,12 @@ tradingRoutes.get('/dashboard', async (c) => {
   const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
 
   const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement, platformAI] = await Promise.all([
-    adapter.getBalance().catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
+    adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC`).bind(user.id).all<{
       id: string;
       symbol: string;
       direction: Direction;
+      market_type?: MarketType;
       entry_price: string;
       remaining_quantity: string;
       leverage: number;
@@ -356,6 +359,9 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
 
   const allowedFields: Record<string, string> = {
     trading_mode: 'trading_mode',
+    market_type: 'market_type',
+    direction_mode: 'direction_mode',
+    hedge_mode: 'hedge_mode',
     trade_execution_mode: 'trade_execution_mode',
     margin_mode: 'margin_mode',
     notifications_enabled: 'notifications_enabled',
@@ -415,8 +421,21 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
   }
   for (const [k, col] of Object.entries(allowedFields)) {
     if (body[k] !== undefined) {
+      let val = typeof body[k] === 'object' && body[k] !== null ? JSON.stringify(body[k]) : body[k];
+      if (k === 'hedge_mode') val = body[k] ? 1 : 0;
+      if (k === 'market_type') val = String(body[k]).toUpperCase() === 'SPOT' ? 'SPOT' : 'FUTURES';
+      if (k === 'direction_mode') {
+        const d = String(body[k]).toUpperCase();
+        val = d === 'LONG_ONLY' || d === 'SHORT_ONLY' ? d : 'BOTH';
+      }
       sets.push(`${col} = ?`);
-      vals.push(typeof body[k] === 'object' && body[k] !== null ? JSON.stringify(body[k]) : body[k]);
+      vals.push(val);
+    }
+  }
+  if (body.market_type === 'SPOT') {
+    sets.push(`max_leverage = 1`, `hedge_mode = 0`);
+    if (body.direction_mode === 'SHORT_ONLY') {
+      return c.json({ error: 'اسپات از معاملات Short مارجین پشتیبانی نمی‌کند. جهت اسپات باید LONG_ONLY یا BOTH باشد.' }, 400);
     }
   }
 
@@ -435,6 +454,9 @@ tradingRoutes.post('/bot/start', async (c) => {
     marginPct?: number;
     strategyKey?: StrategyKey;
     symbol?: string;
+    marketType?: MarketType;
+    directionMode?: DirectionMode;
+    hedgeMode?: boolean;
     autoScanTop?: boolean;
     scanScope?: 'SINGLE' | 'TOP_COINS' | 'ALL_MARKET';
     maxOpenPositions?: number;
@@ -448,8 +470,8 @@ tradingRoutes.post('/bot/start', async (c) => {
   }>().catch(() => ({} as Record<string, unknown>));
 
   const [cfg, ensemble, entitlement] = await Promise.all([
-    c.env.DB.prepare('SELECT trading_mode, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ trading_mode: string; strategy_key: string; risk_profile_json?: string }>(),
+    c.env.DB.prepare('SELECT trading_mode, market_type, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ trading_mode: string; market_type?: MarketType; strategy_key: string; risk_profile_json?: string }>(),
     resolveAIEnsemble(c.env, user.id),
     resolveUserEntitlement(c.env.DB, user),
   ]);
@@ -491,6 +513,25 @@ tradingRoutes.post('/bot/start', async (c) => {
     sets.push(`symbol = ?`);
     vals.push(normalizeCanonicalSymbol(body.symbol));
   }
+  const resolvedMarketType: MarketType = body.marketType === 'SPOT' ? 'SPOT' : body.marketType === 'FUTURES' ? 'FUTURES' : (cfg?.market_type ?? 'FUTURES');
+  if (body.marketType === 'SPOT' || body.marketType === 'FUTURES') {
+    sets.push(`market_type = ?`);
+    vals.push(resolvedMarketType);
+  }
+  if (body.directionMode === 'BOTH' || body.directionMode === 'LONG_ONLY' || body.directionMode === 'SHORT_ONLY') {
+    if (resolvedMarketType === 'SPOT' && body.directionMode === 'SHORT_ONLY') {
+      return c.json({ error: 'اسپات تنها از خرید (Long) پشتیبانی می‌کند.' }, 400);
+    }
+    sets.push(`direction_mode = ?`);
+    vals.push(body.directionMode);
+  }
+  if (typeof body.hedgeMode === 'boolean') {
+    sets.push(`hedge_mode = ?`);
+    vals.push(resolvedMarketType === 'SPOT' ? 0 : body.hedgeMode ? 1 : 0);
+  }
+  if (resolvedMarketType === 'SPOT') {
+    sets.push(`max_leverage = 1`, `hedge_mode = 0`);
+  }
   if (typeof body.autoScanTop === 'boolean') {
     sets.push(`auto_scan_top = ?`);
     vals.push(body.autoScanTop ? 1 : 0);
@@ -507,7 +548,7 @@ tradingRoutes.post('/bot/start', async (c) => {
     sets.push(`allow_auto_flip = ?`);
     vals.push(body.allowAutoFlip ? 1 : 0);
   }
-  if (typeof body.maxLeverage === 'number') {
+  if (typeof body.maxLeverage === 'number' && resolvedMarketType !== 'SPOT') {
     sets.push(`max_leverage = ?`);
     vals.push(Math.max(1, Math.min(50, Math.round(body.maxLeverage))));
   }
@@ -571,10 +612,11 @@ tradingRoutes.post('/bot/stop', async (c) => {
   let stopPnl = 0;
   if (body.settleOpen) {
     const openTrades = await c.env.DB.prepare(
-      `SELECT id, mode, symbol, direction, entry_price, initial_quantity, remaining_quantity, margin_used, realized_pnl FROM trades WHERE user_id = ? AND status = 'OPEN'`
+      `SELECT id, mode, market_type, symbol, direction, entry_price, initial_quantity, remaining_quantity, margin_used, realized_pnl FROM trades WHERE user_id = ? AND status = 'OPEN'`
     ).bind(user.id).all<{
       id: string;
       mode: string;
+      market_type?: MarketType;
       symbol: string;
       direction: Direction;
       entry_price: string;
@@ -586,7 +628,7 @@ tradingRoutes.post('/bot/stop', async (c) => {
 
     for (const t of openTrades.results) {
       const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, t.mode === 'PAPER' ? 'paper' : undefined);
-      const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `stop_settle_${Date.now()}`);
+      const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `stop_settle_${Date.now()}`, t.market_type ?? 'FUTURES');
       const exitPx = Number(cls.filledPrice);
       const entryPx = Number(t.entry_price);
       const qty = Number(t.remaining_quantity);
@@ -710,13 +752,13 @@ tradingRoutes.patch('/positions/:id/tpsl', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json<{ stopLoss?: string; tp1?: string; tp2?: string; tp3?: string }>();
   const row = await c.env.DB.prepare(`SELECT * FROM trades WHERE id = ? AND user_id = ? AND status = 'OPEN'`)
-    .bind(id, user.id).first<{ id: string; mode: string; symbol: string; direction: Direction; current_stop_loss: string; tp1: string }>();
+    .bind(id, user.id).first<{ id: string; mode: string; market_type?: MarketType; symbol: string; direction: Direction; current_stop_loss: string; tp1: string }>();
   if (!row) return c.json({ error: 'Open trade not found' }, 404);
 
   const nextSl = body.stopLoss || row.current_stop_loss;
   const nextTp1 = body.tp1 || row.tp1;
 
-  if (row.mode === 'LIVE') {
+  if (row.mode === 'LIVE' && (row.market_type ?? 'FUTURES') === 'FUTURES') {
     const { adapter } = await resolveUserExchangeAdapter(c.env, user.id);
     await adapter.updatePositionStopLoss(row.symbol, row.direction, nextSl, nextTp1).catch(() => {});
   }
@@ -736,6 +778,7 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
     .bind(id, user.id).first<{
       id: string;
       mode: string;
+      market_type?: MarketType;
       symbol: string;
       direction: Direction;
       entry_price: string;
@@ -747,7 +790,7 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
   if (!t) return c.json({ error: 'Open position not found' }, 404);
 
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, t.mode === 'PAPER' ? 'paper' : undefined);
-  const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `man_cls_${Date.now()}`);
+  const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `man_cls_${Date.now()}`, t.market_type ?? 'FUTURES');
   const exitPx = Number(cls.filledPrice);
   const entryPx = Number(t.entry_price);
   const qty = Number(t.remaining_quantity);
@@ -777,7 +820,9 @@ tradingRoutes.post('/orders/manual', async (c) => {
     symbol: string;
     direction: Direction;
     orderType: 'MARKET' | 'LIMIT';
+    marketType?: MarketType;
     marginMode?: MarginMode;
+    marginPct?: number;
     limitPrice?: string;
     leverage: number;
     stopLoss: string;
@@ -787,18 +832,24 @@ tradingRoutes.post('/orders/manual', async (c) => {
     timeframe?: string;
   }>();
 
+  const cfgRow = await c.env.DB.prepare('SELECT trading_mode, market_type, margin_pct, paper_balance FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ trading_mode: string; market_type?: MarketType; margin_pct: number; paper_balance: string }>();
+  const marketType: MarketType = body.marketType ?? cfgRow?.market_type ?? 'FUTURES';
+  const effectiveLeverage = marketType === 'SPOT' ? 1 : Math.max(1, Number(body.leverage || 1));
+
+  if (marketType === 'SPOT' && body.direction === 'SHORT') {
+    return c.json({ ok: false, error: 'در بازار اسپات امکان باز کردن پوزیشن Short مارجین وجود ندارد؛ فقط خرید (Buy / Long) یا بستن موجودی مجاز است.' }, 400);
+  }
+
   if (body.orderType === 'LIMIT' && body.limitPrice && Number(body.limitPrice) > 0) {
-    const [cfg, activeRow] = await Promise.all([
-      c.env.DB.prepare('SELECT trading_mode, margin_pct, paper_balance FROM bot_configs WHERE user_id = ?')
-        .bind(user.id).first<{ trading_mode: string; margin_pct: number; paper_balance: string }>(),
-      c.env.DB.prepare(
-        `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
-      ).bind(user.id).first<{ provider: ExchangeProviderId }>(),
-    ]);
-    const bal = Number(cfg?.paper_balance ?? 10000);
-    const rawQty = ((bal * ((cfg?.margin_pct ?? 10) / 100)) * body.leverage) / Number(body.limitPrice);
+    const activeRow = await c.env.DB.prepare(
+      `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    ).bind(user.id).first<{ provider: ExchangeProviderId }>();
+    const bal = Number(cfgRow?.paper_balance ?? 10000);
+    const pct = body.marginPct && Number.isFinite(body.marginPct) ? body.marginPct : (cfgRow?.margin_pct ?? 10);
+    const rawQty = ((bal * (pct / 100)) * effectiveLeverage) / Number(body.limitPrice);
     const qty = rawQty >= 100 ? rawQty.toFixed(1) : rawQty >= 1 ? rawQty.toFixed(3) : rawQty.toFixed(5);
-    const exProvider = cfg?.trading_mode === 'PAPER' ? 'paper' : (activeRow?.provider || 'paper');
+    const exProvider = cfgRow?.trading_mode === 'PAPER' ? 'paper' : (activeRow?.provider || 'paper');
     const id = randomId('ord');
     await c.env.DB.prepare(
       `INSERT INTO pending_orders (id, user_id, mode, exchange_provider, symbol, strategy_key, direction, order_type, price, quantity, leverage, stop_loss, tp1, tp2, tp3)
@@ -806,19 +857,19 @@ tradingRoutes.post('/orders/manual', async (c) => {
     ).bind(
       id,
       user.id,
-      cfg?.trading_mode ?? 'PAPER',
+      cfgRow?.trading_mode ?? 'PAPER',
       exProvider,
       body.symbol.toUpperCase(),
       body.direction,
       body.limitPrice,
       qty,
-      body.leverage,
+      effectiveLeverage,
       body.stopLoss,
       body.tp1,
       body.tp2 ?? null,
       body.tp3 ?? null
     ).run();
-    await logAudit(c.env.DB, user.id, 'ORDER', 'INFO', `Queued LIMIT ${body.direction} ${body.symbol} @ ${body.limitPrice}`, body.symbol);
+    await logAudit(c.env.DB, user.id, 'ORDER', 'INFO', `Queued ${marketType} LIMIT ${body.direction} ${body.symbol} @ ${body.limitPrice}`, body.symbol);
     return c.json({ ok: true, pendingOrderId: id });
   }
 
@@ -831,12 +882,18 @@ tradingRoutes.post('/orders/manual', async (c) => {
       timeframe: body.timeframe || '15m',
       price: body.limitPrice || '0',
       stopLoss: body.stopLoss,
-      leverage: body.leverage,
+      leverage: effectiveLeverage,
       tp1: body.tp1,
       tp2: body.tp2,
       tp3: body.tp3,
     },
-    { forceBypassState: true, strategyKey: 'manual_terminal' }
+    {
+      forceBypassState: true,
+      strategyKey: 'manual_terminal',
+      marketType,
+      orderType: body.orderType === 'LIMIT' ? 'LIMIT' : 'MARKET',
+      marginPctOverride: body.marginPct,
+    }
   );
   return c.json(execRes);
 });
@@ -1008,8 +1065,12 @@ tradingRoutes.get('/market/overview', async (c) => {
 tradingRoutes.get('/markets', async (c) => {
   const user = c.get('user');
   const requestedProvider = c.req.query('provider') as ExchangeProviderId | undefined;
+  const requestedMarketType = (c.req.query('marketType') || 'FUTURES').toUpperCase() === 'SPOT' ? 'SPOT' : 'FUTURES';
   const q = (c.req.query('q') || '').trim().toUpperCase();
   const sort = c.req.query('sort') || 'volume';
+  const offset = Math.max(0, Number(c.req.query('offset') || 0) || 0);
+  const limitParam = c.req.query('limit');
+  const limit = limitParam && Number(limitParam) > 0 ? Math.min(2000, Number(limitParam)) : 0;
 
   const activeRow = await c.env.DB.prepare(
     `SELECT provider, label, encrypted_credentials FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
@@ -1035,7 +1096,7 @@ tradingRoutes.get('/markets', async (c) => {
       }
     }
   }
-  let markets = await getExchangeMarkets(provider, proxyConfig);
+  let markets = await getExchangeMarkets(provider, proxyConfig, requestedMarketType);
 
   if (q) {
     markets = markets.filter(
@@ -1052,11 +1113,15 @@ tradingRoutes.get('/markets', async (c) => {
     markets = [...markets].sort((a, b) => Number(a.changePct24h) - Number(b.changePct24h));
   }
 
+  const totalCount = markets.length;
+  const sliced = limit > 0 ? markets.slice(offset, offset + limit) : markets;
+
   return c.json({
     provider,
+    marketType: requestedMarketType,
     label: activeRow?.label || provider.toUpperCase(),
-    totalCount: markets.length,
-    markets,
+    totalCount,
+    markets: sliced,
   });
 });
 
@@ -1388,3 +1453,241 @@ tradingRoutes.get('/events/snapshot', async (c) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// =========================================================================
+// Tamper-Proof Server-Signed Profit Cards (backed strictly by settled D1 trades)
+// =========================================================================
+
+export function buildVerifiedCardCanonicalPayload(card: {
+  id: string;
+  userId: string;
+  mode: string;
+  period: string;
+  startDate: string;
+  endDate: string;
+  tradesCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  roiPct: number;
+  profitFactor: number;
+  exchangeProvider: string;
+  strategyName: string;
+  tradesHash: string;
+  issuedAt: string;
+}): string {
+  return [
+    card.id,
+    card.userId,
+    card.mode,
+    card.period,
+    card.startDate,
+    card.endDate,
+    String(card.tradesCount),
+    card.winRate.toFixed(2),
+    card.netPnlUsd.toFixed(2),
+    card.roiPct.toFixed(2),
+    card.profitFactor.toFixed(2),
+    card.exchangeProvider,
+    card.strategyName,
+    card.tradesHash,
+    card.issuedAt,
+  ].join('|');
+}
+
+tradingRoutes.get('/cards', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM verified_profit_cards WHERE user_id = ? ORDER BY issued_at DESC LIMIT 20`
+  ).bind(user.id).all();
+  return c.json({ cards: rows.results });
+});
+
+tradingRoutes.post('/cards/issue', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{
+    mode?: 'LIVE' | 'PAPER';
+    period?: '24H' | '7D' | '30D' | 'ALL' | 'TRADE';
+    tradeId?: string;
+    cardStyle?: 'dark' | 'gold' | 'emerald';
+  }>().catch(() => ({} as { mode?: 'LIVE' | 'PAPER'; period?: '24H' | '7D' | '30D' | 'ALL' | 'TRADE'; tradeId?: string; cardStyle?: 'dark' | 'gold' | 'emerald' }));
+
+  const requestedMode = body.mode === 'PAPER' ? 'PAPER' : 'LIVE';
+  const period = body.period && ['24H', '7D', '30D', 'ALL', 'TRADE'].includes(body.period) ? body.period : '7D';
+
+  const whereClause = [`user_id = ?`, `status = 'CLOSED'`, `mode = ?`];
+  const binds: unknown[] = [user.id, requestedMode];
+
+  if (period === 'TRADE') {
+    if (!body.tradeId) {
+      return c.json({ error: 'شناسه معامله برای صدور کارت تک‌معامله الزامی است.' }, 400);
+    }
+    whereClause.push(`id = ?`);
+    binds.push(body.tradeId);
+  } else if (period === '24H') {
+    whereClause.push(`closed_at >= datetime('now', '-24 hours')`);
+  } else if (period === '7D') {
+    whereClause.push(`closed_at >= datetime('now', '-7 days')`);
+  } else if (period === '30D') {
+    whereClause.push(`closed_at >= datetime('now', '-30 days')`);
+  }
+
+  const tradesRes = await c.env.DB.prepare(
+    `SELECT id, symbol, direction, exchange_provider, strategy_key, realized_pnl, margin_used, closed_at
+     FROM trades WHERE ${whereClause.join(' AND ')} ORDER BY closed_at ASC`
+  ).bind(...binds).all<{
+    id: string;
+    symbol: string;
+    direction: string;
+    exchange_provider: string;
+    strategy_key: string | null;
+    realized_pnl: string;
+    margin_used: string;
+    closed_at: string;
+  }>();
+
+  const trades = tradesRes.results;
+  if (!trades.length) {
+    return c.json({
+      error:
+        requestedMode === 'LIVE'
+          ? 'هنوز هیچ معامله واقعی (Live) بسته شده‌ای در این بازه زمانی برای حساب شما ثبت نشده است. کارت سود تاییدشده فقط بر اساس معاملات واقعی تسویه‌شده صادر می‌شود.'
+          : 'هیچ معامله آزمایشی (Paper Demo) بسته شده‌ای در این بازه زمانی ثبت نشده است.',
+      code: 'NO_SETTLED_TRADES',
+    }, 400);
+  }
+
+  let netPnlUsd = 0;
+  let wins = 0;
+  let grossWins = 0;
+  let grossLosses = 0;
+  let totalMarginUsed = 0;
+  const providerCounts = new Map<string, number>();
+  const strategyCounts = new Map<string, number>();
+
+  for (const t of trades) {
+    const pnl = Number(t.realized_pnl || 0);
+    const margin = Math.max(0, Number(t.margin_used || 0));
+    netPnlUsd += pnl;
+    totalMarginUsed += margin;
+    if (pnl > 0) {
+      wins++;
+      grossWins += pnl;
+    } else if (pnl < 0) {
+      grossLosses += Math.abs(pnl);
+    }
+    const prov = (t.exchange_provider || 'TOOBIT').toUpperCase();
+    providerCounts.set(prov, (providerCounts.get(prov) ?? 0) + 1);
+    const strat = t.strategy_key || 'dollarino_v01';
+    strategyCounts.set(strat, (strategyCounts.get(strat) ?? 0) + 1);
+  }
+
+  const tradesCount = trades.length;
+  const winRate = Number(((wins / tradesCount) * 100).toFixed(2));
+  const profitFactor = grossLosses > 0 ? Number((grossWins / grossLosses).toFixed(2)) : grossWins > 0 ? 99 : 0;
+
+  let baseCapital = totalMarginUsed;
+  if (requestedMode === 'PAPER') {
+    const cfgRow = await c.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ paper_balance: string }>();
+    const currentPaper = Number(cfgRow?.paper_balance ?? 10000);
+    baseCapital = Math.max(totalMarginUsed, Math.max(100, currentPaper - netPnlUsd));
+  } else {
+    const avgMargin = totalMarginUsed / Math.max(1, tradesCount);
+    baseCapital = Math.max(avgMargin, totalMarginUsed);
+  }
+  const roiPct = baseCapital > 0 ? Number(((netPnlUsd / baseCapital) * 100).toFixed(2)) : 0;
+
+  const topProvider = Array.from(providerCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'TOOBIT';
+  const topStrategy = Array.from(strategyCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'dollarino_v01';
+  const startDate = trades[0]!.closed_at;
+  const endDate = trades[trades.length - 1]!.closed_at;
+
+  const tradesDigestInput = trades.map((t) => `${t.id}:${t.realized_pnl}:${t.closed_at}`).join(';');
+  const tradesHash = await sha256Hex(tradesDigestInput);
+
+  const cardId = `DLR-${randomId('').slice(0, 10).toUpperCase()}`;
+  const issuedAt = new Date().toISOString();
+  const cardSecret = c.env.SESSION_JWT_SECRET || c.env.MASTER_ENCRYPTION_KEY || 'dollarino-card-hmac-secret';
+
+  const canonical = buildVerifiedCardCanonicalPayload({
+    id: cardId,
+    userId: user.id,
+    mode: requestedMode,
+    period,
+    startDate,
+    endDate,
+    tradesCount,
+    winRate,
+    netPnlUsd: Number(netPnlUsd.toFixed(2)),
+    roiPct,
+    profitFactor,
+    exchangeProvider: topProvider,
+    strategyName: topStrategy,
+    tradesHash,
+    issuedAt,
+  });
+  const hmacSignature = await hmacSha256Hex(canonical, cardSecret);
+
+  const payloadSnapshot = JSON.stringify({
+    cardStyle: body.cardStyle || 'dark',
+    symbol: period === 'TRADE' ? trades[0]!.symbol : undefined,
+    direction: period === 'TRADE' ? trades[0]!.direction : undefined,
+    isVerifiedReal: requestedMode === 'LIVE',
+    grossWins: Number(grossWins.toFixed(2)),
+    grossLosses: Number(grossLosses.toFixed(2)),
+    tradesHash,
+  });
+
+  await c.env.DB.prepare(
+    `INSERT INTO verified_profit_cards (
+      id, user_id, mode, period, start_date, end_date,
+      trades_count, win_rate, net_pnl_usd, roi_pct, profit_factor,
+      exchange_provider, strategy_name, payload_json, hmac_signature, issued_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    cardId,
+    user.id,
+    requestedMode,
+    period,
+    startDate,
+    endDate,
+    tradesCount,
+    winRate,
+    Number(netPnlUsd.toFixed(2)),
+    roiPct,
+    profitFactor,
+    topProvider,
+    topStrategy,
+    payloadSnapshot,
+    hmacSignature,
+    issuedAt
+  ).run();
+
+  return c.json({
+    ok: true,
+    card: {
+      id: cardId,
+      userId: user.id,
+      displayName: user.username,
+      mode: requestedMode,
+      isVerifiedReal: requestedMode === 'LIVE',
+      period,
+      startDate,
+      endDate,
+      tradesCount,
+      winRate,
+      netPnlUsd: Number(netPnlUsd.toFixed(2)),
+      roiPct,
+      profitFactor,
+      exchangeProvider: topProvider,
+      strategyName: topStrategy,
+      cardStyle: body.cardStyle || 'dark',
+      symbol: period === 'TRADE' ? trades[0]!.symbol : undefined,
+      direction: period === 'TRADE' ? trades[0]!.direction : undefined,
+      hmacSignature,
+      verifyPath: `/verify-card/${cardId}`,
+      issuedAt,
+    },
+  });
+});
+

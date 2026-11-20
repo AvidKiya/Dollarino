@@ -6,11 +6,12 @@ import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.
 import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
-import { TelegramBotClient } from './client.js';
+import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import {
   exchangeSelectionKeyboard,
   formatBalanceCard,
   mainMenuKeyboard,
+  miniAppInlineKeyboard,
   settingsKeyboard,
   welcomeMessage,
 } from './formatter.js';
@@ -84,6 +85,7 @@ async function getOrProvisionTelegramUser(env: Env, tgUser: { id: number; first_
 
 export async function handleTelegramUpdate(env: Env, botToken: string, update: TelegramUpdate) {
   const bot = new TelegramBotClient(botToken);
+  const webAppUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
 
   // 1. Handle Channel Posts containing Dollarino Signals (Official origin validation, no forwards)
   if (update.channel_post?.text) {
@@ -268,10 +270,16 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data === 'toggle_auto_on' || data === 'toggle_auto_off') {
-      const nextState = data === 'toggle_auto_on' ? 'RUNNING_PAPER' : 'STOPPED';
+      const curCfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
+      const nextState = data === 'toggle_auto_on' ? (curCfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER') : 'STOPPED';
       await env.DB.prepare(
-        `UPDATE bot_configs SET trade_execution_mode = 'AUTO', bot_state = ? WHERE user_id = ?`
+        `UPDATE bot_configs SET trade_execution_mode = 'AUTO', bot_state = ?, updated_at = datetime('now') WHERE user_id = ?`
       ).bind(nextState, user.id).run();
+      if (data === 'toggle_auto_on') {
+        const doStub = env.TRADING_BOT_DO.get(env.TRADING_BOT_DO.idFromName('global-coordinator'));
+        await doStub.fetch('https://do/start').catch(() => {});
+        await doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+      }
       await bot.answerCallbackQuery(cq.id, data === 'toggle_auto_on' ? 'اتوترید روشن شد 🤖' : 'اتوترید خاموش شد');
       if (msgId) {
         await bot.editMessageText(
@@ -279,6 +287,169 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           msgId,
           `وضعیت اتوترید: ${data === 'toggle_auto_on' ? '🟢 روشن (خودکار)' : '🔴 خاموش'}`
         );
+      }
+      return { ok: true };
+    }
+
+    if (data === 'tg_bot_toggle') {
+      const cfg = await env.DB.prepare('SELECT bot_state, trading_mode FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ bot_state: string; trading_mode: string }>();
+      const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+      const nextState = isRunning ? 'STOPPED' : (cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER');
+      await env.DB.prepare(`UPDATE bot_configs SET bot_state = ?, updated_at = datetime('now') WHERE user_id = ?`)
+        .bind(nextState, user.id).run();
+      if (!isRunning) {
+        const doStub = env.TRADING_BOT_DO.get(env.TRADING_BOT_DO.idFromName('global-coordinator'));
+        await doStub.fetch('https://do/start').catch(() => {});
+        await doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+      }
+      await bot.answerCallbackQuery(cq.id, isRunning ? 'ربات متوقف شد 🔴' : 'ربات روشن شد 🟢');
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          `🤖 وضعیت ربات دلارینو: ${isRunning ? '🔴 متوقف' : `🟢 فعال (${cfg?.trading_mode ?? 'PAPER'})`}`,
+          miniAppInlineKeyboard(webAppUrl)
+        );
+      }
+      return { ok: true };
+    }
+
+    if (data === 'tg_positions') {
+      const openRows = await env.DB.prepare(
+        `SELECT id, symbol, direction, market_type, entry_price, leverage, margin_used, current_stop_loss, tp1 FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 8`
+      ).bind(user.id).all<{
+        id: string;
+        symbol: string;
+        direction: 'LONG' | 'SHORT';
+        market_type?: string;
+        entry_price: string;
+        leverage: number;
+        margin_used: string;
+        current_stop_loss: string;
+        tp1: string;
+      }>();
+      await bot.answerCallbackQuery(cq.id);
+      if (!openRows.results.length) {
+        await bot.sendMessage(chatId, '📭 در حال حاضر هیچ معامله بازی روی حساب شما نیست.', {
+          inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '/terminal'),
+        });
+        return { ok: true };
+      }
+      const lines = openRows.results.map(
+        (t, idx) =>
+          `${idx + 1}. ${t.direction === 'LONG' ? '🟢' : '🔴'} ${t.symbol} (${t.market_type || 'FUTURES'} ${t.leverage}x)\n   ورود: ${t.entry_price} | SL: ${t.current_stop_loss} | TP1: ${t.tp1}`
+      ).join('\n\n');
+      const closeButtons: InlineKeyboardButton[][] = openRows.results.map((t) => [
+        { text: `❌ بستن ${t.symbol} (${t.direction})`, callback_data: `close_pos:${t.id}` },
+      ]);
+      if (webAppUrl.startsWith('https://')) {
+        closeButtons.push([{ text: '🚀 مشاهده در مینی‌اپ', web_app: { url: `${webAppUrl}/terminal` } }]);
+      }
+      await bot.sendMessage(chatId, `📈 معاملات باز فعلی (${openRows.results.length}):\n\n${lines}`, {
+        inlineKeyboard: closeButtons,
+      });
+      return { ok: true };
+    }
+
+    if (data.startsWith('close_pos:')) {
+      const tradeId = data.slice('close_pos:'.length);
+      const t = await env.DB.prepare(
+        `SELECT * FROM trades WHERE id = ? AND user_id = ? AND status = 'OPEN'`
+      ).bind(tradeId, user.id).first<{
+        id: string;
+        mode: string;
+        market_type?: 'SPOT' | 'FUTURES';
+        symbol: string;
+        direction: 'LONG' | 'SHORT';
+        entry_price: string;
+        initial_quantity: string;
+        remaining_quantity: string;
+        margin_used: string;
+        realized_pnl: string;
+      }>();
+      if (!t) {
+        await bot.answerCallbackQuery(cq.id, 'این معامله قبلاً بسته شده است.', true);
+        return { ok: true };
+      }
+      const { adapter } = await resolveUserExchangeAdapter(env, user.id, t.mode === 'PAPER' ? 'paper' : undefined);
+      const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `tg_cls_${Date.now()}`, t.market_type ?? 'FUTURES');
+      const exitPx = Number(cls.filledPrice);
+      const entryPx = Number(t.entry_price);
+      const qty = Number(t.remaining_quantity);
+      const pnl = t.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
+      const totalRealized = Number(t.realized_pnl) + pnl - Number(cls.fee);
+
+      if (t.mode === 'PAPER') {
+        const cfgRow = await env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
+          .bind(user.id).first<{ paper_balance: string }>();
+        const remMargin = Number(t.margin_used) * (qty / Math.max(1e-9, Number(t.initial_quantity)));
+        const nextBal = Number(cfgRow?.paper_balance ?? 0) + remMargin + pnl - Number(cls.fee);
+        await env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?')
+          .bind(nextBal.toFixed(2), user.id).run();
+      }
+      await env.DB.prepare(
+        `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'TELEGRAM_MANUAL', closed_at = datetime('now') WHERE id = ?`
+      ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+
+      await bot.answerCallbackQuery(cq.id, 'معامله بسته شد ✅');
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          `✅ معامله ${t.symbol} (${t.direction}) با موفقیت بسته شد!\nخروج: ${cls.filledPrice}\nسود/زیان خالص: ${totalRealized >= 0 ? '+' : ''}${totalRealized.toFixed(2)} USDT`
+        );
+      }
+      return { ok: true };
+    }
+
+    if (data === 'set_mkt:SPOT' || data === 'set_mkt:FUTURES') {
+      const nextMkt = data.endsWith('SPOT') ? 'SPOT' : 'FUTURES';
+      if (nextMkt === 'SPOT') {
+        await env.DB.prepare(
+          `UPDATE bot_configs SET market_type = 'SPOT', max_leverage = 1, hedge_mode = 0, direction_mode = CASE WHEN direction_mode = 'SHORT_ONLY' THEN 'LONG_ONLY' ELSE direction_mode END WHERE user_id = ?`
+        ).bind(user.id).run();
+      } else {
+        await env.DB.prepare(`UPDATE bot_configs SET market_type = 'FUTURES' WHERE user_id = ?`).bind(user.id).run();
+      }
+      await bot.answerCallbackQuery(cq.id, `بازار روی ${nextMkt} تنظیم شد`);
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          `⚖️ نوع بازار معاملاتی روی **${nextMkt === 'SPOT' ? 'اسپات (Spot · اهرم 1x)' : 'فیوچرز (Futures · اهرم و دوطرفه)'}** ذخیره شد.`
+        );
+      }
+      return { ok: true };
+    }
+
+    if (data.startsWith('set_dir:') || data === 'toggle_hedge') {
+      if (data === 'toggle_hedge') {
+        const cfgRow = await env.DB.prepare('SELECT market_type, hedge_mode FROM bot_configs WHERE user_id = ?')
+          .bind(user.id).first<{ market_type?: string; hedge_mode?: number }>();
+        if (cfgRow?.market_type === 'SPOT') {
+          await bot.answerCallbackQuery(cq.id, 'حالت هج فقط در بازار فیوچرز فعال می‌شود.', true);
+          return { ok: true };
+        }
+        const nextHedge = cfgRow?.hedge_mode ? 0 : 1;
+        await env.DB.prepare('UPDATE bot_configs SET hedge_mode = ? WHERE user_id = ?').bind(nextHedge, user.id).run();
+        await bot.answerCallbackQuery(cq.id, nextHedge ? 'حالت هج هم‌زمان فعال شد 🛡' : 'حالت هج غیرفعال شد');
+        if (msgId) {
+          await bot.editMessageText(chatId, msgId, `🛡 وضعیت Hedge Mode (لانگ و شورت هم‌زمان): ${nextHedge ? '🟢 فعال' : '⚪️ غیرفعال'}`);
+        }
+        return { ok: true };
+      }
+      const nextDir = data.slice('set_dir:'.length);
+      const cfgRow = await env.DB.prepare('SELECT market_type FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ market_type?: string }>();
+      if (cfgRow?.market_type === 'SPOT' && nextDir === 'SHORT_ONLY') {
+        await bot.answerCallbackQuery(cq.id, 'در بازار اسپات امکان معامله Short وجود ندارد.', true);
+        return { ok: true };
+      }
+      await env.DB.prepare('UPDATE bot_configs SET direction_mode = ? WHERE user_id = ?').bind(nextDir, user.id).run();
+      await bot.answerCallbackQuery(cq.id, `جهت معاملات: ${nextDir}`);
+      if (msgId) {
+        await bot.editMessageText(chatId, msgId, `↕️ جهت معاملات ربات روی **${nextDir}** تنظیم شد.`);
       }
       return { ok: true };
     }
@@ -310,7 +481,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   if (text === '/start' || text === 'بازگشت به صفحه قبل 🔙') {
     await clearState();
     await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username), {
-      replyKeyboard: mainMenuKeyboard(),
+      replyKeyboard: mainMenuKeyboard(webAppUrl),
+    });
+    await bot.sendMessage(chatId, '🚀 دسترسی سریع به پنل معاملاتی و کنترل ربات:', {
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl),
+    });
+    return { ok: true };
+  }
+
+  if (text === '/app' || text === '🚀 مینی‌اپ دلارینو') {
+    await bot.sendMessage(chatId, '📱 برای ورود مستقیم و بدون نیاز به لاگین به مینی‌اپ دلارینو روی دکمه زیر بزنید:', {
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl),
     });
     return { ok: true };
   }
@@ -339,7 +520,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       ).bind(String(msg.from.id), msg.from.username ?? null, msg.from.first_name ?? null, webUser.id).run();
     }
     await bot.sendMessage(chatId, `✅ حساب تلگرام شما با موفقیت به اکانت وب «${webUser.username}» متصل شد!`, {
-      replyKeyboard: mainMenuKeyboard(),
+      replyKeyboard: mainMenuKeyboard(webAppUrl),
     });
     return { ok: true };
   }
@@ -388,20 +569,20 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await bot.sendMessage(
           chatId,
           `🔐 کلید ${state.provider.toUpperCase()} با رمزنگاری AES-256 ذخیره شد (در حالت Standby).\n\nبرای فعال‌سازی معاملات واقعی روی Toobit یا KCEX لطفاً از پنل وب دلارینو اشتراک Pro یا VIP تهیه کنید.`,
-          { replyKeyboard: mainMenuKeyboard() }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl) }
         );
       } else if (test.ok && test.balance) {
         await env.DB.prepare(`UPDATE bot_configs SET trading_mode = 'LIVE' WHERE user_id = ?`).bind(user.id).run();
         await bot.sendMessage(
           chatId,
           `✅ اتصال به ${state.provider.toUpperCase()} با موفقیت برقرار شد!\n\n${formatBalanceCard(state.provider, test.balance)}`,
-          { replyKeyboard: mainMenuKeyboard() }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl) }
         );
       } else {
         await bot.sendMessage(
           chatId,
           `⚠️ کلیدها به‌صورت رمزنگاری‌شده ذخیره شدند اما تست اتصال صرافی پیام داد:\n${test.message}`,
-          { replyKeyboard: mainMenuKeyboard() }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl) }
         );
       }
       return { ok: true };
@@ -476,8 +657,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   if (text === 'KCEX (۰٪ کارمزد) 🔵' || text === 'KCEX (در انتظار API) ⏳') {
     await bot.sendMessage(
       chatId,
-      `🔵 صرافی KCEX (۰٪ کارمزد میرر):\nبرای اتصال حساب KCEX و لینک معامله سریع، وارد پنل وب دلارینو بخش «صرافی Toobit / KCEX» شوید و اشتراک Pro خود را فعال کنید.`,
-      { replyKeyboard: exchangeSelectionKeyboard() }
+      `🔵 صرافی KCEX (۰٪ کارمزد میرر):\nبرای اتصال حساب KCEX و لینک معامله سریع، مستقیم وارد بخش صرافی در مینی‌اپ شوید:`,
+      {
+        inlineKeyboard: webAppUrl.startsWith('https://')
+          ? [[{ text: '🔗 اتصال KCEX در مینی‌اپ', web_app: { url: `${webAppUrl}/exchanges` } }]]
+          : undefined,
+      }
     );
     return { ok: true };
   }
@@ -487,14 +672,88 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const { adapter } = await resolveUserExchangeAdapter(env, user.id, 'paper');
     const bal = await adapter.getBalance();
     await bot.sendMessage(chatId, `✅ حالت معاملاتی روی **Paper Demo** فعال شد!\n\n${formatBalanceCard('PAPER', bal)}`, {
-      replyKeyboard: mainMenuKeyboard(),
+      replyKeyboard: mainMenuKeyboard(webAppUrl),
     });
     return { ok: true };
   }
 
-  if (text === 'تنظیمات ⚙️') {
+  if (text === 'تنظیمات ⚙️' || text === '/settings') {
     await bot.sendMessage(chatId, '⚙️ منوی تنظیمات ربات دلارینو:', {
       replyKeyboard: settingsKeyboard(admin),
+    });
+    return { ok: true };
+  }
+
+  if (text === 'تنظیم نوع بازار (اسپات/فیوچرز) ⚖️') {
+    const cfg = await env.DB.prepare('SELECT market_type FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ market_type?: string }>();
+    await bot.sendMessage(
+      chatId,
+      `⚖️ بازار فعلی ربات: **${cfg?.market_type === 'SPOT' ? 'اسپات (Spot · 1x)' : 'فیوچرز (Futures)'}**\nنوع بازار مورد نظر را انتخاب کنید:`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '📈 فیوچرز (Futures)', callback_data: 'set_mkt:FUTURES' },
+            { text: '🪙 اسپات (Spot)', callback_data: 'set_mkt:SPOT' },
+          ],
+        ],
+      }
+    );
+    return { ok: true };
+  }
+
+  if (text === 'جهت معاملات (لانگ/شورت) ↕️') {
+    const cfg = await env.DB.prepare('SELECT direction_mode, hedge_mode, market_type FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ direction_mode?: string; hedge_mode?: number; market_type?: string }>();
+    await bot.sendMessage(
+      chatId,
+      `↕️ جهت فعلی معاملات: **${cfg?.direction_mode ?? 'BOTH'}**\n🛡 حالت هج (لانگ و شورت هم‌زمان): **${cfg?.hedge_mode ? 'فعال' : 'غیرفعال'}**\n\nجهت معاملات ربات را انتخاب کنید:`,
+      {
+        inlineKeyboard: [
+          [{ text: '↕️ هر دو جهت (Long + Short)', callback_data: 'set_dir:BOTH' }],
+          [
+            { text: '🟢 فقط لانگ (Long Only)', callback_data: 'set_dir:LONG_ONLY' },
+            { text: '🔴 فقط شورت (Short Only)', callback_data: 'set_dir:SHORT_ONLY' },
+          ],
+          [{ text: `🛡 تغییر حالت هج (${cfg?.hedge_mode ? 'روشن ✅' : 'خاموش'})`, callback_data: 'toggle_hedge' }],
+        ],
+      }
+    );
+    return { ok: true };
+  }
+
+  if (text === '📈 معاملات باز' || text === '/positions') {
+    const openRows = await env.DB.prepare(
+      `SELECT id, symbol, direction, market_type, entry_price, leverage, margin_used, current_stop_loss, tp1 FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 8`
+    ).bind(user.id).all<{
+      id: string;
+      symbol: string;
+      direction: 'LONG' | 'SHORT';
+      market_type?: string;
+      entry_price: string;
+      leverage: number;
+      margin_used: string;
+      current_stop_loss: string;
+      tp1: string;
+    }>();
+    if (!openRows.results.length) {
+      await bot.sendMessage(chatId, '📭 در حال حاضر هیچ معامله بازی روی حساب شما نیست.', {
+        inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '/terminal'),
+      });
+      return { ok: true };
+    }
+    const lines = openRows.results.map(
+      (t, idx) =>
+        `${idx + 1}. ${t.direction === 'LONG' ? '🟢' : '🔴'} ${t.symbol} (${t.market_type || 'FUTURES'} ${t.leverage}x)\n   ورود: ${t.entry_price} | SL: ${t.current_stop_loss} | TP1: ${t.tp1}`
+    ).join('\n\n');
+    const closeButtons: InlineKeyboardButton[][] = openRows.results.map((t) => [
+      { text: `❌ بستن ${t.symbol} (${t.direction})`, callback_data: `close_pos:${t.id}` },
+    ]);
+    if (webAppUrl.startsWith('https://')) {
+      closeButtons.push([{ text: '🚀 مدیریت کامل در مینی‌اپ', web_app: { url: `${webAppUrl}/terminal` } }]);
+    }
+    await bot.sendMessage(chatId, `📈 معاملات باز فعلی (${openRows.results.length}):\n\n${lines}`, {
+      inlineKeyboard: closeButtons,
     });
     return { ok: true };
   }
@@ -518,18 +777,16 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === 'دریافت موجودی صرافی 💳') {
-    const cfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ trading_mode: string }>();
+  if (text === 'دریافت موجودی صرافی 💳' || text === '/balance') {
+    const cfg = await env.DB.prepare('SELECT trading_mode, market_type FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ trading_mode: string; market_type?: 'SPOT' | 'FUTURES' }>();
     const { adapter, provider } = await resolveUserExchangeAdapter(
       env,
       user.id,
       cfg?.trading_mode === 'PAPER' ? 'paper' : undefined
     );
-    const bal = await adapter.getBalance().catch((err) => {
-      throw err;
-    });
-    await bot.sendMessage(chatId, formatBalanceCard(provider, bal));
+    const bal = await adapter.getBalance(cfg?.market_type ?? 'FUTURES');
+    await bot.sendMessage(chatId, formatBalanceCard(`${provider} (${cfg?.market_type ?? 'FUTURES'})`, bal));
     return { ok: true };
   }
 
@@ -586,7 +843,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const [bots, aiSummary, cfg] = await Promise.all([
       env.DB.prepare('SELECT COUNT(*) as cnt FROM telegram_bots WHERE user_id = ?').bind(user.id).first<{ cnt: number }>(),
       getPlatformAISummary(env),
-      env.DB.prepare('SELECT strategy_key FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ strategy_key: string }>(),
+      env.DB.prepare('SELECT strategy_key, bot_state, market_type, direction_mode, hedge_mode FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ strategy_key: string; bot_state: string; market_type?: string; direction_mode?: string; hedge_mode?: number }>(),
     ]);
     const stratName =
       cfg?.strategy_key === 'ai_autonomous_agent'
@@ -594,13 +852,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         : cfg?.strategy_key === 'dollarino_v01'
           ? 'استراتژی منتخب دلارینو (موتور دُرنا V1)'
           : cfg?.strategy_key || 'استراتژی منتخب دلارینو';
+    const running = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
     await bot.sendMessage(
       chatId,
       `🤖 وضعیت ربات و هوش مصنوعی دلارینو:\n\n` +
+      `🔹 وضعیت فعلی: ${running ? '🟢 روشن و فعال' : '🔴 متوقف'}\n` +
+      `🔹 بازار و جهت: ${cfg?.market_type ?? 'FUTURES'} | ${cfg?.direction_mode ?? 'BOTH'}${cfg?.hedge_mode ? ' | Hedge Mode 🛡' : ''}\n` +
       `🔹 استراتژی انتخاب‌شده: ${stratName}\n` +
       `🔹 موتور هوش مصنوعی دلارینو: ${aiSummary.effectiveModeLabelFa}\n` +
       `🔹 ربات‌های کپی ترید دلارینو متصل: ${bots?.cnt ?? 0}\n\n` +
-      `شما بدون نیاز به خرید API هوش مصنوعی، مستقیماً از پنل وب می‌توانید ربات را با یک دکمه روی کل بازار روشن کنید.`
+      `با یک لمس ربات را روشن/خاموش کنید یا وارد ترمینال مینی‌اپ شوید:`,
+      { inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '/terminal') }
     );
     return { ok: true };
   }
@@ -623,7 +885,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       chatId,
       `💎 تعرفه‌های اشتراک دلارینو:\n\n${planLines}\n\n` +
       `وضعیت فعلی شما: ${ent.planNameFa}${ent.hasPaidPlan ? ` (${ent.daysRemaining} روز باقیمانده)` : ''}\n\n` +
-      `برای پرداخت آنی USDT (TRC20) یا کارت به کارت و ثبت کد پیگیری، از مینی‌اپ یا پنل وب دلارینو بخش «تعرفه‌ها و اشتراک» اقدام کنید.`
+      `برای پرداخت آنی USDT (TRC20) یا کارت به کارت و ثبت کد پیگیری، مستقیم وارد صفحه اشتراک مینی‌اپ شوید:`,
+      {
+        inlineKeyboard: webAppUrl.startsWith('https://')
+          ? [[{ text: '💎 خرید و تمدید اشتراک در مینی‌اپ', web_app: { url: `${webAppUrl}/subscription` } }]]
+          : undefined,
+      }
     );
     return { ok: true };
   }
@@ -639,7 +906,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === 'راهنما 📚') {
+  if (text === 'راهنما 📚' || text === '/help') {
     const help = await env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'help_text'`).first<{ value: string }>();
     await bot.sendMessage(chatId, help?.value || '📚 راهنمای دلارینو در پنل وب در دسترس است.');
     return { ok: true };
@@ -685,7 +952,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   await bot.sendMessage(chatId, 'لطفاً یکی از گزینه‌های منو را انتخاب کنید یا سیگنال را برای بررسی ارسال کنید:', {
-    replyKeyboard: mainMenuKeyboard(),
+    replyKeyboard: mainMenuKeyboard(webAppUrl),
   });
   return { ok: true };
 }

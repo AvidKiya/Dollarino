@@ -1,4 +1,6 @@
 export type Direction = 'LONG' | 'SHORT';
+export type MarketType = 'SPOT' | 'FUTURES';
+export type DirectionMode = 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY';
 export type OrderSide = 'BUY' | 'SELL';
 export type TradingMode = 'PAPER' | 'LIVE';
 export type ExecutionMode = 'AUTO' | 'MANUAL_CONFIRM';
@@ -122,6 +124,9 @@ export interface SignalMixerResult {
 
 export interface BotConfig {
   tradingMode: TradingMode;
+  marketType?: MarketType;
+  directionMode?: DirectionMode;
+  hedgeMode?: boolean;
   executionMode: ExecutionMode;
   marginMode?: MarginMode;
   symbol: string;

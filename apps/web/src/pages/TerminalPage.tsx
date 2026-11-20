@@ -4,13 +4,19 @@ import {
   ArrowUpRight,
   BrainCircuit,
   CandlestickChart as CandleIcon,
+  CheckCircle2,
   Edit3,
   Eye,
   History,
   Layers,
+  Rocket,
+  Scale,
   Send,
+  Shield,
   ShieldCheck,
   Target,
+  TrendingDown,
+  TrendingUp,
   X,
   Zap,
 } from 'lucide-react';
@@ -74,6 +80,8 @@ export function TerminalPage({
   onToggleUiMode,
   symbol,
   setSymbol,
+  marketType = 'FUTURES',
+  onChangeMarketType,
   data,
   markets,
   onRefresh,
@@ -83,6 +91,8 @@ export function TerminalPage({
   onToggleUiMode?: (m: 'simple' | 'pro') => void;
   symbol: string;
   setSymbol: (sym: string) => void;
+  marketType?: 'SPOT' | 'FUTURES';
+  onChangeMarketType?: (next: 'SPOT' | 'FUTURES') => Promise<void>;
   data: DashboardPayload;
   markets: ExchangeMarket[];
   onRefresh: () => Promise<void>;
@@ -97,10 +107,12 @@ export function TerminalPage({
 
   // Order ticket state
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
+  const effectiveSide: 'LONG' | 'SHORT' = marketType === 'SPOT' ? 'LONG' : side;
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
   const [marginMode, setMarginMode] = useState<'ISOLATED' | 'CROSS'>(data.config.margin_mode || 'ISOLATED');
   const [limitPrice, setLimitPrice] = useState('');
   const [lev, setLev] = useState(10);
+  const effectiveLev = marketType === 'SPOT' ? 1 : lev;
   const [marginPct, setMarginPct] = useState<number>(Math.max(5, Math.min(100, Number(data.config.margin_pct || 10))));
   const [stopLoss, setStopLoss] = useState('');
   const [tp1, setTp1] = useState('');
@@ -205,13 +217,13 @@ export function TerminalPage({
 
   const copyAiLevelsToTicket = () => {
     if (!aiAnalysis) return;
-    const dir = aiAnalysis.direction ?? (aiAnalysis.bias === 'SHORT' ? 'SHORT' : 'LONG');
+    const dir = marketType === 'SPOT' ? 'LONG' : aiAnalysis.direction ?? (aiAnalysis.bias === 'SHORT' ? 'SHORT' : 'LONG');
     setSide(dir);
     if (aiAnalysis.stopLoss) setStopLoss(String(aiAnalysis.stopLoss));
     if (aiAnalysis.tp1) setTp1(String(aiAnalysis.tp1));
     if (aiAnalysis.tp2) setTp2(String(aiAnalysis.tp2));
     if (aiAnalysis.tp3) setTp3(String(aiAnalysis.tp3));
-    setOrderMsg(isFa ? 'سطوح پیشنهادی چارت AI به فرم سفارش منتقل شد ✅' : 'AI levels copied to order ticket ✅');
+    setOrderMsg(isFa ? 'سطوح پیشنهادی چارت AI به فرم سفارش منتقل شد' : 'AI levels copied to order ticket');
   };
 
   const prepareOrderConfirmation = (e: React.FormEvent) => {
@@ -220,10 +232,10 @@ export function TerminalPage({
     setOrderMsg('');
     setPendingConfirm({
       symbol,
-      direction: side,
+      direction: effectiveSide,
       orderType,
       entryPrice: orderType === 'LIMIT' ? limitPrice : snap?.market24h.lastPrice,
-      leverage: lev,
+      leverage: effectiveLev,
       amountUsd: marginEst,
       stopLoss,
       tp1,
@@ -241,10 +253,12 @@ export function TerminalPage({
         method: 'POST',
         body: JSON.stringify({
           symbol,
-          direction: side,
+          direction: effectiveSide,
           orderType,
+          marketType,
+          marginPct,
           limitPrice: orderType === 'LIMIT' ? limitPrice : undefined,
-          leverage: lev,
+          leverage: effectiveLev,
           marginMode,
           stopLoss,
           tp1,
@@ -258,8 +272,8 @@ export function TerminalPage({
       setOrderMsg(
         res.ok
           ? res.pendingOrderId
-            ? isFa ? 'سفارش لیمیت ثبت شد ✅' : 'Limit order queued ✅'
-            : isFa ? 'معامله با موفقیت باز شد ✅' : 'Position opened ✅'
+            ? isFa ? 'سفارش لیمیت ثبت شد' : 'Limit order queued'
+            : isFa ? 'معامله با موفقیت باز شد' : 'Position opened'
           : res.error || 'Rejected'
       );
       await onRefresh();
@@ -356,23 +370,45 @@ export function TerminalPage({
         )}
 
         <div className="panel rounded-[28px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <SymbolPicker
               lang={lang}
               value={symbol}
               markets={markets}
               provider={data.activeExchange?.provider || 'paper'}
+              marketType={marketType}
+              onChangeMarketType={(m) => void onChangeMarketType?.(m)}
               onChange={(sym) => setSymbol(sym)}
             />
+            {onChangeMarketType && (
+              <div className="ios-segmented">
+                <button
+                  type="button"
+                  onClick={() => void onChangeMarketType('FUTURES')}
+                  className={`px-3 py-1 rounded-full text-[11px] font-black transition ${marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'}`}
+                >
+                  {isFa ? 'فیوچرز' : 'Futures'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onChangeMarketType('SPOT')}
+                  className={`px-3 py-1 rounded-full text-[11px] font-black transition ${marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'}`}
+                >
+                  {isFa ? 'اسپات (1×)' : 'Spot (1×)'}
+                </button>
+              </div>
+            )}
             <div>
               <p dir="ltr" className="font-display font-bold text-2xl tabular text-main">${fmtPx(lastPx)}</p>
-              <p dir="ltr" className={`text-xs font-bold tabular ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
-                {chg24 >= 0 ? '▲' : '▼'} {Math.abs(chg24).toFixed(2)}% {isFa ? 'تغییر ۲۴ ساعته' : '24h change'}
+              <p dir="ltr" className={`text-xs font-bold tabular inline-flex items-center gap-1 ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
+                {chg24 >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                <span>{Math.abs(chg24).toFixed(2)}% {isFa ? 'تغییر ۲۴ ساعته' : '24h change'}</span>
               </p>
             </div>
           </div>
-          <span className="text-[11px] font-bold px-3 py-1.5 rounded-full surface-soft text-sub">
-            {isFa ? 'حالت محافظت‌شده + حدضرر خودکار 🛡️' : 'Auto Stop-Loss Protected 🛡️'}
+          <span className="text-[11px] font-bold px-3 py-1.5 rounded-full surface-soft text-sub inline-flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-jade" />
+            <span>{isFa ? 'حالت محافظت‌شده + حدضرر خودکار' : 'Auto Stop-Loss Protected'}</span>
           </span>
         </div>
 
@@ -408,8 +444,8 @@ export function TerminalPage({
               </h3>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
-              {(['LONG', 'SHORT'] as const).map((s) => (
+            <div className={marketType === 'SPOT' ? 'grid grid-cols-1 gap-2.5' : 'grid grid-cols-2 gap-2.5'}>
+              {(['LONG', ...(marketType === 'FUTURES' ? (['SHORT'] as const) : [])] as const).map((s) => (
                 <button
                   key={s}
                   type="button"
@@ -418,7 +454,7 @@ export function TerminalPage({
                     if (lastPx > 0) applyAutoLevels(lastPx, s);
                   }}
                   className={`py-4 px-3 rounded-2xl font-black text-xs flex flex-col items-center gap-1.5 border-2 transition ${
-                    side === s
+                    effectiveSide === s
                       ? s === 'LONG'
                         ? 'bg-[#12E35D]/15 border-[#12E35D] text-main'
                         : 'bg-rose-500/15 border-rose-500 text-main'
@@ -426,30 +462,48 @@ export function TerminalPage({
                   }`}
                 >
                   {s === 'LONG' ? <ArrowUpRight className="w-6 h-6 text-jade" /> : <ArrowDownRight className="w-6 h-6 text-loss" />}
-                  <span>{s === 'LONG' ? (isFa ? 'بالا میره (خرید 📈)' : 'Going UP 📈') : isFa ? 'پایین میاد (فروش 📉)' : 'Going DOWN 📉'}</span>
+                  <span className="inline-flex items-center gap-1">
+                    {s === 'LONG' ? (
+                      <>
+                        <TrendingUp className="w-3.5 h-3.5 text-jade" />
+                        <span>{marketType === 'SPOT' ? (isFa ? 'خرید اسپات (1× بدون اهرم)' : 'Spot Buy (1×)') : isFa ? 'بالا میره (خرید)' : 'Going UP'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingDown className="w-3.5 h-3.5 text-loss" />
+                        <span>{isFa ? 'پایین میاد (فروش)' : 'Going DOWN'}</span>
+                      </>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-sub">{isFa ? 'میزان سرعت / ریسک:' : 'Comfort Level:'}</p>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { v: 3, l: isFa ? 'امن 🛡️ (3×)' : 'Safe 🛡️ 3×' },
-                  { v: 5, l: isFa ? 'متعادل ⚖️ (5×)' : 'Normal ⚖️ 5×' },
-                  { v: 10, l: isFa ? 'سریع ⚡ (10×)' : 'Fast ⚡ 10×' },
-                ].map((opt) => (
-                  <button
-                    key={opt.v}
-                    type="button"
-                    onClick={() => setLev(opt.v)}
-                    className={`py-2.5 px-2 rounded-2xl text-[11px] font-black transition ${lev === opt.v ? 'ios-pill-active' : 'surface-soft text-dim'}`}
-                  >
-                    {opt.l}
-                  </button>
-                ))}
+            {marketType === 'FUTURES' && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-sub">{isFa ? 'میزان سرعت / ریسک:' : 'Comfort Level:'}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { v: 3, icon: Shield, l: isFa ? 'امن (3×)' : 'Safe 3×' },
+                    { v: 5, icon: Scale, l: isFa ? 'متعادل (5×)' : 'Normal 5×' },
+                    { v: 10, icon: Zap, l: isFa ? 'سریع (10×)' : 'Fast 10×' },
+                  ].map((opt) => {
+                    const OptIcon = opt.icon;
+                    return (
+                      <button
+                        key={opt.v}
+                        type="button"
+                        onClick={() => setLev(opt.v)}
+                        className={`py-2.5 px-2 rounded-2xl text-[11px] font-black transition inline-flex items-center justify-center gap-1 ${lev === opt.v ? 'ios-pill-active' : 'surface-soft text-dim'}`}
+                      >
+                        <OptIcon className="w-3.5 h-3.5" />
+                        <span>{opt.l}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -487,8 +541,9 @@ export function TerminalPage({
 
             {orderMsg && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{orderMsg}</div>}
 
-            <button type="submit" disabled={submitting} className="btn-cobalt w-full py-4 rounded-2xl text-sm font-black">
-              👈 دلارینو ترید کن برام 👉
+            <button type="submit" disabled={submitting} className="btn-cobalt w-full py-4 rounded-2xl text-sm font-black inline-flex items-center justify-center gap-2">
+              <Rocket className="w-4 h-4" />
+              <span>{submitting ? '...' : isFa ? 'دلارینو ترید کن برام' : 'Execute Protected Trade'}</span>
             </button>
           </form>
         </div>
@@ -515,8 +570,29 @@ export function TerminalPage({
             markets={markets}
             value={symbol}
             provider={data.activeExchange?.provider || 'paper'}
+            marketType={marketType}
+            onChangeMarketType={(m) => void onChangeMarketType?.(m)}
             onChange={(sym) => setSymbol(sym)}
           />
+
+          {onChangeMarketType && (
+            <div className="ios-segmented">
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('FUTURES')}
+                className={`px-3 py-1 rounded-full text-[11px] font-black transition ${marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'}`}
+              >
+                {isFa ? 'فیوچرز' : 'Futures'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('SPOT')}
+                className={`px-3 py-1 rounded-full text-[11px] font-black transition ${marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'}`}
+              >
+                {isFa ? 'اسپات' : 'Spot'}
+              </button>
+            </div>
+          )}
 
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             {['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'].map((s) => (
@@ -777,11 +853,13 @@ export function TerminalPage({
         <form onSubmit={prepareOrderConfirmation} className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="font-display font-bold text-base text-main">{isFa ? 'ثبت معامله' : 'Order Ticket'}</span>
-            <span className="text-[10px] font-bold text-dim">{data.config.trading_mode}</span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full badge-signal">
+              {data.config.trading_mode} · {marketType}
+            </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-black/25 border hairline">
-            {(['LONG', 'SHORT'] as const).map((s) => (
+          <div className={marketType === 'SPOT' ? 'grid grid-cols-1 p-1 rounded-xl bg-black/25 border hairline' : 'grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-black/25 border hairline'}>
+            {(['LONG', ...(marketType === 'FUTURES' ? (['SHORT'] as const) : [])] as const).map((s) => (
               <button
                 key={s}
                 type="button"
@@ -790,11 +868,11 @@ export function TerminalPage({
                   applyAutoLevels(lastPx, s);
                 }}
                 className={`py-2.5 rounded-lg font-black transition flex items-center justify-center gap-1 ${
-                  side === s ? (s === 'LONG' ? 'bg-jade text-black' : 'bg-rose-500 text-white') : 'text-dim'
+                  effectiveSide === s ? (s === 'LONG' ? 'bg-jade text-black' : 'bg-rose-500 text-white') : 'text-dim'
                 }`}
               >
                 {s === 'LONG' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
-                <span>{s === 'LONG' ? (isFa ? 'خرید LONG' : 'LONG') : isFa ? 'فروش SHORT' : 'SHORT'}</span>
+                <span>{marketType === 'SPOT' ? (isFa ? 'خرید اسپات SPOT' : 'SPOT BUY') : s === 'LONG' ? (isFa ? 'خرید LONG' : 'LONG') : isFa ? 'فروش SHORT' : 'SHORT'}</span>
               </button>
             ))}
           </div>
@@ -812,20 +890,24 @@ export function TerminalPage({
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5">
-            {(['ISOLATED', 'CROSS'] as const).map((mm) => (
-              <button
-                key={mm}
-                type="button"
-                onClick={() => setMarginMode(mm)}
-                className={`py-1.5 rounded-lg text-[10px] font-bold ${
-                  marginMode === mm ? 'banner-cobalt-soft text-main border border-[var(--gold)]' : 'btn-ghost text-dim'
-                }`}
-              >
-                {mm}
-              </button>
-            ))}
-          </div>
+          {marketType === 'FUTURES' && (
+            <>
+              <div className="grid grid-cols-2 gap-1.5">
+                {(['ISOLATED', 'CROSS'] as const).map((mm) => (
+                  <button
+                    key={mm}
+                    type="button"
+                    onClick={() => setMarginMode(mm)}
+                    className={`py-1.5 rounded-lg text-[10px] font-bold ${
+                      marginMode === mm ? 'banner-cobalt-soft text-main border border-[var(--gold)]' : 'btn-ghost text-dim'
+                    }`}
+                  >
+                    {mm}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {orderType === 'LIMIT' && (
             <input
@@ -836,21 +918,23 @@ export function TerminalPage({
             />
           )}
 
-          <div>
-            <div className="flex justify-between mb-1.5">
-              <span className="text-dim">{isFa ? 'اهرم معاملاتی' : 'Leverage'}</span>
-              <span dir="ltr" className="font-num font-bold" style={{ color: 'var(--gold)' }}>{lev}×</span>
+          {marketType === 'FUTURES' && (
+            <div>
+              <div className="flex justify-between mb-1.5">
+                <span className="text-dim">{isFa ? 'اهرم معاملاتی' : 'Leverage'}</span>
+                <span dir="ltr" className="font-num font-bold" style={{ color: 'var(--gold)' }}>{lev}×</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={50}
+                value={lev}
+                onChange={(e) => setLev(Number(e.target.value))}
+                className="w-full"
+                style={{ ['--fill' as string]: `${((lev - 1) / 49) * 100}%` }}
+              />
             </div>
-            <input
-              type="range"
-              min={1}
-              max={50}
-              value={lev}
-              onChange={(e) => setLev(Number(e.target.value))}
-              className="w-full"
-              style={{ ['--fill' as string]: `${((lev - 1) / 49) * 100}%` }}
-            />
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -878,21 +962,26 @@ export function TerminalPage({
             </div>
             <div className="flex justify-between">
               <span className="text-dim">{isFa ? 'حجم پوزیشن' : 'Position Size'}</span>
-              <span dir="ltr" className="font-num font-bold text-main">${(marginEst * lev).toFixed(0)}</span>
+              <span dir="ltr" className="font-num font-bold text-main">${(marginEst * effectiveLev).toFixed(0)}</span>
             </div>
           </div>
 
-          {orderMsg && <div className="text-[11px] font-bold" style={{ color: 'var(--gold)' }}>{orderMsg}</div>}
+          {orderMsg && (
+            <div className="text-[11px] font-bold inline-flex items-center gap-1" style={{ color: 'var(--gold)' }}>
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{orderMsg}</span>
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={submitting}
             className={`mt-auto w-full py-3.5 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 ${
-              side === 'LONG' ? 'btn-gold' : 'bg-rose-500 text-white'
+              effectiveSide === 'LONG' ? 'btn-gold' : 'bg-rose-500 text-white'
             }`}
           >
             <Zap className="w-4 h-4" />
-            <span>{submitting ? '...' : '👈 دلارینو ترید کن برام 👉'}</span>
+            <span>{submitting ? '...' : isFa ? 'دلارینو ترید کن برام' : 'Execute Protected Trade'}</span>
           </button>
 
           <p className="text-[10px] text-dim flex items-center gap-1.5">

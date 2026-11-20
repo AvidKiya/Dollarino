@@ -7,6 +7,7 @@ export interface Env {
   DEFAULT_SIGNAL_CHANNEL?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  PUBLIC_WEB_URL?: string;
   ALLOW_LIVE_TRADING?: string;
   TOOBIT_PROXY_URL?: string;
   EXCHANGE_PROXY_SECRET?: string;

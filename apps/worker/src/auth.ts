@@ -240,6 +240,65 @@ authRoutes.post('/telegram-link-code', requireAuth, async (c) => {
   return c.json({ code, expiresAt, command: `/link ${code}` });
 });
 
+authRoutes.post('/telegram/merge-code', requireAuth, async (c) => {
+  const u = c.get('user');
+  if (!u.telegramId) {
+    return c.json({ error: 'این گزینه مخصوص کاربرانی است که از داخل مینی‌اپ تلگرام وارد شده‌اند.' }, 400);
+  }
+  const body = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
+  const cleanCode = (body.code ?? '').trim().replace(/^\/link\s+/i, '').toUpperCase();
+  if (!cleanCode) return c.json({ error: 'کد اتصال را وارد کنید (مثلاً LINK-ABC123).' }, 400);
+
+  const webUser = await c.env.DB.prepare(
+    `SELECT id, email, username, role, telegram_link_expires_at FROM users WHERE telegram_link_code = ?`
+  ).bind(cleanCode).first<{ id: string; email: string; username: string; role: string; telegram_link_expires_at: string | null }>();
+
+  if (!webUser) {
+    return c.json({ error: 'کد اتصال نامعتبر یا یافت نشد.' }, 404);
+  }
+  if (webUser.telegram_link_expires_at && Date.parse(webUser.telegram_link_expires_at) < Date.now()) {
+    return c.json({ error: 'اعتبار این کد منقضی شده است؛ لطفاً از پنل وب کد جدید بسازید.' }, 400);
+  }
+
+  if (webUser.id !== u.id) {
+    const currentTgRow = await c.env.DB.prepare(
+      `SELECT telegram_id, telegram_username, telegram_first_name FROM users WHERE id = ?`
+    ).bind(u.id).first<{ telegram_id: string | null; telegram_username: string | null; telegram_first_name: string | null }>();
+
+    await c.env.DB.prepare(`UPDATE users SET telegram_id = NULL WHERE id = ?`).bind(u.id).run();
+    await c.env.DB.prepare(
+      `UPDATE users SET telegram_id = ?, telegram_username = ?, telegram_first_name = ?, telegram_link_code = NULL, telegram_link_expires_at = NULL WHERE id = ?`
+    ).bind(
+      currentTgRow?.telegram_id ?? u.telegramId,
+      currentTgRow?.telegram_username ?? null,
+      currentTgRow?.telegram_first_name ?? null,
+      webUser.id
+    ).run();
+  }
+
+  const isHttps = isHttpsRequest(c);
+  const token = await signJwt({ sub: webUser.id, email: webUser.email, role: webUser.role }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', token, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  return c.json({
+    ok: true,
+    token,
+    user: {
+      id: webUser.id,
+      email: webUser.email,
+      username: webUser.username,
+      role: webUser.role,
+      telegram_id: u.telegramId,
+    },
+  });
+});
+
 authRoutes.patch('/profile', requireAuth, async (c) => {
   const u = c.get('user');
   const body = await c.req.json<{ username?: string }>();

@@ -6,6 +6,8 @@ import {
   selectClosedCandles,
   strategyOutputToDollarinoSignal,
   type Direction,
+  type DirectionMode,
+  type MarketType,
   type SignalMixerWeights,
 } from '@dollarino/core';
 import { runAutonomousAITrader } from '../ai/providers.js';
@@ -81,6 +83,7 @@ export class TradingBotCoordinator implements DurableObject {
     openSymbols: Set<string>
   ): Promise<string[]> {
     const scope = cfg.scan_scope || (cfg.auto_scan_top ? 'ALL_MARKET' : 'SINGLE');
+    const marketType: MarketType = cfg.market_type ?? 'FUTURES';
 
     if (scope === 'SINGLE' && !cfg.auto_scan_top) {
       return Array.from(new Set([cfg.symbol, ...openSymbols])).slice(0, 6);
@@ -100,17 +103,17 @@ export class TradingBotCoordinator implements DurableObject {
 
     let universe: string[] = [];
     if (scope === 'ALL_MARKET') {
-      const cachedKey = `mkt_universe_${cfg.trading_mode}`;
+      const cachedKey = `mkt_universe_${cfg.trading_mode}_${marketType}`;
       const cached = await this.state.storage.get<{ ts: number; list: string[] }>(cachedKey);
       if (cached && Date.now() - cached.ts < 5 * 60_000 && cached.list.length >= 10) {
         universe = cached.list;
       } else {
-        const listed = await getExchangeMarkets(adapter.provider).catch(() => []);
+        const listed = await getExchangeMarkets(adapter.provider, undefined, marketType).catch(() => []);
         if (listed.length > 0) {
+          // Include ALL listed USDT pairs across the exchange (no 32-coin truncation)
           universe = listed
             .filter((m) => m.symbol.endsWith('USDT'))
             .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0))
-            .slice(0, 32)
             .map((m) => m.symbol);
           await this.state.storage.put(cachedKey, { ts: Date.now(), list: universe });
         }
@@ -127,7 +130,7 @@ export class TradingBotCoordinator implements DurableObject {
       ])
     );
 
-    // Rotate 10 symbols per 15s tick (12 on first sweep) while always monitoring open positions & primary symbol
+    // Rotate cleanly across the entire exchange coin universe while prioritizing open positions & primary symbol
     const priority = Array.from(new Set([cfg.symbol, ...openSymbols])).slice(0, 4);
     const others = pool.filter((s) => !priority.includes(s));
     const cursorKey = `scan_cursor_${userId}`;
@@ -157,6 +160,9 @@ export class TradingBotCoordinator implements DurableObject {
       return;
     }
 
+    const marketType: MarketType = cfg.market_type ?? 'FUTURES';
+    const hedgeMode = marketType === 'FUTURES' && Boolean(cfg.hedge_mode);
+
     const [{ adapter }, openRows] = await Promise.all([
       resolveUserExchangeAdapter(
         this.env,
@@ -164,7 +170,7 @@ export class TradingBotCoordinator implements DurableObject {
         cfg.trading_mode === 'PAPER' ? 'paper' : undefined
       ),
       this.env.DB.prepare(
-        `SELECT id, symbol, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode
+        `SELECT id, symbol, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode, market_type
          FROM trades WHERE user_id = ? AND status = 'OPEN'`
       ).bind(userId).all<{
         id: string;
@@ -177,25 +183,29 @@ export class TradingBotCoordinator implements DurableObject {
         margin_used: string;
         realized_pnl: string;
         mode: string;
+        market_type?: MarketType;
       }>(),
     ]);
 
-    const openBySymbol = new Map<string, (typeof openRows.results)[number]>();
+    const openByKey = new Map<string, (typeof openRows.results)[number]>();
+    const openSymbols = new Set<string>();
     for (const r of openRows.results) {
-      if (!openBySymbol.has(r.symbol)) openBySymbol.set(r.symbol, r);
+      openSymbols.add(r.symbol);
+      const key = hedgeMode ? `${r.symbol}:${r.direction}` : r.symbol;
+      if (!openByKey.has(key)) openByKey.set(key, r);
     }
     let liveOpenCount = openRows.results.length;
-    const openSymbols = new Set(openBySymbol.keys());
 
     const symbolsToScan = await this.buildScanBatchForUser(userId, cfg, adapter, openSymbols);
 
-    // Evaluate symbols in parallel chunks of 4 so a 12-coin initial sweep finishes in ~1.2s
+    // Evaluate symbols in parallel chunks of 4 so a 12-coin sweep finishes rapidly
     for (let i = 0; i < symbolsToScan.length; i += 4) {
       const chunk = symbolsToScan.slice(i, i + 4);
       const results = await Promise.all(
         chunk.map((scanSymbol) => {
-          const existingOnSymbol = openBySymbol.get(scanSymbol) ?? null;
-          if (!existingOnSymbol && liveOpenCount >= cfg.max_open_positions) {
+          const openLong = hedgeMode ? openByKey.get(`${scanSymbol}:LONG`) ?? null : openByKey.get(scanSymbol) ?? null;
+          const openShort = hedgeMode ? openByKey.get(`${scanSymbol}:SHORT`) ?? null : openByKey.get(scanSymbol) ?? null;
+          if (!openLong && !openShort && liveOpenCount >= cfg.max_open_positions) {
             return Promise.resolve(false);
           }
           return this.evaluateSymbolForUser(
@@ -203,7 +213,7 @@ export class TradingBotCoordinator implements DurableObject {
             cfg,
             adapter,
             scanSymbol,
-            existingOnSymbol,
+            { long: openLong, short: openShort, hedgeMode },
             liveOpenCount
           ).catch(async (err) => {
             const msg = err instanceof Error ? err.message : 'Scan error';
@@ -227,7 +237,7 @@ export class TradingBotCoordinator implements DurableObject {
         userId,
         'SIGNAL',
         'INFO',
-        `پایش زنده همزمان ${symbolsToScan.length} ارز (${names}) تکمیل شد · جستجو برای نقطه ورود مطمئن`,
+        `پایش زنده همزمان ${symbolsToScan.length} ارز ${marketType} (${names}) تکمیل شد · جستجو برای نقطه ورود مطمئن`,
         symbolsToScan[0] || cfg.symbol
       );
     }
@@ -246,6 +256,7 @@ export class TradingBotCoordinator implements DurableObject {
       margin_used: string;
       realized_pnl: string;
       mode: string;
+      market_type?: MarketType;
     },
     reason: 'AI_EXIT' | 'STRATEGY_FLIP'
   ) {
@@ -253,7 +264,8 @@ export class TradingBotCoordinator implements DurableObject {
       openPos.symbol,
       openPos.direction,
       openPos.remaining_quantity,
-      `${reason.toLowerCase()}_${Date.now()}`
+      `${reason.toLowerCase()}_${Date.now()}`,
+      openPos.market_type ?? cfg.market_type ?? 'FUTURES'
     );
     const exitPx = Number(cls.filledPrice);
     const entryPx = Number(openPos.entry_price);
@@ -293,22 +305,49 @@ export class TradingBotCoordinator implements DurableObject {
     cfg: UserBotConfigRow,
     adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
     scanSymbol: string,
-    openOnSymbol: {
-      id: string;
-      symbol: string;
-      direction: Direction;
-      entry_price: string;
-      current_stop_loss: string;
-      tp1: string;
-      remaining_quantity: string;
-      margin_used: string;
-      realized_pnl: string;
-      mode: string;
-    } | null,
+    openState: {
+      long: {
+        id: string;
+        symbol: string;
+        direction: Direction;
+        entry_price: string;
+        current_stop_loss: string;
+        tp1: string;
+        remaining_quantity: string;
+        margin_used: string;
+        realized_pnl: string;
+        mode: string;
+        market_type?: MarketType;
+      } | null;
+      short: {
+        id: string;
+        symbol: string;
+        direction: Direction;
+        entry_price: string;
+        current_stop_loss: string;
+        tp1: string;
+        remaining_quantity: string;
+        margin_used: string;
+        realized_pnl: string;
+        mode: string;
+        market_type?: MarketType;
+      } | null;
+      hedgeMode: boolean;
+    },
     openCount: number
   ): Promise<boolean> {
+    const marketType: MarketType = cfg.market_type ?? 'FUTURES';
+    const directionMode: DirectionMode = cfg.direction_mode ?? 'BOTH';
+    const openAny = openState.long ?? openState.short;
+    const isDirectionAllowed = (dir: Direction) => {
+      if (marketType === 'SPOT' && dir === 'SHORT') return false;
+      if (directionMode === 'LONG_ONLY' && dir === 'SHORT') return false;
+      if (directionMode === 'SHORT_ONLY' && dir === 'LONG') return false;
+      return true;
+    };
+
     // If max open positions reached and we don't hold this symbol (nor allow flip/exit), skip heavy API calls
-    if (!openOnSymbol && openCount >= cfg.max_open_positions) {
+    if (!openAny && openCount >= cfg.max_open_positions) {
       return false;
     }
 
@@ -370,17 +409,17 @@ export class TradingBotCoordinator implements DurableObject {
           higherTimeframe: cfg.higher_timeframe,
           candles: ltfClosed,
           htfCandles: htfClosed,
-          maxLeverage: Math.max(1, cfg.max_leverage),
+          maxLeverage: marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
           minConfidence: cfg.ai_min_confidence ?? 65,
           orderBookImbalancePct: imbalancePct,
           spreadPct,
           fundingRate: market24h?.fundingRate,
-          openPosition: openOnSymbol
+          openPosition: openAny
             ? {
-                direction: openOnSymbol.direction,
-                entryPrice: openOnSymbol.entry_price,
-                currentStopLoss: openOnSymbol.current_stop_loss,
-                tp1: openOnSymbol.tp1,
+                direction: openAny.direction,
+                entryPrice: openAny.entry_price,
+                currentStopLoss: openAny.current_stop_loss,
+                tp1: openAny.tp1,
               }
             : null,
           riskPreset,
@@ -406,26 +445,37 @@ export class TradingBotCoordinator implements DurableObject {
 
       if (!decision.ok) return false;
 
-      if (decision.action === 'CLOSE' && openOnSymbol) {
-        await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'AI_EXIT');
+      if (decision.action === 'CLOSE' && openAny) {
+        await this.closeOpenPositionEarly(userId, cfg, adapter, openAny, 'AI_EXIT');
         return false;
       }
 
       if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 65)) {
-        if (openOnSymbol) {
-          if (openOnSymbol.direction === decision.action && !(cfg.allow_pyramiding ?? 0)) {
+        const sameSideOpen = decision.action === 'LONG' ? openState.long : openState.short;
+        const oppositeSideOpen = decision.action === 'LONG' ? openState.short : openState.long;
+
+        // Spot Sell Signal can close existing Spot LONG cleanly even though Spot cannot open margin SHORT
+        if (marketType === 'SPOT' && decision.action === 'SHORT') {
+          if (openState.long && (cfg.allow_auto_flip ?? 1)) {
+            await this.closeOpenPositionEarly(userId, cfg, adapter, openState.long, 'AI_EXIT');
+          }
+          return false;
+        }
+        if (!isDirectionAllowed(decision.action)) return false;
+
+        if (sameSideOpen && !(cfg.allow_pyramiding ?? 0)) {
+          return false;
+        }
+        if (oppositeSideOpen && !openState.hedgeMode) {
+          if (cfg.allow_auto_flip ?? 1) {
+            await this.closeOpenPositionEarly(userId, cfg, adapter, oppositeSideOpen, 'AI_EXIT');
+          } else {
             return false;
           }
-          if (openOnSymbol.direction !== decision.action) {
-            if (cfg.allow_auto_flip ?? 1) {
-              await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'AI_EXIT');
-            } else {
-              return false;
-            }
-          }
         }
+        if (openCount >= cfg.max_open_positions) return false;
 
-        if (cooldownMinutes > 0 && !openOnSymbol) {
+        if (cooldownMinutes > 0 && !sameSideOpen) {
           const lastClosed = await this.env.DB.prepare(
             `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
           ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
@@ -442,7 +492,7 @@ export class TradingBotCoordinator implements DurableObject {
           timeframe: cfg.entry_timeframe,
           price: String(decision.entry),
           stopLoss: String(decision.stopLoss),
-          leverage: decision.leverage,
+          leverage: marketType === 'SPOT' ? 1 : decision.leverage,
           tp1: String(decision.tp1),
           tp2: String(decision.tp2),
           tp3: String(decision.tp3),
@@ -473,6 +523,7 @@ export class TradingBotCoordinator implements DurableObject {
           strategyKey: 'ai_autonomous_agent',
           aiConfidence: decision.confidence,
           aiReasoning: decision.thesis,
+          marketType,
         });
         if (execRes.ok) {
           await this.env.DB.prepare(`UPDATE signals SET status = 'EXECUTED' WHERE id = ?`).bind(sigId).run();
@@ -518,20 +569,32 @@ export class TradingBotCoordinator implements DurableObject {
 
     if (lastProcessed === latest.timestamp) return false;
 
-    if (openOnSymbol) {
-      if (openOnSymbol.direction === latest.signal && !(cfg.allow_pyramiding ?? 0)) {
+    const sigDir: Direction = latest.signal;
+    const sameSideOpen = sigDir === 'LONG' ? openState.long : openState.short;
+    const oppositeSideOpen = sigDir === 'LONG' ? openState.short : openState.long;
+
+    if (marketType === 'SPOT' && sigDir === 'SHORT') {
+      if (openState.long && (cfg.allow_auto_flip ?? 1)) {
+        await this.state.storage.put(lastBarKey, latest.timestamp);
+        await this.closeOpenPositionEarly(userId, cfg, adapter, openState.long, 'STRATEGY_FLIP');
+      }
+      return false;
+    }
+    if (!isDirectionAllowed(sigDir)) return false;
+
+    if (sameSideOpen && !(cfg.allow_pyramiding ?? 0)) {
+      return false;
+    }
+    if (oppositeSideOpen && !openState.hedgeMode) {
+      if (cfg.allow_auto_flip ?? 1) {
+        await this.closeOpenPositionEarly(userId, cfg, adapter, oppositeSideOpen, 'STRATEGY_FLIP');
+      } else {
         return false;
       }
-      if (openOnSymbol.direction !== latest.signal) {
-        if (cfg.allow_auto_flip ?? 1) {
-          await this.closeOpenPositionEarly(userId, cfg, adapter, openOnSymbol, 'STRATEGY_FLIP');
-        } else {
-          return false;
-        }
-      }
     }
+    if (openCount >= cfg.max_open_positions) return false;
 
-    if (cooldownMinutes > 0 && !openOnSymbol) {
+    if (cooldownMinutes > 0 && !sameSideOpen) {
       const lastClosed = await this.env.DB.prepare(
         `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
       ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
@@ -548,14 +611,14 @@ export class TradingBotCoordinator implements DurableObject {
     const sig = strategyOutputToDollarinoSignal(
       scanSymbol,
       cfg.entry_timeframe,
-      Math.max(1, cfg.max_leverage),
+      marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
       latest,
       cfg.signal_channel_handle
     );
     if (!sig) return false;
 
-    await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `سیگنال ${sig.direction} روی ${sig.symbol} شناسایی شد (${cfg.strategy_key})`, sig.symbol);
-    const exec = await executeSignalForUser(this.env, userId, sig, { strategyKey: cfg.strategy_key });
+    await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `سیگنال ${sig.direction} روی ${sig.symbol} شناسایی شد (${cfg.strategy_key} · ${marketType})`, sig.symbol);
+    const exec = await executeSignalForUser(this.env, userId, sig, { strategyKey: cfg.strategy_key, marketType });
     return exec.ok;
   }
 }

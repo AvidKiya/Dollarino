@@ -16,23 +16,21 @@ npm install
 npx wrangler login
 npx wrangler d1 create dollarino-db
 ```
-شناسه (`database_id`) دریافتی را داخل `wrangler.toml` جایگزین `local-dev-db` کنید و هر ۷ مایگریشن (`0001` تا `0007`) را اعمال کنید:
+شناسه (`database_id`) دریافتی را داخل `wrangler.toml` جایگزین `local-dev-db` کنید و هر ۱۰ مایگریشن (`0001` تا `0010`) را اعمال کنید:
 ```bash
 npx wrangler d1 migrations apply dollarino-db --remote
 ```
-کلیدهای امنیتی رمزنگاری AES-256 و JWT را تنظیم کنید:
+کلیدهای امنیتی رمزنگاری AES-256، JWT و آدرس وب‌سایت را تنظیم کنید:
 ```bash
 openssl rand -base64 32 | npx wrangler secret put MASTER_ENCRYPTION_KEY
 openssl rand -hex 32 | npx wrangler secret put SESSION_JWT_SECRET
+npx wrangler secret put PUBLIC_WEB_URL   # مثال: https://dollarino.pages.dev
 ```
-*(اختیاری: برای فعال‌سازی ربات تلگرام اصلی سیستم:)*
+*(اختیاری: برای فعال‌سازی ربات تلگرام اصلی سیستم و دکمه مینی‌اپ:)*
 ```bash
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 ```
-سپس ورکر را دیپلوی کنید:
-```bash
-npx wrangler deploy
-```
+سپس ورکر را دیپلوی کنید (`npx wrangler deploy`) و یک‌بار اندپوینت `POST /api/webhook/telegram/setup` را با توکن ادمین/مالک صدا بزنید تا Webhook، منوی دستورات (`/start`, `/app`, `/positions`, `/balance`, `/settings`, `/help`) و دکمه `ChatMenuButton` مینی‌اپ در تلگرام ثبت شوند.
 
 > 💡 **نکته GitHub Actions:** با قرار دادن `CLOUDFLARE_API_TOKEN` و `CLOUDFLARE_ACCOUNT_ID` در GitHub Secrets، ورک‌فلو `.github/workflows/deploy.yml` پس از هر Push به‌صورت خودکار مایگریشن‌ها، Worker و Pages را منتشر می‌کند.
 

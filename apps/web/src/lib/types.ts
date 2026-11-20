@@ -35,6 +35,7 @@ export interface OpenTradeRow {
   id: string;
   symbol: string;
   direction: 'LONG' | 'SHORT';
+  market_type?: 'SPOT' | 'FUTURES';
   leverage: number;
   entry_price: string;
   mark_price?: string;
@@ -57,12 +58,38 @@ export interface ClosedTradeRow {
   id: string;
   symbol: string;
   direction: 'LONG' | 'SHORT';
+  market_type?: 'SPOT' | 'FUTURES';
   leverage: number;
   entry_price: string;
   exit_price: string;
   realized_pnl: string;
   close_reason?: string;
   closed_at: string;
+}
+
+export interface VerifiedProfitCard {
+  id: string;
+  userId?: string;
+  displayName?: string;
+  mode: 'LIVE' | 'PAPER';
+  isVerifiedReal: boolean;
+  period: '24H' | '7D' | '30D' | 'ALL' | 'TRADE';
+  startDate: string;
+  endDate: string;
+  tradesCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  roiPct: number;
+  profitFactor: number;
+  exchangeProvider: string;
+  strategyName: string;
+  cardStyle?: string;
+  symbol?: string;
+  direction?: string;
+  hmacSignature?: string;
+  signaturePrefix?: string;
+  verifyPath?: string;
+  issuedAt: string;
 }
 
 export interface PendingOrderRow {
@@ -92,6 +119,9 @@ export interface DashboardPayload {
   config: {
     bot_state: string;
     trading_mode: 'PAPER' | 'LIVE';
+    market_type?: 'SPOT' | 'FUTURES';
+    direction_mode?: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY';
+    hedge_mode?: number;
     trade_execution_mode: 'AUTO' | 'MANUAL_CONFIRM';
     margin_mode: 'ISOLATED' | 'CROSS';
     symbol: string;

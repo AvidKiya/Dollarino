@@ -124,8 +124,8 @@ export function SubscriptionPage({
       setGiftCode('');
       setMsg(
         isFa
-          ? `🎁 کد هدیه فعال شد! ${r.durationDays} روز اشتراک به حساب شما اضافه گردید.`
-          : `🎁 Gift code redeemed! +${r.durationDays} days added to your subscription.`
+          ? `کد هدیه فعال شد! ${r.durationDays} روز اشتراک به حساب شما اضافه گردید.`
+          : `Gift code redeemed! +${r.durationDays} days added to your subscription.`
       );
       await loadData();
       await onRefreshDashboard();
@@ -334,7 +334,7 @@ export function SubscriptionPage({
             </div>
             <div>
               <h3 className="font-display font-bold text-sm text-main">
-                {isFa ? 'کد هدیه یا تخفیف دارید؟ 🎁' : 'Have a Gift Code? 🎁'}
+                {isFa ? 'کد هدیه یا تخفیف دارید؟' : 'Have a Gift Code?'}
               </h3>
               <p className="text-[11px] text-dim">
                 {isFa ? 'کد را وارد کنید تا اشتراک شما فوراً فعال شود' : 'Redeem your instant activation code'}
@@ -367,7 +367,7 @@ export function SubscriptionPage({
               </div>
               <div>
                 <h3 className="font-display font-bold text-sm text-main">
-                  {isFa ? 'دعوت از دوستان = اشتراک رایگان 🤝' : 'Invite Friends = Free Days 🤝'}
+                  {isFa ? 'دعوت از دوستان = اشتراک رایگان' : 'Invite Friends = Free Days'}
                 </h3>
                 <p className="text-[11px] text-dim">
                   {isFa

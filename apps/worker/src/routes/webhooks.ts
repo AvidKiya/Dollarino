@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { formatDollarinoSignal, parseDollarinoSignal } from '@dollarino/core';
+import { requireAuth, type AppVariables } from '../auth.js';
 import { decryptVaultJson, randomId } from '../crypto.js';
 import { executeSignalForUser, logAudit, notifyUserTelegram } from '../engine/executor.js';
 import type { Env } from '../env.js';
@@ -7,7 +8,16 @@ import { resolveUserEntitlement } from './subscriptions.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { handleTelegramUpdate } from '../telegram/handler.js';
 
-export const webhookRoutes = new Hono<{ Bindings: Env }>();
+export const webhookRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+const DEFAULT_TG_COMMANDS = [
+  { command: 'start', description: 'شروع و منوی اصلی دلارینو' },
+  { command: 'app', description: 'باز کردن مینی‌اپ معاملاتی دلارینو' },
+  { command: 'positions', description: 'مشاهده و مدیریت معاملات باز' },
+  { command: 'balance', description: 'نمایش موجودی لحظه‌ای حساب' },
+  { command: 'settings', description: 'تنظیمات بازار (اسپات/فیوچرز) و جهت' },
+  { command: 'help', description: 'راهنمای اتصال صرافی و ربات' },
+];
 
 /**
  * TradingView Alert Webhook: accepts JSON or raw Dollarino signal text!
@@ -137,4 +147,41 @@ webhookRoutes.post('/telegram/:botId', async (c) => {
   const update = await c.req.json();
   const result = await handleTelegramUpdate(c.env, botToken, update);
   return c.json(result);
+});
+
+/**
+ * One-click global Telegram Bot provisioning: registers Webhook, Bot Commands, and Mini App Menu Button
+ */
+webhookRoutes.post('/telegram/setup', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'owner' && user.role !== 'admin') {
+    return c.json({ error: 'Admin role required' }, 403);
+  }
+  if (!c.env.TELEGRAM_BOT_TOKEN) {
+    return c.json({ error: 'TELEGRAM_BOT_TOKEN is not configured in Worker secrets' }, 503);
+  }
+  const body = await c.req.json<{ webhookBaseUrl?: string; webAppUrl?: string }>().catch(
+    () => ({} as { webhookBaseUrl?: string; webAppUrl?: string })
+  );
+  const webhookBase = (body.webhookBaseUrl || new URL(c.req.url).origin).replace(/\/$/, '');
+  const webAppUrl = (body.webAppUrl || c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
+  const webhookUrl = `${webhookBase}/api/webhook/telegram`;
+
+  const client = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
+  const me = await client.getMe();
+  await client.setWebhook(webhookUrl, c.env.TELEGRAM_WEBHOOK_SECRET);
+  await client.setMyCommands(DEFAULT_TG_COMMANDS);
+  if (webAppUrl.startsWith('https://')) {
+    await client.setChatMenuButton(webAppUrl, 'پنل دلارینو');
+  }
+  const info = await client.getWebhookInfo().catch(() => null);
+
+  return c.json({
+    ok: true,
+    bot: me,
+    webhookUrl,
+    webAppUrl,
+    commandsRegistered: DEFAULT_TG_COMMANDS.length,
+    webhookInfo: info,
+  });
 });

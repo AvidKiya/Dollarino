@@ -107,11 +107,26 @@ export function evaluateRiskGates(input: RiskGateInput): RiskGateDecision {
     return emptyReject('SYMBOL_HALTED', `Instrument ${input.instrument.symbol} is not open for trading`);
   }
 
+  const marketType = input.config.marketType ?? 'FUTURES';
+  const directionMode = input.config.directionMode ?? 'BOTH';
+
+  if (directionMode === 'LONG_ONLY' && input.signal.direction === 'SHORT') {
+    return emptyReject('DIRECTION_FILTERED', 'Bot direction mode is set to LONG_ONLY');
+  }
+  if (directionMode === 'SHORT_ONLY' && input.signal.direction === 'LONG') {
+    return emptyReject('DIRECTION_FILTERED', 'Bot direction mode is set to SHORT_ONLY');
+  }
+  if (marketType === 'SPOT' && input.signal.direction === 'SHORT') {
+    return emptyReject('SPOT_NO_MARGIN_SHORT', 'Spot market only opens BUY (LONG) positions and sells held inventory on TP/SL');
+  }
+
   const requestedLev = input.config.useSignalLeverage ? input.signal.leverage : input.config.maxLeverage;
-  const effectiveLeverage = Math.max(
-    input.instrument.minLeverage,
-    Math.min(requestedLev, input.config.maxLeverage, input.instrument.maxLeverage)
-  );
+  const effectiveLeverage = marketType === 'SPOT'
+    ? 1
+    : Math.max(
+        input.instrument.minLeverage,
+        Math.min(requestedLev, input.config.maxLeverage, input.instrument.maxLeverage)
+      );
 
   // Margin allocation: configurable % of available futures margin (default 10%)
   const marginPctDecimal = Math.max(0.5, Math.min(100, input.config.marginPct)) / 100;

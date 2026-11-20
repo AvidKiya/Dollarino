@@ -15,7 +15,10 @@ import {
   ChevronRight,
   LogOut,
   CheckCircle2,
+  Link2,
 } from 'lucide-react';
+import { useState } from 'react';
+import { apiFetch, setStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { AuthUserInfo, DashboardPayload, NavTab } from '../lib/types';
 import type { LookId } from '../components/AppearanceModal';
@@ -45,6 +48,44 @@ export function ServicesPage({
   const isFa = lang === 'fa';
   const isAdmin = user.role.toUpperCase() === 'ADMIN' || user.role.toUpperCase() === 'OWNER';
   const Arrow = isFa ? ChevronLeft : ChevronRight;
+  const isTelegramPseudo = user.email.endsWith('@telegram.dollarino.local');
+  const [mergeCode, setMergeCode] = useState('');
+  const [linkCmd, setLinkCmd] = useState('');
+  const [linkStatus, setLinkStatus] = useState('');
+  const [linkBusy, setLinkBusy] = useState(false);
+
+  const handleGenerateLinkCode = async () => {
+    setLinkBusy(true);
+    setLinkStatus('');
+    try {
+      const r = await apiFetch<{ code: string; command: string }>('/api/auth/telegram-link-code', { method: 'POST' });
+      setLinkCmd(r.command);
+      setLinkStatus(isFa ? `کد اتصال ساخته شد: ${r.code} (در ربات تلگرام ارسال یا در مینی‌اپ وارد کنید)` : `Code created: ${r.code}`);
+    } catch (e) {
+      setLinkStatus(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  const handleMergeTelegramToWeb = async () => {
+    if (!mergeCode.trim()) return;
+    setLinkBusy(true);
+    setLinkStatus('');
+    try {
+      const res = await apiFetch<{ ok: boolean; token: string; user: AuthUserInfo }>('/api/auth/telegram/merge-code', {
+        method: 'POST',
+        body: JSON.stringify({ code: mergeCode.trim() }),
+      });
+      if (res.token) setStoredToken(res.token);
+      setLinkStatus(isFa ? 'حساب مینی‌اپ با موفقیت به اکانت وب متصل شد! صفحه در حال همگام‌سازی...' : 'Account merged! Reloading...');
+      setTimeout(() => window.location.reload(), 900);
+    } catch (e) {
+      setLinkStatus(e instanceof Error ? e.message : 'Merge failed');
+    } finally {
+      setLinkBusy(false);
+    }
+  };
 
   const quickShortcuts: Array<{
     tab: NavTab;
@@ -219,6 +260,75 @@ export function ServicesPage({
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Telegram Mini App <-> Web Account Sync Card */}
+      <div className="panel rounded-[26px] p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Link2 className="w-4 h-4 text-brand" />
+            <span className="text-xs font-black text-main">
+              {isFa ? 'اتصال همگام حساب وب و مینی‌اپ تلگرام' : 'Sync Web & Telegram Mini App Account'}
+            </span>
+          </div>
+          {user.telegram_id && !isTelegramPseudo && (
+            <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
+              {isFa ? 'متصل به تلگرام' : 'Telegram Linked'}
+            </span>
+          )}
+        </div>
+
+        {isTelegramPseudo ? (
+          <div className="space-y-2">
+            <p className="text-[11px] text-sub leading-relaxed">
+              {isFa
+                ? 'شما با اکانت تلگرام وارد مینی‌اپ شده‌اید. اگر از قبل در سایت دلارینو اکانت وب ساخته‌اید، کد اتصال (LINK-...) را از پنل وب گرفته و این‌جا وارد کنید تا اشتراک و سابقه شما یکی شود:'
+                : 'Opened via Telegram. Paste your web account LINK code below to merge both accounts:'}
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={mergeCode}
+                onChange={(e) => setMergeCode(e.target.value.toUpperCase())}
+                placeholder="LINK-ABC123"
+                dir="ltr"
+                className="field text-xs font-mono-num flex-1"
+              />
+              <button
+                type="button"
+                disabled={linkBusy}
+                onClick={() => void handleMergeTelegramToWeb()}
+                className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black shrink-0"
+              >
+                {linkBusy ? '...' : isFa ? 'اتصال به وب' : 'Link Web'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[11px] text-sub leading-relaxed">
+              {isFa
+                ? 'برای اتصال ربات و مینی‌اپ تلگرام به همین اکانت وب (انتقال خودکار اشتراک و صرافی)، یک کد اتصال بسازید و دستور آن را برای ربات بفرستید:'
+                : 'Generate a one-time code and send /link CODE in the Telegram bot (or paste it inside the Mini App):'}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={linkBusy}
+                onClick={() => void handleGenerateLinkCode()}
+                className="btn-ghost px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>{linkBusy ? '...' : isFa ? 'ساخت کد اتصال تلگرام' : 'Generate Link Code'}</span>
+              </button>
+              {linkCmd && (
+                <code dir="ltr" className="px-3 py-1.5 rounded-xl surface-soft font-mono-num text-xs font-black text-jade">
+                  {linkCmd}
+                </code>
+              )}
+            </div>
+          </div>
+        )}
+        {linkStatus && <p className="text-[11px] font-bold text-jade">{linkStatus}</p>}
       </div>
 
       {/* Quick 2x2 Action Strip (Kifpool Services Style) */}

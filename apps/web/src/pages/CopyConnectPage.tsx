@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Bot,
   BrainCircuit,
   Check,
@@ -156,7 +157,7 @@ export function CopyConnectPage({
         body: JSON.stringify({ rawText: rawSig, executeNow, source: 'copytrade' }),
       });
       if (!res.ok) flash(res.error || 'Rejected', true);
-      else flash(executeNow ? (isFa ? `معامله ${res.tradeId} باز شد ✅` : `Executed ${res.tradeId}`) : isFa ? 'سیگنال با موفقیت ثبت شد ✅' : 'Signal parsed & logged ✅');
+      else flash(executeNow ? (isFa ? `معامله ${res.tradeId} باز شد` : `Executed ${res.tradeId}`) : isFa ? 'سیگنال با موفقیت ثبت شد' : 'Signal parsed & logged');
       await onRefresh();
     } catch (e) {
       flash(e instanceof Error ? e.message : 'Error', true);
@@ -168,7 +169,7 @@ export function CopyConnectPage({
       method: 'PATCH',
       body: JSON.stringify({ signal_channel_handle: tgChannel }),
     });
-    flash(isFa ? `کانال ${tgChannel} ذخیره شد ✅` : 'Signal channel saved ✅');
+    flash(isFa ? `کانال ${tgChannel} ذخیره شد` : 'Signal channel saved');
     await onRefresh();
   };
 
@@ -184,7 +185,8 @@ export function CopyConnectPage({
           ? isFa
             ? 'صرافی ذخیره شد. برای معامله واقعی، اشتراک Pro را فعال کنید.'
             : 'Saved. Upgrade to Pro for live execution.'
-          : `${res.test.ok ? '✅' : '⚠️'} ${res.test.message}`
+          : res.test.message,
+        !res.requiresSubscription && !res.test.ok
       );
       setExForm({ provider: 'toobit', label: '', apiKey: '', apiSecret: '', webSessionToken: '', proxyUrl: '', proxySecret: '' });
       await loadConnections();
@@ -197,7 +199,7 @@ export function CopyConnectPage({
   const activateExchange = async (id: string) => {
     try {
       await apiFetch(`/api/connections/exchanges/${id}/activate`, { method: 'POST' });
-      flash(isFa ? 'حساب صرافی فعال شد ✅' : 'Active exchange switched ✅');
+      flash(isFa ? 'حساب صرافی فعال شد' : 'Active exchange switched');
       await loadConnections();
       await onRefresh();
     } catch (err) {
@@ -211,7 +213,7 @@ export function CopyConnectPage({
         method: 'PATCH',
         body: JSON.stringify({ proxyUrl: proxyEdits[id] ?? '' }),
       });
-      flash(`${res.test.ok ? '✅' : '⚠️'} ${res.test.message}`);
+      flash(res.test.message, !res.test.ok);
       await loadConnections();
     } catch (err) {
       flash(err instanceof Error ? err.message : 'Proxy update failed', true);
@@ -227,8 +229,8 @@ export function CopyConnectPage({
       });
       flash(
         isFa
-          ? `ربات @${res.botUsername} متصل شد${res.webhookConfigured ? ' (Webhook فعال)' : ''} ✅`
-          : `Bot @${res.botUsername} connected ✅`
+          ? `ربات @${res.botUsername} متصل شد${res.webhookConfigured ? ' (Webhook و Mini App فعال)' : ''}`
+          : `Bot @${res.botUsername} connected`
       );
       setTgToken('');
       await loadConnections();
@@ -253,7 +255,7 @@ export function CopyConnectPage({
           macro_blackout: riskForm.macro_blackout ? 1 : 0,
         }),
       });
-      flash(isFa ? 'تمام قوانین سپر ریسک و تارگت‌ها ذخیره شد ✅' : 'Risk & 3-TP settings saved ✅');
+      flash(isFa ? 'تمام قوانین سپر ریسک و تارگت‌ها ذخیره شد' : 'Risk & 3-TP settings saved');
       await onRefresh();
     } catch (err) {
       flash(err instanceof Error ? err.message : 'Save failed', true);
@@ -374,7 +376,7 @@ export function CopyConnectPage({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => void apiFetch(`/api/connections/telegram-bots/${b.id}/sync-webhook`, { method: 'POST' }).then(() => flash(isFa ? 'وب‌هوک همگام‌سازی شد ✅' : 'Synced'))}
+                        onClick={() => void apiFetch(`/api/connections/telegram-bots/${b.id}/sync-webhook`, { method: 'POST' }).then(() => flash(isFa ? 'وب‌هوک و منوی مینی‌اپ همگام‌سازی شد' : 'Webhook & Mini App menu synced'))}
                         className="text-brand font-bold text-[11px]"
                       >
                         Sync
@@ -473,7 +475,7 @@ export function CopyConnectPage({
                               type="button"
                               onClick={() => void apiFetch(`/api/connections/exchanges/${c.id}/test`, { method: 'POST' }).then((r) => {
                                 const d = r as { ok: boolean; message: string };
-                                flash(`${d.ok ? '✅' : '⚠️'} ${d.message}`);
+                                flash(d.message, !d.ok);
                               })}
                               className="btn-ghost p-2 rounded-xl"
                               title="Test"
@@ -537,10 +539,13 @@ export function CopyConnectPage({
             </div>
 
             {exForm.provider === 'kcex' && (
-              <div className="rounded-2xl p-3 bg-amber-500/10 border border-amber-500/35 text-[11px] leading-relaxed text-amber-200">
-                {isFa
-                  ? '⚠️ شفافیت فنی: صرافی KCEX در حال حاضر کلید API رسمی برای ربات معامله‌گر خودکار ارائه نمی‌دهد (۰٪ میکر / ۰.۰۱٪ تیکر فقط در وب/اپ). در صورت انتخاب KCEX، دلارینو به صورت Signal-Mirror (محاسبه کارمزد واقعی ۰.۰۱٪ + لینک مستقیم باز کردن پوزیشن در KCEX) کار می‌کند.'
-                  : '⚠️ Verified Capability Notice: KCEX currently does not provide public automated trading API keys (0% Maker / 0.01% Taker on web/app only). Choosing KCEX activates verified Signal-Mirror mode (0.01% taker simulation + 1-tap KCEX deep-links).'}
+              <div className="rounded-2xl p-3 bg-amber-500/10 border border-amber-500/35 text-[11px] leading-relaxed text-amber-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                <span>
+                  {isFa
+                    ? 'شفافیت فنی: صرافی KCEX در حال حاضر کلید API رسمی برای ربات معامله‌گر خودکار ارائه نمی‌دهد (۰٪ میکر / ۰.۰۱٪ تیکر فقط در وب/اپ). در صورت انتخاب KCEX، دلارینو به صورت Signal-Mirror (محاسبه کارمزد واقعی ۰.۰۱٪ + لینک مستقیم باز کردن پوزیشن در KCEX) کار می‌کند.'
+                    : 'Verified Capability Notice: KCEX currently does not provide public automated trading API keys (0% Maker / 0.01% Taker on web/app only). Choosing KCEX activates verified Signal-Mirror mode (0.01% taker simulation + 1-tap KCEX deep-links).'}
+                </span>
               </div>
             )}
 

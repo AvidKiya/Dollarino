@@ -1,4 +1,4 @@
-import type { Candle, Direction, InstrumentSpec, Timeframe } from '@dollarino/core';
+import type { Candle, Direction, InstrumentSpec, MarketType, Timeframe } from '@dollarino/core';
 import type { ExchangePosition, FuturesBalance, IExchangeAdapter, Market24hStats, OrderResult, PlaceOrderParams } from './base.js';
 import { fetchBitunixKlinesFallback, findMarketSpec, normalizeCanonicalSymbol } from './markets.js';
 import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
@@ -373,9 +373,9 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
     return fetchPublicOrderBook(symbol, limit, this.proxyConfig);
   }
 
-  async getInstrumentSpec(symbol: string): Promise<InstrumentSpec> {
+  async getInstrumentSpec(symbol: string, marketType: MarketType = 'FUTURES'): Promise<InstrumentSpec> {
     const clean = normalizeCanonicalSymbol(symbol);
-    const live = await findMarketSpec('paper', clean, this.proxyConfig).catch(() => undefined);
+    const live = await findMarketSpec('paper', clean, this.proxyConfig, marketType).catch(() => undefined);
     if (live) {
       return {
         symbol: clean,
@@ -385,7 +385,7 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
         maxMarketVolume: '1000000',
         minNotional: '5',
         minLeverage: 1,
-        maxLeverage: live.maxLeverage,
+        maxLeverage: marketType === 'SPOT' ? 1 : live.maxLeverage,
         status: 'OPEN',
       };
     }
@@ -398,7 +398,7 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
       maxMarketVolume: '100',
       minNotional: '5',
       minLeverage: 1,
-      maxLeverage: 100,
+      maxLeverage: marketType === 'SPOT' ? 1 : 100,
       status: 'OPEN',
     };
   }
@@ -455,7 +455,7 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
 
   async updatePositionStopLoss(): Promise<void> {}
 
-  async closePositionPartialOrFull(symbol: string, _dir: Direction, quantity: string, clientOrderId: string): Promise<OrderResult> {
+  async closePositionPartialOrFull(symbol: string, _dir: Direction, quantity: string, clientOrderId: string, _marketType: MarketType = 'FUTURES'): Promise<OrderResult> {
     const price = await this.getTickerPrice(symbol);
     const fee = (Number(price) * Number(quantity) * 0.0005).toFixed(4);
     return {

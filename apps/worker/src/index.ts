@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authRoutes, requireAuth, type AppVariables } from './auth.js';
+import { hmacSha256Hex } from './crypto.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
 import { reconcileOpenPositionsForUser } from './engine/executor.js';
 import type { Env } from './env.js';
@@ -9,7 +10,7 @@ import { adminRoutes } from './routes/admin.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
 import { connectionRoutes } from './routes/connections.js';
 import { getPublicPlans, subscriptionRoutes } from './routes/subscriptions.js';
-import { tradingRoutes } from './routes/trading.js';
+import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/trading.js';
 import { webhookRoutes } from './routes/webhooks.js';
 
 export { TradingBotCoordinator };
@@ -48,11 +49,106 @@ app.get('/api/health', (c) => {
     },
     aiProviders: ['deepseek', 'anthropic', 'openai', 'gemini', 'openai_compatible'],
     exchanges: {
-      toobit: 'LIVE_FUTURES_SUPPORTED',
+      toobit: 'LIVE_SPOT_AND_FUTURES_SUPPORTED',
       kcex: 'MIRROR_0PCT_MAKER_AND_WEB_SESSION',
       paper: 'SIMULATOR_LIVE_QUOTES',
     },
+    capabilities: {
+      spotTrading: true,
+      futuresTrading: true,
+      dualDirection: true,
+      hedgeMode: true,
+      verifiedProfitCards: true,
+    },
     timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/public/verify-card/:cardId', async (c) => {
+  const cardId = (c.req.param('cardId') || '').trim();
+  if (!cardId) return c.json({ valid: false, error: 'Missing cardId' }, 400);
+
+  const row = await c.env.DB.prepare(
+    `SELECT v.*, u.username, u.telegram_username
+     FROM verified_profit_cards v
+     LEFT JOIN users u ON u.id = v.user_id
+     WHERE v.id = ? LIMIT 1`
+  ).bind(cardId).first<{
+    id: string;
+    user_id: string;
+    mode: string;
+    period: string;
+    start_date: string;
+    end_date: string;
+    trades_count: number;
+    win_rate: number;
+    net_pnl_usd: number;
+    roi_pct: number;
+    profit_factor: number;
+    exchange_provider: string;
+    strategy_name: string;
+    payload_json: string;
+    hmac_signature: string;
+    issued_at: string;
+    username: string | null;
+    telegram_username: string | null;
+  }>();
+
+  if (!row) {
+    return c.json({ valid: false, error: 'کارت سود با این شناسه در سرور دلارینو ثبت نشده است (احتمالاً جعلی یا نامعتبر است).' }, 404);
+  }
+
+  let parsedPayload: { tradesHash?: string; cardStyle?: string; symbol?: string; direction?: string; isVerifiedReal?: boolean } = {};
+  try {
+    parsedPayload = JSON.parse(row.payload_json || '{}');
+  } catch {
+    parsedPayload = {};
+  }
+
+  const cardSecret = c.env.SESSION_JWT_SECRET || c.env.MASTER_ENCRYPTION_KEY || 'dollarino-card-hmac-secret';
+  const expectedCanonical = buildVerifiedCardCanonicalPayload({
+    id: row.id,
+    userId: row.user_id,
+    mode: row.mode,
+    period: row.period,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    tradesCount: Number(row.trades_count),
+    winRate: Number(row.win_rate),
+    netPnlUsd: Number(row.net_pnl_usd),
+    roiPct: Number(row.roi_pct),
+    profitFactor: Number(row.profit_factor),
+    exchangeProvider: row.exchange_provider,
+    strategyName: row.strategy_name,
+    tradesHash: parsedPayload.tradesHash || '',
+    issuedAt: row.issued_at,
+  });
+  const expectedSig = await hmacSha256Hex(expectedCanonical, cardSecret);
+  const signatureValid = expectedSig === row.hmac_signature;
+
+  return c.json({
+    valid: signatureValid,
+    card: {
+      id: row.id,
+      displayName: row.username || (row.telegram_username ? `@${row.telegram_username}` : 'Dollarino Trader'),
+      mode: row.mode,
+      isVerifiedReal: row.mode === 'LIVE' && signatureValid,
+      period: row.period,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      tradesCount: row.trades_count,
+      winRate: row.win_rate,
+      netPnlUsd: row.net_pnl_usd,
+      roiPct: row.roi_pct,
+      profitFactor: row.profit_factor,
+      exchangeProvider: row.exchange_provider,
+      strategyName: row.strategy_name,
+      cardStyle: parsedPayload.cardStyle || 'dark',
+      symbol: parsedPayload.symbol,
+      direction: parsedPayload.direction,
+      signaturePrefix: row.hmac_signature.slice(0, 16),
+      issuedAt: row.issued_at,
+    },
   });
 });
 
