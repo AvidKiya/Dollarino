@@ -61,6 +61,7 @@ export interface UserBotConfigRow {
   allow_pyramiding?: number;
   watchlist_json?: string;
   started_at?: string | null;
+  active_custom_strategy_id?: string | null;
 }
 
 export function rowToBotConfig(r: UserBotConfigRow): BotConfig {

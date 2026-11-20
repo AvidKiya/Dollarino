@@ -1,6 +1,6 @@
 import { buildBacktestMatrices } from './kiya-bot.js';
 import { computeStrategySignals, type StrategyParams } from './strategies.js';
-import type { BacktestMetrics, BacktestResult, BacktestTrade, Candle, StrategyKey, Timeframe } from './types.js';
+import type { BacktestMetrics, BacktestResult, BacktestTrade, Candle, StrategyKey, StrategySignalOutput, Timeframe } from './types.js';
 
 export interface BacktestOptions {
   symbol: string;
@@ -21,6 +21,7 @@ export interface BacktestOptions {
   feeRateBps?: number;      // default 5 bps (0.05%) taker
   slippageBps?: number;     // default 3 bps (0.03%)
   params?: StrategyParams;
+  customSignals?: StrategySignalOutput[];
 }
 
 /**
@@ -34,14 +35,17 @@ export function runBacktest(
 ): BacktestResult {
   const feeRate = (opts.feeRateBps ?? 5) / 10_000;
   const slipRate = (opts.slippageBps ?? 3) / 10_000;
-  const signals = computeStrategySignals(
-    opts.strategyKey,
-    ltfCandles,
-    htfCandles,
-    opts.timeframe,
-    opts.higherTimeframe ?? '1h',
-    opts.params
-  );
+  const signals =
+    opts.customSignals && opts.customSignals.length === ltfCandles.length
+      ? opts.customSignals
+      : computeStrategySignals(
+          opts.strategyKey,
+          ltfCandles,
+          htfCandles,
+          opts.timeframe,
+          opts.higherTimeframe ?? '1h',
+          opts.params
+        );
 
   const signalByTs = new Map(signals.map((s) => [s.timestamp, s]));
 

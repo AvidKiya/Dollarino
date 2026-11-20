@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Activity,
   ArrowDownRight,
+  ArrowLeft,
   ArrowRight,
   ArrowUpDown,
   ArrowUpRight,
@@ -142,6 +143,21 @@ export function OverviewPage({
   // Inline Edit TP/SL state
   const [editPos, setEditPos] = useState<OpenTradeRow | null>(null);
   const [editForm, setEditForm] = useState({ stopLoss: '', tp1: '', tp2: '', tp3: '' });
+
+  // Simple Mode Guided 4-Step Launcher (TimeTrade parity)
+  const [simpleWizTab, setSimpleWizTab] = useState<'bot' | 'exchange'>('bot');
+  const [simpleStep, setSimpleStep] = useState(0);
+  const [simpleCapital, setSimpleCapital] = useState<number>(Math.max(10, Math.round(Number(data.balance.free || 10000) * 0.25)));
+  const [simpleRiskPreset, setSimpleRiskPreset] = useState<'low' | 'medium' | 'high'>('medium');
+  const [simpleStrategy, setSimpleStrategy] = useState<
+    'dollarino_v01' | 'ai_autonomous_agent' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer'
+  >('dollarino_v01');
+  const [simpleExProvider, setSimpleExProvider] = useState<'toobit' | 'kcex'>('toobit');
+  const [simpleExKey, setSimpleExKey] = useState('');
+  const [simpleExSecret, setSimpleExSecret] = useState('');
+  const [simpleExProxy, setSimpleExProxy] = useState('');
+  const [simpleExSession, setSimpleExSession] = useState('');
+  const [simpleTradesTab, setSimpleTradesTab] = useState<'open' | 'closed'>('open');
 
   // Simple Mode (10-to-80yo Effortless 3-Tap Trading)
   const [simpleCoin, setSimpleCoin] = useState('BTCUSDT');
@@ -761,7 +777,383 @@ export function OverviewPage({
           </div>
         </section>
 
-        {/* 2. Easy 3-Step Manual Trade Card (Designed for 10 to 80 years old!) */}
+        {/* 2. Embedded TimeTrade-Parity 4-Step Autonomous Bot Launcher (Simple Mode) */}
+        <section className="panel rounded-[30px] p-5 sm:p-7 space-y-5 border border-[var(--line-strong)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <DollarinoBrandMark size={42} glow />
+              <div>
+                <h2 className="font-display font-bold text-lg sm:text-xl text-main">
+                  {isFa ? 'راه‌اندازی گام‌به‌گام ربات دلارینو' : 'Dollarino Guided Auto-Bot Setup'}
+                </h2>
+                <p className="text-xs text-dim mt-0.5">
+                  {isFa
+                    ? 'تنظیم سریع سرمایه، ریسک، استراتژی و اتصال صرافی — ربات پس از شروع به‌صورت ۲۴/۷ خودکار سود می‌سازد.'
+                    : 'Set capital, risk, strategy & exchange — your bot scans and earns 24/7 automatically.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="ios-segmented p-1">
+              <button
+                type="button"
+                onClick={() => setSimpleWizTab('bot')}
+                className={`px-4 py-2 rounded-full text-xs font-black inline-flex items-center gap-1.5 transition ${
+                  simpleWizTab === 'bot' ? 'ios-pill-active' : 'text-dim hover:text-main'
+                }`}
+              >
+                <Bot className="w-3.5 h-3.5" />
+                <span>{isFa ? 'تنظیم ربات معاملاتی' : 'Trading Bot Setup'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSimpleWizTab('exchange')}
+                className={`px-4 py-2 rounded-full text-xs font-black inline-flex items-center gap-1.5 transition ${
+                  simpleWizTab === 'exchange' ? 'ios-pill-active' : 'text-dim hover:text-main'
+                }`}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>{isFa ? 'اتصال صرافی واقعی' : 'Connect Exchange'}</span>
+              </button>
+            </div>
+          </div>
+
+          {simpleWizTab === 'bot' ? (
+            <div className="space-y-4">
+              {/* 4 Step Pills */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  isFa ? 'مبلغ سرمایه' : 'Capital',
+                  isFa ? 'سطح ریسک' : 'Risk Level',
+                  isFa ? 'استراتژی' : 'Strategy',
+                  isFa ? 'تأیید و شروع' : 'Launch Bot',
+                ].map((lbl, idx) => (
+                  <button
+                    key={lbl}
+                    type="button"
+                    onClick={() => setSimpleStep(idx)}
+                    className={`py-2.5 px-3 rounded-2xl text-xs font-black transition text-center ${
+                      simpleStep === idx ? 'btn-cobalt' : idx < simpleStep ? 'badge-signal' : 'surface-soft text-dim hover:text-main'
+                    }`}
+                  >
+                    {idx + 1}. {lbl}
+                  </button>
+                ))}
+              </div>
+
+              {simpleStep === 0 && (
+                <div className="surface-soft rounded-2xl p-4 sm:p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-main flex items-center gap-1.5">
+                      <Wallet className="w-4 h-4" style={{ color: 'var(--gold)' }} />
+                      <span>{isFa ? 'چه مقدار سرمایه به ربات می‌سپارید؟ (حداقل $۱۰)' : 'How much capital should the bot allocate? (min $10)'}</span>
+                    </span>
+                    <span dir="ltr" className="font-num font-black text-lg text-jade">
+                      ${simpleCapital.toLocaleString()} ({Math.min(100, Math.max(2, Math.round((simpleCapital / Math.max(100, totalEq)) * 100)))}%)
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={Math.max(100, Math.round(totalEq))}
+                    step={10}
+                    value={Math.min(Math.max(100, Math.round(totalEq)), simpleCapital)}
+                    onChange={(e) => setSimpleCapital(Number(e.target.value))}
+                    className="w-full"
+                    style={{ ['--fill' as string]: `${Math.min(100, Math.round((simpleCapital / Math.max(100, totalEq)) * 100))}%` }}
+                  />
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                    {[100, 500, 1000, Math.round(totalEq * 0.25), Math.round(totalEq * 0.5), Math.round(totalEq)].map((amt, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setSimpleCapital(Math.max(10, amt))}
+                        className={`py-2 rounded-xl text-xs font-num font-black transition ${
+                          simpleCapital === Math.max(10, amt) ? 'btn-emerald' : 'btn-ghost text-dim'
+                        }`}
+                      >
+                        ${Math.max(10, amt).toLocaleString()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {simpleStep === 1 && (
+                <div className="grid sm:grid-cols-3 gap-3">
+                  {[
+                    {
+                      id: 'low' as const,
+                      title: isFa ? 'کم‌ریسک (محافظه‌کار)' : 'Conservative',
+                      detail: isFa ? 'اهرم ۳× · تریلینگ ۱.۵٪ · سقف ضرر روزانه ۳٪' : '3x Lev · 1.5% Trail · 3% Daily Cap',
+                      icon: ShieldCheck,
+                      cls: 'text-jade',
+                    },
+                    {
+                      id: 'medium' as const,
+                      title: isFa ? 'متعادل (پیشنهادی)' : 'Balanced (Recommended)',
+                      detail: isFa ? 'اهرم ۱۰× · تریلینگ ۲٪ + ریسک‌فری TP1' : '10x Lev · 2% Trail + Auto Risk-Free',
+                      icon: Scale,
+                      cls: 'text-brand',
+                    },
+                    {
+                      id: 'high' as const,
+                      title: isFa ? 'پُرقدرت (سود سریع)' : 'Aggressive Alpha',
+                      detail: isFa ? 'اهرم ۲۰× · تا ۲۰ پوزیشن همزمان در کل بازار' : '20x Lev · Up to 20 parallel trades',
+                      icon: Zap,
+                      cls: 'text-flame',
+                    },
+                  ].map((r) => {
+                    const Icon = r.icon;
+                    const active = simpleRiskPreset === r.id;
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => setSimpleRiskPreset(r.id)}
+                        className={`p-4 rounded-2xl border text-start transition space-y-1.5 ${
+                          active ? 'border-[var(--gold)] bg-[color:color-mix(in_srgb,var(--gold)_14%,transparent)] shadow-lg' : 'surface-soft'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <Icon className={`w-5 h-5 ${r.cls}`} />
+                          {active && <CheckCircle2 className="w-4 h-4 text-jade" />}
+                        </div>
+                        <p className={`text-xs font-black ${r.cls}`}>{r.title}</p>
+                        <p className="text-[11px] text-dim">{r.detail}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {simpleStep === 2 && (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {[
+                    { id: 'dollarino_v01' as const, badge: 'دُرنا V1', t: isFa ? 'رشد پایدار (دُرنا V1)' : 'Steady Growth (Dorna V1)', d: isFa ? 'برترین استراتژی غیرریپینت با اسکن کل بازار' : 'Flagship non-repaint full market scanner' },
+                    { id: 'ai_autonomous_agent' as const, badge: 'Multi-AI', t: isFa ? 'هوش مصنوعی دُرّبین' : 'Dorrbin Multi-AI', d: isFa ? 'تصمیم‌گیری خودکار چند مدل AI روی بازار زنده' : 'Autonomous multi-model AI consensus' },
+                    { id: 'kbos_v11' as const, badge: 'ALMA+ATR', t: 'KBOs Super v11', d: isFa ? 'موج‌سواری روند همراه با ۳ تارگت و تریلینگ' : 'HTF trend ribbon with 3-TP trailing SL' },
+                    { id: 'sp2l' as const, badge: '3-TP', t: isFa ? 'شکار نقدینگی (SP2L)' : 'Liquidity Sweep (SP2L)', d: isFa ? 'ورود روی جمع‌آوری نقدینگی و شکست جعلی' : 'Sweep reversal + Break-Even on TP1' },
+                    { id: 'ema_trend_pullback' as const, badge: 'Momentum', t: isFa ? 'مومنتوم روند EMA' : 'EMA Momentum', d: isFa ? 'ورود در پولبک‌های تمیز هم‌جهت روند اصلی' : 'Clean pullback in dominant HTF trend' },
+                    { id: 'signal_mixer' as const, badge: '8-Ch', t: isFa ? 'میکسر ۸ کاناله کوانت' : '8-Channel Quant Mixer', d: isFa ? 'ترکیب وزن‌دار ۸ اندیکاتور و حجم بازار' : 'Weighted 8-factor market score' },
+                  ].map((s) => {
+                    const active = simpleStrategy === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setSimpleStrategy(s.id)}
+                        className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
+                          active ? 'border-[var(--gold)] bg-[color:color-mix(in_srgb,var(--gold)_14%,transparent)]' : 'surface-soft'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-black text-main">{s.t}</span>
+                          <span className="text-[9px] px-2 py-0.5 rounded-full badge-signal font-bold">{s.badge}</span>
+                        </div>
+                        <p className="text-[11px] text-dim">{s.d}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {simpleStep === 3 && (
+                <div className="surface-soft rounded-2xl p-4 sm:p-5 grid sm:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <span className="text-dim block">{isFa ? 'سرمایه درگیر:' : 'Allocated Capital:'}</span>
+                    <span dir="ltr" className="font-num font-black text-base text-main">${simpleCapital.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-dim block">{isFa ? 'سطح حفاظت ریسک:' : 'Risk Profile:'}</span>
+                    <span className="font-black text-base text-jade">
+                      {simpleRiskPreset === 'low' ? (isFa ? 'کم‌ریسک (3×)' : 'Conservative (3×)') : simpleRiskPreset === 'high' ? (isFa ? 'پُرقدرت (20×)' : 'Aggressive (20×)') : (isFa ? 'متعادل (10×)' : 'Balanced (10×)')}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-dim block">{isFa ? 'موتور انتخابی:' : 'Active Strategy:'}</span>
+                    <span className="font-black text-base text-brand">{simpleStrategy}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={simpleStep === 0}
+                  onClick={() => setSimpleStep((s) => Math.max(0, s - 1))}
+                  className="btn-ghost px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 disabled:opacity-40"
+                >
+                  <ArrowLeft className={`w-3.5 h-3.5 ${isFa ? 'rotate-180' : ''}`} />
+                  <span>{isFa ? 'مرحله قبلی' : 'Back'}</span>
+                </button>
+
+                {simpleStep < 3 ? (
+                  <button
+                    type="button"
+                    onClick={() => setSimpleStep((s) => Math.min(3, s + 1))}
+                    className="btn-cobalt px-6 py-2.5 rounded-xl text-xs inline-flex items-center gap-1.5"
+                  >
+                    <span>{isFa ? 'تأیید و مرحله بعد' : 'Next Step'}</span>
+                    <ArrowRight className={`w-3.5 h-3.5 ${isFa ? 'rotate-180' : ''}`} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        const lev = simpleRiskPreset === 'low' ? 3 : simpleRiskPreset === 'high' ? 20 : 10;
+                        const dailyLoss = simpleRiskPreset === 'low' ? 3 : simpleRiskPreset === 'high' ? 10 : 5;
+                        const trailPct = simpleRiskPreset === 'low' ? 1.5 : simpleRiskPreset === 'high' ? 2.8 : 2.0;
+                        const marginPct = Math.min(100, Math.max(2, Math.round((simpleCapital / Math.max(100, totalEq)) * 100)));
+                        await apiFetch('/api/trading/config', {
+                          method: 'PATCH',
+                          body: JSON.stringify({
+                            strategy_key: simpleStrategy,
+                            margin_pct: marginPct,
+                            max_leverage: lev,
+                            daily_max_loss_pct: dailyLoss,
+                            trailing_stop_enabled: 1,
+                            trailing_stop_pct: trailPct,
+                            auto_scan_top: 1,
+                            scan_scope: 'ALL_MARKET',
+                            risk_profile_json: { preset: simpleRiskPreset === 'low' ? 'conservative' : simpleRiskPreset === 'high' ? 'aggressive' : 'balanced', allocatedAmount: simpleCapital },
+                          }),
+                        });
+                        await apiFetch('/api/trading/bot/start', {
+                          method: 'POST',
+                          body: JSON.stringify({ marginPct, strategyKey: simpleStrategy, maxLeverage: lev, allocatedAmount: simpleCapital, scanScope: 'ALL_MARKET' }),
+                        });
+                        tgNotifyHaptic('success');
+                        toastMsg(isFa ? 'ربات با تنظیمات شما روشن شد و به صورت ۲۴/۷ معامله می‌کند!' : 'Auto-Bot launched! Scanning & trading 24/7.');
+                        await onRefresh();
+                      } catch (err) {
+                        toastMsg(err instanceof Error ? err.message : 'Start failed', true);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    className="btn-lime px-7 py-3 rounded-2xl text-xs sm:text-sm font-black inline-flex items-center gap-2 shadow-xl"
+                  >
+                    <Rocket className="w-4 h-4" />
+                    <span>{busy ? '...' : isFa ? 'ذخیره و شروع خودکار ربات (کسب سود ۲۴/۷)' : 'Launch 24/7 Autonomous Bot'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                {(['toobit', 'kcex'] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setSimpleExProvider(p)}
+                    className={`py-2.5 rounded-xl font-black uppercase ${simpleExProvider === p ? 'btn-cobalt' : 'btn-ghost text-dim'}`}
+                  >
+                    {p === 'toobit' ? 'Toobit Futures' : 'KCEX Futures'}
+                  </button>
+                ))}
+              </div>
+              <div className="grid sm:grid-cols-2 gap-2.5">
+                <input value={simpleExKey} onChange={(e) => setSimpleExKey(e.target.value)} dir="ltr" placeholder="API Key" className="field font-mono text-xs" />
+                <input type="password" value={simpleExSecret} onChange={(e) => setSimpleExSecret(e.target.value)} dir="ltr" placeholder="API Secret" className="field font-mono text-xs" />
+              </div>
+              {simpleExProvider === 'kcex' ? (
+                <input value={simpleExSession} onChange={(e) => setSimpleExSession(e.target.value)} dir="ltr" placeholder="KCEX Web Session Token (optional)" className="field font-mono text-xs" />
+              ) : (
+                <input value={simpleExProxy} onChange={(e) => setSimpleExProxy(e.target.value)} dir="ltr" placeholder="Relay Proxy URL (optional)" className="field font-mono text-xs" />
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-dim flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-jade shrink-0" />
+                  <span>{isFa ? 'رمزنگاری AES-256-GCM · فقط مجوز معامله، بدون مجوز برداشت.' : 'AES-256-GCM encrypted · Trade-only API scope.'}</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const r = await apiFetch<{ test?: { message?: string } }>('/api/connections/exchanges', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          provider: simpleExProvider,
+                          apiKey: simpleExKey,
+                          apiSecret: simpleExSecret,
+                          proxyUrl: simpleExProvider === 'toobit' && simpleExProxy.trim() ? simpleExProxy.trim() : undefined,
+                          webSessionToken: simpleExProvider === 'kcex' ? simpleExSession : undefined,
+                        }),
+                      });
+                      toastMsg(r.test?.message || (isFa ? 'صرافی با موفقیت متصل شد' : 'Exchange connected'));
+                      await onRefresh();
+                    } catch (err) {
+                      toastMsg(err instanceof Error ? err.message : 'Exchange error', true);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="btn-emerald px-5 py-2.5 rounded-xl font-black"
+                >
+                  {isFa ? 'اتصال صرافی واقعی' : 'Connect Exchange'}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* 2B. Live Performance Activity Curve + Settled / Active Summary */}
+        <section className="grid lg:grid-cols-[1.2fr_1fr] gap-4">
+          <div className="panel rounded-[28px] p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-display font-bold text-base text-main flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-jade" />
+                  <span>{isFa ? 'روند رشد سرمایه و فعالیت ساعتی' : 'Hourly Trading Activity & Equity Curve'}</span>
+                </h3>
+                <p className="text-[11px] text-dim">
+                  {isFa ? 'نمای تجمعی عملکرد ربات طی ۳۰ روز اخیر' : '30-day cumulative automated equity'}
+                </p>
+              </div>
+              <span dir="ltr" className={`text-xs font-num font-black ${todayPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
+                {todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)}
+              </span>
+            </div>
+            <div className="h-36 rounded-2xl surface-soft p-3">
+              <AreaChart values={equitySeries} height={116} />
+            </div>
+          </div>
+
+          <div className="panel rounded-[28px] p-5 flex flex-col justify-between gap-3">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="surface-soft rounded-2xl p-3">
+                <p dir="ltr" className="font-num font-bold text-base text-main">{data.stats.totalTrades}</p>
+                <p className="text-[10px] text-dim mt-0.5">{isFa ? 'کل معاملات' : 'Trades'}</p>
+              </div>
+              <div className="surface-soft rounded-2xl p-3">
+                <p dir="ltr" className="font-num font-bold text-base text-jade">{data.stats.winRate.toFixed(1)}%</p>
+                <p className="text-[10px] text-dim mt-0.5">{isFa ? 'نرخ برد' : 'Win Rate'}</p>
+              </div>
+              <div className="surface-soft rounded-2xl p-3">
+                <p dir="ltr" className="font-num font-bold text-base text-brand">${usedBal.toFixed(0)}</p>
+                <p className="text-[10px] text-dim mt-0.5">{isFa ? 'درگیر در معامله' : 'Allocated'}</p>
+              </div>
+            </div>
+            <div className="surface-soft rounded-2xl p-3.5 flex items-center justify-between text-xs">
+              <div>
+                <p className="font-bold text-main">{isFa ? 'کارت سود هفتگی تاییدشده' : 'Verified Weekly Profit Card'}</p>
+                <p className="text-[10px] text-dim">{isFa ? 'امضای دیجیتال HMAC سرور برای اشتراک‌گذاری' : 'Server HMAC signed report card'}</p>
+              </div>
+              <button type="button" onClick={() => onNavigate('card')} className="btn-gold px-3.5 py-2 rounded-xl text-[11px] font-black">
+                {isFa ? 'مشاهده کارت' : 'Open Card'}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* 3. Easy 3-Step Manual Trade Card (Designed for 10 to 80 years old!) */}
         <section className="panel rounded-[30px] p-5 sm:p-7 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -953,23 +1345,72 @@ export function OverviewPage({
           </div>
         </section>
 
-        {/* 3. Plain-Language Open Trades */}
+        {/* 3. Plain-Language Open & Settled Trades */}
         <section className="panel rounded-[30px] p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-display font-bold text-xl text-main">
-                {isFa ? 'معاملات باز شما الان چطورن؟' : 'Your Active Trades Right Now'}
+                {simpleTradesTab === 'open'
+                  ? isFa ? 'معاملات باز شما الان چطورن؟' : 'Your Active Trades Right Now'
+                  : isFa ? 'معاملات تسویه‌شده و سودهای ثبت‌شده' : 'Settled Trades & Realized Results'}
               </h2>
               <p className="text-xs text-dim mt-0.5">
-                {isFa ? 'هر زمان که سود را دوست داشتید، فقط با یک دکمه ببندید.' : 'Tap Close & Collect Profit anytime you like.'}
+                {simpleTradesTab === 'open'
+                  ? isFa ? 'هر زمان که سود را دوست داشتید، فقط با یک دکمه ببندید.' : 'Tap Close & Collect Profit anytime you like.'
+                  : isFa ? 'تمام معاملات بسته‌شده ربات با جزئیات دقیق سود و زیان.' : 'Recent settled positions executed by your bot.'}
               </p>
             </div>
-            <button type="button" onClick={() => onNavigate('portfolio')} className="btn-ghost px-4 py-2 rounded-2xl text-xs font-bold">
-              {isFa ? 'دیدن همه معاملات' : 'View All'}
-            </button>
+            <div className="flex items-center gap-2">
+              <div className="ios-segmented p-1">
+                <button
+                  type="button"
+                  onClick={() => setSimpleTradesTab('open')}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${simpleTradesTab === 'open' ? 'ios-pill-active' : 'text-dim'}`}
+                >
+                  {isFa ? `باز (${data.openTrades.length})` : `Open (${data.openTrades.length})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimpleTradesTab('closed')}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-black transition ${simpleTradesTab === 'closed' ? 'ios-pill-active' : 'text-dim'}`}
+                >
+                  {isFa ? `تسویه‌شده (${data.closedTrades.length})` : `Settled (${data.closedTrades.length})`}
+                </button>
+              </div>
+              <button type="button" onClick={() => onNavigate('portfolio')} className="btn-ghost px-3.5 py-2 rounded-2xl text-xs font-bold">
+                {isFa ? 'همه' : 'All'}
+              </button>
+            </div>
           </div>
 
-          {data.openTrades.length === 0 ? (
+          {simpleTradesTab === 'closed' ? (
+            data.closedTrades.length === 0 ? (
+              <div className="rounded-3xl surface-soft p-8 text-center text-xs text-dim">
+                {isFa ? 'هنوز معامله تسویه‌شده‌ای ثبت نشده است.' : 'No settled trades yet.'}
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-3">
+                {data.closedTrades.slice(0, 6).map((t) => {
+                  const pnl = Number(t.realized_pnl || 0);
+                  const win = pnl >= 0;
+                  return (
+                    <div key={t.id} className="rounded-3xl surface-soft p-4 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <CoinIcon symbol={t.symbol} size={36} />
+                        <div>
+                          <p className="font-black text-sm text-main">{t.symbol.replace('USDT', '')} · {t.direction}</p>
+                          <p className="text-[10px] text-dim">{new Date(t.closed_at).toLocaleString(isFa ? 'fa-IR' : 'en-US')}</p>
+                        </div>
+                      </div>
+                      <span dir="ltr" className={`font-num font-black text-sm ${win ? 'text-jade' : 'text-loss'}`}>
+                        {win ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : data.openTrades.length === 0 ? (
             <div className="rounded-3xl surface-soft p-8 text-center space-y-2">
               <p className="text-sm font-bold text-main">
                 {isFa ? 'الان هیچ معامله بازی ندارید' : 'No open trades right now'}

@@ -5,6 +5,7 @@ import {
   Calendar,
   CheckCircle2,
   ChevronDown,
+  Code2,
   Crosshair,
   Download,
   Flame,
@@ -32,6 +33,7 @@ import type { DashboardPayload } from '../lib/types';
 import { CoinIcon } from '../components/CoinIcon';
 import { AreaChart, ConsensusGauge } from '../components/DollarinoViz';
 import { HybridLab } from '../components/HybridLab';
+import { StrategyIdePanel } from '../components/StrategyIdePanel';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -64,7 +66,7 @@ export function RadarLabPage({
   onRefresh: () => Promise<void>;
 }) {
   const isFa = lang === 'fa';
-  const [subTab, setSubTab] = useState<'radar' | 'lab' | 'backtest'>('radar');
+  const [subTab, setSubTab] = useState<'radar' | 'lab' | 'backtest' | 'ide'>('radar');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | 'AI' | 'DORNA' | 'TELEGRAM' | 'TRADINGVIEW'>('ALL');
   const [expandedRaw, setExpandedRaw] = useState<Record<string, boolean>>({});
   const [scanning, setScanning] = useState(false);
@@ -263,13 +265,16 @@ export function RadarLabPage({
               ? isFa ? 'رادار سیگنال زنده و اسکنر' : 'AI Signal Radar & Scanner'
               : subTab === 'lab'
                 ? isFa ? 'آزمایشگاه ترکیب و تنظیمات KBOS' : 'Hybrid Lab & KBOS Tuner'
-                : isFa ? 'بک‌تستر تاریخی و جدول حرارتی' : 'Historical Backtester'}
+                : subTab === 'ide'
+                  ? isFa ? 'محیط کدنویسی Pine Script و Python' : 'Pine Script & Python Strategy IDE'
+                  : isFa ? 'بک‌تستر تاریخی و جدول حرارتی' : 'Historical Backtester'}
           </h2>
         </div>
 
         <div className="inline-flex p-1 panel rounded-full overflow-x-auto no-scrollbar">
           {[
             { id: 'radar' as const, icon: Radar, l: isFa ? 'رادار و اسکن' : 'Live Radar' },
+            { id: 'ide' as const, icon: Code2, l: isFa ? 'Pine / Python IDE' : 'Pine / Python IDE' },
             { id: 'lab' as const, icon: SlidersHorizontal, l: isFa ? 'آزمایشگاه و KBOS' : 'Lab & KBOS' },
             { id: 'backtest' as const, icon: BarChart3, l: isFa ? 'بک‌تست ۹۰۰ کندل' : 'Backtester' },
           ].map((t) => {
@@ -522,6 +527,16 @@ export function RadarLabPage({
             </div>
           </div>
         </div>
+      )}
+
+      {subTab === 'ide' && (
+        <StrategyIdePanel
+          lang={lang}
+          markets={markets}
+          defaultSymbol={data.config.symbol || 'BTCUSDT'}
+          activeCustomStrategyId={data.config.active_custom_strategy_id}
+          onActivatedOnBot={onRefresh}
+        />
       )}
 
       {subTab === 'backtest' && (

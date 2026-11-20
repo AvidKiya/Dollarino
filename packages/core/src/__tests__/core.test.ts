@@ -7,13 +7,17 @@ import {
   computeStrategySignals,
   DEFAULT_KBOS_PARAMS,
   DEFAULT_MIXER_WEIGHTS,
+  evaluatePineStrategy,
+  evaluatePythonStrategy,
   evaluateRiskGates,
   evaluateSignalMixerAtBar,
+  evaluateVisualStrategy,
   formatDollarinoSignal,
   mergeKbosParams,
   parseDollarinoSignal,
   quantizeDown,
   runBacktest,
+  SAMPLE_CUSTOM_STRATEGIES,
   superSmoother,
   type AIProviderId,
   type BotConfig,
@@ -659,4 +663,80 @@ describe('@dollarino/core Spot/Futures & direction mode risk gates', () => {
     expect(shortOnlyLong.reasonCode).toBe('DIRECTION_FILTERED');
   });
 });
+
+describe('@dollarino/core Pine Script, Python & Visual Strategy Engine', () => {
+  const buildOscillatingCandles = (len = 260): Candle[] => {
+    const start = Date.UTC(2026, 4, 1);
+    const out: Candle[] = [];
+    let p = 50_000;
+    for (let i = 0; i < len; i++) {
+      const wave = Math.sin(i / 7) * 520 + (i % 35 < 18 ? 140 : -110);
+      const open = p;
+      const close = Math.max(10_000, open + wave * 0.45);
+      out.push({
+        timestamp: start + i * 900_000,
+        open,
+        high: Math.max(open, close) + 140,
+        low: Math.min(open, close) - 140,
+        close,
+        volume: 1000 + (i % 15) * 180,
+      });
+      p = close;
+    }
+    return out;
+  };
+
+  it('compiles and runs all SAMPLE_CUSTOM_STRATEGIES cleanly with chart plots and signals', () => {
+    const candles = buildOscillatingCandles(260);
+    for (const s of SAMPLE_CUSTOM_STRATEGIES) {
+      const res =
+        s.language === 'pine'
+          ? evaluatePineStrategy(s.code, candles, '15m')
+          : evaluatePythonStrategy(s.code, candles, '15m');
+      expect(res.valid).toBe(true);
+      expect(res.errors.length).toBe(0);
+      expect(res.signals.length).toBe(candles.length);
+      expect(res.plots.length).toBeGreaterThan(0);
+
+      const bt = runBacktest(candles, [], {
+        symbol: 'BTCUSDT',
+        strategyKey: s.language === 'pine' ? 'custom_pine' : 'custom_python',
+        timeframe: '15m',
+        initialBalance: 10_000,
+        marginPct: 5,
+        leverage: 5,
+        tp1ClosePct: 40,
+        tp2ClosePct: 30,
+        tp3ClosePct: 30,
+        autoBreakevenOnTp1: true,
+        moveSlToTp1OnTp2: true,
+        customSignals: res.signals,
+      });
+      expect(bt.equityCurve.length).toBe(candles.length);
+      expect(Number.isFinite(bt.metrics.finalEquity)).toBe(true);
+    }
+  });
+
+  it('evaluates Visual No-Code strategy rules with plots and triggers', () => {
+    const candles = buildOscillatingCandles(160);
+    const vis = evaluateVisualStrategy(
+      {
+        name: 'Visual EMA + RSI',
+        logic: 'ANY',
+        slAtrMult: 1.8,
+        tp1R: 1.5,
+        tp2R: 2.5,
+        tp3R: 4.0,
+        longRules: [{ id: '1', kind: 'EMA_CROSS_ABOVE', param1: 9, param2: 21 }],
+        shortRules: [{ id: '2', kind: 'EMA_CROSS_BELOW', param1: 9, param2: 21 }],
+      },
+      candles,
+      '15m'
+    );
+    expect(vis.valid).toBe(true);
+    expect(vis.plots.length).toBeGreaterThanOrEqual(2);
+    expect(vis.signals.some((s) => s.signal !== 'NONE')).toBe(true);
+  });
+});
+
 

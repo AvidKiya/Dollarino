@@ -1,14 +1,17 @@
 import {
   computeStrategySignals,
   DEFAULT_MIXER_WEIGHTS,
+  evaluateCustomStrategy,
   formatDollarinoSignal,
   mergeKbosParams,
   selectClosedCandles,
   strategyOutputToDollarinoSignal,
+  type CustomStrategyLanguage,
   type Direction,
   type DirectionMode,
   type MarketType,
   type SignalMixerWeights,
+  type StrategySignalOutput,
 } from '@dollarino/core';
 import { runAutonomousAITrader } from '../ai/providers.js';
 import { randomId } from '../crypto.js';
@@ -533,19 +536,40 @@ export class TradingBotCoordinator implements DurableObject {
       return false;
     }
 
-    // 2B. Dollarino Select Strategy (Dorna V1 & Quant strategies)
-    const outputs = computeStrategySignals(
-      cfg.strategy_key,
-      ltfClosed,
-      htfClosed,
-      cfg.entry_timeframe,
-      cfg.higher_timeframe,
-      {
-        kbosParams,
-        mixerWeights,
-        mixerThreshold: cfg.mixer_threshold ?? 65,
+    // 2B. Custom Pine Script / Python / Visual Strategy OR Dollarino Built-in Quant Strategies
+    let outputs: StrategySignalOutput[] = [];
+    if (
+      (cfg.strategy_key === 'custom_pine' ||
+        cfg.strategy_key === 'custom_python' ||
+        cfg.strategy_key === 'custom_visual') &&
+      cfg.active_custom_strategy_id
+    ) {
+      const customRow = await this.env.DB.prepare(
+        `SELECT language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
+      )
+        .bind(cfg.active_custom_strategy_id, userId)
+        .first<{ language: CustomStrategyLanguage; code: string }>();
+
+      if (customRow?.code) {
+        const evalRes = evaluateCustomStrategy(customRow.language, customRow.code, ltfClosed, cfg.entry_timeframe);
+        if (evalRes.valid) outputs = evalRes.signals;
       }
-    );
+    }
+
+    if (outputs.length === 0) {
+      outputs = computeStrategySignals(
+        cfg.strategy_key,
+        ltfClosed,
+        htfClosed,
+        cfg.entry_timeframe,
+        cfg.higher_timeframe,
+        {
+          kbosParams,
+          mixerWeights,
+          mixerThreshold: cfg.mixer_threshold ?? 65,
+        }
+      );
+    }
     const lastBarKey = `last_signal_ts_${userId}_${scanSymbol}`;
     const lastProcessed = await this.state.storage.get<number>(lastBarKey);
     const currentClose = ltfClosed[ltfClosed.length - 1]!.close;

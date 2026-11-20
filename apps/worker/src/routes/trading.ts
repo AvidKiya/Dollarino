@@ -6,13 +6,17 @@ import {
   DEFAULT_KBOS_PARAMS,
   DEFAULT_MIXER_WEIGHTS,
   ema,
+  evaluateCustomStrategy,
   evaluateSignalMixerAtBar,
   formatDollarinoSignal,
   mergeKbosParams,
   parseDollarinoSignal,
   rsi,
+  runBacktest,
+  SAMPLE_CUSTOM_STRATEGIES,
   selectClosedCandles,
   strategyOutputToDollarinoSignal,
+  type CustomStrategyLanguage,
   type Direction,
   type DirectionMode,
   type MarginMode,
@@ -372,6 +376,7 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     allow_pyramiding: 'allow_pyramiding',
     watchlist_json: 'watchlist_json',
     strategy_key: 'strategy_key',
+    active_custom_strategy_id: 'active_custom_strategy_id',
     entry_timeframe: 'entry_timeframe',
     higher_timeframe: 'higher_timeframe',
     margin_pct: 'margin_pct',
@@ -467,6 +472,7 @@ tradingRoutes.post('/bot/start', async (c) => {
     trailingStopEnabled?: boolean;
     trailingStopPct?: number;
     allocatedAmount?: number;
+    customStrategyId?: string;
   }>().catch(() => ({} as Record<string, unknown>));
 
   const [cfg, ensemble, entitlement] = await Promise.all([
@@ -508,6 +514,10 @@ tradingRoutes.post('/bot/start', async (c) => {
   if (typeof body.strategyKey === 'string') {
     sets.push(`strategy_key = ?`);
     vals.push(body.strategyKey);
+  }
+  if (typeof body.customStrategyId === 'string') {
+    sets.push(`active_custom_strategy_id = ?`);
+    vals.push(body.customStrategyId || null);
   }
   if (typeof body.symbol === 'string' && body.symbol.trim()) {
     sets.push(`symbol = ?`);
@@ -994,9 +1004,38 @@ tradingRoutes.get('/market/overview', async (c) => {
     adapter.getKlines(symbol, htfTf, 200),
     adapter.getMarket24h(symbol),
     adapter.getOrderBook(symbol, 15),
-    c.env.DB.prepare('SELECT mixer_weights_json, mixer_threshold, kbos_params_json FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ mixer_weights_json?: string; mixer_threshold?: number; kbos_params_json?: string }>(),
+    c.env.DB.prepare('SELECT mixer_weights_json, mixer_threshold, kbos_params_json, strategy_key, active_custom_strategy_id FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ mixer_weights_json?: string; mixer_threshold?: number; kbos_params_json?: string; strategy_key?: string; active_custom_strategy_id?: string | null }>(),
   ]);
+
+  let customOverlays: {
+    id: string;
+    title: string;
+    language: CustomStrategyLanguage;
+    plots: Array<{ title: string; color: string; overlay: boolean; points: Array<{ time: number; value: number }> }>;
+    markers: Array<{ time: number; position: 'belowBar' | 'aboveBar'; color: string; shape: 'arrowUp' | 'arrowDown'; text: string }>;
+    latestSignal: unknown;
+  } | null = null;
+
+  const requestedCustomId = c.req.query('customStrategyId') || cfg?.active_custom_strategy_id;
+  if (requestedCustomId) {
+    const customRow = await c.env.DB.prepare(
+      `SELECT id, name, language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
+    ).bind(requestedCustomId, user.id).first<{ id: string; name: string; language: CustomStrategyLanguage; code: string }>();
+    if (customRow?.code) {
+      const ev = evaluateCustomStrategy(customRow.language, customRow.code, candles, timeframe);
+      if (ev.valid) {
+        customOverlays = {
+          id: customRow.id,
+          title: customRow.name || ev.title,
+          language: customRow.language,
+          plots: ev.plots,
+          markers: ev.markers,
+          latestSignal: ev.latestSignal,
+        };
+      }
+    }
+  }
 
   let parsedKbos = DEFAULT_KBOS_PARAMS;
   try {
@@ -1058,6 +1097,7 @@ tradingRoutes.get('/market/overview', async (c) => {
       markers: kbosDetailed.markers,
       latestSignal: kbosDetailed.outputs[kbosDetailed.outputs.length - 1] ?? null,
     },
+    customOverlays,
     mixer,
   });
 });
@@ -1690,4 +1730,162 @@ tradingRoutes.post('/cards/issue', async (c) => {
     },
   });
 });
+
+// =========================================================================
+// Pro Quant Strategy IDE: Pine Script, Python & Visual Strategy Endpoints
+// =========================================================================
+
+tradingRoutes.get('/strategies', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM user_strategies WHERE user_id = ? ORDER BY updated_at DESC`
+  ).bind(user.id).all<{
+    id: string;
+    user_id: string;
+    name: string;
+    description: string;
+    language: CustomStrategyLanguage;
+    code: string;
+    timeframe: string;
+    is_active: number;
+    created_at: string;
+    updated_at: string;
+  }>().catch(() => ({ results: [] }));
+
+  return c.json({
+    samples: SAMPLE_CUSTOM_STRATEGIES,
+    userStrategies: rows.results,
+  });
+});
+
+tradingRoutes.post('/strategies/evaluate', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{
+    language?: CustomStrategyLanguage;
+    code?: string;
+    symbol?: string;
+    timeframe?: Timeframe;
+  }>().catch(() => ({} as { language?: CustomStrategyLanguage; code?: string; symbol?: string; timeframe?: Timeframe }));
+
+  const langMode: CustomStrategyLanguage =
+    body.language === 'python' || body.language === 'visual' ? body.language : 'pine';
+  const code = String(body.code || '');
+  const symbol = normalizeCanonicalSymbol(body.symbol || 'BTCUSDT');
+  const tf = (body.timeframe || '15m') as Timeframe;
+
+  const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
+  const candles = await adapter.getKlines(symbol, tf, 360);
+  const res = evaluateCustomStrategy(langMode, code, candles, tf);
+
+  let backtestSummary = null;
+  if (res.valid && candles.length >= 40) {
+    const bt = runBacktest(candles, [], {
+      symbol,
+      strategyKey: langMode === 'pine' ? 'custom_pine' : langMode === 'python' ? 'custom_python' : 'custom_visual',
+      timeframe: tf,
+      initialBalance: 10000,
+      marginPct: 10,
+      leverage: 5,
+      tp1ClosePct: 40,
+      tp2ClosePct: 30,
+      tp3ClosePct: 30,
+      autoBreakevenOnTp1: true,
+      moveSlToTp1OnTp2: true,
+      customSignals: res.signals,
+    });
+    backtestSummary = {
+      metrics: bt.metrics,
+      equityCurve: bt.equityCurve,
+      trades: bt.trades.slice(0, 40),
+    };
+  }
+
+  return c.json({
+    valid: res.valid,
+    title: res.title,
+    language: res.language,
+    errors: res.errors,
+    warnings: res.warnings,
+    plots: res.plots,
+    markers: res.markers,
+    latestSignal: res.latestSignal,
+    candles,
+    backtestSummary,
+  });
+});
+
+tradingRoutes.post('/strategies', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{
+    id?: string;
+    name?: string;
+    description?: string;
+    language?: CustomStrategyLanguage;
+    code?: string;
+    timeframe?: Timeframe;
+  }>().catch(() => ({} as { id?: string; name?: string; description?: string; language?: CustomStrategyLanguage; code?: string; timeframe?: Timeframe }));
+
+  const langMode: CustomStrategyLanguage =
+    body.language === 'python' || body.language === 'visual' ? body.language : 'pine';
+  const name = String(body.name || 'Custom Strategy').trim().slice(0, 80);
+  const description = String(body.description || '').trim().slice(0, 240);
+  const code = String(body.code || '');
+  const tf = String(body.timeframe || '15m');
+
+  if (!code.trim()) {
+    return c.json({ error: 'کد استراتژی نمی‌تواند خالی باشد.' }, 400);
+  }
+
+  if (body.id) {
+    const existing = await c.env.DB.prepare(
+      `SELECT id FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
+    ).bind(body.id, user.id).first<{ id: string }>();
+
+    if (existing) {
+      await c.env.DB.prepare(
+        `UPDATE user_strategies SET name = ?, description = ?, language = ?, code = ?, timeframe = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`
+      ).bind(name, description, langMode, code, tf, existing.id, user.id).run();
+      const row = await c.env.DB.prepare(`SELECT * FROM user_strategies WHERE id = ?`).bind(existing.id).first();
+      return c.json({ ok: true, strategy: row });
+    }
+  }
+
+  const id = randomId('strat');
+  await c.env.DB.prepare(
+    `INSERT INTO user_strategies (id, user_id, name, description, language, code, timeframe, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+  ).bind(id, user.id, name, description, langMode, code, tf).run();
+
+  const row = await c.env.DB.prepare(`SELECT * FROM user_strategies WHERE id = ?`).bind(id).first();
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Saved custom ${langMode.toUpperCase()} strategy: ${name}`);
+  return c.json({ ok: true, strategy: row });
+});
+
+tradingRoutes.delete('/strategies/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  await c.env.DB.prepare(`DELETE FROM user_strategies WHERE id = ? AND user_id = ?`).bind(id, user.id).run();
+  await c.env.DB.prepare(
+    `UPDATE bot_configs SET active_custom_strategy_id = NULL, strategy_key = CASE WHEN active_custom_strategy_id = ? THEN 'dollarino_v01' ELSE strategy_key END WHERE user_id = ?`
+  ).bind(id, user.id).run();
+  return c.json({ ok: true });
+});
+
+tradingRoutes.post('/strategies/:id/activate', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const row = await c.env.DB.prepare(
+    `SELECT id, name, language, timeframe FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
+  ).bind(id, user.id).first<{ id: string; name: string; language: CustomStrategyLanguage; timeframe: string }>();
+  if (!row) return c.json({ error: 'Custom strategy not found' }, 404);
+
+  const strategyKey = row.language === 'pine' ? 'custom_pine' : row.language === 'python' ? 'custom_python' : 'custom_visual';
+  await c.env.DB.prepare(
+    `UPDATE bot_configs SET strategy_key = ?, active_custom_strategy_id = ?, entry_timeframe = ?, updated_at = datetime('now') WHERE user_id = ?`
+  ).bind(strategyKey, row.id, row.timeframe || '15m', user.id).run();
+
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Activated custom ${row.language.toUpperCase()} strategy "${row.name}" for autonomous execution`);
+  return c.json({ ok: true, strategyKey, activeCustomStrategyId: row.id, name: row.name });
+});
+
 

@@ -47,7 +47,10 @@ export type StrategyKey =
   | 'vibe_4h_candle_confirmation'
   | 'signal_mixer'
   | 'test_strategy'
-  | 'dollarino_tv_hybrid';
+  | 'dollarino_tv_hybrid'
+  | 'custom_pine'
+  | 'custom_python'
+  | 'custom_visual';
 
 export type MaVariantKind =
   | 'SMA'

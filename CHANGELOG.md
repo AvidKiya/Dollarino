@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.0.0] - 2026-11-20
+### Added
+- `migrations/0011_custom_strategies.sql`: Added `user_strategies` table (`pine`, `python`, `visual` strategies) and `bot_configs.active_custom_strategy_id` for 24/7 autonomous custom code execution.
+- **Simple Mode Guided 4-Step Launcher (TimeTrade Parity)**: Embedded full 4-step launcher (`تنظیم ربات معاملاتی` | `اتصال صرافی واقعی` -> `1. مبلغ سرمایه 2. سطح ریسک 3. استراتژی 4. تأیید و شروع`) directly in Simple Mode (`OverviewPage.tsx`), plus Hourly Trading Activity curve & Open/Settled trade tabs.
+- **Pro Quant Strategy IDE (Pine Script v4/v5 + Python + Visual Builder)**:
+  - Added deterministic zero-`eval` interpreter in `packages/core/src/custom-strategy-engine.ts` supporting Pine Script v4/v5 (`ta.ema`, `ta.sma`, `ta.rsi`, `ta.atr`, `ta.bb`, `ta.supertrend`, `ta.macd`, `ta.vwap`, `plot()`, `strategy.entry()`) and Python Quant (`df['close'].ewm().mean()`, `rolling()`, `ta.bbands`, `crossover`, `plot()`, `df.loc[..., 'signal']`) plus No-Code Visual Rule Builder and 6 built-in templates (`SAMPLE_CUSTOM_STRATEGIES`).
+  - Added Worker CRUD, Live Evaluation & Bot Activation routes (`/api/trading/strategies`, `/evaluate`, `/:id`, `/:id/activate`) and integrated `bot-do.ts` autonomous execution.
+  - Added `StrategyIdePanel.tsx` to `RadarLabPage.tsx` (`Pine / Python IDE` tab) and live `Pine/Py` script drawer inside `TerminalPage.tsx` with direct `CandlestickChart.tsx` line plotting & marker overlays.
+- **Landing Page Redesign & 3D Brand Visuals**: Added generated glassmorphic 3D assets (`hero-core.png`, `ide-prism.png`, `vault-shield.png`), live scrolling ticker, interactive Desk/Simple/IDE hero switcher, Pine/Python product showcase tab, cryptographic HMAC security section, and animated CSS transitions.
+
 ## [6.2.0] - 2026-11-20
 ### Added
 - `migrations/0010_spot_futures_directions_verified_cards.sql`: Added `market_type`, `direction_mode`, and `hedge_mode` on `bot_configs`, `market_type` on `trades`, and `verified_profit_cards` table for tamper-proof HMAC-SHA256 profit cards.

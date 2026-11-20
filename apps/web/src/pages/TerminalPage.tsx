@@ -5,11 +5,14 @@ import {
   BrainCircuit,
   CandlestickChart as CandleIcon,
   CheckCircle2,
+  Code2,
   Edit3,
   Eye,
   History,
   Layers,
+  Play,
   Rocket,
+  Save,
   Scale,
   Send,
   Shield,
@@ -20,8 +23,19 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import type { Candle, Timeframe } from '@dollarino/core';
-import { CandlestickChart, type ChartLevels, type ChartOverlays, type KbosChartOverlays } from '../components/CandlestickChart';
+import {
+  SAMPLE_CUSTOM_STRATEGIES,
+  type Candle,
+  type CustomStrategyLanguage,
+  type Timeframe,
+} from '@dollarino/core';
+import {
+  CandlestickChart,
+  type ChartLevels,
+  type ChartOverlays,
+  type CustomStrategyChartOverlay,
+  type KbosChartOverlays,
+} from '../components/CandlestickChart';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { apiFetch } from '../lib/api';
@@ -49,6 +63,7 @@ interface OverviewResponse {
     ema200: Array<{ time: number; value: number }>;
   };
   kbosOverlays?: KbosChartOverlays;
+  customOverlays?: CustomStrategyChartOverlay | null;
 }
 
 interface ChartAIResult {
@@ -99,10 +114,16 @@ export function TerminalPage({
 }) {
   const isFa = lang === 'fa';
   const [tf, setTf] = useState<Timeframe>('15m');
-  const [rightIntel, setRightIntel] = useState<'ai' | 'book'>('ai');
+  const [rightIntel, setRightIntel] = useState<'ai' | 'book' | 'script'>('ai');
   const [snap, setSnap] = useState<OverviewResponse | null>(null);
   const [showEma, setShowEma] = useState(true);
   const [showKbos, setShowKbos] = useState(true);
+  const [customChartOverlay, setCustomChartOverlay] = useState<CustomStrategyChartOverlay | null>(null);
+  const [scriptLang, setScriptLang] = useState<CustomStrategyLanguage>('pine');
+  const [scriptName, setScriptName] = useState('Dollarino EMA 9/21 + RSI Momentum');
+  const [scriptCode, setScriptCode] = useState(SAMPLE_CUSTOM_STRATEGIES[0]!.code);
+  const [scriptBusy, setScriptBusy] = useState(false);
+  const [scriptFeedback, setScriptFeedback] = useState<{ ok: boolean; text: string; retPct?: number; wr?: number } | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingTradeConfirmation | null>(null);
 
   // Order ticket state
@@ -666,6 +687,13 @@ export function TerminalPage({
               </button>
               <button
                 type="button"
+                onClick={() => setRightIntel('script')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${rightIntel === 'script' || customChartOverlay ? 'btn-lime' : 'btn-ghost text-dim'}`}
+              >
+                <Code2 className="w-3 h-3" /> Pine/Py
+              </button>
+              <button
+                type="button"
                 onClick={() => void askChartAI()}
                 disabled={aiLoading}
                 className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1.5"
@@ -681,6 +709,7 @@ export function TerminalPage({
               candles={snap.candles}
               overlays={chartOverlays}
               kbosOverlays={showKbos ? snap.kbosOverlays : undefined}
+              customOverlays={customChartOverlay ?? snap.customOverlays}
               levels={chartLevels}
               height={430}
             />
@@ -691,13 +720,13 @@ export function TerminalPage({
           )}
         </div>
 
-        {/* Middle Column: Chart AI + Saved Threads vs Order Book (3 cols) */}
+        {/* Middle Column: Chart AI + Order Book + Pine/Python Script Drawer (3 cols) */}
         <div className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3 text-xs">
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-black/25 border hairline">
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-black/25 border hairline">
             <button
               type="button"
               onClick={() => setRightIntel('ai')}
-              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1.5 ${
+              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1 text-[11px] ${
                 rightIntel === 'ai' ? 'btn-gold' : 'text-dim hover:text-main'
               }`}
             >
@@ -707,12 +736,22 @@ export function TerminalPage({
             <button
               type="button"
               onClick={() => setRightIntel('book')}
-              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1.5 ${
+              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1 text-[11px] ${
                 rightIntel === 'book' ? 'btn-gold' : 'text-dim hover:text-main'
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>{isFa ? 'دفتر سفارش' : 'Order Book'}</span>
+              <span>{isFa ? 'سفارش‌ها' : 'Book'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightIntel('script')}
+              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1 text-[11px] ${
+                rightIntel === 'script' ? 'btn-gold' : 'text-dim hover:text-main'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>Pine/Py</span>
             </button>
           </div>
 
@@ -824,7 +863,7 @@ export function TerminalPage({
                 </button>
               </div>
             </div>
-          ) : (
+          ) : rightIntel === 'book' ? (
             <div className="space-y-2 flex-1">
               <div className="flex justify-between text-[11px] text-dim pb-1 border-b hairline">
                 <span>{isFa ? `اسپرد: ${snap?.spreadPct ?? '0.02'}%` : `Spread: ${snap?.spreadPct ?? '0.02'}%`}</span>
@@ -844,6 +883,151 @@ export function TerminalPage({
                     <span className="text-dim">{Number(s).toFixed(3)}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col flex-1 gap-2.5">
+              <div className="grid grid-cols-2 gap-1.5">
+                {(['pine', 'python'] as const).map((lng) => (
+                  <button
+                    key={lng}
+                    type="button"
+                    onClick={() => {
+                      setScriptLang(lng);
+                      const sample = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.language === lng);
+                      if (sample) {
+                        setScriptName(isFa ? sample.nameFa : sample.nameEn);
+                        setScriptCode(sample.code);
+                      }
+                    }}
+                    className={`py-1.5 rounded-lg text-[11px] font-black uppercase ${scriptLang === lng ? 'btn-lime' : 'btn-ghost text-dim'}`}
+                  >
+                    {lng === 'pine' ? 'Pine v5' : 'Python'}
+                  </button>
+                ))}
+              </div>
+
+              <select
+                value=""
+                onChange={(e) => {
+                  const found = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.id === e.target.value);
+                  if (found) {
+                    setScriptLang(found.language);
+                    setScriptName(isFa ? found.nameFa : found.nameEn);
+                    setScriptCode(found.code);
+                  }
+                }}
+                className="field py-1.5 px-2.5 text-[11px]"
+              >
+                <option value="">{isFa ? 'بارگذاری از کتابخانه نمونه...' : 'Load sample script...'}</option>
+                {SAMPLE_CUSTOM_STRATEGIES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {isFa ? s.nameFa : s.nameEn}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                value={scriptName}
+                onChange={(e) => setScriptName(e.target.value)}
+                placeholder={isFa ? 'نام اسکریپت' : 'Script name'}
+                className="field py-1.5 px-2.5 text-[11px] font-bold"
+              />
+
+              <textarea
+                dir="ltr"
+                spellCheck={false}
+                rows={9}
+                value={scriptCode}
+                onChange={(e) => setScriptCode(e.target.value)}
+                className="w-full rounded-xl p-2.5 font-mono text-[10px] leading-relaxed bg-[#060d20] text-[#dce8ff] border border-blue-500/30 outline-none flex-1"
+              />
+
+              {scriptFeedback && (
+                <div
+                  className={`p-2 rounded-xl text-[10px] font-bold ${
+                    scriptFeedback.ok ? 'badge-signal' : 'bg-rose-500/15 text-loss'
+                  }`}
+                >
+                  <div>{scriptFeedback.text}</div>
+                  {scriptFeedback.retPct !== undefined && (
+                    <div dir="ltr" className="font-num mt-0.5">
+                      Return: {scriptFeedback.retPct >= 0 ? '+' : ''}{scriptFeedback.retPct.toFixed(2)}% · WR: {scriptFeedback.wr?.toFixed(1)}%
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  disabled={scriptBusy}
+                  onClick={async () => {
+                    setScriptBusy(true);
+                    setScriptFeedback(null);
+                    try {
+                      const ev = await apiFetch<{
+                        valid: boolean;
+                        title: string;
+                        errors: string[];
+                        plots: CustomStrategyChartOverlay['plots'];
+                        markers: CustomStrategyChartOverlay['markers'];
+                        backtestSummary?: { metrics: { netReturnPct: number; winRatePct: number } };
+                      }>('/api/trading/strategies/evaluate', {
+                        method: 'POST',
+                        body: JSON.stringify({ language: scriptLang, code: scriptCode, symbol, timeframe: tf }),
+                      });
+                      if (ev.valid) {
+                        setCustomChartOverlay({
+                          title: ev.title || scriptName,
+                          language: scriptLang,
+                          plots: ev.plots,
+                          markers: ev.markers,
+                        });
+                        setScriptFeedback({
+                          ok: true,
+                          text: isFa ? `روی چارت اعمال شد (${ev.plots.length} خط، ${ev.markers.length} سیگنال)` : `Plotted (${ev.plots.length} lines, ${ev.markers.length} signals)`,
+                          retPct: ev.backtestSummary?.metrics.netReturnPct,
+                          wr: ev.backtestSummary?.metrics.winRatePct,
+                        });
+                      } else {
+                        setScriptFeedback({ ok: false, text: ev.errors[0] || 'Invalid script' });
+                      }
+                    } catch (err) {
+                      setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Error' });
+                    } finally {
+                      setScriptBusy(false);
+                    }
+                  }}
+                  className="btn-cobalt py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>{scriptBusy ? '...' : isFa ? 'اجرا روی چارت' : 'Plot Chart'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={scriptBusy}
+                  onClick={async () => {
+                    setScriptBusy(true);
+                    try {
+                      const saved = await apiFetch<{ strategy: { id: string } }>('/api/trading/strategies', {
+                        method: 'POST',
+                        body: JSON.stringify({ name: scriptName, language: scriptLang, code: scriptCode, timeframe: tf }),
+                      });
+                      await apiFetch(`/api/trading/strategies/${saved.strategy.id}/activate`, { method: 'POST' });
+                      setScriptFeedback({ ok: true, text: isFa ? 'ذخیره و روی ربات خودکار فعال شد' : 'Saved & deployed to auto bot' });
+                      await onRefresh();
+                    } catch (err) {
+                      setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Save failed' });
+                    } finally {
+                      setScriptBusy(false);
+                    }
+                  }}
+                  className="btn-emerald py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'فعال‌سازی ربات' : 'Deploy Bot'}</span>
+                </button>
               </div>
             </div>
           )}

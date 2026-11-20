@@ -8,6 +8,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Code2,
   Coins,
   Cpu,
   Download,
@@ -15,6 +16,7 @@ import {
   EyeOff,
   Globe,
   Layers,
+  Lock,
   Menu,
   Moon,
   Play,
@@ -25,7 +27,9 @@ import {
   Star,
   Sun,
   Target,
+  Terminal as TerminalIcon,
   Trophy,
+  Wand2,
   X,
   Zap,
 } from 'lucide-react';
@@ -79,7 +83,8 @@ export function LandingPage({
   const [demoBusy, setDemoBusy] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [hideBal, setHideBal] = useState(false);
-  const [showcaseTab, setShowcaseTab] = useState<'terminal' | 'desk' | 'chartai' | 'futures'>('terminal');
+  const [heroPreview, setHeroPreview] = useState<'desk' | 'simple' | 'ide'>('desk');
+  const [showcaseTab, setShowcaseTab] = useState<'terminal' | 'desk' | 'chartai' | 'pine' | 'futures'>('terminal');
   const [heroCoin, setHeroCoin] = useState<'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT'>('BTCUSDT');
   const [aiQuery, setAiQuery] = useState(
     isFa ? 'بهترین نقطه ورود و حد ضرر بیت‌کوین در ۱۵ دقیقه چیست؟' : 'What is the cleanest 15m BTC entry, stop-loss and targets?'
@@ -293,16 +298,35 @@ export function LandingPage({
         )}
       </header>
 
+      {/* Live Scrolling Market Ticker Bar */}
+      <div className="relative z-10 mt-3 overflow-hidden border-y hairline bg-[color:color-mix(in_srgb,var(--panel)_65%,transparent)] backdrop-blur-md py-2">
+        <div className="flex w-max animate-ticker gap-6 text-xs font-num" dir="ltr">
+          {[...liveCoins, ...liveCoins, ...liveCoins].map((c, idx) => {
+            const up = c.changePct24h >= 0;
+            return (
+              <div key={`${c.symbol}-${idx}`} className="flex items-center gap-2 px-3">
+                <CoinIcon symbol={c.symbol} size={18} />
+                <span className="font-bold text-main">{c.symbol}</span>
+                <span className="text-sub">{c.price > 0 ? `$${c.price.toLocaleString()}` : '$—'}</span>
+                <span className={`font-black ${up ? 'text-jade' : 'text-loss'}`}>
+                  {up ? '+' : ''}{c.changePct24h.toFixed(2)}%
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Main Content */}
       <main id="top" className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 space-y-20 py-10 sm:py-14">
-        {/* 1. Signature 01.zip Editorial Hero + Cobalt Live Device Mockup */}
+        {/* 1. Editorial Hero + Interactive Cobalt Live Instrument & Neural Core */}
         <section className="grid grid-cols-1 lg:grid-cols-[1.03fr_0.97fr] gap-10 xl:gap-14 items-center">
-          <div className="text-center lg:text-start">
+          <div className="text-center lg:text-start reveal-up">
             <div className="flex flex-wrap justify-center lg:justify-start gap-2 mb-6">
               {[
-                { icon: Rocket, text: isFa ? 'حالت ساده (۱۰ تا ۸۰ سال) + حرفه‌ای' : 'Simple & Pro Modes', color: 'var(--gold)' },
+                { icon: Rocket, text: isFa ? 'شروع در ۴ گام ساده + محیط Pine & Python' : '4-Step Simple + Pine/Python Pro IDE', color: 'var(--gold)' },
                 { icon: ShieldCheck, text: 'Paper · Toobit · KCEX', color: 'var(--jade)' },
-                { icon: Download, text: isFa ? 'وب · ربات و مینی‌اپ تلگرام' : 'Web · Bot · Mini App', color: 'var(--text)' },
+                { icon: Lock, text: isFa ? 'کارت سود HMAC-SHA256' : 'HMAC-Signed Profit Proof', color: 'var(--text)' },
               ].map((b) => {
                 const Icon = b.icon;
                 return (
@@ -315,35 +339,35 @@ export function LandingPage({
             </div>
 
             <p className="text-[11px] font-black tracking-[0.18em] text-dim mb-3">
-              {isFa ? 'سه موتور · یک میز · صفر حدس' : 'THREE ENGINES · ONE DESK · ZERO GUESSWORK'}
+              {isFa ? 'دو دنیا در یک پلتفرم · ساده برای همه · کوانت برای حرفه‌ای‌ها' : 'TWO WORLDS IN ONE · EFFORTLESS FOR BEGINNERS · QUANT FOR PROS'}
             </p>
 
             <h1 className="font-display font-bold tracking-tight leading-[1.16] text-[clamp(36px,7.5vw,66px)] text-main">
               {isFa ? (
                 <>
-                  شما بخوابید،
+                  شما استراحت کنید،
                   <br />
                   <span style={{ color: 'var(--gold)' }}>دلارینو </span>
-                  <span className="mark-lime">بیدار</span>
+                  <span className="mark-lime">بازار</span>
                   <br />
-                  می‌ماند.
+                  را شکار می‌کند.
                 </>
               ) : (
                 <>
-                  You sleep.
+                  You rest.
                   <br />
                   <span style={{ color: 'var(--gold)' }}>Dollarino </span>
-                  <span className="mark-lime">stays</span>
+                  <span className="mark-lime">hunts</span>
                   <br />
-                  awake.
+                  the market.
                 </>
               )}
             </h1>
 
             <p className="mt-5 text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
               {isFa
-                ? 'چه تازه‌کار باشی و بخواهی در ۳ لمس ساده ترید کنی، چه تریدر حرفه‌ای باشی و دنبال چارت AI، ۶ استراتژی کوانت، بک‌تستر ۹۰۰ کندلی و اتصال Toobit/KCEX باشی — همه چیز یکپارچه در وب، ربات و مینی‌اپ تلگرام آماده است.'
-                : 'Simple 3-tap guided trading for absolute beginners (ages 10 to 80) plus a full Pro Quant Desk with Chart AI, 6 strategies, 900-candle backtester & Toobit/KCEX integration.'}
+                ? 'در حالت ساده فقط سرمایه را مشخص کنید و در ۴ گام ربات ۲۴/۷ خود را روشن کنید تا خودکار معامله و سودسازی کند. در حالت حرفه‌ای کد Pine Script یا Python بنویسید، روی چارت زنده اجرا کنید و به صرافی‌های Toobit و KCEX متصل شوید.'
+                : 'In Simple Mode just enter your capital and follow 4 guided steps to launch a 24/7 autonomous earner. Switch to Pro Mode to author TradingView Pine Script & Python strategies directly on live charts.'}
             </p>
 
             <div className="mt-7 flex flex-wrap justify-center lg:justify-start gap-3">
@@ -389,82 +413,158 @@ export function LandingPage({
             </div>
           </div>
 
-          {/* 01.zip Cobalt Live Instrument Device Mockup */}
+          {/* Interactive Animated Live Instrument Device Mockup */}
           <div className="relative">
-            <div className="panel rounded-[28px] p-4 sm:p-5 shadow-2xl space-y-3.5 relative">
-              <div className="flex items-center justify-between text-[10px] font-black tracking-widest text-dim">
+            <div className="panel glow-card-anim rounded-[30px] p-4 sm:p-5 shadow-2xl space-y-3.5 relative">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-black tracking-widest text-dim">
                 <div className="flex items-center gap-2">
                   <DollarinoBrandMark size={24} />
-                  <span>DOLLARINO OS V6</span>
+                  <span>DOLLARINO OS V7</span>
                 </div>
-                <span className="inline-flex items-center gap-1.5 text-jade">
-                  <span className="live-dot h-2 w-2 rounded-full bg-jade" />
-                  <span>LIVE DESK</span>
-                </span>
+                <div className="ios-segmented p-0.5 text-[10px]">
+                  {[
+                    { id: 'desk' as const, l: isFa ? 'نمای زنده' : 'Desk' },
+                    { id: 'simple' as const, l: isFa ? 'حالت ساده' : 'Simple' },
+                    { id: 'ide' as const, l: 'Pine / Py' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setHeroPreview(m.id)}
+                      className={`px-2.5 py-1 rounded-full font-black transition ${heroPreview === m.id ? 'ios-pill-active' : 'text-dim'}`}
+                    >
+                      {m.l}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Signature Cobalt Wallet Card inside Device */}
-              <div
-                className="rounded-[22px] p-5 text-white relative overflow-hidden"
-                style={{ background: 'linear-gradient(135deg, #1b54f5 0%, #0d32b5 58%, #071d70 100%)' }}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold opacity-80">{isFa ? 'موجودی دمو · USD' : 'Paper Demo · USD'}</span>
-                  <button type="button" onClick={() => setHideBal((v) => !v)} className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20">
-                    {hideBal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {heroPreview === 'desk' && (
+                <>
+                  {/* Signature Cobalt Wallet Card with 3D AI Core */}
+                  <div
+                    className="rounded-[22px] p-5 text-white relative overflow-hidden"
+                    style={{ background: 'linear-gradient(135deg, #1b54f5 0%, #0d32b5 58%, #071d70 100%)' }}
+                  >
+                    <img
+                      src="/assets/hero-core.png"
+                      alt="Dollarino AI Core"
+                      className="pointer-events-none absolute -end-6 -top-8 w-44 h-44 object-contain opacity-65 mix-blend-screen animate-floaty-slow"
+                    />
+                    <div className="relative z-10">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold opacity-80">{isFa ? 'موجودی دمو · USD' : 'Paper Demo · USD'}</span>
+                        <button type="button" onClick={() => setHideBal((v) => !v)} className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20">
+                          {hideBal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular mt-1.5">
+                        {hideBal ? '••••••' : '$10,000.00'}
+                      </p>
+                      <div className="mt-3 flex items-center justify-between">
+                        <span dir="ltr" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black" style={{ background: 'var(--lime)', color: '#09111f' }}>
+                          +12.4% · Weekly
+                        </span>
+                        <span className="text-[11px] font-semibold opacity-80">{isFa ? 'آماده اسکن ۲۴/۷' : '24/7 Engine Ready'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Live Market Rows inside Device */}
+                  <div className="space-y-2">
+                    {liveCoins.slice(0, 4).map((c) => {
+                      const up = c.changePct24h >= 0;
+                      return (
+                        <button
+                          key={c.symbol}
+                          type="button"
+                          onClick={() => setHeroCoin(c.symbol === 'ETHUSDT' || c.symbol === 'SOLUSDT' ? c.symbol : 'BTCUSDT')}
+                          className="w-full rounded-2xl surface-soft px-3.5 py-2.5 flex items-center gap-3 hover:border-[var(--gold)] transition text-xs"
+                        >
+                          <CoinIcon symbol={c.symbol} size={26} />
+                          <span className="font-bold text-main w-12 text-start">{c.symbol.replace('USDT', '')}</span>
+                          <div className="flex-1 h-6">
+                            <Sparkline
+                              values={
+                                c.symbol === heroCoin && liveCandles.length >= 4
+                                  ? liveCandles.slice(-10)
+                                  : [100, 102, 101, 103, up ? 105 : 98]
+                              }
+                              height={22}
+                              color={up ? '#10d9a3' : '#ff4d6d'}
+                              fill={false}
+                            />
+                          </div>
+                          <span dir="ltr" className="font-num font-bold text-main tabular">
+                            {c.price > 0 ? `$${c.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'}
+                          </span>
+                          <span dir="ltr" className={`font-num font-bold w-14 text-end ${up ? 'text-jade' : 'text-loss'}`}>
+                            {up ? '+' : ''}{c.changePct24h.toFixed(2)}%
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {heroPreview === 'simple' && (
+                <div className="surface-soft rounded-2xl p-4 space-y-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-main">{isFa ? 'راه‌اندازی ۴ مرحله‌ای ساده' : '4-Step Auto-Bot Setup'}</span>
+                    <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{isFa ? 'بدون نیاز به دانش فنی' : 'Zero Coding'}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 text-[10px] font-bold">
+                    <div className="badge-signal rounded-xl py-2 text-center">1. $1,000</div>
+                    <div className="badge-signal rounded-xl py-2 text-center">2. Balanced</div>
+                    <div className="btn-cobalt rounded-xl py-2 text-center">3. دُرنا V1</div>
+                    <div className="surface-card rounded-xl py-2 text-center text-dim">4. Launch</div>
+                  </div>
+                  <div className="rounded-2xl bg-[#07112b] text-white p-4 space-y-2">
+                    <div className="flex justify-between text-[11px] text-white/70">
+                      <span>{isFa ? 'انتظار سود با حفاظت TP1 Risk-Free' : 'Auto 3-TP + Trailing Shield'}</span>
+                      <span className="text-jade font-bold">ACTIVE</span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-white/90">
+                      {isFa
+                        ? 'فقط مبلغ را بگذارید و تأیید بزنید؛ ربات خودکار بازار را اسکن، معامله را باز و سود را برداشت می‌کند.'
+                        : 'Allocate funds once and let your bot scan all 807 markets 24/7 automatically.'}
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => void triggerDemo()} className="btn-lime w-full py-3 rounded-xl font-black">
+                    {isFa ? 'تست رایگان همین حالا' : 'Try Guided Setup Free'}
                   </button>
                 </div>
-                <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular mt-1.5">
-                  {hideBal ? '••••••' : '$10,000.00'}
-                </p>
-                <div className="mt-3 flex items-center justify-between">
-                  <span dir="ltr" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black" style={{ background: 'var(--lime)', color: '#09111f' }}>
-                    +12.4% · Weekly
-                  </span>
-                  <span className="text-[11px] font-semibold opacity-80">{isFa ? 'آماده اسکن زنده' : 'Live Desk Ready'}</span>
-                </div>
-              </div>
+              )}
 
-              {/* Live Market Rows inside Device */}
-              <div className="space-y-2">
-                {liveCoins.slice(0, 4).map((c) => {
-                  const up = c.changePct24h >= 0;
-                  return (
-                    <button
-                      key={c.symbol}
-                      type="button"
-                      onClick={() => setHeroCoin((c.symbol === 'ETHUSDT' || c.symbol === 'SOLUSDT' ? c.symbol : 'BTCUSDT'))}
-                      className="w-full rounded-2xl surface-soft px-3.5 py-2.5 flex items-center gap-3 hover:border-[var(--gold)] transition text-xs"
-                    >
-                      <CoinIcon symbol={c.symbol} size={26} />
-                      <span className="font-bold text-main w-12 text-start">{c.symbol.replace('USDT', '')}</span>
-                      <div className="flex-1 h-6">
-                        <Sparkline
-                          values={
-                            c.symbol === heroCoin && liveCandles.length >= 4
-                              ? liveCandles.slice(-10)
-                              : [100, 102, 101, 103, up ? 105 : 98]
-                          }
-                          height={22}
-                          color={up ? '#10d9a3' : '#ff4d6d'}
-                          fill={false}
-                        />
-                      </div>
-                      <span dir="ltr" className="font-num font-bold text-main tabular">
-                        {c.price > 0 ? `$${c.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'}
-                      </span>
-                      <span dir="ltr" className={`font-num font-bold w-14 text-end ${up ? 'text-jade' : 'text-loss'}`}>
-                        {up ? '+' : ''}{c.changePct24h.toFixed(2)}%
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              {heroPreview === 'ide' && (
+                <div className="surface-soft rounded-2xl p-4 space-y-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-main flex items-center gap-1.5">
+                      <Code2 className="w-4 h-4 text-jade" />
+                      <span>Pine Script v5 · Python Quant</span>
+                    </span>
+                    <img src="/assets/ide-prism.png" alt="Quant Prism" className="w-9 h-9 rounded-lg object-cover" />
+                  </div>
+                  <pre dir="ltr" className="rounded-xl bg-[#050c20] text-[#93c5fd] p-3 font-mono text-[10px] leading-relaxed overflow-x-auto">
+{`//@version=5
+strategy("Dollarino EMA 9/21", overlay=true)
+fast = ta.ema(close, 9)
+slow = ta.ema(close, 21)
+plot(fast, "EMA 9", color=color.aqua)
+strategy.entry("L", strategy.long,
+  when=ta.crossover(fast, slow))`}
+                  </pre>
+                  <button type="button" onClick={() => void triggerDemo()} className="btn-cobalt w-full py-2.5 rounded-xl font-black">
+                    {isFa ? 'باز کردن Pine / Python IDE زنده' : 'Open Live Strategy IDE'}
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center justify-between pt-1 text-[10px] font-black text-dim">
                 <span>LIVE DESK · 807 PAIRS</span>
                 <span className="px-2.5 py-1 rounded-full" style={{ background: 'var(--lime)', color: '#09111f' }}>
-                  {isFa ? '۳ موتور فعال' : '3 ENGINES'}
+                  {isFa ? 'اسپات + فیوچرز + Pine/Py' : 'SPOT · FUTURES · IDE'}
                 </span>
               </div>
             </div>
@@ -482,16 +582,16 @@ export function LandingPage({
           </div>
         </section>
 
-        {/* 4 Big Metric Cards (01.zip) */}
+        {/* 4 Big Metric Cards (Animated Pop) */}
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             ['807+', isFa ? 'جفت‌ارز زنده' : 'Live Perpetuals'],
             ['20', isFa ? 'معامله همزمان' : 'Parallel Trades'],
-            ['24/7', isFa ? 'اسکن و اجرای خودکار' : 'Autonomous Desk'],
+            ['Pine + Py', isFa ? 'کدنویسی روی چارت' : 'Live Script IDE'],
             ['50×', isFa ? 'سقف اهرم آزاد' : 'Max Leverage'],
           ].map(([v, l]) => (
-            <div key={l} className="panel rounded-3xl py-5 px-4 text-center">
-              <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular" style={{ color: 'var(--gold)' }}>
+            <div key={l} className="panel panel-hover rounded-3xl py-5 px-4 text-center">
+              <p dir="ltr" className="font-display font-bold text-2xl sm:text-4xl tabular" style={{ color: 'var(--gold)' }}>
                 {v}
               </p>
               <p className="text-xs font-bold text-dim mt-1">{l}</p>
@@ -499,7 +599,7 @@ export function LandingPage({
           ))}
         </section>
 
-        {/* 2. Interactive TimeTrade + Dollarino Product Tour */}
+        {/* 2. Interactive Product Tour */}
         <section id="showcase" className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
             <div>
@@ -507,16 +607,17 @@ export function LandingPage({
                 {isFa ? 'همه‌چیز، یک‌جا — پایانه و ابزارهای هوشمند' : 'EVERYTHING IN ONE WORKSPACE'}
               </p>
               <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-                {isFa ? 'تور زنده پایانه حرفه‌ای، ربات و چارت AI' : 'Pro Terminal, Autonomous Agents & Chart AI'}
+                {isFa ? 'تور زنده پایانه، ربات ۴ مرحله‌ای، چارت AI و Pine/Python' : 'Pro Terminal, 4-Step Auto-Bot, Chart AI & Pine/Python IDE'}
               </h2>
             </div>
 
             <div className="inline-flex p-1 panel rounded-full overflow-x-auto no-scrollbar">
               {[
-                { id: 'terminal' as const, icon: CandleIcon, l: isFa ? 'پایانه و چارت AI' : 'Pro Terminal' },
-                { id: 'desk' as const, icon: Cpu, l: isFa ? '۰۱ ربات و سپر ریسک' : '01 Agent & Risk' },
+                { id: 'terminal' as const, icon: CandleIcon, l: isFa ? 'پایانه و چارت' : 'Terminal' },
+                { id: 'desk' as const, icon: Cpu, l: isFa ? '۰۱ ربات و سپر ریسک' : '01 Auto Bot' },
                 { id: 'chartai' as const, icon: BrainCircuit, l: isFa ? '۰۲ دستیار چارت AI' : '02 Chart AI' },
-                { id: 'futures' as const, icon: Coins, l: isFa ? '۰۳ بازار فیوچرز' : '03 Perpetuals' },
+                { id: 'pine' as const, icon: Code2, l: isFa ? '۰۳ کدنویسی Pine/Py' : '03 Pine & Py' },
+                { id: 'futures' as const, icon: Coins, l: isFa ? '۰۴ بازار فیوچرز' : '04 Markets' },
               ].map((t) => {
                 const Icon = t.icon;
                 return (
@@ -636,6 +737,40 @@ export function LandingPage({
               </div>
             )}
 
+            {showcaseTab === 'pine' && (
+              <div className="grid md:grid-cols-[1.2fr_0.8fr] gap-6 items-center">
+                <div className="space-y-3">
+                  <span className="text-[10px] font-black tracking-widest text-jade">
+                    03 · PINE SCRIPT V5 & PYTHON QUANT IDE
+                  </span>
+                  <h3 className="font-display font-bold text-2xl text-main">
+                    {isFa ? 'کد تریدینگ‌ویو و پایتون را مستقیم روی چارت زنده اجرا کن' : 'Paste Pine Script or Python — Trade Live Off Your Code'}
+                  </h3>
+                  <p className="text-xs text-dim leading-relaxed">
+                    {isFa
+                      ? 'پشتیبانی از ta.ema، ta.sma، ta.bb، ta.supertrend، ta.rsi، plot() و strategy.entry بدون نیاز به سرور خارجی؛ رسم خطوط روی چارت، بک‌تست لحظه‌ای و فعال‌سازی ربات ۲۴/۷ با یک کلیک.'
+                      : 'Native parser for ta.ema, ta.bb, ta.supertrend, ta.rsi, plot() & strategy.entry — instant live chart plots, Sharpe/DD backtesting, and 1-click autonomous deployment.'}
+                  </p>
+                  <pre dir="ltr" className="rounded-2xl bg-[#050c20] border border-blue-500/25 p-3.5 font-mono text-[11px] text-[#a5f3fc] overflow-x-auto">
+{`# Python or Pine Script v5
+def generate_signals(df):
+    bb_mid, upper, lower = ta.bbands(df['close'], 20, 2.0)
+    plot("BB Upper", upper, "#ff4d6d")
+    df.loc[crossover(df['close'], lower), 'signal'] = 1`}
+                  </pre>
+                </div>
+                <div className="panel rounded-3xl p-5 flex flex-col items-center text-center gap-3 glow-card-anim">
+                  <img src="/assets/ide-prism.png" alt="Dollarino Pine & Python Engine" className="w-40 h-40 object-contain rounded-2xl animate-floaty" />
+                  <p className="text-xs font-bold text-main">
+                    {isFa ? '۶ قالب آماده Pine و Python + سازنده بصری بدون کد' : '6 Ready Templates + Visual Rule Builder'}
+                  </p>
+                  <button type="button" onClick={() => void triggerDemo()} className="btn-lime w-full py-2.5 rounded-xl text-xs font-black">
+                    {isFa ? 'ساخت استراتژی اختصاصی' : 'Launch Strategy IDE'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {showcaseTab === 'futures' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -694,9 +829,9 @@ export function LandingPage({
               },
               {
                 art: <ModeGraphicCodex />,
-                code: 'DORNA V1 & KBOS',
-                title: isFa ? 'استراتژی‌های دُرنا V1، KBOS و SP2L' : 'Dorna V1, KBOS & SP2L Playbook',
-                desc: isFa ? 'روند، مومنتوم، شکار نقدینگی و ریبون غیرریپینت؛ به همراه بک‌تست تاریخی و جدول حرارتی ماهانه.' : 'Non-repaint trend & liquidity sweep engines with full historical backtesting.',
+                code: 'PINE · PYTHON · KBOS',
+                title: isFa ? 'استراتژی‌های دُرنا، Pine Script و Python' : 'Dorna V1, Pine Script & Python IDE',
+                desc: isFa ? '۶ استراتژی کوانت آماده به همراه محیط کدنویسی Pine Script v5 و Python با رسم مستقیم روی چارت و بک‌تستر ۹۰۰ کندلی.' : 'Built-in quant engines plus live Pine Script v5 & Python IDE with 900-bar backtesting.',
                 c: '#10d9a3',
               },
               {
@@ -707,7 +842,7 @@ export function LandingPage({
                 c: '#ff8a00',
               },
             ].map((e) => (
-              <div key={e.code} className="panel panel-hover rounded-[26px] p-5 space-y-4">
+              <div key={e.code} className="panel panel-hover glow-card-anim rounded-[26px] p-5 space-y-4">
                 {e.art}
                 <div className="flex items-center justify-between">
                   <span dir="ltr" className="text-[10px] font-black px-2.5 py-1 rounded-full" style={{ background: `${e.c}20`, color: e.c }}>
@@ -718,6 +853,43 @@ export function LandingPage({
                 <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* 3B. Cryptographic Security Vault & Server HMAC Verified Profit Cards */}
+        <section className="panel glow-card-anim rounded-[30px] p-6 sm:p-8 grid md:grid-cols-[0.85fr_1.15fr] gap-8 items-center">
+          <div className="flex justify-center">
+            <img
+              src="/assets/vault-shield.png"
+              alt="Dollarino Vault Security"
+              className="w-52 h-52 object-contain rounded-3xl animate-floaty-slow"
+            />
+          </div>
+          <div className="space-y-4">
+            <span className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[10px] font-black">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>ZERO-TRUST SECURITY · HMAC-SHA256 PROOF</span>
+            </span>
+            <h2 className="font-display font-bold text-2xl sm:text-3xl text-main">
+              {isFa ? 'امنیت بانکی کلیدها + کارت سود غیرقابل جعل' : 'Bank-Grade Key Vault + Tamper-Proof Profit Cards'}
+            </h2>
+            <p className="text-xs sm:text-sm text-dim leading-relaxed">
+              {isFa
+                ? 'تمامی کلیدهای صرافی Toobit و KCEX با الگوریتم AES-256-GCM رمزنگاری می‌شوند و فقط دسترسی معامله دارند (برداشت غیرممکن). علاوه بر این، هر کارت سود هفتگی شما با امضای دیجیتال سرور HMAC-SHA256 و لینک QR عمومی تایید می‌شود تا هیچ‌کس نتواند آمار ساختگی بسازد.'
+                : 'Exchange keys are AES-256-GCM encrypted with strict trade-only permissions. Every Profit Card is cryptographically HMAC-SHA256 signed by the server with an instant public QR verifier.'}
+            </p>
+            <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
+              {[
+                [isFa ? 'رمزنگاری AES-256' : 'AES-256 Vault', isFa ? 'حافظه ایزوله سرور' : 'Encrypted at rest'],
+                [isFa ? 'بدون مجوز برداشت' : 'Zero Withdrawal', isFa ? 'سرمایه در صرافی خودت' : 'Funds stay on exchange'],
+                [isFa ? 'اثبات HMAC + QR' : 'HMAC + QR Verify', isFa ? 'استعلام لحظه‌ای اصالت' : 'Public anti-fake proof'],
+              ].map(([t, s]) => (
+                <div key={t} className="surface-soft rounded-2xl p-3">
+                  <p className="font-black text-main">{t}</p>
+                  <p className="text-[11px] text-dim mt-0.5">{s}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

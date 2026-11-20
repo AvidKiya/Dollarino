@@ -39,11 +39,26 @@ export interface ChartOverlays {
   ema200?: IndicatorPoint[];
 }
 
+export interface CustomStrategyChartOverlay {
+  id?: string;
+  title: string;
+  language?: 'pine' | 'python' | 'visual';
+  plots: Array<{ title: string; color: string; overlay: boolean; points: IndicatorPoint[] }>;
+  markers: Array<{
+    time: number;
+    position: 'belowBar' | 'aboveBar';
+    color: string;
+    shape: 'arrowUp' | 'arrowDown';
+    text: string;
+  }>;
+}
+
 export function CandlestickChart({
   candles,
   levels,
   overlays,
   kbosOverlays,
+  customOverlays,
   showVolume = true,
   height = 420,
 }: {
@@ -51,6 +66,7 @@ export function CandlestickChart({
   levels?: ChartLevels;
   overlays?: ChartOverlays;
   kbosOverlays?: KbosChartOverlays;
+  customOverlays?: CustomStrategyChartOverlay | null;
   showVolume?: boolean;
   height?: number;
 }) {
@@ -62,6 +78,7 @@ export function CandlestickChart({
   const [showDemaAtr, setShowDemaAtr] = useState(true);
   const [showAlmaRibbon, setShowAlmaRibbon] = useState(true);
   const [showEmas, setShowEmas] = useState(false);
+  const [showCustomOverlay, setShowCustomOverlay] = useState(true);
   const [showMarkers, setShowMarkers] = useState(true);
 
   useEffect(() => {
@@ -149,9 +166,13 @@ export function CandlestickChart({
         );
       }
 
-      if (showMarkers && kbosOverlays?.markers?.length) {
+      if (showMarkers && ((showCustomOverlay && customOverlays?.markers?.length) || kbosOverlays?.markers?.length)) {
+        const rawMarkers =
+          showCustomOverlay && customOverlays?.markers?.length
+            ? customOverlays.markers
+            : kbosOverlays?.markers ?? [];
         const markers: SeriesMarker<Time>[] = dedupAsc(
-          kbosOverlays.markers.map((m) => ({
+          rawMarkers.map((m) => ({
             time: m.time as Time,
             position: m.position,
             color: m.color,
@@ -163,6 +184,19 @@ export function CandlestickChart({
       }
 
       chart.timeScale().fitContent();
+    }
+
+    if (showCustomOverlay && customOverlays?.plots?.length) {
+      for (const pl of customOverlays.plots) {
+        if (!pl.points.length) continue;
+        const cs = chart.addLineSeries({
+          color: pl.color || '#38e1ff',
+          lineWidth: 2,
+          priceLineVisible: false,
+          title: pl.title,
+        });
+        cs.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value }))));
+      }
     }
 
     if (showEmas || (!kbosOverlays && overlays)) {
@@ -232,12 +266,21 @@ export function CandlestickChart({
       ro.disconnect();
       try { chart.remove(); } catch { /* ignore */ }
     };
-  }, [candles, levels, overlays, kbosOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showMarkers, isLight]);
+  }, [candles, levels, overlays, kbosOverlays, customOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showCustomOverlay, showMarkers, isLight]);
 
   return (
     <div className="space-y-2">
-      {kbosOverlays && (
+      {(kbosOverlays || customOverlays) && (
         <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+          {customOverlays && (
+            <button
+              type="button"
+              onClick={() => setShowCustomOverlay((v) => !v)}
+              className={`px-2.5 py-1 rounded-lg border font-bold transition ${showCustomOverlay ? 'btn-lime' : 'surface-soft text-dim'}`}
+            >
+              {customOverlays.language ? `${customOverlays.language.toUpperCase()} · ` : ''}{customOverlays.title}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowKbosHtf((v) => !v)}

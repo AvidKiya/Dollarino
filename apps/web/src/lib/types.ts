@@ -159,6 +159,7 @@ export interface DashboardPayload {
     macro_blackout?: number;
     use_signal_leverage?: number;
     notifications_enabled?: number;
+    active_custom_strategy_id?: string | null;
   };
   balance: { free: string; used: string; total: string; currency: string };
   activeExchange: { provider: string; label: string };
