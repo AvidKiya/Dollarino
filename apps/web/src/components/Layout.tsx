@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   ArrowDownRight,
   ArrowUpRight,
-  BarChart3,
   Bell,
   Bot,
+  BrainCircuit,
   CandlestickChart,
   CircleHelp,
   Command,
@@ -22,7 +22,6 @@ import {
   Power,
   Radar,
   Rocket,
-  RotateCcw,
   Search,
   Shield,
   Sparkles,
@@ -54,32 +53,34 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 }
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
-  { id: 'overview', labelFa: 'خانه و ربات من', labelEn: 'Home & Bot', icon: Home },
-  { id: 'markets', labelFa: 'بازار ارزها', labelEn: 'Coins & Prices', icon: BarChart3 },
-  { id: 'terminal', labelFa: 'معامله آسان', labelEn: 'Easy Trade', icon: Zap },
+  { id: 'overview', labelFa: 'ترید هوشمند اتومات AI', labelEn: 'Automated AI Trading', icon: Home },
+  { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
+  { id: 'copy', labelFa: 'کپی‌ترید تاییدشده', labelEn: 'Copy Trade', icon: Users },
   { id: 'portfolio', labelFa: 'کیف پول و سودها', labelEn: 'Wallet & Profit', icon: Wallet },
-  { id: 'services', labelFa: 'خدمات و ابزارها', labelEn: 'Services Hub', icon: LayoutGrid },
-  { id: 'pricing', labelFa: 'اشتراک و پشتیبانی', labelEn: 'Plans & Help', icon: CreditCard },
-  { id: 'faq', labelFa: 'راهنمای ساده', labelEn: 'Simple Guide', icon: CircleHelp },
+  { id: 'services', labelFa: 'سرویس‌ها و اشتراک', labelEn: 'Services & Plans', icon: LayoutGrid },
+  { id: 'pricing', labelFa: 'خرید و تمدید اشتراک', labelEn: 'Subscriptions', icon: CreditCard },
+  { id: 'faq', labelFa: 'راهنمای استفاده', labelEn: 'User Guide', icon: CircleHelp },
 ];
 
 const MAIN_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', labelFa: 'نمای کلی', labelEn: 'Overview', icon: LayoutDashboard },
+  { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'terminal', labelFa: 'پایانه و چارت AI', labelEn: 'Terminal & Chart AI', icon: CandlestickChart },
   { id: 'markets', labelFa: 'بازارهای فیوچرز', labelEn: 'Markets', icon: Globe },
-  { id: 'radar', labelFa: 'رادار و آزمایشگاه', labelEn: 'Radar & Lab', icon: Radar },
-  { id: 'copy', labelFa: 'کپی‌ترید و اتصالات', labelEn: 'Copy & Connect', icon: Users },
+  { id: 'radar', labelFa: 'رادار و استراتژی شخصی', labelEn: 'Radar & Custom IDE', icon: Radar },
+  { id: 'copy', labelFa: 'کپی‌ترید تاییدشده و API', labelEn: 'Copy Trade & API', icon: Users },
   { id: 'portfolio', labelFa: 'پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
   { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
 ];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
-  { id: 'pricing', labelFa: 'تعرفه‌ها و اشتراک', labelEn: 'Pricing', icon: CreditCard },
+  { id: 'pricing', labelFa: 'اشتراک‌ها و کد هدیه', labelEn: 'Subscriptions', icon: CreditCard },
   { id: 'faq', labelFa: 'راهنما و سوالات', labelEn: 'FAQ & Guide', icon: CircleHelp },
 ];
 
 export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
+  if (id === 'myai') return isFa ? 'هوش مصنوعی من' : 'My AI Agent';
   if (id === 'services') return isFa ? 'خدمات' : 'Services';
   if (id === 'card') return isFa ? 'کارت هفتگی' : 'Weekly Card';
   if (id === 'admin') return isFa ? 'مدیریت' : 'Admin';
@@ -425,10 +426,10 @@ export function Layout({
   recentSignalsCount = 0,
   onStartStop,
   onKillSwitch,
-  onResetDemo,
   onSelectSymbolForTerminal,
   onRefresh,
   onGoLanding,
+  onOpenSupport,
   onLogout,
   children,
 }: {
@@ -455,10 +456,12 @@ export function Layout({
   onSelectSymbolForTerminal?: (sym: string) => void;
   onRefresh?: () => Promise<void>;
   onGoLanding?: () => void;
+  onOpenSupport?: () => void;
   onLogout: () => Promise<void>;
   children: ReactNode;
 }) {
   const isFa = lang === 'fa';
+  void activeExchangeLabel;
   const isRunning = botState.startsWith('RUNNING');
   const isAdmin = user.role.toUpperCase() === 'ADMIN' || user.role.toUpperCase() === 'OWNER';
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -849,19 +852,11 @@ export function Layout({
             </p>
           </div>
           <p className="text-[10px] text-dim truncate">
-            {entitlement?.hasPaidPlan ? (
-              `${isFa ? entitlement.planNameFa : entitlement.planNameEn}`
-            ) : tradingMode === 'PAPER' ? (
-              isFa ? (
-                <>
-                  حساب دمو (<span dir="ltr" className="inline-block font-num">$10,000</span> رایگان)
-                </>
-              ) : (
-                'Paper Demo ($10,000 Free)'
-              )
-            ) : (
-              activeExchangeLabel
-            )}
+            {entitlement?.hasPaidPlan
+              ? `${isFa ? entitlement.planNameFa : entitlement.planNameEn}`
+              : isFa
+                ? 'نیازمند اشتراک فعال'
+                : 'Subscription Required'}
           </p>
           <button
             type="button"
@@ -894,18 +889,10 @@ export function Layout({
         )}
 
         <div className="flex items-center justify-between text-[11px] font-semibold text-dim px-1">
-          {onResetDemo && tradingMode === 'PAPER' ? (
-            <button type="button" onClick={() => void onResetDemo()} className="inline-flex items-center gap-1 hover:text-main transition">
-              <RotateCcw className="w-3 h-3" />
-              <span>
-                {isFa ? (
-                  <>
-                    ریست <span dir="ltr" className="inline-block font-num">$10k</span>
-                  </>
-                ) : (
-                  'Reset $10k'
-                )}
-              </span>
+          {onOpenSupport ? (
+            <button type="button" onClick={onOpenSupport} className="inline-flex items-center gap-1 hover:text-main transition">
+              <Headphones className="w-3 h-3 text-jade" />
+              <span>{isFa ? 'پشتیبانی آنلاین' : 'Support'}</span>
             </button>
           ) : (
             <span className="truncate">{user.username}</span>
@@ -995,12 +982,13 @@ export function Layout({
 
                 <button
                   type="button"
-                  onClick={() => selectTab('faq')}
-                  aria-label={isFa ? 'پشتیبانی و راهنما' : 'Support & Guide'}
-                  title={isFa ? 'پشتیبانی و راهنما' : 'Support & Guide'}
-                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition"
+                  onClick={() => (onOpenSupport ? onOpenSupport() : selectTab('faq'))}
+                  aria-label={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
+                  title={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
+                  className="relative h-7 px-2 sm:h-8 sm:px-2.5 inline-flex items-center gap-1 rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition text-[11px] font-bold text-main"
                 >
-                  <Headphones className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-main" />
+                  <Headphones className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-jade shrink-0" />
+                  <span className="hidden sm:inline">{isFa ? 'پشتیبانی' : 'Support'}</span>
                   <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)]" />
                 </button>
 

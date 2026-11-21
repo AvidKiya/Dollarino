@@ -140,7 +140,7 @@ export function PortfolioPage({
 
   const resetDemo = async () => {
     await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
-    setNotice(isFa ? 'حساب دمو به $۱۰,۰۰۰ بازنشانی شد' : 'Paper balance reset to $10,000');
+    setNotice(isFa ? 'موجودی شبیه‌ساز به $۱۰,۰۰۰ بازنشانی شد' : 'Simulation balance reset to $10,000');
     await onRefresh();
     if (ledgerTab === 'wallet') {
       void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
@@ -190,7 +190,7 @@ export function PortfolioPage({
 
         <div className="relative z-10 flex items-center justify-between gap-2">
           <span className="px-3 py-1 rounded-full bg-white/15 text-[11px] font-black">
-            {data.config.trading_mode === 'PAPER' ? (isFa ? 'کیف پول دمو' : 'PAPER WALLET') : isFa ? 'کیف پول واقعی' : 'LIVE WALLET'}
+            {data.config.trading_mode === 'PAPER' ? (isFa ? 'حساب شبیه‌ساز' : 'SIMULATED WALLET') : isFa ? 'کیف پول واقعی' : 'LIVE WALLET'}
           </span>
           <div className="flex items-center gap-1.5">
             <button

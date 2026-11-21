@@ -1,5 +1,29 @@
 export type ReplyKeyboardButton = { text: string; web_app?: { url: string } };
-export type InlineKeyboardButton = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
+export type InlineKeyboardButton = {
+  text: string;
+  callback_data?: string;
+  url?: string;
+  web_app?: { url: string };
+  style?: 'primary' | 'success' | 'danger';
+};
+
+function stripButtonStyles(markup: unknown): unknown {
+  if (!markup || typeof markup !== 'object') return markup;
+  const obj = markup as Record<string, unknown>;
+  if (!Array.isArray(obj.inline_keyboard)) return markup;
+  return {
+    ...obj,
+    inline_keyboard: obj.inline_keyboard.map((row) =>
+      Array.isArray(row)
+        ? row.map((btn) => {
+            if (!btn || typeof btn !== 'object') return btn;
+            const { style: _style, ...rest } = btn as Record<string, unknown>;
+            return rest;
+          })
+        : row
+    ),
+  };
+}
 
 export class TelegramBotClient {
   constructor(private token: string) {}
@@ -12,6 +36,19 @@ export class TelegramBotClient {
       signal: AbortSignal.timeout(12_000),
     });
     const json = await res.json() as { ok: boolean; result?: T; description?: string };
+    if (!json.ok && body.reply_markup && /style|button|markup|field/i.test(json.description ?? '')) {
+      const retryRes = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, reply_markup: stripButtonStyles(body.reply_markup) }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      const retryJson = await retryRes.json() as { ok: boolean; result?: T; description?: string };
+      if (!retryJson.ok) {
+        throw new Error(`Telegram ${method} failed: ${retryJson.description ?? retryRes.status}`);
+      }
+      return retryJson.result as T;
+    }
     if (!json.ok) {
       throw new Error(`Telegram ${method} failed: ${json.description ?? res.status}`);
     }

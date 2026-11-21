@@ -373,4 +373,69 @@ describe('Dollarino Telegram Bot Full Spec & Admin Suite', () => {
     });
     expect(lossCard).toContain('ضرر هم جزئی از بازار🥲');
   });
+
+  it('enforces paid-only gating, collapsible colored inline menus, My AI training, and unified Online Support', async () => {
+    const env = makeEnv();
+
+    // Unpaid user gets subscription gate on bot toggle
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 40,
+      message: { message_id: 60, from: { id: 2002002, first_name: 'سارا' }, chat: { id: 2002002, type: 'private' }, text: '/start' },
+    });
+    expect(JSON.stringify(tgCalls[1]?.body.reply_markup)).toContain('"style":"primary"');
+
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 41,
+      callback_query: { id: 'cq_acc', from: { id: 2002002 }, message: { chat: { id: 2002002 }, message_id: 61 }, data: 'tg_acc:ai' },
+    });
+    const accEdit = tgCalls.find((c) => c.method === 'editMessageText');
+    expect(JSON.stringify(accEdit?.body.reply_markup)).toContain('آموزش به هوش مصنوعی من');
+
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 42,
+      callback_query: { id: 'cq_gate', from: { id: 2002002 }, message: { chat: { id: 2002002 }, message_id: 61 }, data: 'tg_mode_simple_ai' },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('تعرفه‌های فعال'))).toBe(true);
+
+    // Train Personal Raw AI ("هوش مصنوعی من")
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 43,
+      callback_query: { id: 'cq_myai', from: { id: 2002002 }, message: { chat: { id: 2002002 }, message_id: 61 }, data: 'tg_myai_train' },
+    });
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 44,
+      message: { message_id: 62, from: { id: 2002002 }, chat: { id: 2002002, type: 'private' }, text: 'تایم 15m با RSI زیر 35 و EMA 9/21 فقط BTC و ETH حد ضرر 2% حد سود 5%' },
+    });
+    expect(tgCalls[0]?.body.text).toContain('یاد گرفتم');
+    const aiRow = await db.prepare(`SELECT system_rules_json FROM user_ai_agents uaa JOIN users u ON u.id = uaa.user_id WHERE u.telegram_id = '2002002'`).first<{ system_rules_json: string }>();
+    expect(aiRow?.system_rules_json).toContain('"BTCUSDT"');
+
+    // Online Support -> Admin reply synced back
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 45,
+      message: { message_id: 63, from: { id: 2002002 }, chat: { id: 2002002, type: 'private' }, text: '💬 پشتیبانی آنلاین' },
+    });
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 46,
+      message: { message_id: 64, from: { id: 2002002 }, chat: { id: 2002002, type: 'private' }, text: 'سلام اشتراک ماهانه چطور فعال کنم؟' },
+    });
+    const tkt = await db.prepare(`SELECT id FROM support_tickets ORDER BY created_at DESC LIMIT 1`).first<{ id: string }>();
+    expect(tkt?.id).toBeTruthy();
+
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 47,
+      callback_query: { id: 'cq_sup_rep', from: { id: 944021185 }, message: { chat: { id: 944021185 }, message_id: 70 }, data: `adm:sup_reply:${tkt!.id}` },
+    });
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 48,
+      message: { message_id: 71, from: { id: 944021185 }, chat: { id: 944021185, type: 'private' }, text: 'از منوی خرید اشتراک پلن را انتخاب کنید.' },
+    });
+    expect(tgCalls.some((c) => String(c.body.chat_id) === '2002002' && String(c.body.text).includes('پاسخ پشتیبانی آنلاین'))).toBe(true);
+  });
 });

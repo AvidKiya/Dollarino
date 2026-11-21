@@ -5,6 +5,7 @@ import { encryptVaultJson, hashPassword, maskSecret, randomId } from '../crypto.
 import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
+import { DEFAULT_TRAINED_RULES, extractRulesFromConversation, type TrainedAIRules } from '../routes/my-ai.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import {
   getSystemSetting,
@@ -17,6 +18,7 @@ import {
 } from './admin-menu.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import {
+  type CollapsibleMenuSection,
   exchangeSelectionKeyboard,
   formatAccountCard,
   formatBalanceCard,
@@ -280,9 +282,9 @@ async function showSubscriptionMenu(env: Env, bot: TelegramBotClient, chatId: st
     `\n\nپلن مورد نظر را برای دریافت فاکتور TRC20 یا پرداخت با کیف پول انتخاب کنید:`;
 
   const kb: InlineKeyboardButton[][] = [
-    planRows.slice(0, 2).map((p) => ({ text: `${p.name_fa} (${p.price_usd}$)`, callback_data: `sub_buy:${p.code}` })),
+    planRows.slice(0, 2).map((p) => ({ text: `${p.name_fa} (${p.price_usd}$)`, callback_data: `sub_buy:${p.code}`, style: 'success' as const })),
     ...(planRows.length > 2
-      ? [planRows.slice(2, 4).map((p) => ({ text: `${p.name_fa} (${p.price_usd}$)`, callback_data: `sub_buy:${p.code}` }))]
+      ? [planRows.slice(2, 4).map((p) => ({ text: `${p.name_fa} (${p.price_usd}$)`, callback_data: `sub_buy:${p.code}`, style: 'primary' as const }))]
       : []),
     [{ text: '🎁 اعمال کد هدیه / تخفیف', callback_data: 'sub_gift' }],
   ];
@@ -632,6 +634,18 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data.startsWith('manual_trade:')) {
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: tgId,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        await bot.answerCallbackQuery(cq.id, '💎 برای اجرای معامله، اشتراک فعال لازم است.', true);
+        await showSubscriptionMenu(env, bot, chatId, user, tgId);
+        return { ok: true };
+      }
       const sigId = data.split(':')[1]!;
       if (msgId) {
         await bot.editMessageText(
@@ -720,6 +734,20 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data === 'toggle_auto_on' || data === 'toggle_auto_off') {
+      if (data === 'toggle_auto_on') {
+        const ent = await resolveUserEntitlement(env.DB, {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          role: (user.role as AuthUser['role']) || 'user',
+          telegramId: tgId,
+        });
+        if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+          await bot.answerCallbackQuery(cq.id, 'برای روشن کردن اتوترید، اشتراک فعال لازم است.', true);
+          await showSubscriptionMenu(env, bot, chatId, user, tgId);
+          return { ok: true };
+        }
+      }
       const curCfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
       const nextState = data === 'toggle_auto_on' ? (curCfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER') : 'STOPPED';
       await env.DB.prepare(
@@ -741,10 +769,189 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data.startsWith('tg_acc:')) {
+      const sec = (data.slice('tg_acc:'.length) || 'none') as CollapsibleMenuSection;
+      const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
+      const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+      await bot.answerCallbackQuery(cq.id);
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          `🎛 منوی شیشه‌ای سریع دلارینو:\nبخش دلخواه را باز یا بسته کنید:`,
+          miniAppInlineKeyboard(webAppUrl, '', sec, isRunning)
+        ).catch(() => {});
+      }
+      return { ok: true };
+    }
+
+    if (data === 'tg_mode_simple_ai') {
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: tgId,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        await bot.answerCallbackQuery(cq.id, 'برای ترید هوشمند اتومات، اشتراک لازم است 💎', true);
+        await showSubscriptionMenu(env, bot, chatId, user, tgId);
+        return { ok: true };
+      }
+      const cfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
+      const nextState = cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+      await env.DB.prepare(
+        `UPDATE bot_configs SET strategy_key = 'ai_autonomous_agent', trade_execution_mode = 'AUTO', bot_state = ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(nextState, user.id).run();
+      const doStub = env.TRADING_BOT_DO.get(env.TRADING_BOT_DO.idFromName('global-coordinator'));
+      await doStub.fetch('https://do/start').catch(() => {});
+      await doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+      await bot.answerCallbackQuery(cq.id, 'ترید هوشمند اتومات روشن شد ✅');
+      await bot.sendMessage(chatId, '🤖 حالت ساده (ترید هوشمند کاملاً اتومات با هوش مصنوعی) با موفقیت روشن شد و بازار را رصد می‌کند!');
+      return { ok: true };
+    }
+
+    if (data === 'tg_myai') {
+      await bot.answerCallbackQuery(cq.id);
+      let ag = await env.DB.prepare(`SELECT name, system_rules_json, is_active_for_trading FROM user_ai_agents WHERE user_id = ?`).bind(user.id).first<{
+        name: string;
+        system_rules_json: string;
+        is_active_for_trading: number;
+      }>().catch(() => null);
+      if (!ag) {
+        await env.DB.prepare(`INSERT OR IGNORE INTO user_ai_agents (id, user_id, name, system_rules_json) VALUES (?, ?, 'هوش مصنوعی شخصی من', ?)`)
+          .bind(randomId('myai'), user.id, JSON.stringify(DEFAULT_TRAINED_RULES)).run();
+        ag = { name: 'هوش مصنوعی شخصی من', system_rules_json: JSON.stringify(DEFAULT_TRAINED_RULES), is_active_for_trading: 0 };
+      }
+      let rules: TrainedAIRules = DEFAULT_TRAINED_RULES;
+      try { rules = { ...DEFAULT_TRAINED_RULES, ...JSON.parse(ag.system_rules_json || '{}') }; } catch { /* default */ }
+      const summary =
+        `🧠 ${ag.name} (${ag.is_active_for_trading ? '🟢 فعال روی ربات' : '⚪️ در حال آموزش'})\n\n` +
+        `• تایم‌فریم: ${rules.timeframe} | سبک: ${rules.style}\n` +
+        `• ارزها: ${rules.symbols.join('، ')}\n` +
+        `• اندیکاتورها: ${rules.indicators.join(' + ')}\n` +
+        `• حد ضرر: ${rules.stopLossPct}% | حد سود: ${rules.takeProfitPct}% | اهرم: ${rules.maxLeverage}x\n\n` +
+        `روی دکمه زیر بزنید و استراتژی خودتان را با زبان ساده برایم بنویسید تا یاد بگیرم:`;
+      const kb: InlineKeyboardButton[][] = [
+        [{ text: '✍️ آموزش جدید به هوش مصنوعی من', callback_data: 'tg_myai_train', style: 'primary' }],
+        [{ text: '🚀 فعال‌سازی ترید خودکار با هوش مصنوعی من', callback_data: 'tg_myai_activate', style: 'success' }],
+        [{ text: '🔙 بازگشت به منوی شیشه‌ای', callback_data: 'tg_acc:ai' }],
+      ];
+      if (msgId) await bot.editMessageText(chatId, msgId, summary, kb).catch(() => bot.sendMessage(chatId, summary, { inlineKeyboard: kb }));
+      else await bot.sendMessage(chatId, summary, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data === 'tg_myai_train') {
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify({ step: 'AWAIT_MYAI_TEACH' }), user.id).run();
+      await bot.answerCallbackQuery(cq.id);
+      await bot.sendMessage(chatId, '🧠 هوش مصنوعی خام شما گوش به زنگ است!\nاستراتژی، تایم‌فریم، اندیکاتورها (مثلاً RSI زیر ۳۵ و EMA 9/21)، ارزها و حد ضرر/سود خود را همین الان بنویسید:');
+      return { ok: true };
+    }
+
+    if (data === 'tg_myai_activate') {
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: tgId,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        await bot.answerCallbackQuery(cq.id, 'برای فعال‌سازی ترید خودکار اشتراک لازم است 💎', true);
+        await showSubscriptionMenu(env, bot, chatId, user, tgId);
+        return { ok: true };
+      }
+      await env.DB.prepare(`UPDATE user_ai_agents SET is_active_for_trading = 1 WHERE user_id = ?`).bind(user.id).run();
+      const cfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
+      const nextState = cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+      await env.DB.prepare(`UPDATE bot_configs SET strategy_key = 'my_custom_ai', bot_state = ?, updated_at = datetime('now') WHERE user_id = ?`)
+        .bind(nextState, user.id).run();
+      const doStub = env.TRADING_BOT_DO.get(env.TRADING_BOT_DO.idFromName('global-coordinator'));
+      await doStub.fetch('https://do/start').catch(() => {});
+      await doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+      await bot.answerCallbackQuery(cq.id, 'هوش مصنوعی شخصی شما فعال شد ✅');
+      await bot.sendMessage(chatId, '🚀 هوش مصنوعی شخصی شما با قوانین آموزش‌داده‌شده روی ربات فعال شد و ۲۴ ساعته معامله می‌کند!');
+      return { ok: true };
+    }
+
+    if (data === 'tg_copy_list') {
+      await bot.answerCallbackQuery(cq.id);
+      const traders = await env.DB.prepare(
+        `SELECT id, display_name, specialty, win_rate, roi_30d_pct, followers_count FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
+      ).all<{ id: string; display_name: string; specialty: string; win_rate: number; roi_30d_pct: number; followers_count: number }>().catch(() => ({ results: [] }));
+      if (!traders.results.length) {
+        await bot.sendMessage(chatId, '🏆 در حال حاضر تریدری ثبت نشده است.');
+        return { ok: true };
+      }
+      const lines = traders.results.map(
+        (t, i) => `${i + 1}. ✅ ${t.display_name} (${t.specialty})\n   نرخ برد: ${t.win_rate}% | بازده ۳۰روزه: +${t.roi_30d_pct}% | دنبال‌کننده: ${t.followers_count}`
+      ).join('\n\n');
+      const kb: InlineKeyboardButton[][] = traders.results.map((t) => [
+        { text: `📌 کپی از ${t.display_name}`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
+      ]);
+      kb.push([{ text: '🔙 بازگشت', callback_data: 'tg_acc:copy' }]);
+      if (msgId) await bot.editMessageText(chatId, msgId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, kb).catch(() => bot.sendMessage(chatId, lines, { inlineKeyboard: kb }));
+      else await bot.sendMessage(chatId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_copy_follow:')) {
+      const traderId = data.slice('tg_copy_follow:'.length);
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: tgId,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        await bot.answerCallbackQuery(cq.id, 'برای کپی‌ترید اشتراک فعال لازم است 💎', true);
+        await showSubscriptionMenu(env, bot, chatId, user, tgId);
+        return { ok: true };
+      }
+      const trader = await env.DB.prepare(`SELECT display_name FROM copy_traders WHERE id = ?`).bind(traderId).first<{ display_name: string }>();
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO copy_subscriptions (id, user_id, trader_id, allocation_usd, risk_multiplier, auto_mirror, is_active) VALUES (?, ?, ?, 100, 1, 1, 1)`
+      ).bind(randomId('csub'), user.id, traderId).run();
+      await env.DB.prepare(`UPDATE copy_subscriptions SET is_active = 1 WHERE user_id = ? AND trader_id = ?`).bind(user.id, traderId).run();
+      await bot.answerCallbackQuery(cq.id, `کپی‌ترید ${trader?.display_name || ''} فعال شد ✅`);
+      await bot.sendMessage(chatId, `✅ کپی‌ترید خودکار برای «${trader?.display_name || traderId}» فعال شد! از مینی‌اپ نیز می‌توانید معاملات لحظه‌ای ایشان را ببینید و مدیریت کنید.`);
+      return { ok: true };
+    }
+
+    if (data === 'tg_open_sub') {
+      await bot.answerCallbackQuery(cq.id);
+      await showSubscriptionMenu(env, bot, chatId, user, tgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_support_open') {
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }), user.id).run();
+      await bot.answerCallbackQuery(cq.id);
+      const supportId = await getSystemSetting(env.DB, 'telegram_support', '@Dollarino_admin');
+      await bot.sendMessage(chatId, `💬 پشتیبانی آنلاین دلارینو\n\nسوال، مشکل یا پیام خود را همین‌جا بنویسید تا مستقیماً برای تیم پشتیبانی ارسال شود و پاسخ در همین ربات و پنل وب برایتان نمایش داده شود.\n(پشتیبانی مستقیم تلگرام: ${supportId})`);
+      return { ok: true };
+    }
+
     if (data === 'tg_bot_toggle') {
       const cfg = await env.DB.prepare('SELECT bot_state, trading_mode FROM bot_configs WHERE user_id = ?')
         .bind(user.id).first<{ bot_state: string; trading_mode: string }>();
       const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+      if (!isRunning) {
+        const ent = await resolveUserEntitlement(env.DB, {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          role: (user.role as AuthUser['role']) || 'user',
+          telegramId: tgId,
+        });
+        if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+          await bot.answerCallbackQuery(cq.id, 'برای روشن کردن ربات، اشتراک لازم است 💎', true);
+          await showSubscriptionMenu(env, bot, chatId, user, tgId);
+          return { ok: true };
+        }
+      }
       const nextState = isRunning ? 'STOPPED' : (cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER');
       await env.DB.prepare(`UPDATE bot_configs SET bot_state = ?, updated_at = datetime('now') WHERE user_id = ?`)
         .bind(nextState, user.id).run();
@@ -759,7 +966,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           chatId,
           msgId,
           `🤖 وضعیت ربات دلارینو: ${isRunning ? '🔴 متوقف' : `🟢 فعال (${cfg?.trading_mode ?? 'PAPER'})`}`,
-          miniAppInlineKeyboard(webAppUrl)
+          miniAppInlineKeyboard(webAppUrl, '', 'ai', !isRunning)
         );
       }
       return { ok: true };
@@ -1169,6 +1376,56 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (state.step === 'AWAIT_MYAI_TEACH') {
+      await clearState();
+      let ag = await env.DB.prepare(`SELECT system_rules_json, training_notes FROM user_ai_agents WHERE user_id = ?`).bind(user.id).first<{ system_rules_json: string; training_notes: string }>().catch(() => null);
+      if (!ag) {
+        await env.DB.prepare(`INSERT OR IGNORE INTO user_ai_agents (id, user_id, name, system_rules_json) VALUES (?, ?, 'هوش مصنوعی شخصی من', ?)`)
+          .bind(randomId('myai'), user.id, JSON.stringify(DEFAULT_TRAINED_RULES)).run();
+        ag = { system_rules_json: JSON.stringify(DEFAULT_TRAINED_RULES), training_notes: '' };
+      }
+      let cur: TrainedAIRules = DEFAULT_TRAINED_RULES;
+      try { cur = { ...DEFAULT_TRAINED_RULES, ...JSON.parse(ag.system_rules_json || '{}') }; } catch { /* default */ }
+      const { next, learnedHighlights } = extractRulesFromConversation(text, cur);
+      const nextNotes = `${ag.training_notes ? `${ag.training_notes}\n` : ''}• ${text}`.slice(-4000);
+      await env.DB.prepare(
+        `UPDATE user_ai_agents SET training_notes = ?, system_rules_json = ?, last_trained_at = datetime('now'), updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(nextNotes, JSON.stringify(next), user.id).run();
+      await env.DB.prepare(`INSERT INTO user_ai_messages (id, user_id, role, content) VALUES (?, ?, 'user', ?)`).bind(randomId('msg'), user.id, text).run();
+      const reply = learnedHighlights.length
+        ? `✅ این موارد را یاد گرفتم و ثبت کردم:\n• ${learnedHighlights.join('\n• ')}\n\nتایم‌فریم: ${next.timeframe} | ارزها: ${next.symbols.join('، ')} | SL ${next.stopLossPct}% / TP ${next.takeProfitPct}%`
+        : `🧠 دستورالعمل شما ثبت شد! تایم‌فریم فعلی: ${next.timeframe} | ارزها: ${next.symbols.join('، ')}`;
+      await env.DB.prepare(`INSERT INTO user_ai_messages (id, user_id, role, content, extracted_rules_json) VALUES (?, ?, 'assistant', ?, ?)`).bind(randomId('msg'), user.id, reply, JSON.stringify(next)).run();
+      await bot.sendMessage(chatId, reply, {
+        inlineKeyboard: [
+          [{ text: '✍️ آموزش بیشتر', callback_data: 'tg_myai_train', style: 'primary' }],
+          [{ text: '🚀 فعال‌سازی ترید با هوش مصنوعی من', callback_data: 'tg_myai_activate', style: 'success' }],
+        ],
+      });
+      return { ok: true };
+    }
+
+    if (state.step === 'AWAIT_SUPPORT_MSG') {
+      await clearState();
+      let tkt = await env.DB.prepare(`SELECT id FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`).bind(user.id).first<{ id: string }>();
+      const ticketId = tkt?.id || randomId('tkt');
+      if (!tkt) {
+        await env.DB.prepare(`INSERT INTO support_tickets (id, user_id, subject, status, channel) VALUES (?, ?, 'پشتیبانی تلگرام', 'OPEN', 'TELEGRAM')`).bind(ticketId, user.id).run();
+      }
+      await env.DB.prepare(`INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message) VALUES (?, ?, ?, 'user', ?, ?)`)
+        .bind(randomId('smsg'), ticketId, user.id, user.username, text.slice(0, 2000)).run();
+      await env.DB.prepare(`UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`).bind(ticketId).run();
+
+      const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
+      await bot.sendMessage(ownerId, `💬 پیام پشتیبانی جدید از ربات:\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${text}`, {
+        inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }]],
+      }).catch(() => {});
+      await bot.sendMessage(chatId, `✅ پیام شما به تیکت #${ticketId} ارسال شد. پاسخ تیم پشتیبانی در همین‌جا برایتان پیام می‌شود.`, {
+        replyKeyboard: mainMenuKeyboard(webAppUrl),
+      });
+      return { ok: true };
+    }
+
     if (state.step === 'AWAIT_GIFT_CODE') {
       const code = text.trim().toUpperCase();
       await clearState();
@@ -1241,10 +1498,31 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       `🔗 اتصال صرافی دلارینو\n\n` +
       `• Toobit (توبیت): اتصال مستقیم API فیوچرز با اجرای سریع\n` +
       `• KCEX (کی‌سی‌ای‌ایکس): ۰٪ کارمزد میرر و همگام‌سازی خودکار\n` +
-      `• Paper Mode: حساب دمو رایگان بدون ریسک واقعی\n\n` +
+      `• Paper Mode: شبیه‌ساز آزمایشی (نیازمند اشتراک فعال)\n\n` +
       `صرافی مورد نظر خود را انتخاب کنید:`,
       { replyKeyboard: exchangeSelectionKeyboard() }
     );
+    return { ok: true };
+  }
+
+  if (text === '🏆 کپی‌ترید تاییدشده' || text === '/copy') {
+    const traders = await env.DB.prepare(
+      `SELECT id, display_name, specialty, win_rate, roi_30d_pct, followers_count FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
+    ).all<{ id: string; display_name: string; specialty: string; win_rate: number; roi_30d_pct: number; followers_count: number }>().catch(() => ({ results: [] }));
+    const lines = traders.results.length
+      ? traders.results.map((t, i) => `${i + 1}. ✅ ${t.display_name} (${t.specialty})\n   نرخ برد: ${t.win_rate}% | بازده ۳۰روزه: +${t.roi_30d_pct}%`).join('\n\n')
+      : 'در حال حاضر تریدری ثبت نشده است.';
+    const kb: InlineKeyboardButton[][] = traders.results.map((t) => [
+      { text: `📌 کپی از ${t.display_name}`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
+    ]);
+    await bot.sendMessage(chatId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, { inlineKeyboard: kb });
+    return { ok: true };
+  }
+
+  if (text === '💬 پشتیبانی آنلاین' || text === '/support') {
+    await setState({ step: 'AWAIT_SUPPORT_MSG' });
+    const supportId = await getSystemSetting(env.DB, 'telegram_support', '@Dollarino_admin');
+    await bot.sendMessage(chatId, `💬 پشتیبانی آنلاین دلارینو\n\nپیام خود را همین‌جا بنویسید تا مستقیماً به پنل ادمین ارسال شود.\n(پشتیبانی مستقیم تلگرام: ${supportId})`);
     return { ok: true };
   }
 
@@ -1275,10 +1553,21 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   if (text.startsWith('Paper Mode')) {
+    const ent = await resolveUserEntitlement(env.DB, {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      role: (user.role as AuthUser['role']) || 'user',
+      telegramId: tgId,
+    });
+    if (ent.subscriptionRequired && !ent.hasPaidPlan) {
+      await showSubscriptionMenu(env, bot, chatId, user, tgId);
+      return { ok: true };
+    }
     await env.DB.prepare(`UPDATE bot_configs SET trading_mode = 'PAPER' WHERE user_id = ?`).bind(user.id).run();
     const { adapter } = await resolveUserExchangeAdapter(env, user.id, 'paper');
     const bal = await adapter.getBalance();
-    await bot.sendMessage(chatId, `✅ حالت معاملاتی روی Paper Demo فعال شد!\n\n${formatBalanceCard('PAPER', bal)}`, {
+    await bot.sendMessage(chatId, `✅ حالت شبیه‌ساز حساب فعال شد:\n\n${formatBalanceCard('PAPER', bal)}`, {
       replyKeyboard: mainMenuKeyboard(webAppUrl),
     });
     return { ok: true };

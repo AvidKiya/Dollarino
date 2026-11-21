@@ -7,7 +7,7 @@ import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { normalizeProxyBaseUrl } from '../exchanges/proxy.js';
 import { TelegramBotClient } from '../telegram/client.js';
-import { resolveUserEntitlement } from './subscriptions.js';
+import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
 
 export const connectionRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 connectionRoutes.use('*', requireAuth);
@@ -78,7 +78,7 @@ connectionRoutes.post('/exchanges', async (c) => {
 
   if (!body.provider) return c.json({ error: 'Provider is required' }, 400);
   if (body.provider !== 'paper' && body.provider !== 'toobit' && body.provider !== 'kcex') {
-    return c.json({ error: 'Only Toobit, KCEX, and Paper Demo are supported in Dollarino.' }, 400);
+    return c.json({ error: 'Only Toobit, KCEX, and Simulation Account are supported in Dollarino.' }, 400);
   }
 
   const provider = body.provider as 'paper' | 'toobit' | 'kcex';
@@ -87,11 +87,11 @@ connectionRoutes.post('/exchanges', async (c) => {
   }
 
   const ent = await resolveUserEntitlement(c.env.DB, user);
-  const canActivateNow = provider === 'paper' || ent.allowLiveTrading;
+  const canActivateNow = !ent.subscriptionRequired || ent.hasPaidPlan;
   if (body.activate === true && !canActivateNow) {
     return c.json(
       {
-        error: 'Active Pro or VIP subscription required to activate live Toobit or KCEX trading.',
+        error: 'برای فعال‌سازی اتصال صرافی و ترید، اشتراک فعال لازم است.',
         code: 'SUBSCRIPTION_REQUIRED',
       },
       402
@@ -133,7 +133,7 @@ connectionRoutes.post('/exchanges', async (c) => {
 
   const label =
     body.label?.trim() ||
-    (provider === 'kcex' ? 'KCEX Futures (0% Maker / Mirror)' : provider === 'paper' ? 'Paper Demo' : 'Toobit Futures');
+    (provider === 'kcex' ? 'KCEX Futures (0% Maker / Mirror)' : provider === 'paper' ? 'Simulation Account' : 'Toobit Futures');
 
   await c.env.DB.prepare(
     `INSERT INTO exchange_connections (id, user_id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials)
@@ -211,14 +211,12 @@ connectionRoutes.post('/exchanges/:id/activate', async (c) => {
     .bind(id, user.id).first<{ id: string; provider: string }>();
   if (!row) return c.json({ error: 'Connection not found' }, 404);
 
-  if (row.provider !== 'paper') {
-    const ent = await resolveUserEntitlement(c.env.DB, user);
-    if (!ent.allowLiveTrading) {
-      return c.json({
-        error: 'Active Pro or VIP subscription required to activate Toobit / KCEX.',
-        code: 'SUBSCRIPTION_REQUIRED',
-      }, 402);
-    }
+  const ent = await resolveUserEntitlement(c.env.DB, user);
+  if (ent.subscriptionRequired && !ent.hasPaidPlan) {
+    return c.json({
+      error: 'برای فعال‌سازی صرافی و شروع ترید، اشتراک فعال لازم است.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    }, 402);
   }
 
   await c.env.DB.prepare('UPDATE exchange_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
@@ -246,6 +244,10 @@ connectionRoutes.post('/exchanges/:id/test', async (c) => {
 
 connectionRoutes.post('/exchanges/test-order', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) {
+    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
+  }
   const body = await c.req.json<{ symbol?: string; direction?: 'LONG' | 'SHORT' }>().catch(() => ({} as { symbol?: string; direction?: 'LONG' | 'SHORT' }));
   const symbol = (body.symbol || 'BTCUSDT').toUpperCase();
   const direction = body.direction || 'LONG';

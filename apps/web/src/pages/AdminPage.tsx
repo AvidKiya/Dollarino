@@ -4,13 +4,16 @@ import {
   CheckCircle2,
   Crown,
   Gift,
+  Headphones,
   KeyRound,
+  MessageCircle,
   Play,
   Plus,
   Send,
   Settings,
   Shield,
   Trash2,
+  Trophy,
   UserCheck,
   Users,
   XCircle,
@@ -92,8 +95,55 @@ interface SubOrder {
 
 interface PlanRow {
   code: string;
+  name_fa?: string;
+  name_en?: string;
   price_usd: number;
   price_toman: number;
+  duration_days?: number;
+  is_popular?: number;
+  is_active?: number;
+}
+
+interface AdminCopyTrader {
+  id: string;
+  display_name: string;
+  handle: string;
+  specialty: string;
+  win_rate: number;
+  roi_30d_pct: number;
+  max_drawdown_pct: number;
+  followers_count: number;
+  risk_level: string;
+  is_verified: number;
+  is_active: number;
+  trades?: Array<{
+    id: string;
+    symbol: string;
+    side: string;
+    entry_price: number;
+    leverage: number;
+    pnl_pct: number;
+    status: string;
+  }>;
+}
+
+interface AdminSupportTicket {
+  id: string;
+  user_id: string | null;
+  username: string | null;
+  email: string | null;
+  subject: string;
+  status: 'OPEN' | 'ANSWERED' | 'CLOSED';
+  last_message_at: string;
+}
+
+interface AdminSupportMessage {
+  id: string;
+  ticket_id: string;
+  sender_role: 'user' | 'admin';
+  sender_name: string | null;
+  message: string;
+  created_at: string;
 }
 
 export function AdminPage({
@@ -149,9 +199,52 @@ export function AdminPage({
     weight: 100,
   });
 
+  // Copy Traders Admin State
+  const [copyTraders, setCopyTraders] = useState<AdminCopyTrader[]>([]);
+  const [newTrader, setNewTrader] = useState({
+    displayName: '',
+    handle: '@',
+    specialty: 'BTC/ETH Momentum',
+    bioFa: '',
+    winRate: 76,
+    roi30dPct: 38,
+    maxDrawdownPct: 5.5,
+    riskLevel: 'BALANCED',
+  });
+  const [tradeTargetId, setTradeTargetId] = useState('');
+  const [newTraderTrade, setNewTraderTrade] = useState({
+    symbol: 'BTCUSDT',
+    side: 'LONG' as 'LONG' | 'SHORT',
+    entryPrice: 92000,
+    stopLoss: 90200,
+    tp1: 95200,
+    leverage: 10,
+    pnlPct: 12.4,
+    status: 'OPEN' as 'OPEN' | 'CLOSED',
+    note: '',
+  });
+
+  // Online Support Admin State
+  const [tickets, setTickets] = useState<AdminSupportTicket[]>([]);
+  const [allTicketMsgs, setAllTicketMsgs] = useState<AdminSupportMessage[]>([]);
+  const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
+  const [supReply, setSupReply] = useState('');
+
+  // Full Plans CRUD State
+  const [adminPlans, setAdminPlans] = useState<PlanRow[]>([]);
+  const [newPlan, setNewPlan] = useState({
+    code: '',
+    nameFa: '',
+    nameEn: '',
+    priceUsd: 29,
+    priceToman: 2030000,
+    durationDays: 30,
+    isPopular: false,
+  });
+
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -161,9 +254,34 @@ export function AdminPage({
         cacheTtlSec: number;
         latestSignals: PlatformAISignal[];
       }>('/api/admin/ai-engines').catch(() => null),
+      apiFetch<{ traders: AdminCopyTrader[]; trades: Array<{ id: string; trader_id: string; symbol: string; direction: string; entry_price: string; leverage: number; pnl_pct: number; status: string }> }>('/api/admin/copy-traders').catch(() => ({ traders: [], trades: [] })),
+      apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
+      apiFetch<{ plans: PlanRow[] }>('/api/admin/plans').catch(() => ({ plans: [] })),
     ]);
     setData(ov);
     setOrders(ordRes.orders);
+    setAdminPlans(plansRes.plans || []);
+    const tradesMap = new Map<string, AdminCopyTrader['trades']>();
+    for (const td of ctRes.trades || []) {
+      const arr = tradesMap.get(td.trader_id) ?? [];
+      arr.push({
+        id: td.id,
+        symbol: td.symbol,
+        side: td.direction,
+        entry_price: Number(td.entry_price),
+        leverage: td.leverage,
+        pnl_pct: td.pnl_pct,
+        status: td.status,
+      });
+      tradesMap.set(td.trader_id, arr);
+    }
+    const mergedTraders = (ctRes.traders || []).map((t) => ({ ...t, trades: tradesMap.get(t.id) ?? [] }));
+    setCopyTraders(mergedTraders);
+    if (mergedTraders.length && !tradeTargetId) {
+      setTradeTargetId(mergedTraders[0]!.id);
+    }
+    setTickets(supRes.tickets || []);
+    setAllTicketMsgs(supRes.messages || []);
     setHelpText(ov.settings.help_text || '');
     if (aiRes) {
       setAiEngines(aiRes.engines || []);
@@ -876,6 +994,130 @@ export function AdminPage({
             </form>
           </div>
 
+          {/* Full Subscription Plans CRUD */}
+          <div className="surface-card p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="font-black text-sm text-main flex items-center gap-2">
+                <Crown className="w-4 h-4 text-amber-400" />
+                <span>{isFa ? 'مدیریت کامل پکیج‌ها و پلن‌های اشتراک' : 'Subscription Plans Manager'}</span>
+              </h3>
+              <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{adminPlans.length}</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {adminPlans.map((pl) => (
+                <div key={pl.code} className="surface-soft rounded-2xl p-3 space-y-2 border hairline">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main truncate">{isFa ? pl.name_fa || pl.code : pl.name_en || pl.code}</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await apiFetch(`/api/admin/plans/${pl.code}`, {
+                          method: 'PATCH',
+                          body: JSON.stringify({ is_active: pl.is_active !== 1 }),
+                        });
+                        await load();
+                        onUserUpdated();
+                      }}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        pl.is_active === 1 ? 'badge-signal' : 'bg-rose-500/15 text-loss'
+                      }`}
+                    >
+                      {pl.is_active === 1 ? (isFa ? 'فعال' : 'Active') : (isFa ? 'غیرفعال' : 'Hidden')}
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-dim font-mono-num" dir="ltr">
+                    {pl.code} · ${pl.price_usd} · {Number(pl.price_toman || 0).toLocaleString()}T · {pl.duration_days || 30}d
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await apiFetch(`/api/admin/plans/${pl.code}`, {
+                          method: 'PATCH',
+                          body: JSON.stringify({ is_popular: pl.is_popular !== 1 }),
+                        });
+                        await load();
+                      }}
+                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold ${
+                        pl.is_popular === 1 ? 'btn-gold' : 'surface-card text-dim'
+                      }`}
+                    >
+                      {pl.is_popular === 1 ? '⭐ Popular' : 'Mark Popular'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                await apiFetch('/api/admin/plans', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    code: newPlan.code || undefined,
+                    name_fa: newPlan.nameFa,
+                    name_en: newPlan.nameEn || newPlan.nameFa,
+                    price_usd: newPlan.priceUsd,
+                    price_toman: newPlan.priceToman,
+                    duration_days: newPlan.durationDays,
+                    is_popular: newPlan.isPopular,
+                    is_active: true,
+                  }),
+                });
+                setNewPlan({ code: '', nameFa: '', nameEn: '', priceUsd: 29, priceToman: 2030000, durationDays: 30, isPopular: false });
+                setMsg(isFa ? 'پلن اشتراک با موفقیت ذخیره شد.' : 'Subscription plan saved.');
+                await load();
+                onUserUpdated();
+              }}
+              className="grid grid-cols-2 sm:grid-cols-6 gap-2 pt-3 border-t hairline items-end"
+            >
+              <input
+                value={newPlan.code}
+                onChange={(e) => setNewPlan({ ...newPlan, code: e.target.value })}
+                placeholder="code (e.g. vip_60)"
+                dir="ltr"
+                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
+              />
+              <input
+                required
+                value={newPlan.nameFa}
+                onChange={(e) => setNewPlan({ ...newPlan, nameFa: e.target.value })}
+                placeholder={isFa ? 'نام فارسی پلن' : 'Persian Name'}
+                className="surface-input rounded-xl px-2.5 py-2"
+              />
+              <input
+                type="number"
+                min={1}
+                value={newPlan.priceUsd}
+                onChange={(e) => setNewPlan({ ...newPlan, priceUsd: Number(e.target.value) })}
+                placeholder="USD $"
+                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
+              />
+              <input
+                type="number"
+                min={10000}
+                value={newPlan.priceToman}
+                onChange={(e) => setNewPlan({ ...newPlan, priceToman: Number(e.target.value) })}
+                placeholder="Toman"
+                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
+              />
+              <input
+                type="number"
+                min={1}
+                value={newPlan.durationDays}
+                onChange={(e) => setNewPlan({ ...newPlan, durationDays: Number(e.target.value) })}
+                placeholder="Days"
+                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
+              />
+              <button type="submit" className="btn-emerald py-2 px-3 rounded-xl font-black inline-flex items-center justify-center gap-1">
+                <Plus className="w-3.5 h-3.5" />
+                <span>{isFa ? 'افزودن / آپدیت' : 'Save Plan'}</span>
+              </button>
+            </form>
+          </div>
+
           <div className="surface-card p-5 overflow-x-auto">
             <h3 className="text-sm font-black mb-3 flex items-center gap-2 text-main">
               <Users className="w-4 h-4 text-brand" />
@@ -936,6 +1178,226 @@ export function AdminPage({
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Admin Copy Traders Manager + Online Support Inbox */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+            {/* Copy Traders Management */}
+            <div className="surface-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-sm text-main flex items-center gap-2">
+                  <Trophy className="w-4 h-4 text-amber-400" />
+                  <span>{isFa ? 'مدیریت تریدرهای تاییدشده کپی‌ترید' : 'Verified Copy Traders Manager'}</span>
+                </h3>
+                <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{copyTraders.length}</span>
+              </div>
+
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {copyTraders.map((tr) => (
+                  <div key={tr.id} className="surface-soft rounded-xl p-3 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-black text-main truncate">{tr.display_name} <span dir="ltr" className="text-dim font-mono">({tr.handle})</span></p>
+                      <p className="text-[11px] text-dim" dir="ltr">
+                        ROI +{tr.roi_30d_pct}% · WR {tr.win_rate}% · {tr.risk_level} · {tr.trades?.length || 0} trades
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await apiFetch(`/api/admin/copy-traders/${tr.id}`, { method: 'DELETE' });
+                        setMsg(isFa ? 'کپی‌تریدر حذف شد.' : 'Trader deleted.');
+                        void load();
+                      }}
+                      className="text-loss hover:opacity-75 p-1.5"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  await apiFetch('/api/admin/copy-traders', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      display_name: newTrader.displayName,
+                      handle: newTrader.handle,
+                      specialty: newTrader.specialty,
+                      bio_fa: newTrader.bioFa,
+                      win_rate: newTrader.winRate,
+                      roi_30d_pct: newTrader.roi30dPct,
+                      max_drawdown_pct: newTrader.maxDrawdownPct,
+                      risk_level: newTrader.riskLevel === 'BALANCED' ? 'MEDIUM' : newTrader.riskLevel,
+                      is_verified: true,
+                    }),
+                  });
+                  setNewTrader({ ...newTrader, displayName: '', handle: '@', bioFa: '' });
+                  setMsg(isFa ? 'کپی‌تریدر تاییدشده جدید اضافه شد!' : 'Verified Copy Trader added!');
+                  void load();
+                }}
+                className="space-y-2 pt-3 border-t hairline"
+              >
+                <p className="font-bold text-sub">{isFa ? 'افزودن تریدر تاییدشده جدید:' : 'Add Verified Trader:'}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input required value={newTrader.displayName} onChange={(e) => setNewTrader({ ...newTrader, displayName: e.target.value })} placeholder={isFa ? 'نام تریدر' : 'Display Name'} className="surface-input rounded-xl px-3 py-2" />
+                  <input required dir="ltr" value={newTrader.handle} onChange={(e) => setNewTrader({ ...newTrader, handle: e.target.value })} placeholder="@handle" className="surface-input rounded-xl px-3 py-2 font-mono" />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input value={newTrader.specialty} onChange={(e) => setNewTrader({ ...newTrader, specialty: e.target.value })} placeholder="Specialty" className="surface-input rounded-xl px-3 py-2" />
+                  <input type="number" step="0.1" value={newTrader.roi30dPct} onChange={(e) => setNewTrader({ ...newTrader, roi30dPct: Number(e.target.value) })} placeholder="30d ROI %" className="surface-input rounded-xl px-3 py-2 font-mono-num" />
+                  <input type="number" step="0.1" value={newTrader.winRate} onChange={(e) => setNewTrader({ ...newTrader, winRate: Number(e.target.value) })} placeholder="Win Rate %" className="surface-input rounded-xl px-3 py-2 font-mono-num" />
+                </div>
+                <button type="submit" className="w-full py-2 rounded-xl btn-gold font-black inline-flex items-center justify-center gap-1">
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'ثبت تریدر تاییدشده' : 'Publish Verified Trader'}</span>
+                </button>
+              </form>
+
+              {copyTraders.length > 0 && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const tid = tradeTargetId || copyTraders[0]!.id;
+                    await apiFetch(`/api/admin/copy-traders/${tid}/trades`, {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        symbol: newTraderTrade.symbol,
+                        direction: newTraderTrade.side,
+                        leverage: newTraderTrade.leverage,
+                        entry_price: String(newTraderTrade.entryPrice),
+                        stop_loss: String(newTraderTrade.stopLoss),
+                        tp1: String(newTraderTrade.tp1),
+                        status: newTraderTrade.status,
+                        pnl_pct: newTraderTrade.pnlPct,
+                        note: newTraderTrade.note,
+                      }),
+                    });
+                    setMsg(isFa ? 'معامله جدید برای کپی‌تریدر ثبت شد!' : 'Trader signal/trade published!');
+                    void load();
+                  }}
+                  className="space-y-2 pt-3 border-t hairline"
+                >
+                  <p className="font-bold text-sub">{isFa ? 'ثبت معامله برای کپی توسط کاربران:' : 'Publish Trade for Users to Copy:'}</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select value={tradeTargetId || copyTraders[0]?.id} onChange={(e) => setTradeTargetId(e.target.value)} className="surface-input rounded-xl px-2 py-2">
+                      {copyTraders.map((t) => (
+                        <option key={t.id} value={t.id}>{t.display_name}</option>
+                      ))}
+                    </select>
+                    <input dir="ltr" value={newTraderTrade.symbol} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, symbol: e.target.value.toUpperCase() })} placeholder="BTCUSDT" className="surface-input rounded-xl px-2 py-2 font-mono" />
+                    <select value={newTraderTrade.side} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, side: e.target.value as 'LONG' | 'SHORT' })} className="surface-input rounded-xl px-2 py-2">
+                      <option value="LONG">LONG</option>
+                      <option value="SHORT">SHORT</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    <input type="number" step="any" value={newTraderTrade.entryPrice} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, entryPrice: Number(e.target.value) })} placeholder="Entry" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    <input type="number" step="any" value={newTraderTrade.stopLoss} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, stopLoss: Number(e.target.value) })} placeholder="SL" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    <input type="number" step="any" value={newTraderTrade.tp1} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp1: Number(e.target.value) })} placeholder="TP1" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    <input type="number" step="0.1" value={newTraderTrade.pnlPct} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, pnlPct: Number(e.target.value) })} placeholder="PnL%" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  </div>
+                  <button type="submit" className="w-full py-2 rounded-xl btn-emerald font-black">
+                    {isFa ? 'ثبت معامله در لیست کپی‌ترید' : 'Publish Copy Trade'}
+                  </button>
+                </form>
+              )}
+            </div>
+
+            {/* Online Support Inbox */}
+            <div className="surface-card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-sm text-main flex items-center gap-2">
+                  <Headphones className="w-4 h-4 text-jade" />
+                  <span>{isFa ? 'صندوق تیکت‌های پشتیبانی آنلاین (همگام با تلگرام)' : 'Online Support Inbox (Synced with Telegram)'}</span>
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[10px] font-black">
+                  {tickets.filter((t) => t.status === 'OPEN').length} {isFa ? 'باز' : 'OPEN'}
+                </span>
+              </div>
+
+              {tickets.length === 0 ? (
+                <p className="text-center py-8 text-dim">{isFa ? 'هنوز تیکت پشتیبانی ارسال نشده است.' : 'No support tickets yet.'}</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {tickets.map((tk) => (
+                      <button
+                        key={tk.id}
+                        type="button"
+                        onClick={() => setActiveTicketId(tk.id)}
+                        className={`w-full rounded-xl p-2.5 text-start flex items-center justify-between gap-2 transition ${
+                          activeTicketId === tk.id ? 'btn-cobalt text-white' : 'surface-soft hover:bg-[var(--soft)]'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold truncate">{tk.username || tk.email || 'User'} · {tk.subject}</p>
+                          <p className="text-[10px] opacity-75">{new Date(tk.last_message_at).toLocaleString(isFa ? 'fa-IR' : 'en-US')}</p>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-black ${tk.status === 'OPEN' ? 'bg-emerald-500/20 text-jade' : 'bg-white/10 text-dim'}`}>
+                          {tk.status}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeTicketId && (
+                    <div className="surface-soft rounded-2xl p-3 space-y-2.5 border hairline">
+                      <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                        {allTicketMsgs
+                          .filter((m) => m.ticket_id === activeTicketId)
+                          .map((m) => (
+                            <div key={m.id} className={`rounded-xl p-2 ${m.sender_role === 'admin' ? 'bg-[#1652F0]/15 text-main' : 'panel'}`}>
+                              <p className="text-[10px] font-black text-dim">{m.sender_role === 'admin' ? 'پشتیبانی دلارینو' : m.sender_name || 'کاربر'}</p>
+                              <p className="text-xs text-main mt-0.5 whitespace-pre-wrap">{m.message}</p>
+                            </div>
+                          ))}
+                      </div>
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          if (!supReply.trim()) return;
+                          await apiFetch(`/api/admin/support/${activeTicketId}/reply`, {
+                            method: 'POST',
+                            body: JSON.stringify({ message: supReply.trim() }),
+                          });
+                          setSupReply('');
+                          await load();
+                          setMsg(isFa ? 'پاسخ ارسال شد و به تلگرام کاربر هم مخابره گردید.' : 'Reply sent & notified on Telegram.');
+                        }}
+                        className="flex gap-2"
+                      >
+                        <input
+                          value={supReply}
+                          onChange={(e) => setSupReply(e.target.value)}
+                          placeholder={isFa ? 'پاسخ پشتیبانی را بنویسید...' : 'Write admin reply...'}
+                          className="flex-1 surface-input rounded-xl px-3 py-2 text-xs"
+                        />
+                        <button type="submit" className="btn-emerald px-3.5 py-2 rounded-xl font-black inline-flex items-center gap-1">
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>{isFa ? 'ارسال' : 'Reply'}</span>
+                        </button>
+                      </form>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await apiFetch(`/api/admin/support/${activeTicketId}/status`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ status: 'CLOSED' }),
+                          });
+                          setMsg(isFa ? 'تیکت بسته شد.' : 'Ticket closed.');
+                          void load();
+                        }}
+                        className="text-[11px] font-bold text-loss hover:underline"
+                      >
+                        {isFa ? 'بستن این تیکت' : 'Close Ticket'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">

@@ -17,6 +17,8 @@ import {
   Sliders,
   Sparkles,
   Trash2,
+  Trophy,
+  Users,
 } from 'lucide-react';
 import { formatDollarinoSignal } from '@dollarino/core';
 import { apiFetch } from '../lib/api';
@@ -49,6 +51,37 @@ interface PlatformAISummary {
   }>;
 }
 
+interface VerifiedCopyTrader {
+  id: string;
+  display_name: string;
+  handle: string;
+  avatar_url?: string | null;
+  bio_fa?: string | null;
+  bio_en?: string | null;
+  specialty: string;
+  win_rate: number;
+  roi_30d_pct: number;
+  max_drawdown_pct: number;
+  followers_count: number;
+  min_allocation_usd?: number;
+  risk_level: string;
+  following: boolean;
+  mySubscription?: { allocation_usd: number } | null;
+  trades: Array<{
+    id: string;
+    symbol: string;
+    direction: 'LONG' | 'SHORT';
+    entry_price: string;
+    stop_loss: string | null;
+    tp1: string | null;
+    leverage: number;
+    pnl_pct: number;
+    status: 'OPEN' | 'CLOSED';
+    note: string | null;
+    opened_at: string;
+  }>;
+}
+
 interface TgBot {
   id: string;
   bot_username: string;
@@ -73,6 +106,11 @@ export function CopyConnectPage({
   const [tab, setTab] = useState<'copy' | 'exchanges' | 'risk'>('copy');
   const [msg, setMsg] = useState<{ err?: boolean; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [traders, setTraders] = useState<VerifiedCopyTrader[]>([]);
+  const [loadingTraders, setLoadingTraders] = useState(true);
+  const [allocMap, setAllocMap] = useState<Record<string, number>>({});
+  const [copyingTradeId, setCopyingTradeId] = useState<string | null>(null);
+  const [showWebhookMirror, setShowWebhookMirror] = useState(false);
 
   // Copy Trade & Signals
   const webhookUrl = `${window.location.origin}/api/webhook/tv/${data.config.webhook_secret}`;
@@ -131,14 +169,25 @@ export function CopyConnectPage({
   });
 
   const loadConnections = async () => {
-    const [ex, ai, tg] = await Promise.all([
+    setLoadingTraders(true);
+    const [ex, ai, tg, ct] = await Promise.all([
       apiFetch<{ connections: ExchangeConn[] }>('/api/connections/exchanges').catch(() => ({ connections: [] })),
       apiFetch<{ platformAI: PlatformAISummary }>('/api/connections/platform-ai').catch(() => ({ platformAI: null })),
       apiFetch<{ bots: TgBot[] }>('/api/connections/telegram-bots').catch(() => ({ bots: [] })),
+      apiFetch<{ traders: VerifiedCopyTrader[] }>('/api/copy-trade/traders').catch(() => ({ traders: [] })),
     ]);
     setExchanges(ex.connections.filter((c) => c.provider === 'toobit' || c.provider === 'kcex' || c.provider === 'paper'));
     setPlatformAI(ai.platformAI);
     setTgBots(tg.bots);
+    setTraders(ct.traders || []);
+    setAllocMap((prev) => {
+      const next = { ...prev };
+      for (const tr of ct.traders || []) {
+        if (next[tr.id] === undefined) next[tr.id] = tr.mySubscription?.allocation_usd || tr.min_allocation_usd || 100;
+      }
+      return next;
+    });
+    setLoadingTraders(false);
   };
 
   useEffect(() => {
@@ -148,6 +197,46 @@ export function CopyConnectPage({
   const flash = (text: string, err = false) => {
     setMsg({ text, err });
     setTimeout(() => setMsg(null), 5000);
+  };
+
+  const toggleFollowTrader = async (t: VerifiedCopyTrader) => {
+    try {
+      const res = await apiFetch<{ ok: boolean; following: boolean }>('/api/copy-trade/follow', {
+        method: 'POST',
+        body: JSON.stringify({
+          traderId: t.id,
+          follow: !t.following,
+          allocationUsd: allocMap[t.id] ?? 100,
+        }),
+      });
+      flash(
+        res.following
+          ? isFa
+            ? `کپی‌ترید خودکار از ${t.display_name} فعال شد!`
+            : `Auto-copy enabled for ${t.display_name}`
+          : isFa
+            ? `کپی‌ترید ${t.display_name} متوقف شد.`
+            : `Unfollowed ${t.display_name}`
+      );
+      await loadConnections();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : 'Subscription required', true);
+    }
+  };
+
+  const copySingleTrade = async (tradeId: string) => {
+    setCopyingTradeId(tradeId);
+    try {
+      const res = await apiFetch<{ ok: boolean; tradeId?: string }>(`/api/copy-trade/copy-now/${tradeId}`, {
+        method: 'POST',
+      });
+      flash(isFa ? `معامله با موفقیت کپی شد! (${res.tradeId ?? ''})` : `Trade mirrored (${res.tradeId ?? ''})!`);
+      await onRefresh();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : 'Failed to mirror trade', true);
+    } finally {
+      setCopyingTradeId(null);
+    }
   };
 
   const runSignal = async (executeNow: boolean) => {
@@ -306,124 +395,268 @@ export function CopyConnectPage({
       )}
 
       {tab === 'copy' && (
-        <div className="grid lg:grid-cols-2 gap-4">
-          <div className="panel rounded-[26px] p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display font-bold text-lg text-main">
-                {isFa ? 'لینک وب‌هوک TradingView و اجرای سیگنال' : 'TradingView Webhook & Signal Runner'}
-              </h3>
+        <div className="space-y-5">
+          {/* Verified Copy Traders Marketplace */}
+          <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-amber-400" />
+                  <h3 className="font-display font-bold text-xl text-main">
+                    {isFa ? 'تریدرهای تاییدشده کپی‌ترید دلارینو' : 'Admin-Verified Copy Traders'}
+                  </h3>
+                </div>
+                <p className="text-xs text-dim mt-1">
+                  {isFa
+                    ? 'فقط معامله‌گران بررسی و تاییدشده توسط مدیریت دلارینو در این بخش نمایش داده می‌شوند. معاملات هر تریدر را ببینید و با یک کلیک کپی کنید.'
+                    : 'Only traders reviewed and verified by Dollarino admins appear here. Follow automatically or copy any trade with 1 tap.'}
+                </p>
+              </div>
               {!entitlement?.hasPaidPlan && (
-                <button type="button" onClick={() => onNavigate('pricing')} className="text-[11px] font-bold hover:underline" style={{ color: 'var(--gold)' }}>
-                  {isFa ? 'نیازمند پرو ←' : 'Upgrade Pro →'}
+                <button type="button" onClick={() => onNavigate('pricing')} className="btn-gold px-4 py-2 rounded-xl text-xs font-black">
+                  {isFa ? 'فعال‌سازی اشتراک برای کپی ←' : 'Subscribe to Copy →'}
                 </button>
               )}
             </div>
 
-            <div className="rounded-2xl surface-soft p-3 flex items-center justify-between gap-2 text-xs">
-              <code dir="ltr" className="truncate font-mono text-[11px] text-main">{webhookUrl}</code>
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(webhookUrl);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1800);
-                }}
-                className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1 shrink-0"
-              >
-                {copied ? <Check className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
-                <span>{copied ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی لینک' : 'Copy'}</span>
-              </button>
-            </div>
+            {loadingTraders ? (
+              <div className="p-8 text-center text-xs text-dim">{isFa ? 'در حال دریافت لیست تریدرها...' : 'Loading verified traders...'}</div>
+            ) : traders.length === 0 ? (
+              <div className="surface-soft rounded-2xl p-6 text-center text-xs text-dim">
+                {isFa ? 'در حال حاضر تریدری ثبت نشده است. به‌زودی تریدرهای تاییدشده اضافه می‌شوند.' : 'No verified copy traders published yet.'}
+              </div>
+            ) : (
+              <div className="grid lg:grid-cols-3 gap-4">
+                {traders.map((tr) => (
+                  <div key={tr.id} className={`surface-soft rounded-[24px] p-4 border flex flex-col justify-between gap-4 ${tr.following ? 'border-emerald-500/45' : 'hairline'}`}>
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-display font-bold text-base text-main">{tr.display_name}</h4>
+                            <CheckCircle2 className="w-4 h-4 text-brand shrink-0" />
+                          </div>
+                          <p className="text-[11px] text-dim mt-0.5">
+                            {tr.specialty} · <span dir="ltr">{tr.handle}</span>
+                          </p>
+                        </div>
+                        <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black shrink-0">
+                          {tr.risk_level}
+                        </span>
+                      </div>
 
-            <textarea rows={8} dir="ltr" value={rawSig} onChange={(e) => setRawSig(e.target.value)} className="field font-mono text-[11px]" />
+                      <p className="text-[11px] text-sub leading-relaxed">
+                        {isFa ? tr.bio_fa || '' : tr.bio_en || ''}
+                      </p>
 
-            <div className="flex gap-2">
-              <button type="button" onClick={() => void runSignal(false)} className="btn-ghost flex-1 py-2.5 rounded-xl text-xs font-bold">
-                {isFa ? 'فقط تحلیل و ثبت در رادار' : 'Parse & Log Only'}
-              </button>
-              <button type="button" onClick={() => void runSignal(true)} className="btn-emerald flex-1 py-2.5 rounded-xl text-xs inline-flex items-center justify-center gap-1.5">
-                <Play className="w-3.5 h-3.5" />
-                <span>{isFa ? 'اجرای خودکار ۳ تارگت' : 'Execute 3-TP'}</span>
-              </button>
-            </div>
-          </div>
+                      <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="panel rounded-xl p-2">
+                          <p dir="ltr" className="font-num font-black text-jade">+{tr.roi_30d_pct}%</p>
+                          <p className="text-[10px] text-dim">{isFa ? 'بازده ۳۰ روزه' : '30d ROI'}</p>
+                        </div>
+                        <div className="panel rounded-xl p-2">
+                          <p dir="ltr" className="font-num font-black text-main">{tr.win_rate}%</p>
+                          <p className="text-[10px] text-dim">{isFa ? 'نرخ برد' : 'Win Rate'}</p>
+                        </div>
+                        <div className="panel rounded-xl p-2">
+                          <p dir="ltr" className="font-num font-black text-amber-400">-{tr.max_drawdown_pct}%</p>
+                          <p className="text-[10px] text-dim">{isFa ? 'حداکثر افت' : 'Max DD'}</p>
+                        </div>
+                      </div>
 
-          <div className="panel rounded-[26px] p-5 space-y-4">
-            <h3 className="font-display font-bold text-lg text-main">
-              {isFa ? 'کپی‌ترید مستقیم از کانال تلگرام' : 'Telegram Channel Copy-Trade'}
-            </h3>
+                      {/* Trader's Open & Recent Trades */}
+                      <div className="space-y-2 pt-2 border-t hairline">
+                        <p className="text-[11px] font-black text-dim">
+                          {isFa ? 'آخرین معاملات این تریدر:' : 'Recent / Live Trades:'}
+                        </p>
+                        {tr.trades.length === 0 ? (
+                          <p className="text-[11px] text-dim">{isFa ? 'معامله فعالی ثبت نشده است.' : 'No trades logged yet.'}</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {tr.trades.slice(0, 3).map((td) => (
+                              <div key={td.id} className="panel rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 font-bold text-main">
+                                    <span dir="ltr">{td.symbol}</span>
+                                    <span className={td.direction === 'LONG' ? 'text-jade' : 'text-loss'}>{td.direction}</span>
+                                    <span dir="ltr" className="text-dim">{td.leverage}×</span>
+                                  </div>
+                                  <p className="text-[10px] text-dim truncate" dir="ltr">
+                                    @${td.entry_price} · {td.status} ({td.pnl_pct >= 0 ? '+' : ''}{td.pnl_pct}%)
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={copyingTradeId === td.id}
+                                  onClick={() => void copySingleTrade(td.id)}
+                                  className="btn-emerald px-2.5 py-1.5 rounded-lg text-[10px] font-black shrink-0"
+                                >
+                                  {copyingTradeId === td.id ? '...' : isFa ? 'کپی معامله' : 'Copy Trade'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
 
-            <div className="flex gap-2 text-xs">
-              <input value={tgChannel} onChange={(e) => setTgChannel(e.target.value)} dir="ltr" placeholder="@Dollarinoofficial" className="field font-mono" />
-              <button type="button" onClick={() => void saveChannelHandle()} className="btn-ghost px-4 rounded-xl font-bold shrink-0">
-                {isFa ? 'ذخیره کانال' : 'Save'}
-              </button>
-            </div>
-
-            <form onSubmit={addTelegramBot} className="space-y-3 text-xs pt-2 border-t hairline">
-              <input value={tgToken} onChange={(e) => setTgToken(e.target.value)} required dir="ltr" placeholder="123456:ABC-BotFatherToken..." className="field font-mono" />
-              <button type="submit" className="btn-gold w-full py-3 rounded-xl text-xs inline-flex items-center justify-center gap-1.5">
-                <Plus className="w-4 h-4" />
-                <span>{isFa ? 'اتصال ربات تلگرام' : 'Connect Telegram Bot'}</span>
-              </button>
-            </form>
-
-            {tgBots.length > 0 && (
-              <div className="space-y-2 pt-2 border-t hairline text-xs">
-                {tgBots.map((b) => (
-                  <div key={b.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
-                    <span>@{b.bot_username} · {b.signal_channel_id}</span>
-                    <div className="flex items-center gap-2">
+                    <div className="space-y-2 pt-2 border-t hairline">
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-dim">{isFa ? 'مبلغ تخصیص کپی ($):' : 'Copy Allocation ($):'}</span>
+                        <select
+                          value={allocMap[tr.id] ?? 100}
+                          onChange={(e) => setAllocMap((prev) => ({ ...prev, [tr.id]: Number(e.target.value) }))}
+                          className="field py-1 px-2 text-xs w-28"
+                        >
+                          {[50, 100, 250, 500, 1000].map((v) => (
+                            <option key={v} value={v}>${v}</option>
+                          ))}
+                        </select>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => void apiFetch(`/api/connections/telegram-bots/${b.id}/sync-webhook`, { method: 'POST' }).then(() => flash(isFa ? 'وب‌هوک و منوی مینی‌اپ همگام‌سازی شد' : 'Webhook & Mini App menu synced'))}
-                        className="text-brand font-bold text-[11px]"
+                        onClick={() => void toggleFollowTrader(tr)}
+                        className={`w-full py-2.5 rounded-xl text-xs font-black inline-flex items-center justify-center gap-1.5 ${
+                          tr.following ? 'btn-ghost text-loss border border-rose-500/35' : 'btn-gold'
+                        }`}
                       >
-                        Sync
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void apiFetch(`/api/connections/telegram-bots/${b.id}`, { method: 'DELETE' }).then(loadConnections)}
-                        className="text-loss hover:opacity-75"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Users className="w-3.5 h-3.5" />
+                        <span>
+                          {tr.following
+                            ? isFa
+                              ? 'توقف کپی خودکار (در حال دنبال کردن ✓)'
+                              : 'Stop Auto-Copy (Following ✓)'
+                            : isFa
+                              ? `فعال‌سازی کپی خودکار (${tr.followers_count} دنبال‌کننده)`
+                              : `Follow & Auto-Copy (${tr.followers_count})`}
+                        </span>
                       </button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
+          </div>
 
-            <div className="pt-2 border-t hairline flex items-center justify-between text-xs">
-              <span className="text-dim">{isFa ? 'کد اتصال سریع به ربات تلگرام:' : 'Quick Telegram Account Link:'}</span>
-              <button
-                type="button"
-                onClick={async () => {
-                  const res = await apiFetch<{ code: string; command: string; deepLinkUrl?: string }>('/api/auth/telegram-link-code', { method: 'POST' });
-                  setLinkCode(res);
-                }}
-                className="btn-ghost px-3 py-1.5 rounded-xl font-bold"
-              >
-                {isFa ? 'ساخت کد اتصال' : 'Generate Code'}
-              </button>
-            </div>
-            {linkCode && (
-              <div className="surface-soft rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span dir="ltr" className="font-mono text-jade font-bold">{linkCode.command}</span>
-                <a
-                  href={linkCode.deepLinkUrl || `https://t.me/Dollarino_bot?start=${linkCode.code}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-emerald px-3 py-1 rounded-lg font-bold"
-                >
-                  {isFa ? (
-                    <>
-                      اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
-                    </>
-                  ) : (
-                    '1-Click Connect'
+          {/* Collapsible Advanced TradingView / Telegram Mirror */}
+          <div className="panel rounded-[24px] p-4 sm:p-5 space-y-4">
+            <button
+              type="button"
+              onClick={() => setShowWebhookMirror((v) => !v)}
+              className="w-full flex items-center justify-between text-xs font-black text-main"
+            >
+              <span>{isFa ? 'اتصال وب‌هوک TradingView و کپی کانال تلگرام (تنظیمات پیشرفته)' : 'TradingView Webhook & Channel Mirror (Advanced)'}</span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${showWebhookMirror ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showWebhookMirror && (
+              <div className="grid lg:grid-cols-2 gap-4 pt-2 border-t hairline">
+                <div className="surface-soft rounded-[22px] p-4 space-y-3">
+                  <h4 className="font-display font-bold text-sm text-main">
+                    {isFa ? 'لینک وب‌هوک TradingView و اجرای سیگنال' : 'TradingView Webhook & Signal Runner'}
+                  </h4>
+                  <div className="rounded-xl panel p-2.5 flex items-center justify-between gap-2 text-xs">
+                    <code dir="ltr" className="truncate font-mono text-[11px] text-main">{webhookUrl}</code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(webhookUrl);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1800);
+                      }}
+                      className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1 shrink-0"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
+                      <span>{copied ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی لینک' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <textarea rows={6} dir="ltr" value={rawSig} onChange={(e) => setRawSig(e.target.value)} className="field font-mono text-[11px]" />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => void runSignal(false)} className="btn-ghost flex-1 py-2.5 rounded-xl text-xs font-bold">
+                      {isFa ? 'فقط تحلیل و ثبت' : 'Parse Only'}
+                    </button>
+                    <button type="button" onClick={() => void runSignal(true)} className="btn-emerald flex-1 py-2.5 rounded-xl text-xs inline-flex items-center justify-center gap-1.5">
+                      <Play className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'اجرای خودکار ۳ تارگت' : 'Execute 3-TP'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="surface-soft rounded-[22px] p-4 space-y-3">
+                  <h4 className="font-display font-bold text-sm text-main">
+                    {isFa ? 'کپی‌ترید مستقیم از کانال و ربات تلگرام' : 'Telegram Channel & Bot Link'}
+                  </h4>
+                  <div className="flex gap-2 text-xs">
+                    <input value={tgChannel} onChange={(e) => setTgChannel(e.target.value)} dir="ltr" placeholder="@Dollarinoofficial" className="field font-mono" />
+                    <button type="button" onClick={() => void saveChannelHandle()} className="btn-ghost px-4 rounded-xl font-bold shrink-0">
+                      {isFa ? 'ذخیره کانال' : 'Save'}
+                    </button>
+                  </div>
+                  <form onSubmit={addTelegramBot} className="space-y-2.5 text-xs pt-2 border-t hairline">
+                    <input value={tgToken} onChange={(e) => setTgToken(e.target.value)} required dir="ltr" placeholder="123456:ABC-BotFatherToken..." className="field font-mono" />
+                    <button type="submit" className="btn-gold w-full py-2.5 rounded-xl text-xs inline-flex items-center justify-center gap-1.5">
+                      <Plus className="w-4 h-4" />
+                      <span>{isFa ? 'اتصال ربات تلگرام شخصی' : 'Connect Telegram Bot'}</span>
+                    </button>
+                  </form>
+                  {tgBots.length > 0 && (
+                    <div className="space-y-1.5 pt-2 border-t hairline text-xs">
+                      {tgBots.map((b) => (
+                        <div key={b.id} className="panel rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                          <span>@{b.bot_username} · {b.signal_channel_id}</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void apiFetch(`/api/connections/telegram-bots/${b.id}/sync-webhook`, { method: 'POST' }).then(() => flash(isFa ? 'وب‌هوک همگام‌سازی شد' : 'Synced'))}
+                              className="text-brand font-bold text-[11px]"
+                            >
+                              Sync
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void apiFetch(`/api/connections/telegram-bots/${b.id}`, { method: 'DELETE' }).then(loadConnections)}
+                              className="text-loss hover:opacity-75"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </a>
+                  <div className="pt-2 border-t hairline flex items-center justify-between text-xs">
+                    <span className="text-dim">{isFa ? 'کد اتصال سریع به ربات تلگرام:' : 'Quick Telegram Account Link:'}</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const res = await apiFetch<{ code: string; command: string; deepLinkUrl?: string }>('/api/auth/telegram-link-code', { method: 'POST' });
+                        setLinkCode(res);
+                      }}
+                      className="btn-ghost px-3 py-1.5 rounded-xl font-bold"
+                    >
+                      {isFa ? 'ساخت کد اتصال' : 'Generate Code'}
+                    </button>
+                  </div>
+                  {linkCode && (
+                    <div className="panel rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span dir="ltr" className="font-mono text-jade font-bold">{linkCode.command}</span>
+                      <a
+                        href={linkCode.deepLinkUrl || `https://t.me/Dollarino_bot?start=${linkCode.code}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-emerald px-3 py-1 rounded-lg font-bold"
+                      >
+                        {isFa ? (
+                          <>
+                            اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
+                          </>
+                        ) : (
+                          '1-Click Connect'
+                        )}
+                      </a>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

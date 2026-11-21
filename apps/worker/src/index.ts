@@ -9,7 +9,10 @@ import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from '.
 import { adminRoutes } from './routes/admin.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
 import { connectionRoutes } from './routes/connections.js';
+import { copyTradeRoutes } from './routes/copy-trade.js';
+import { myAiRoutes } from './routes/my-ai.js';
 import { getPublicPlans, subscriptionRoutes } from './routes/subscriptions.js';
+import { supportRoutes } from './routes/support.js';
 import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/trading.js';
 import { webhookRoutes } from './routes/webhooks.js';
 
@@ -24,11 +27,14 @@ app.use('*', cors({
 }));
 
 app.get('/', (c) => {
+  if (c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
   return c.json({
     ok: true,
-    service: 'Dollarino API Worker v6.0',
+    service: 'Dollarino API Worker v8.0',
     health: '/api/health',
-    note: 'Open the Website preview (port 5173) or Cloudflare Pages frontend to use the full Dollarino UI.',
+    note: 'Open the Website preview (port 5173) or unified Worker URL to use the full Dollarino UI.',
   });
 });
 
@@ -157,6 +163,14 @@ app.get('/api/public/plans', async (c) => {
   return c.json({ plans });
 });
 
+app.get('/api/public/copy-traders', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level
+     FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
+  ).all().catch(() => ({ results: [] }));
+  return c.json({ traders: rows.results });
+});
+
 app.get('/api/public/market-snapshot', async (c) => {
   const symbol = (c.req.query('symbol') || 'BTCUSDT').toUpperCase();
   const proxyCfg = c.env.TOOBIT_PROXY_URL
@@ -196,6 +210,9 @@ app.route('/api/connections', connectionRoutes);
 app.route('/api/subscriptions', subscriptionRoutes);
 app.route('/api/trading', tradingRoutes);
 app.route('/api/chart-ai', chartAiRoutes);
+app.route('/api/my-ai', myAiRoutes);
+app.route('/api/copy-trade', copyTradeRoutes);
+app.route('/api/support', supportRoutes);
 app.route('/api/webhook', webhookRoutes);
 app.route('/api/admin', adminRoutes);
 
@@ -239,6 +256,13 @@ app.post('/api/telegram/webhook/:botId', async (c) => {
   const url = new URL(c.req.url);
   url.pathname = `/api/webhook/telegram/${c.req.param('botId')}`;
   return app.fetch(new Request(url.toString(), c.req.raw), c.env, c.executionCtx);
+});
+
+app.all('*', async (c) => {
+  if (!c.req.path.startsWith('/api/') && c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  return c.json({ error: `Route not found: ${c.req.path}` }, 404);
 });
 
 export default {

@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  BrainCircuit,
   Camera,
   CheckCircle2,
   ChevronLeft,
@@ -10,6 +11,7 @@ import {
   CreditCard,
   ExternalLink,
   Gift,
+  Headphones,
   Image,
   KeyRound,
   Link2,
@@ -71,6 +73,7 @@ export function ServicesPage({
   data,
   onNavigate,
   onUpdateUser,
+  onOpenSupport,
   onLogout,
 }: {
   lang: Lang;
@@ -82,6 +85,7 @@ export function ServicesPage({
   data: DashboardPayload;
   onNavigate: (tab: NavTab) => void;
   onUpdateUser?: (next: AuthUserInfo) => void;
+  onOpenSupport?: () => void;
   onLogout: () => Promise<void>;
 }) {
   const isFa = lang === 'fa';
@@ -176,13 +180,9 @@ export function ServicesPage({
     ? isFa
       ? data.entitlement.planNameFa
       : data.entitlement.planNameEn
-    : isFa ? (
-        <>
-          نسخه رایگان دمو (<span dir="ltr" className="inline-block font-num">$10K</span>)
-        </>
-      ) : (
-        'Free Paper ($10K)'
-      );
+    : isFa
+      ? 'بدون اشتراک فعال (نیازمند خرید اشتراک)'
+      : 'No Active Plan (Subscription Required)';
 
   /* Dedicated Account Management View matching image-2.png + Real Profile Photo Upload */
   if (accountView) {
@@ -443,9 +443,9 @@ export function ServicesPage({
     color: string;
   }> = [
     {
-      tab: 'terminal',
-      title: isFa ? 'معاملات سریع' : 'Easy Trade',
-      icon: Zap,
+      tab: 'myai',
+      title: isFa ? 'هوش مصنوعی من' : 'My AI',
+      icon: BrainCircuit,
       bg: 'from-[#1652F0] to-[#3B82F6]',
       color: '#FFFFFF',
     },
@@ -465,7 +465,7 @@ export function ServicesPage({
     },
     {
       tab: 'pricing',
-      title: isFa ? 'کد هدیه' : 'Gift Card',
+      title: isFa ? 'اشتراک و هدیه' : 'Plans & Gift',
       icon: Gift,
       bg: 'from-[#F59E0B] to-[#FBBF24]',
       color: '#FFFFFF',
@@ -481,6 +481,15 @@ export function ServicesPage({
     tileColor: string;
     badge?: string;
   }> = [
+    {
+      tab: 'myai',
+      title: isFa ? 'هوش مصنوعی من (قابل آموزش با چت)' : 'My Trainable AI Agent',
+      subtitle: isFa ? 'با چت فارسی استراتژی خودت را به AI یاد بده، تست بگیر و ۲۴/۷ اجرا کن' : 'Teach your strategy via chat, test live & activate 24/7',
+      icon: BrainCircuit,
+      tileBg: 'bg-[#1652F0]/15',
+      tileColor: 'text-[#1652F0]',
+      badge: isFa ? 'جدید' : 'NEW',
+    },
     {
       tab: 'overview',
       title: isFa ? 'ربات معامله‌گر هوشمند ۲۴/۷' : '24/7 Autonomous AI Bot',
@@ -500,8 +509,8 @@ export function ServicesPage({
     },
     {
       tab: 'copy',
-      title: isFa ? 'اتصال Toobit / KCEX و کپی‌ترید' : 'Toobit / KCEX API & Copy Trade',
-      subtitle: isFa ? 'اتصال امن AES-256 بدون دسترسی برداشت' : 'AES-256 trade-only exchange vault',
+      title: isFa ? 'کپی‌ترید تاییدشده و صرافی Toobit / KCEX' : 'Verified Copy Trade & Exchanges',
+      subtitle: isFa ? 'تریدرهای تاییدشده ادمین + اتصال امن صرافی AES-256' : 'Admin-verified Copy Traders & AES-256 exchange vault',
       icon: Users,
       tileBg: 'bg-[#0EA5E9]/15',
       tileColor: 'text-[#0284C7]',
@@ -720,6 +729,23 @@ export function ServicesPage({
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>
+
+          {onOpenSupport && (
+            <button
+              type="button"
+              onClick={onOpenSupport}
+              className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
+            >
+              <span className="w-10 h-10 rounded-2xl bg-[#10B981]/15 text-[#0D9455] grid place-items-center shrink-0">
+                <Headphones className="w-5 h-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'پشتیبانی آنلاین و چت با ادمین' : 'Online Support & Live Admin Chat'}</span>
+                <span className="text-[11px] text-dim block">{isFa ? 'ارسال پیام فوری همگام با تلگرام پشتیبانی' : 'Direct chat synced with Telegram support'}</span>
+              </div>
+              <Arrow className="w-4 h-4 text-dim shrink-0" />
+            </button>
+          )}
 
           <button
             type="button"

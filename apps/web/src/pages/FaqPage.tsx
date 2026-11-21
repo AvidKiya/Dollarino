@@ -9,38 +9,34 @@ export function FaqPage({ lang }: { lang: Lang }) {
   const items = isFa
     ? [
         [
-          'چطور بدون ریسک و در ۲ دقیقه با دلارینو شروع کنم؟',
-          'بلافاصله بعد از ورود، یک حساب دمو با $۱۰,۰۰۰ اعتبار رایگان و قیمت واقعی بازار در اختیارتان است. کافی است در بخش نمای کلی، موتور دلخواه (دُرّبین AI یا دُرنا V1) و ریسک را انتخاب کنید و دکمه «شروع خودکار ربات» را بزنید.',
+          'چطور در ۲ دقیقه با دلارینو شروع کنم؟',
+          'پس از ثبت‌نام، اشتراک دلخواه خود را فعال کنید و سپس صرافی Toobit یا KCEX را متصل نمایید. در «حالت ساده» با یک دکمه ترید هوشمند اتومات با هوش مصنوعی روشن می‌شود؛ یا می‌توانید در «هوش مصنوعی من» استراتژی خودتان را با چت به AI یاد بدهید و در «کپی‌ترید تاییدشده» از تریدرهای منتخب کپی کنید.',
         ],
         [
           'پایانه و چارت AI چطور کار می‌کند؟',
           'در تب «پایانه و چارت AI» می‌توانید روی هر جفت‌ارز چارت زنده را ببینید، از هوش مصنوعی بخواهید سطوح حمایت، مقاومت، Entry، حد ضرر و ۳ تارگت را روی چارت بکشد و با یک کلیک آن‌ها را به فرم معامله منتقل کنید.',
         ],
         [
-          'برای استفاده از هوش مصنوعی دُرّبین باید کلید API بخرم؟',
-          'خیر! هوش مصنوعی دلارینو (دُرّبین) به‌صورت مرکزی توسط پلتفرم مدیریت می‌شود و نیاز به هیچ کلید شخصی LLM ندارید.',
+          'هوش مصنوعی من (My AI) چگونه کار می‌کند؟',
+          'یک هوش مصنوعی خام در اختیار شماست؛ با گفتگوی ساده فارسی تایم‌فریم، اندیکاتورها (RSI، EMA، سوپرترند)، حد ضرر و سود دلخواه را به او یاد می‌دهید، روی کندل‌های واقعی تست می‌گیرید و برای ترید ۲۴ ساعته فعال می‌کنید.',
         ],
         [
           'آیا سرمایه من در صرافی‌های Toobit و KCEX امن است؟',
           'بله، سرمایه شما در حساب صرافی خودتان می‌ماند. کلیدهای API با استاندارد AES-256 رمزنگاری می‌شوند و تنها دسترسی معامله (بدون مجوز برداشت) نیاز دارند.',
         ],
-        [
-          'فرق ۴ پوسته ظاهری برنامه چیست؟',
-          'از آیکون پالت در بالای صفحه می‌توانید بین ۴ ظاهر کبالت کیهانی، کاغذ روشن ادیتوریال، اُبسیدیان طلایی و سیگنال نیمه‌شب سوییچ کنید.',
-        ],
       ]
     : [
         [
-          'How do I start safely with zero capital at risk?',
-          'Every account launches with a $10,000 Paper Demo running against live exchange quotes. Pick an engine and risk preset in Overview and click Start Auto-Trading.',
+          'How do I start with Dollarino in 2 minutes?',
+          'Sign up, activate a subscription plan, and pick Simple Automated AI Trading or teach your personal My AI agent, follow Verified Copy Traders, or run custom Pine Script & Python strategies.',
         ],
         [
           'How does Terminal & Chart AI work?',
           'In Terminal & Chart AI you get live candlesticks, Order Book depth, interactive AI chart analysis that plots Entry/SL/TP1–TP3 directly onto candles, and 1-click copy into the Order Ticket.',
         ],
         [
-          'Do I need personal OpenAI/Anthropic API keys?',
-          'No — Dorrbin Multi-AI consensus is managed centrally by the platform.',
+          'How does My Trainable AI work?',
+          'Chat with your blank personal AI in plain language to define your indicators, timeframes, risk rules, and coins — preview a live market backtest and activate 24/7 execution.',
         ],
         [
           'Are my exchange funds safe?',
@@ -82,8 +78,8 @@ export function FaqPage({ lang }: { lang: Lang }) {
         <ShieldCheck className="w-5 h-5 text-jade shrink-0" />
         <span>
           {isFa
-            ? 'حساب دمو برای تمرین است؛ هنگام اتصال به صرافی واقعی حتماً سطح ریسک متناسب با سرمایه خود را انتخاب کنید.'
-            : 'Paper mode simulates live quotes risk-free; always size live leverage conservatively.'}
+            ? 'همیشه تنظیمات ریسک و اهرم را متناسب با سرمایه خود انتخاب کنید و برای هر سوال با پشتیبانی آنلاین در تماس باشید.'
+            : 'Always size leverage conservatively according to your risk tolerance and contact Online Support anytime.'}
         </span>
       </div>
     </div>

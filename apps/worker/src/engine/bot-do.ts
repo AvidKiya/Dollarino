@@ -18,6 +18,7 @@ import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS } from '../exchanges/markets.js';
+import { compileTrainedRulesToVisualDef, DEFAULT_TRAINED_RULES, type TrainedAIRules } from '../routes/my-ai.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -536,9 +537,24 @@ export class TradingBotCoordinator implements DurableObject {
       return false;
     }
 
-    // 2B. Custom Pine Script / Python / Visual Strategy OR Dollarino Built-in Quant Strategies
+    // 2B. User-Trained Personal AI ('my_custom_ai'), Custom Pine/Python/Visual Strategy, OR Dollarino Quant Strategies
     let outputs: StrategySignalOutput[] = [];
-    if (
+    if (cfg.strategy_key === 'my_custom_ai') {
+      const agentRow = await this.env.DB.prepare(
+        `SELECT name, system_rules_json FROM user_ai_agents WHERE user_id = ? LIMIT 1`
+      ).bind(userId).first<{ name: string; system_rules_json: string }>().catch(() => null);
+      if (agentRow) {
+        let rules: TrainedAIRules = DEFAULT_TRAINED_RULES;
+        try {
+          rules = { ...DEFAULT_TRAINED_RULES, ...(JSON.parse(agentRow.system_rules_json || '{}') as Partial<TrainedAIRules>) };
+        } catch {
+          rules = DEFAULT_TRAINED_RULES;
+        }
+        const visualDef = compileTrainedRulesToVisualDef(rules, agentRow.name);
+        const evalRes = evaluateCustomStrategy('visual', JSON.stringify(visualDef), ltfClosed, cfg.entry_timeframe);
+        if (evalRes.valid) outputs = evalRes.signals;
+      }
+    } else if (
       (cfg.strategy_key === 'custom_pine' ||
         cfg.strategy_key === 'custom_python' ||
         cfg.strategy_key === 'custom_visual') &&

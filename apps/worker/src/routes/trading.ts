@@ -28,7 +28,7 @@ import {
 import { requireAuth, type AppVariables } from '../auth.js';
 import { getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
 import { decryptVaultJson, hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
-import { resolveUserEntitlement } from './subscriptions.js';
+import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -323,6 +323,8 @@ tradingRoutes.get('/wallet/ledger', async (c) => {
 
 tradingRoutes.post('/wallet/topup', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{ amountUsd?: number; note?: string }>();
   const amount = Number(body.amountUsd ?? 0);
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
@@ -338,7 +340,7 @@ tradingRoutes.post('/wallet/topup', async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
      VALUES (?, ?, ?, 'TOPUP', ?, ?, ?)`
-  ).bind(randomId('wl'), user.id, cfg?.trading_mode ?? 'PAPER', amount, nextBal, body.note ?? 'Instant Paper Credit Top-Up').run();
+  ).bind(randomId('wl'), user.id, cfg?.trading_mode ?? 'PAPER', amount, nextBal, body.note ?? 'Instant Simulation Credit Top-Up').run();
 
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Wallet topped up +$${amount.toFixed(2)} (Balance: $${nextBal.toFixed(2)})`);
   return c.json({ ok: true, balanceAfter: nextBal });
@@ -346,14 +348,16 @@ tradingRoutes.post('/wallet/topup', async (c) => {
 
 tradingRoutes.post('/wallet/reset', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const targetBal = 10000;
   await c.env.DB.prepare(`UPDATE bot_configs SET paper_balance = '10000.00', updated_at = datetime('now') WHERE user_id = ?`)
     .bind(user.id).run();
   await c.env.DB.prepare(
     `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
-     VALUES (?, ?, 'PAPER', 'TOPUP', ?, ?, 'Reset Paper Demo Balance to $10,000')`
+     VALUES (?, ?, 'PAPER', 'TOPUP', ?, ?, 'Reset Simulation Balance to $10,000')`
   ).bind(randomId('wl'), user.id, targetBal, targetBal).run().catch(() => {});
-  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'Paper Demo balance reset to $10,000.00');
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'Simulation balance reset to $10,000.00');
   return c.json({ ok: true, balanceAfter: targetBal });
 });
 
@@ -410,7 +414,7 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     const ent = await resolveUserEntitlement(c.env.DB, user);
     if (!ent.allowLiveTrading) {
       return c.json({
-        error: 'Active paid subscription required to switch to Live Trading (Toobit / KCEX). Paper Demo remains free.',
+        error: 'Active paid subscription required to switch to Live Trading (Toobit / KCEX).',
         code: 'SUBSCRIPTION_REQUIRED',
       }, 402);
     }
@@ -483,21 +487,27 @@ tradingRoutes.post('/bot/start', async (c) => {
   ]);
 
   const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'dollarino_v01');
+  if (!entitlement.hasPaidPlan && entitlement.subscriptionRequired) {
+    return c.json({
+      error: 'برای روشن کردن ربات و معامله در دلارینو، ابتدا یکی از پلن‌های اشتراک را فعال کنید.',
+      code: 'SUBSCRIPTION_REQUIRED',
+    }, 402);
+  }
   if (cfg?.trading_mode === 'LIVE' && !entitlement.allowLiveTrading) {
     return c.json({
-      error: 'Active paid subscription required for Live Trading (Toobit / KCEX). Please upgrade or test in Paper Demo.',
+      error: 'Active paid subscription required for Live Trading (Toobit / KCEX).',
       code: 'SUBSCRIPTION_REQUIRED',
     }, 402);
   }
   if (targetStrategy === 'ai_autonomous_agent' && !entitlement.allowAiTrading) {
     return c.json({
-      error: 'برای ترید با «هوش مصنوعی دلارینو»، اشتراک Pro یا VIP لازم است. می‌توانید همین الان با «استراتژی منتخب دلارینو» در دمو رایگان تست کنید.',
+      error: 'برای ترید با «هوش مصنوعی دلارینو»، اشتراک فعال لازم است.',
       code: 'SUBSCRIPTION_REQUIRED',
     }, 402);
   }
   if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0) {
     return c.json({
-      error: 'موتور «هوش مصنوعی دلارینو» هنوز توسط مدیریت فعال نشده است. تا فعال‌سازی می‌توانید از «استراتژی منتخب دلارینو» استفاده کنید.',
+      error: 'موتور «هوش مصنوعی دلارینو» هنوز توسط مدیریت فعال نشده است. تا فعال‌سازی می‌توانید از «هوش مصنوعی من» یا استراتژی‌های کوانت استفاده کنید.',
       code: 'NO_ACTIVE_AI_KEY',
     }, 400);
   }
@@ -826,6 +836,10 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
 
 tradingRoutes.post('/orders/manual', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) {
+    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
+  }
   const body = await c.req.json<{
     symbol: string;
     direction: Direction;
@@ -917,6 +931,16 @@ tradingRoutes.delete('/pending/:id', async (c) => {
 
 tradingRoutes.post('/signals/execute', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) {
+    return c.json(
+      {
+        error: 'برای اجرای سیگنال و معامله، ابتدا اشتراک دلارینو را خریداری و فعال کنید.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      },
+      402
+    );
+  }
   const body = await c.req.json<{ rawText?: string; signal?: Record<string, unknown>; executeNow?: boolean; source?: 'copytrade' | 'scanner' }>();
   const parsed = parseDollarinoSignal(body.signal ?? body.rawText ?? '');
   if (!parsed) return c.json({ error: 'Could not parse valid Dollarino signal' }, 400);
@@ -952,13 +976,10 @@ tradingRoutes.post('/signals/execute', async (c) => {
   }
 
   const ent = await resolveUserEntitlement(c.env.DB, user);
-  const cfgMode = await c.env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?')
-    .bind(user.id).first<{ trading_mode: string }>();
-  const isScannerPaper = body.source === 'scanner' && (cfgMode?.trading_mode ?? 'PAPER') === 'PAPER';
-  if (!isScannerPaper && !ent.allowCopyTrade) {
+  if (!ent.hasPaidPlan && ent.subscriptionRequired) {
     return c.json(
       {
-        error: 'Active Pro or VIP subscription required to execute Telegram Copy-Trade signals.',
+        error: 'برای اجرای سیگنال و معامله، ابتدا اشتراک دلارینو را خریداری و فعال کنید.',
         code: 'SUBSCRIPTION_REQUIRED',
       },
       402
@@ -968,7 +989,7 @@ tradingRoutes.post('/signals/execute', async (c) => {
   const execRes = await executeSignalForUser(c.env, user.id, parsed, {
     signalId: sigId,
     forceBypassState: true,
-    strategyKey: isScannerPaper ? 'scanner_signal' : 'manual_signal',
+    strategyKey: body.source === 'scanner' ? 'scanner_signal' : 'manual_signal',
   });
 
   if (execRes.ok) {
@@ -1167,6 +1188,8 @@ tradingRoutes.get('/markets', async (c) => {
 
 tradingRoutes.post('/scanner', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     strategyKey?: StrategyKey;
     timeframe?: Timeframe;
@@ -1544,6 +1567,8 @@ tradingRoutes.get('/cards', async (c) => {
 
 tradingRoutes.post('/cards/issue', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     mode?: 'LIVE' | 'PAPER';
     period?: '24H' | '7D' | '30D' | 'ALL' | 'TRADE';
@@ -1591,7 +1616,7 @@ tradingRoutes.post('/cards/issue', async (c) => {
       error:
         requestedMode === 'LIVE'
           ? 'هنوز هیچ معامله واقعی (Live) بسته شده‌ای در این بازه زمانی برای حساب شما ثبت نشده است. کارت سود تاییدشده فقط بر اساس معاملات واقعی تسویه‌شده صادر می‌شود.'
-          : 'هیچ معامله آزمایشی (Paper Demo) بسته شده‌ای در این بازه زمانی ثبت نشده است.',
+          : 'هیچ معامله شبیه‌ساز بسته شده‌ای در این بازه زمانی ثبت نشده است.',
       code: 'NO_SETTLED_TRADES',
     }, 400);
   }
@@ -1760,6 +1785,8 @@ tradingRoutes.get('/strategies', async (c) => {
 
 tradingRoutes.post('/strategies/evaluate', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     language?: CustomStrategyLanguage;
     code?: string;
@@ -1816,6 +1843,8 @@ tradingRoutes.post('/strategies/evaluate', async (c) => {
 
 tradingRoutes.post('/strategies', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     id?: string;
     name?: string;
@@ -1873,6 +1902,10 @@ tradingRoutes.delete('/strategies/:id', async (c) => {
 
 tradingRoutes.post('/strategies/:id/activate', async (c) => {
   const user = c.get('user');
+  const gate = await requirePaidEntitlement(c.env.DB, user);
+  if (!gate.ok) {
+    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
+  }
   const id = c.req.param('id');
   const row = await c.env.DB.prepare(
     `SELECT id, name, language, timeframe FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`

@@ -1,4 +1,5 @@
 import type { FuturesBalance } from '../exchanges/base.js';
+import type { InlineKeyboardButton } from './client.js';
 
 export function formatIranDateTime(isoInput?: string | null): string {
   if (!isoInput) return '—';
@@ -26,12 +27,13 @@ export function formatToman(usdt: number, rate = 70000): string {
 export function welcomeMessage(firstName: string): string {
   return (
     `سلام خوش اومدی ${firstName || 'دوست عزیز'} 🌹\n\n` +
-    `🤖 به ربات تریدر هوشمند دلارینو (@Dollarino_bot) خوش آمدید!\n` +
-    `• اجرای خودکار و دستی سیگنال‌های کانال رسمی @Dollarino_official\n` +
-    `• موتور هوش مصنوعی مرکزی و استراتژی منتخب دلارینو (اسکن کل بازار)\n` +
-    `• مدیریت خودکار ۳ تارگت (۵۰٪ / ۲۵٪ / ۲۵٪) + ریسک‌فری خودکار روی TP1\n\n` +
-    `💎 صرافی‌های متصل: Toobit و KCEX + حساب دمو رایگان Paper Mode.\n` +
-    `از دکمه‌های زیر استفاده کنید:`
+    `💎 به پلتفرم هوشمند ترید دلارینو (@Dollarino_bot) خوش آمدید!\n` +
+    `• حالت ساده: ترید کاملاً اتومات با هوش مصنوعی ۲۴ ساعته\n` +
+    `• هوش مصنوعی من: هوش مصنوعی خام خودت را با چت آموزش بده تا برایت معامله کند\n` +
+    `• کپی‌ترید تاییدشده: مشاهده و کپی خودکار معاملات تریدرهای تاییدشده\n` +
+    `• استراتژی شخصی: ساخت و بک‌تست اسکریپت‌های Pine Script و Python\n\n` +
+    `🔐 برای دسترسی به معاملات واقعی و خودکار، اشتراک دلارینو لازم است.\n` +
+    `از منوی شیشه‌ای و کشویی زیر یا دکمه‌های ربات استفاده کنید:`
   );
 }
 
@@ -41,32 +43,97 @@ export function mainMenuKeyboard(webAppUrl?: string) {
     [{ text: 'اتصال به صرافی 🔗' }, { text: 'تنظیمات ⚙️' }],
     [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
     [{ text: '📈 معاملات باز' }, { text: 'ربات و هوش مصنوعی من 🤖' }],
+    [{ text: '🏆 کپی‌ترید تاییدشده' }, { text: '💬 پشتیبانی آنلاین' }],
     safeUrl
       ? [{ text: '🚀 مینی‌اپ دلارینو', web_app: { url: safeUrl } }, { text: 'راهنما 📚' }]
       : [{ text: 'راهنما 📚' }],
   ];
 }
 
-export function miniAppInlineKeyboard(webAppUrl: string, path = '') {
+export type CollapsibleMenuSection = 'none' | 'ai' | 'copy' | 'tools';
+
+export function miniAppInlineKeyboard(
+  webAppUrl: string,
+  path = '',
+  openSection: CollapsibleMenuSection = 'none',
+  isBotRunning = false
+): InlineKeyboardButton[][] {
   const base = webAppUrl.replace(/\/$/, '');
   const fullUrl = `${base}${path}`;
-  if (!fullUrl.startsWith('https://')) {
-    return [
-      [
-        { text: '📈 معاملات باز', callback_data: 'tg_positions' },
-        { text: '🤖 روشن/خاموش ربات', callback_data: 'tg_bot_toggle' },
-      ],
-      [{ text: '🌐 ورود مستقیم به سایت دلارینو', callback_data: 'tg_web_login' }],
-    ];
+  const hasHttps = fullUrl.startsWith('https://');
+  const rows: InlineKeyboardButton[][] = [];
+
+  if (hasHttps) {
+    rows.push([
+      {
+        text: '🚀 باز کردن پنل شیشه‌ای در مینی‌اپ',
+        web_app: { url: fullUrl },
+        style: 'primary',
+      },
+    ]);
   }
-  return [
-    [{ text: '🚀 باز کردن پنل کامل در مینی‌اپ', web_app: { url: fullUrl } }],
-    [
+
+  // Section 1: AI & Trading Accordion
+  rows.push([
+    {
+      text: `${openSection === 'ai' ? '▾' : '▸'} 🧠 ترید هوشمند و هوش مصنوعی من`,
+      callback_data: `tg_acc:${openSection === 'ai' ? 'none' : 'ai'}`,
+      style: 'primary',
+    },
+  ]);
+  if (openSection === 'ai') {
+    rows.push([
+      { text: '🤖 حالت ساده (اتومات AI)', callback_data: 'tg_mode_simple_ai', style: 'success' },
+      { text: '🧠 آموزش به هوش مصنوعی من', callback_data: 'tg_myai', style: 'primary' },
+    ]);
+    rows.push([
+      {
+        text: isBotRunning ? '🔴 توقف ربات خودکار' : '🟢 روشن کردن ربات خودکار',
+        callback_data: 'tg_bot_toggle',
+        style: isBotRunning ? 'danger' : 'success',
+      },
+      ...(hasHttps
+        ? [{ text: '🧪 استراتژی شخصی (IDE)', web_app: { url: `${base}/?tab=lab` } }]
+        : [{ text: '📈 معاملات باز', callback_data: 'tg_positions' }]),
+    ]);
+  }
+
+  // Section 2: Verified Copy Trade Accordion
+  rows.push([
+    {
+      text: `${openSection === 'copy' ? '▾' : '▸'} 🏆 کپی‌ترید تریدرهای تاییدشده`,
+      callback_data: `tg_acc:${openSection === 'copy' ? 'none' : 'copy'}`,
+      style: 'success',
+    },
+  ]);
+  if (openSection === 'copy') {
+    rows.push([
+      { text: '📋 لیست تریدرهای تاییدشده', callback_data: 'tg_copy_list', style: 'success' },
+      ...(hasHttps
+        ? [{ text: '🌐 باز کردن در مینی‌اپ', web_app: { url: `${base}/?tab=copy` } }]
+        : [{ text: '📈 پوزیشن‌های فعال', callback_data: 'tg_positions' }]),
+    ]);
+  }
+
+  // Section 3: Account, Subscription & Online Support Accordion
+  rows.push([
+    {
+      text: `${openSection === 'tools' ? '▾' : '▸'} 💎 اشتراک، پوزیشن‌ها و پشتیبانی آنلاین`,
+      callback_data: `tg_acc:${openSection === 'tools' ? 'none' : 'tools'}`,
+    },
+  ]);
+  if (openSection === 'tools') {
+    rows.push([
       { text: '📈 معاملات باز', callback_data: 'tg_positions' },
-      { text: '🤖 روشن/خاموش ربات', callback_data: 'tg_bot_toggle' },
-    ],
-    [{ text: '🌐 ورود مستقیم به سایت (مرورگر)', callback_data: 'tg_web_login' }],
-  ];
+      { text: '💎 خرید / تمدید اشتراک', callback_data: 'tg_open_sub', style: 'success' },
+    ]);
+    rows.push([
+      { text: '💬 پشتیبانی آنلاین', callback_data: 'tg_support_open', style: 'primary' },
+      { text: '🌐 ورود مستقیم به سایت', callback_data: 'tg_web_login' },
+    ]);
+  }
+
+  return rows;
 }
 
 export function settingsKeyboard(isAdmin: boolean, isSuperAdmin = false) {
@@ -88,7 +155,7 @@ export function settingsKeyboard(isAdmin: boolean, isSuperAdmin = false) {
 export function exchangeSelectionKeyboard() {
   return [
     [{ text: 'Toobit (توبیت - API لایو) 🟢' }, { text: 'KCEX (کی‌سی‌ای‌ایکس - ۰٪ کارمزد) 🔵' }],
-    [{ text: 'Paper Mode (دمو رایگان) 🧪' }],
+    [{ text: 'Paper Mode (حساب آزمایشی با اشتراک) 🧪' }],
     [{ text: 'بازگشت به صفحه قبل 🔙' }],
   ];
 }

@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   TRADING_BOT_DO: DurableObjectNamespace;
+  ASSETS?: { fetch(request: Request): Promise<Response> };
   SESSION_JWT_SECRET?: string;
   MASTER_ENCRYPTION_KEY?: string;
   OWNER_TELEGRAM_ID?: string;

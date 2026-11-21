@@ -3,8 +3,8 @@ export type Lang = 'fa' | 'en';
 export const dict = {
   fa: {
     brand: 'دلارینو',
-    brandSub: 'هوش مصنوعی دلارینو · استراتژی منتخب · کپی ترید',
-    freeBadge: 'دمو رایگان + اشتراک حرفه‌ای',
+    brandSub: 'هوش مصنوعی دلارینو · هوش مصنوعی من · کپی ترید تاییدشده',
+    freeBadge: 'پلتفرم اشتراکی ترید هوشمند',
     nav: {
       dashboard: 'خانه و شروع ترید',
       flow: 'استراتژی منتخب دلارینو',
@@ -22,10 +22,10 @@ export const dict = {
     killSwitch: 'توقف اضطراری و بستن همه',
     startBot: 'شروع خودکار ربات',
     stopBot: 'توقف ربات',
-    addBalance: 'شارژ موجودی دمو',
+    addBalance: 'مدیریت موجودی',
     showTradingCard: 'کارت نتایج هفتگی',
     logout: 'خروج از حساب',
-    paperMode: 'حساب دمو رایگان',
+    paperMode: 'حساب شبیه‌ساز',
     liveMode: 'حساب واقعی (صرافی)',
     autoTrade: 'معامله خودکار',
     manualTrade: 'تایید دستی',
@@ -45,8 +45,8 @@ export const dict = {
   },
   en: {
     brand: 'Dollarino',
-    brandSub: 'Dollarino AI · Dollarino Select · Copy-Trade',
-    freeBadge: 'Free Paper Demo + Pro',
+    brandSub: 'Dollarino AI · My AI · Verified Copy-Trade',
+    freeBadge: 'Subscription AI Trading Platform',
     nav: {
       dashboard: 'Home & Auto-Trade',
       flow: 'Dollarino Select (Dorna V1)',
@@ -64,10 +64,10 @@ export const dict = {
     killSwitch: 'Emergency Close All',
     startBot: 'Start Auto-Trade',
     stopBot: 'Stop Bot',
-    addBalance: 'Top Up Demo',
+    addBalance: 'Balance Manager',
     showTradingCard: 'Weekly Results Card',
     logout: 'Sign Out',
-    paperMode: 'Free Paper Demo',
+    paperMode: 'Simulated Mode',
     liveMode: 'Live Exchange',
     autoTrade: 'Auto-Trade',
     manualTrade: 'Manual Confirm',

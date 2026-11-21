@@ -43,9 +43,24 @@ export interface UserEntitlement {
 
 export async function getPublicPlans(db: D1Database): Promise<SubscriptionPlanRow[]> {
   const rows = await db.prepare(
-    `SELECT * FROM subscription_plans WHERE is_active = 1 ORDER BY sort_order ASC`
+    `SELECT * FROM subscription_plans WHERE is_active = 1 AND price_usd > 0 ORDER BY sort_order ASC`
   ).all<SubscriptionPlanRow>().catch(() => ({ results: [] as SubscriptionPlanRow[] }));
   return rows.results;
+}
+
+export async function requirePaidEntitlement(
+  db: D1Database,
+  user: AuthUser
+): Promise<{ ok: true; entitlement: UserEntitlement } | { ok: false; entitlement: UserEntitlement; error: string }> {
+  const entitlement = await resolveUserEntitlement(db, user);
+  if (entitlement.hasPaidPlan || !entitlement.subscriptionRequired) {
+    return { ok: true, entitlement };
+  }
+  return {
+    ok: false,
+    entitlement,
+    error: 'برای دسترسی به این قابلیت، ابتدا اشتراک دلارینو را خریداری و فعال کنید.',
+  };
 }
 
 export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Promise<UserEntitlement> {
@@ -133,13 +148,13 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
 
   return {
     hasPaidPlan: false,
-    planCode: 'free_demo',
-    planNameFa: 'حساب تست دمو (رایگان)',
-    planNameEn: 'Paper Demo Trial',
-    status: 'FREE_DEMO',
-    allowPaperDemo: true,
+    planCode: 'none',
+    planNameFa: 'بدون اشتراک فعال',
+    planNameEn: 'No Active Subscription',
+    status: 'UNSUBSCRIBED',
+    allowPaperDemo: false,
     allowAiTrading: false,
-    allowCodexbot: true, // Allowed in Paper Demo for testing!
+    allowCodexbot: false,
     allowCopyTrade: false,
     allowLiveTrading: false,
     daysRemaining: 0,

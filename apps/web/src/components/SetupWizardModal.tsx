@@ -35,8 +35,8 @@ export function SetupWizardModal({
   const [allocatedAmount, setAllocatedAmount] = useState<number>(Math.round(safeAvail * 0.5));
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [strategyType, setStrategyType] = useState<
-    'dollarino_v01' | 'ai_autonomous_agent' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'
-  >('dollarino_v01');
+    'ai_autonomous_agent' | 'my_custom_ai' | 'dollarino_v01' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'
+  >('ai_autonomous_agent');
 
   const [exProvider, setExProvider] = useState<'toobit' | 'kcex'>('toobit');
   const [apiKey, setApiKey] = useState('');
@@ -81,16 +81,22 @@ export function SetupWizardModal({
 
   const strategyOptions = [
     {
+      id: 'ai_autonomous_agent' as const,
+      title: isFa ? 'ترید هوشمند اتومات با هوش مصنوعی دلارینو' : 'Dollarino Autonomous AI',
+      badge: '100% AI',
+      detail: isFa ? 'حالت ساده: تحلیل و معامله کاملاً اتومات توسط هوش مصنوعی ۲۴ ساعته' : 'Fully automated 24/7 AI trading',
+    },
+    {
+      id: 'my_custom_ai' as const,
+      title: isFa ? 'هوش مصنوعی شخصی من (آموزش‌دیده با چت)' : 'My Trainable Personal AI',
+      badge: 'My AI',
+      detail: isFa ? 'اجرای استراتژی‌ای که خودتان به هوش مصنوعی خام یاد داده‌اید' : 'Executes rules taught via your personal AI chat',
+    },
+    {
       id: 'dollarino_v01' as const,
       title: isFa ? 'استراتژی دُرنا V1 (منتخب دلارینو)' : 'Dorna V1 (Dollarino Select)',
       badge: 'دُرنا V1',
       detail: isFa ? 'برترین استراتژی غیرریپینت دلارینو با اسکن همزمان کل بازار' : 'Non-repaint flagship scanning all markets simultaneously',
-    },
-    {
-      id: 'ai_autonomous_agent' as const,
-      title: isFa ? 'هوش مصنوعی دُرّبین (Multi-AI)' : 'Dorrbin Multi-AI Engine',
-      badge: '100% AI',
-      detail: isFa ? 'اجماع چند مدل پیشرفته AI بدون نیاز به کلید API شخصی' : 'Platform-managed Multi-AI consensus engine',
     },
     {
       id: 'kbos_v11' as const,
@@ -287,43 +293,52 @@ export function SetupWizardModal({
               ))}
             </div>
 
-            {step === 0 && (
-              <div className="space-y-4">
-                <div className="surface-soft rounded-2xl p-4 space-y-3">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-dim flex items-center gap-1.5">
-                      <Wallet className="w-4 h-4" style={{ color: 'var(--gold)' }} />
-                      {isFa ? 'مبلغ درگیر در هر معامله / سبد:' : 'Capital allocated:'}
-                    </span>
-                    <span dir="ltr" className="font-num font-black text-lg text-main">
-                      ${allocatedAmount.toLocaleString()} ({marginPct}%)
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={Math.max(50, Math.round(safeAvail * 0.05))}
-                    max={safeAvail}
-                    step={Math.max(10, Math.round(safeAvail * 0.02))}
-                    value={allocatedAmount}
-                    onChange={(e) => setAllocatedAmount(Number(e.target.value))}
-                    className="w-full"
-                    style={{ ['--fill' as string]: `${marginPct}%` }}
-                  />
-                  <div className="flex gap-2">
-                    {[0.1, 0.25, 0.5, 1].map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setAllocatedAmount(Math.round(safeAvail * p))}
-                        className="flex-1 py-1.5 rounded-xl btn-ghost text-[11px] font-bold"
+            {step === 0 && (() => {
+              const minAmt = Math.max(50, Math.round(safeAvail * 0.05));
+              const maxAmt = Math.max(minAmt + 10, safeAvail);
+              const clampedVal = Math.min(maxAmt, Math.max(minAmt, allocatedAmount));
+              const sliderFill = Math.round(((clampedVal - minAmt) / (maxAmt - minAmt)) * 100);
+              return (
+                <div className="space-y-4">
+                  <div className="surface-soft rounded-2xl p-4 space-y-3.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+                      <span className="text-dim flex items-center gap-1.5 leading-snug">
+                        <Wallet className="w-4 h-4 shrink-0" style={{ color: 'var(--gold)' }} />
+                        <span>{isFa ? 'مبلغ درگیر در هر معامله / سبد:' : 'Capital allocated:'}</span>
+                      </span>
+                      <span
+                        dir="ltr"
+                        className="font-num font-black text-base sm:text-lg text-main bg-white/5 px-3 py-1 rounded-xl border hairline self-start sm:self-auto shrink-0"
                       >
-                        {Math.round(p * 100)}%
-                      </button>
-                    ))}
+                        ${allocatedAmount.toLocaleString()} ({marginPct}%)
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={minAmt}
+                      max={maxAmt}
+                      step={Math.max(10, Math.round(safeAvail * 0.02))}
+                      value={clampedVal}
+                      onChange={(e) => setAllocatedAmount(Number(e.target.value))}
+                      className="w-full"
+                      style={{ ['--fill' as string]: `${sliderFill}%` }}
+                    />
+                    <div className="flex gap-2">
+                      {[0.1, 0.25, 0.5, 1].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setAllocatedAmount(Math.round(safeAvail * p))}
+                          className="flex-1 py-1.5 rounded-xl btn-ghost text-[11px] font-bold"
+                        >
+                          {Math.round(p * 100)}%
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {step === 1 && (
               <div className="space-y-2.5">

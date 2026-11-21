@@ -396,10 +396,11 @@ html[data-theme='cosmic'] .panel {
 .mark-lime {
   background: linear-gradient(120deg, #10b981, #0ea5e9);
   color: #ffffff;
-  border-radius: 12px;
-  padding: 0.02em 0.34em 0.08em;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
+  border-radius: 14px;
+  padding: 0.02em 0.36em 0.08em;
+  display: inline-block;
+  line-height: 1.24;
+  vertical-align: baseline;
 }
 
 .coin-card-wallet {
@@ -476,6 +477,13 @@ input[type='range'] {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--gold) var(--fill, 50%), var(--line) var(--fill, 50%));
   outline: none;
+}
+[dir='rtl'] input[type='range'] {
+  background: linear-gradient(270deg, var(--gold) var(--fill, 50%), var(--line) var(--fill, 50%));
+}
+[dir='rtl'] input[type='range'][dir='ltr'],
+input[type='range'][dir='ltr'] {
+  background: linear-gradient(90deg, var(--gold) var(--fill, 50%), var(--line) var(--fill, 50%));
 }
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;

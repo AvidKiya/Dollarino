@@ -78,8 +78,8 @@ export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; l
                       ? 'تاییدشده: عملکرد واقعی (Live) ثبت‌شده در سرور'
                       : 'VERIFIED: Real Live Settled Performance'
                     : isFa
-                      ? 'هشدار: این کارت مربوط به حساب آزمایشی (Paper Demo) است'
-                      : 'SIMULATION: Issued from Paper Demo Account'}
+                      ? 'هشدار: این کارت مربوط به حساب شبیه‌سازی (Simulation) است'
+                      : 'SIMULATION: Issued from Simulation Account'}
                 </p>
                 <p className="text-[11px] text-sub mt-1">
                   {isFa

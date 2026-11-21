@@ -133,7 +133,7 @@ export function WeeklyCardPage({
             : `Verified Real Profit Card issued (${res.card.id})`
           : isFa
             ? `کارت شبیه‌سازی آزمایشی صادر شد (${res.card.id})`
-            : `Paper Demo Simulation Card issued (${res.card.id})`
+            : `Simulation Card issued (${res.card.id})`
       );
       await loadArchive();
     } catch (err) {
@@ -370,7 +370,7 @@ export function WeeklyCardPage({
                   <span>{isFa ? 'حساب واقعی (Live)' : 'Real Live Trading'}</span>
                 </div>
                 <p className="text-[10px] text-dim mt-1">
-                  {isFa ? 'نشان تاییدشده رسمی بدون واترمارک دمو' : 'Official Verified Seal'}
+                  {isFa ? 'نشان تاییدشده رسمی بدون واترمارک شبیه‌ساز' : 'Official Verified Seal'}
                 </p>
               </button>
               <button
@@ -382,10 +382,10 @@ export function WeeklyCardPage({
               >
                 <div className="flex items-center gap-1.5 text-xs font-black text-main">
                   <AlertTriangle className="w-4 h-4 text-goldsoft" />
-                  <span>{isFa ? 'حساب آزمایشی (Demo)' : 'Paper Demo'}</span>
+                  <span>{isFa ? 'حساب شبیه‌ساز (Sim)' : 'Simulation Account'}</span>
                 </div>
                 <p className="text-[10px] text-dim mt-1">
-                  {isFa ? 'دارای برچسب شفاف DEMO SIMULATION' : 'Marked as Simulation Only'}
+                  {isFa ? 'دارای برچسب شفاف SIMULATION' : 'Marked as Simulation Only'}
                 </p>
               </button>
             </div>
@@ -603,7 +603,7 @@ export function WeeklyCardPage({
               </p>
               <p className="text-xs text-dim leading-relaxed">
                 {isFa
-                  ? 'حساب (واقعی یا دمو) و بازه زمانی را انتخاب کرده و روی «صدور کارت تاییدشده از سرور» کلیک کنید.'
+                  ? 'حساب (واقعی یا شبیه‌ساز) و بازه زمانی را انتخاب کرده و روی «صدور کارت تاییدشده از سرور» کلیک کنید.'
                   : 'Select account mode and period on the left, then click Issue Server-Signed Card.'}
               </p>
             </div>

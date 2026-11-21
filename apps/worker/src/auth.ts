@@ -185,34 +185,13 @@ authRoutes.post('/login', async (c) => {
 });
 
 authRoutes.post('/quick-demo', async (c) => {
-  const shortTag = Math.random().toString(36).slice(2, 8);
-  const email = `demo-${shortTag}@dollarino.app`;
-  const username = `کاربر-${shortTag}`;
-  const rawPassword = `Dl#${Math.random().toString(36).slice(2, 10)}`;
-  const id = randomId('usr');
-  const passwordHash = await hashPassword(rawPassword);
-
-  await c.env.DB.prepare(
-    `INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, 'user')`
-  ).bind(id, email, username, passwordHash).run();
-
-  await ensureUserDefaults(c.env.DB, id);
-
-  const isHttps = isHttpsRequest(c);
-  const token = await signJwt({ sub: id, email, role: 'user' }, c.env.SESSION_JWT_SECRET);
-  setCookie(c, 'dollarino_session', token, {
-    httpOnly: true,
-    sameSite: isHttps ? 'None' : 'Lax',
-    secure: isHttps,
-    path: '/',
-    maxAge: 60 * 60 * 24 * 7,
-  });
-
-  return c.json({
-    token,
-    user: { id, email, username, role: 'user', telegram_id: null },
-    demoCredentials: { email, password: rawPassword },
-  }, 201);
+  return c.json(
+    {
+      error: 'سرویس تست رایگان غیرفعال شده است. برای ورود به دلارینو لطفاً ثبت‌نام کرده و اشتراک خود را فعال کنید.',
+      code: 'PAID_ONLY_PLATFORM',
+    },
+    403
+  );
 });
 
 authRoutes.post('/logout', (c) => {

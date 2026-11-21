@@ -164,28 +164,36 @@ export function RadarLabPage({
   };
 
   const saveStrategyParams = async () => {
-    await apiFetch('/api/trading/config', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        kbos_params_json: kbosParams,
-        mixer_threshold: mixerThreshold,
-      }),
-    });
-    setNotice(isFa ? 'پارامترهای استراتژی و KBOS در ربات ذخیره شد' : 'KBOS & Mixer parameters saved');
-    await onRefresh();
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          kbos_params_json: kbosParams,
+          mixer_threshold: mixerThreshold,
+        }),
+      });
+      setNotice(isFa ? 'پارامترهای استراتژی و KBOS در ربات ذخیره شد' : 'KBOS & Mixer parameters saved');
+      await onRefresh();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Save error');
+    }
   };
 
   const applyHybridModel = async () => {
-    await apiFetch('/api/trading/config', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        strategy_key: 'ai_autonomous_agent',
-        ai_gate_enabled: 1,
-        mixer_threshold: mixerThreshold,
-      }),
-    });
-    setNotice(isFa ? 'مدل ترکیبی در حساب ربات شما فعال شد' : 'Hybrid setup applied');
-    await onRefresh();
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          strategy_key: 'ai_autonomous_agent',
+          ai_gate_enabled: 1,
+          mixer_threshold: mixerThreshold,
+        }),
+      });
+      setNotice(isFa ? 'مدل ترکیبی در حساب ربات شما فعال شد' : 'Hybrid setup applied');
+      await onRefresh();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Error');
+    }
   };
 
   const runBacktest = async () => {

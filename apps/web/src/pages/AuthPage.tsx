@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Bot, Globe, Lock, Mail, Moon, Send, ShieldCheck, Sparkles, Sun, User } from 'lucide-react';
+import { ArrowLeft, Bot, Globe, Lock, Mail, Moon, Send, ShieldCheck, Sun, User } from 'lucide-react';
 import { apiFetch, setStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
@@ -28,7 +28,6 @@ export function AuthPage({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
 
@@ -74,20 +73,6 @@ export function AuthPage({
     }
   };
 
-  const quickStartDemo = async () => {
-    setDemoLoading(true);
-    setError(null);
-    try {
-      const res = await apiFetch<{ token: string }>('/api/auth/quick-demo', { method: 'POST' });
-      setStoredToken(res.token);
-      await onSuccess();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Quick demo failed');
-    } finally {
-      setDemoLoading(false);
-    }
-  };
-
   const shownError = error || externalError;
   const isFa = lang === 'fa';
 
@@ -130,16 +115,6 @@ export function AuthPage({
             )}
           </div>
 
-          <button
-            type="button"
-            disabled={demoLoading}
-            onClick={() => void quickStartDemo()}
-            className="btn-emerald w-full py-3.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>{demoLoading ? '...' : isFa ? 'شروع فوری با $۱۰,۰۰۰ دمو رایگان (۱ کلیک)' : 'Instant $10,000 Paper Demo (1-Click)'}</span>
-          </button>
-
           <a
             href="https://t.me/Dollarino_bot?start=web_auth"
             target="_blank"
@@ -173,7 +148,7 @@ export function AuthPage({
               }}
               className={`py-2.5 rounded-xl text-xs font-bold transition ${mode === 'register' ? 'btn-gold' : 'text-dim hover:text-main'}`}
             >
-              {isFa ? 'ثبت‌نام سریع' : 'Create Account'}
+              {isFa ? 'ثبت‌نام حساب کاربری' : 'Create Account'}
             </button>
             <button
               type="button"
@@ -230,13 +205,13 @@ export function AuthPage({
             {shownError && <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-bold text-loss">{shownError}</div>}
 
             <button type="submit" disabled={loading} className="btn-gold w-full py-3.5 rounded-2xl text-xs font-black">
-              {loading ? '...' : mode === 'register' ? (isFa ? 'ساخت حساب + $۱۰,۰۰۰ دمو' : 'Create Account + $10k Demo') : isFa ? 'ورود به داشبورد' : 'Enter Desk'}
+              {loading ? '...' : mode === 'register' ? (isFa ? 'ساخت حساب و ورود به پنل' : 'Create Account & Continue') : isFa ? 'ورود به میز کار' : 'Enter Workspace'}
             </button>
           </form>
 
-          <p className="text-[11px] text-dim flex items-center justify-center gap-1.5 pt-1">
+          <p className="text-[11px] text-dim flex items-center justify-center gap-1.5 pt-1 text-center">
             <ShieldCheck className="w-3.5 h-3.5 text-jade shrink-0" />
-            <span>{isFa ? 'پس از ثبت‌نام، با ۱ کلیک از بخش سرویس‌ها تلگرام خود را همگام کنید' : 'Free Paper Desk · Sync Telegram in 1 click after signup'}</span>
+            <span>{isFa ? 'برای استفاده از معامله اتومات، هوش مصنوعی من و کپی‌ترید، فعال‌سازی اشتراک الزامی است.' : 'Active subscription is required to start automated trading & Copy Trade.'}</span>
           </p>
           <p className="text-[10px] text-dim flex items-center justify-center gap-1.5">
             <Bot className="w-3.5 h-3.5 text-brand shrink-0" />

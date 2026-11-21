@@ -3,6 +3,11 @@ main = "apps/worker/src/index.ts"
 compatibility_date = "2025-07-18"
 compatibility_flags = ["nodejs_compat"]
 
+[assets]
+directory = "apps/web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
 [vars]
 OWNER_TELEGRAM_ID = "944021185"
 DEFAULT_SIGNAL_CHANNEL = "@Dollarino_official"

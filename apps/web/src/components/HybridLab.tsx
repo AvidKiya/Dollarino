@@ -472,7 +472,7 @@ export function HybridLab({
                   className="btn-cobalt px-5 py-2.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
                 >
                   <Zap size={14} />
-                  <span>{isFa ? 'فعال‌سازی در دمو واقعی' : 'Launch in Live Demo'}</span>
+                  <span>{isFa ? 'فعال‌سازی در ربات تریدر' : 'Activate on Bot'}</span>
                 </button>
               )}
             </div>

@@ -1,58 +1,49 @@
-# راهنمای استقرار Dollarino v6.0 روی GitHub و Cloudflare Pages
+# راهنمای استقرار یکپارچه Dollarino روی GitHub و Cloudflare
 
-پروژه **دلارینو (Dollarino v6.0)** آماده استقرار مستقیم از طریق **GitHub** روی **Cloudflare Pages + Workers + Durable Objects + D1** است.
-
----
-
-## مرحله ۱: قرار دادن پروژه در GitHub
-۱. یک ریپازیتوری جدید (پیشنهادی: **Private**) در GitHub بسازید.
-۲. فایل‌های این آرشیو را استخراج کرده و مستقیماً در ریشه ریپازیتوری آپلود/Push کنید (`package.json` و `wrangler.toml` باید در ریشه باشند).
+پروژه **دلارینو (Dollarino)** اکنون به‌صورت **یکپارچه (Full-Stack Cloudflare Workers + Static Assets + D1 + Durable Objects)** پیکربندی شده است تا خطای `404` در مسیرهای `/api/*` روی دامنه اصلی هرگز رخ ندهد.
 
 ---
 
-## مرحله ۲: ساخت دیتابیس D1 و دیپلوی بک‌اند (Cloudflare Worker)
+## روش پیشنهادی: استقرار یکپارچه (Worker + Frontend روی یک دامنه)
+
+### ۱. ساخت یا بررسی دیتابیس D1 و اعمال مایگریشن‌ها (`0001` تا `0014`)
 ```bash
-npm install
+npm ci
 npx wrangler login
-npx wrangler d1 create dollarino-db
-```
-شناسه (`database_id`) دریافتی را داخل `wrangler.toml` جایگزین `local-dev-db` کنید و هر ۱۰ مایگریشن (`0001` تا `0010`) را اعمال کنید:
-```bash
 npx wrangler d1 migrations apply dollarino-db --remote
 ```
-کلیدهای امنیتی رمزنگاری AES-256، JWT و آدرس وب‌سایت را تنظیم کنید:
+
+### ۲. تنظیم کلیدهای امنیتی (Secrets)
 ```bash
 openssl rand -base64 32 | npx wrangler secret put MASTER_ENCRYPTION_KEY
 openssl rand -hex 32 | npx wrangler secret put SESSION_JWT_SECRET
-npx wrangler secret put PUBLIC_WEB_URL   # مثال: https://dollarino.pages.dev
-```
-*(اختیاری: برای فعال‌سازی ربات تلگرام اصلی سیستم و دکمه مینی‌اپ:)*
-```bash
+npx wrangler secret put PUBLIC_WEB_URL   # مثال: https://dollarino-worker.<subdomain>.workers.dev
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 ```
-سپس ورکر را دیپلوی کنید (`npx wrangler deploy`) و یک‌بار اندپوینت `POST /api/webhook/telegram/setup` را با توکن ادمین/مالک صدا بزنید تا Webhook، منوی دستورات (`/start`, `/app`, `/positions`, `/balance`, `/settings`, `/help`) و دکمه `ChatMenuButton` مینی‌اپ در تلگرام ثبت شوند.
 
-> 💡 **نکته GitHub Actions:** با قرار دادن `CLOUDFLARE_API_TOKEN` و `CLOUDFLARE_ACCOUNT_ID` در GitHub Secrets، ورک‌فلو `.github/workflows/deploy.yml` پس از هر Push به‌صورت خودکار مایگریشن‌ها، Worker و Pages را منتشر می‌کند.
+### ۳. بیلد و استقرار یکپارچه
+```bash
+npm run build
+npx wrangler deploy
+```
+با همین یک دستور، هم **فرانت‌اند (`apps/web/dist`)** و هم **بک‌اند (`/api/*`) + ربات ۲۴ ساعته (Durable Object)** روی یک آدرس واحد بالا می‌آیند و تمام دکمه‌ها و درخواست‌های API بلافاصله بدون خطای `404` کار می‌کنند.
 
----
-
-## مرحله ۳: اتصال GitHub به Cloudflare Pages
-۱. در پنل Cloudflare -> **Workers & Pages** -> **Create** -> تب **Pages** -> **Connect to Git**.
-۲. تنظیمات بیلد را وارد کنید:
-   - **Project name:** `dollarino`
-   - **Production branch:** `main`
-   - **Root directory:** `/`
-   - **Build command:** `npm run build`
-   - **Build output directory:** `apps/web/dist`
-۳. برای پروکسی `/api/*` داخل `functions/api/[[path]].ts`:
-   - در **Settings -> Bindings / Functions** یک **Service Binding** با نام **`WORKER_API`** متصل به سرویس **`dollarino-worker`** بسازید (یا `WORKER_URL` را روی آدرس Worker تنظیم کنید).
-4. گزینه **Retry deployment** را بزنید.
+سپس یک‌بار اندپوینت `POST /api/webhook/telegram/setup` را با حساب مدیر صدا بزنید تا Webhook و دکمه‌های مینی‌اپ ربات تلگرام ثبت شوند.
 
 ---
 
-## مرحله ۴: راه‌اندازی پنل مدیریت، هوش مصنوعی دلارینو و صرافی‌ها
-۱. اولین کاربری که ثبت‌نام می‌کند به صورت خودکار مالک سیستم (`owner`) می‌شود.
-۲. وارد تب **مدیریت (Admin)** شوید و:
-   - در بخش **«هوش مصنوعی دلارینو — موتور دُرّبین (۱ تا ۳ مدل ترکیبی)»** از ۱ تا ۳ مدل (مثل DeepSeek، Claude، GPT یا Gemini) را وارد، تست (`پینگ زنده`) و با حالت اجماع دلخواه ذخیره کنید. تمام کلیدها با AES-256 روی سرور رمزنگاری می‌شوند و کاربران بدون نیاز به API شخصی از **هوش مصنوعی دلارینو** استفاده می‌کنند.
-   - آدرس کیف‌پول تتر TRC20، شماره کارت بانکی و اشتراک‌ها را تنظیم کنید.
-۳. کاربران در صفحه ورود می‌توانند با یک کلیک **«ورود سریع و تست رایگان»** **استراتژی منتخب دلارینو (موتور دُرنا V1)** را روی کل بازار امتحان کنند یا در تب **اتصال صرافی و تلگرام** حساب **Toobit**، **KCEX** و **کپی ترید دلارینو** خود را متصل نمایند.
+## استفاده همزمان با Cloudflare Pages (در صورت اتصال به دامنه `pages.dev`)
+اگر دامنه شما به Cloudflare Pages متصل است، یکی از دو روش زیر را انجام دهید تا `/api/*` روی `pages.dev` هم به Worker متصل شود:
+1. در پنل Cloudflare -> پروژه Pages -> **Settings -> Functions / Bindings**:
+   - یک **Service Binding** با نام **`WORKER_API`** به سرویس **`dollarino-worker`** اضافه کنید، **یا**
+   - متغیر **`WORKER_URL`** را برابر آدرس Worker (مثل `https://dollarino-worker.<subdomain>.workers.dev`) بگذارید؛ فایل `functions/api/[[path]].ts` به‌طور خودکار تمام درخواست‌های `/api/*` را فوروارد می‌کند.
+2. یا در متغیر محیطی بیلد فرانت‌اند **`VITE_API_BASE`** را روی آدرس Worker تنظیم کرده و `npm run build` بگیرید.
+
+---
+
+## امکانات پلتفرم اشتراکی دلارینو
+- **پلتفرم تمام‌اشتراکی:** هیچ حساب دمو رایگان وجود ندارد و دسترسی به موتورهای ترید مستلزم فعال‌سازی اشتراک است.
+- **حالت ساده:** منحصراً ترید هوشمند اتومات با هوش مصنوعی (تک‌کلیکی و بی‌نیاز از دانش فنی).
+- **هوش مصنوعی من (My AI):** هوش مصنوعی خام اختصاصی که با چت به کاربر استراتژی یاد می‌گیرد، تست زنده می‌گیرد و معامله می‌کند.
+- **کپی‌ترید تاییدشده:** لیست تریدرهای تاییدشده ادمین + معاملاتشان + کپی با یک لمس (در سایت و ربات تلگرام).
+- **پشتیبانی آنلاین زنده:** گفتگوی مستقیم داخل وب‌سایت همگام‌سازی‌شده با صندوق تیکت ادمین و تلگرام.

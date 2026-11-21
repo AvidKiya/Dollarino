@@ -39,6 +39,7 @@ export interface DollarinoSignal {
 export type StrategyKey =
   | 'dollarino_v01'
   | 'ai_autonomous_agent'
+  | 'my_custom_ai'
   | 'kbos_v11'
   | 'sp2l'
   | 'grid_strategy'

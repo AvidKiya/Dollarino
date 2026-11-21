@@ -88,8 +88,8 @@ export function ConfirmTradeSheet({
               <p className="text-[11px] text-sub">
                 {order.tradingMode === 'PAPER'
                   ? isFa
-                    ? 'در حساب آزمایشی رایگان (بدون ریسک پول واقعی)'
-                    : 'Paper Demo Mode (zero real-money risk)'
+                    ? 'در حساب شبیه‌ساز متصل به قیمت واقعی بازار'
+                    : 'Simulated live-quote execution'
                   : isFa
                     ? 'در حساب واقعی صرافی متصل شما'
                     : 'Live Connected Exchange Account'}

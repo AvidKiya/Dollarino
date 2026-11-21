@@ -196,28 +196,28 @@ export function SubscriptionPage({
                     ? `فعال · ${entitlement.daysRemaining} روز`
                     : `ACTIVE · ${entitlement.daysRemaining}d`
                   : isFa
-                    ? 'حساب دمو رایگان'
-                    : 'Paper Demo Tier'}
+                    ? 'بدون اشتراک فعال'
+                    : 'Subscription Required'}
               </span>
             </div>
             <p className="text-xs text-white/80 mt-1">
               {entitlement?.hasPaidPlan
                 ? isFa
-                  ? 'دسترسی کامل به هوش مصنوعی دلارینو، استراتژی منتخب دلارینو، کپی ترید دلارینو و صرافی‌های Toobit و KCEX فعال است.'
-                  : 'Full access unlocked: Dollarino AI, Dollarino Select, Dollarino Copy-Trade & Live Toobit/KCEX.'
+                  ? 'دسترسی کامل به ترید هوشمند اتومات، هوش مصنوعی من، کپی‌ترید تاییدشده، استراتژی شخصی و صرافی‌های Toobit و KCEX فعال است.'
+                  : 'Full access unlocked: Auto AI Trading, My Trainable AI, Verified Copy-Trade, Custom IDE & Live Toobit/KCEX.'
                 : isFa
-                  ? 'دمو رایگان باز است. با خرید اشتراک حرفه‌ای، هوش مصنوعی دلارینو، ترید لایو و کپی ترید دلارینو را فعال کنید.'
-                  : 'Paper Demo is free. Upgrade to Pro or VIP for Dollarino AI, Copy-Trade & Live Toobit/KCEX.'}
+                  ? 'برای استفاده از ترید هوشمند، هوش مصنوعی من، کپی‌ترید تاییدشده و استراتژی شخصی، ابتدا یکی از اشتراک‌های زیر را انتخاب و فعال کنید.'
+                  : 'Activate a subscription plan below to unlock Auto AI Trading, My AI, Verified Copy-Trade, and Custom Strategies.'}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2 text-xs">
           {[
-            { ok: true, label: isFa ? 'دمو رایگان' : 'Paper Demo' },
-            { ok: entitlement?.allowAiTrading, label: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI' },
-            { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی ترید دلارینو' : 'Dollarino Copy-Trade' },
-            { ok: entitlement?.allowLiveTrading, label: isFa ? 'اتصال صرافی واقعی' : 'Toobit & KCEX' },
+            { ok: entitlement?.hasPaidPlan, label: isFa ? 'ترید هوشمند اتومات AI' : 'Auto AI Trading' },
+            { ok: entitlement?.allowAiTrading, label: isFa ? 'هوش مصنوعی من' : 'My Trainable AI' },
+            { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی‌ترید تاییدشده' : 'Verified Copy-Trade' },
+            { ok: entitlement?.allowLiveTrading, label: isFa ? 'اتصال صرافی Toobit / KCEX' : 'Live Toobit & KCEX' },
           ].map((e) => (
             <span
               key={e.label}
@@ -271,13 +271,11 @@ export function SubscriptionPage({
                 <div>
                   <div className="flex items-baseline gap-2 font-mono-num">
                     <span className={`text-3xl font-black ${p.is_popular ? 'text-white' : 'text-main'}`}>
-                      {p.price_usd === 0 ? (isFa ? 'رایگان' : 'Free') : `$${p.price_usd}`}
+                      ${p.price_usd}
                     </span>
-                    {p.price_usd > 0 && (
-                      <span className={`text-xs ${p.is_popular ? 'text-white/75' : 'text-dim'}`}>
-                        / {p.duration_days} {isFa ? 'روز' : 'days'}
-                      </span>
-                    )}
+                    <span className={`text-xs ${p.is_popular ? 'text-white/75' : 'text-dim'}`}>
+                      / {p.duration_days} {isFa ? 'روز' : 'days'}
+                    </span>
                   </div>
                   {p.price_toman > 0 && (
                     <p className={`text-xs font-extrabold mt-1 ${p.is_popular ? 'text-[#7dffb0]' : 'text-signal'}`}>
@@ -300,26 +298,22 @@ export function SubscriptionPage({
                 </ul>
               </div>
 
-              {p.price_usd === 0 ? (
-                <div className="py-2.5 text-center rounded-xl surface-soft text-xs font-bold text-sub">
-                  {isCurrent ? (isFa ? 'فعال روی حساب دمو' : 'Active for Demo') : (isFa ? 'همیشه رایگان برای تست' : 'Always Free')}
-                </div>
-              ) : (
-                <button
-                  onClick={() => setSelectedPlan(p)}
-                  className={`w-full py-3 rounded-2xl font-extrabold text-xs transition ${
-                    p.is_popular
-                      ? 'bg-[#059669] hover:bg-[#047857] text-white shadow'
-                      : isSelected
-                        ? 'btn-emerald'
-                        : 'btn-cobalt'
-                  }`}
-                >
-                  {isSelected
-                    ? isFa ? 'انتخاب‌شده برای پرداخت ↓' : 'Selected ↓'
+              <button
+                onClick={() => setSelectedPlan(p)}
+                className={`w-full py-3 rounded-2xl font-extrabold text-xs transition ${
+                  p.is_popular
+                    ? 'bg-[#059669] hover:bg-[#047857] text-white shadow'
+                    : isSelected
+                      ? 'btn-emerald'
+                      : 'btn-cobalt'
+                }`}
+              >
+                {isSelected
+                  ? isFa ? 'انتخاب‌شده برای پرداخت ↓' : 'Selected ↓'
+                  : isCurrent
+                    ? isFa ? 'تمدید این پلن' : 'Renew Plan'
                     : isFa ? 'خرید و فعال‌سازی اشتراک' : 'Select Plan'}
-                </button>
-              )}
+              </button>
             </div>
           );
         })}
@@ -367,7 +361,7 @@ export function SubscriptionPage({
               </div>
               <div>
                 <h3 className="font-display font-bold text-sm text-main">
-                  {isFa ? 'دعوت از دوستان = اشتراک رایگان' : 'Invite Friends = Free Days'}
+                  {isFa ? 'دعوت از دوستان = روزهای هدیه اشتراک' : 'Invite Friends = Bonus Days'}
                 </h3>
                 <p className="text-[11px] text-dim">
                   {isFa

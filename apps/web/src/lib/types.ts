@@ -2,6 +2,7 @@ import type { SignalMixerResult, Timeframe } from '@dollarino/core';
 
 export type NavTab =
   | 'overview'
+  | 'myai'
   | 'terminal'
   | 'markets'
   | 'radar'

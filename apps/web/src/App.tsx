@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { Layout, type UiMode } from './components/Layout';
+import { SupportModal } from './components/SupportModal';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
-import { apiFetch, setStoredToken } from './lib/api';
+import { apiFetch, ApiError, setStoredToken } from './lib/api';
 import type { Lang } from './lib/i18n';
 import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
 import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
@@ -13,6 +14,7 @@ import { CopyConnectPage } from './pages/CopyConnectPage';
 import { FaqPage } from './pages/FaqPage';
 import { LandingPage } from './pages/LandingPage';
 import { MarketsPage } from './pages/MarketsPage';
+import { MyAiPage } from './pages/MyAiPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PortfolioPage } from './pages/PortfolioPage';
 import { RadarLabPage } from './pages/RadarLabPage';
@@ -52,6 +54,8 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [globalNotice, setGlobalNotice] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
   const [marketType, setMarketType] = useState<'SPOT' | 'FUTURES'>('FUTURES');
@@ -158,12 +162,6 @@ export function App() {
     return () => clearInterval(iv);
   }, [user]);
 
-  const handleQuickDemo = async () => {
-    const res = await apiFetch<{ token: string }>('/api/auth/quick-demo', { method: 'POST' });
-    setStoredToken(res.token);
-    await loadSessionAndDashboard();
-  };
-
   const handleLogout = async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     setStoredToken(null);
@@ -185,18 +183,20 @@ export function App() {
         await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
       }
       await loadSessionAndDashboard();
-    } catch {
+    } catch (err) {
       setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: prevState } } : cur));
+      if (err instanceof ApiError && err.status === 402) {
+        setGlobalNotice(lang === 'fa' ? 'برای روشن کردن ربات، ابتدا اشتراک خود را فعال کنید.' : 'Please activate a subscription to start the bot.');
+        setActiveTab('pricing');
+      } else {
+        setGlobalNotice(err instanceof Error ? err.message : 'Action failed');
+      }
+      setTimeout(() => setGlobalNotice(null), 5000);
     }
   };
 
   const handleKillSwitch = async () => {
     await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
-    await loadSessionAndDashboard();
-  };
-
-  const handleResetDemo = async () => {
-    await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
     await loadSessionAndDashboard();
   };
 
@@ -245,11 +245,11 @@ export function App() {
             setLang={handleSetLang}
             look={look}
             onToggleDaylight={handleToggleDaylight}
-            onQuickDemo={handleQuickDemo}
             onGoAuth={(mode) => {
               setAuthMode(mode);
               setPublicScreen('auth');
             }}
+            onOpenSupport={() => setSupportOpen(true)}
           />
         ) : (
           <AuthPage
@@ -263,6 +263,17 @@ export function App() {
             onSuccess={loadSessionAndDashboard}
           />
         )}
+        <SupportModal
+          open={supportOpen}
+          lang={lang}
+          authenticated={false}
+          onClose={() => setSupportOpen(false)}
+          onGoToAuth={() => {
+            setSupportOpen(false);
+            setAuthMode('login');
+            setPublicScreen('auth');
+          }}
+        />
       </>
     );
   }
@@ -284,6 +295,7 @@ export function App() {
   }
 
   return (
+    <>
     <Layout
       lang={lang}
       setLang={handleSetLang}
@@ -297,18 +309,45 @@ export function App() {
       entitlement={dashboard.entitlement}
       botState={dashboard.config.bot_state}
       tradingMode={dashboard.config.trading_mode}
-      activeExchangeLabel={dashboard.activeExchange?.label || dashboard.activeExchange?.provider || 'Paper Desk'}
-      freeBalance={dashboard.balance.free || '10000'}
+      activeExchangeLabel={dashboard.activeExchange?.label || dashboard.activeExchange?.provider || 'Exchange'}
+      freeBalance={dashboard.balance.free || '0'}
       markets={markets}
       openTradesCount={dashboard.openTrades.length}
       recentSignalsCount={dashboard.recentSignals.length}
       onStartStop={handleTopbarStartStop}
       onKillSwitch={handleKillSwitch}
-      onResetDemo={handleResetDemo}
       onSelectSymbolForTerminal={openTerminalWithSymbol}
       onRefresh={loadSessionAndDashboard}
+      onOpenSupport={() => setSupportOpen(true)}
       onLogout={handleLogout}
     >
+      {globalNotice && (
+        <div className="mb-4 p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-xs font-bold text-main flex items-center justify-between gap-2">
+          <span>{globalNotice}</span>
+          <button type="button" onClick={() => setActiveTab('pricing')} className="btn-gold px-3 py-1 rounded-xl text-[11px] font-black shrink-0">
+            {lang === 'fa' ? 'مشاهده اشتراک‌ها' : 'Plans'}
+          </button>
+        </div>
+      )}
+
+      {!dashboard.entitlement?.hasPaidPlan && activeTab !== 'pricing' && activeTab !== 'admin' && (
+        <div className="mb-5 panel rounded-3xl p-4 border border-amber-500/40 flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5 text-xs">
+            <p className="font-black text-main">
+              {lang === 'fa' ? 'اشتراک فعال برای حساب شما ثبت نشده است' : 'No Active Subscription Found'}
+            </p>
+            <p className="text-dim">
+              {lang === 'fa'
+                ? 'برای فعال‌سازی ترید هوشمند اتومات، هوش مصنوعی من، کپی‌ترید و استراتژی شخصی، یکی از اشتراک‌ها را تهیه کنید.'
+                : 'Subscribe to unlock Automated AI Trading, My Trainable AI, Verified Copy-Trade, and Custom Strategies.'}
+            </p>
+          </div>
+          <button type="button" onClick={() => setActiveTab('pricing')} className="btn-gold px-5 py-2.5 rounded-2xl text-xs font-black shrink-0">
+            {lang === 'fa' ? 'خرید / تمدید اشتراک 💎' : 'Buy Subscription'}
+          </button>
+        </div>
+      )}
+
       {activeTab === 'overview' && (
         <OverviewPage
           lang={lang}
@@ -321,6 +360,14 @@ export function App() {
           onSelectTerminalSymbol={openTerminalWithSymbol}
           onRefresh={loadSessionAndDashboard}
           onUpgradeUser={(u) => setUser(u)}
+        />
+      )}
+      {activeTab === 'myai' && (
+        <MyAiPage
+          lang={lang}
+          hasPaidPlan={Boolean(dashboard.entitlement?.hasPaidPlan)}
+          onNavigate={setActiveTab}
+          onRefresh={loadSessionAndDashboard}
         />
       )}
       {activeTab === 'terminal' && (
@@ -384,6 +431,7 @@ export function App() {
           data={dashboard}
           onNavigate={setActiveTab}
           onUpdateUser={(u) => setUser(u)}
+          onOpenSupport={() => setSupportOpen(true)}
           onLogout={handleLogout}
         />
       )}
@@ -402,6 +450,13 @@ export function App() {
         <AdminPage lang={lang} currentUser={user} onUserUpdated={() => void loadSessionAndDashboard()} />
       )}
     </Layout>
+    <SupportModal
+      open={supportOpen}
+      lang={lang}
+      authenticated
+      onClose={() => setSupportOpen(false)}
+    />
+    </>
   );
 }
 export default App;

@@ -77,18 +77,19 @@ webhookRoutes.post('/tv/:secret', async (c) => {
 
   await logAudit(c.env.DB, cfg.user_id, 'SIGNAL', 'INFO', `TradingView Webhook received ${signal.direction} ${signal.symbol}`, signal.symbol);
 
+  const ent = await resolveUserEntitlement(c.env.DB, {
+    id: cfg.user_id,
+    email: cfg.email,
+    username: cfg.username,
+    role: cfg.role,
+    telegramId: cfg.telegram_id,
+  });
+  if (!ent.allowCopyTrade) {
+    await logAudit(c.env.DB, cfg.user_id, 'RISK', 'WARN', 'TradingView webhook skipped: active paid subscription required', signal.symbol);
+    return c.json({ ok: false, mode: cfg.trade_execution_mode, code: 'SUBSCRIPTION_REQUIRED', error: 'Active subscription required for TradingView webhooks' }, 402);
+  }
+
   if (cfg.trade_execution_mode === 'AUTO') {
-    const ent = await resolveUserEntitlement(c.env.DB, {
-      id: cfg.user_id,
-      email: cfg.email,
-      username: cfg.username,
-      role: cfg.role,
-      telegramId: cfg.telegram_id,
-    });
-    if (!ent.allowCopyTrade) {
-      await logAudit(c.env.DB, cfg.user_id, 'RISK', 'WARN', 'Auto Copy-Trade skipped: active Pro/VIP subscription required', signal.symbol);
-      return c.json({ ok: false, mode: 'AUTO', code: 'SUBSCRIPTION_REQUIRED', error: 'Active Pro/VIP subscription required for Auto Copy-Trade' }, 402);
-    }
     const exec = await executeSignalForUser(c.env, cfg.user_id, signal, {
       signalId: sigId,
       forceBypassState: true,

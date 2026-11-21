@@ -84,12 +84,16 @@ export function isAdminSessionExpired(lastActiveAt?: string | null): boolean {
 export function adminMainKeyboard(actor: AdminActor): InlineKeyboardButton[][] {
   const rows: InlineKeyboardButton[][] = [
     [
-      { text: '📊 داشبورد مالی و آمار', callback_data: 'adm:dash' },
-      { text: '👥 مدیریت کاربران', callback_data: 'adm:users' },
+      { text: '📊 داشبورد مالی و آمار', callback_data: 'adm:dash', style: 'primary' },
+      { text: '👥 مدیریت کاربران', callback_data: 'adm:users', style: 'primary' },
+    ],
+    [
+      { text: '💬 تیکت‌های پشتیبانی', callback_data: 'adm:support', style: 'success' },
+      { text: '🏆 مدیریت کپی‌تریدرها', callback_data: 'adm:copy', style: 'success' },
     ],
     [
       { text: '📨 پیام همگانی', callback_data: 'adm:broadcast' },
-      { text: '💰 مدیریت تراکنش‌ها', callback_data: 'adm:tx:ALL:0' },
+      { text: '💰 مدیریت تراکنش‌ها', callback_data: 'adm:tx:ALL:0', style: 'primary' },
     ],
     [
       { text: '🎁 کدهای هدیه', callback_data: 'adm:gifts' },
@@ -99,7 +103,7 @@ export function adminMainKeyboard(actor: AdminActor): InlineKeyboardButton[][] {
       { text: '📈 گزارش‌گیری پیشرفته', callback_data: 'adm:reports' },
       ...(actor.isSuperAdmin ? [{ text: '👤 مدیریت ادمین‌ها', callback_data: 'adm:admins' }] : []),
     ],
-    [{ text: '🔙 خروج از پنل مدیریت', callback_data: 'adm:exit' }],
+    [{ text: '🔙 خروج از پنل مدیریت', callback_data: 'adm:exit', style: 'danger' }],
   ];
   return rows;
 }
@@ -407,7 +411,7 @@ export async function handleAdminCallback(
         { text: '👑 کاربران VIP', callback_data: 'adm:bc_target:vip' },
       ],
       [
-        { text: '👤 کاربران عادی (رایگان)', callback_data: 'adm:bc_target:free' },
+        { text: '👤 کاربران بدون اشتراک', callback_data: 'adm:bc_target:free' },
         { text: '🟢 فعال امروز', callback_data: 'adm:bc_target:active_today' },
       ],
       [{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }],
@@ -957,6 +961,73 @@ export async function handleAdminCallback(
     return handleAdminCallback(env, bot, actor, cqId, chatId, msgId, 'adm:admins');
   }
 
+  // Online Support Tickets Desk inside Admin Bot
+  if (data === 'adm:support') {
+    const tickets = await env.DB.prepare(
+      `SELECT st.id, st.subject, st.status, st.channel, st.last_message_at, u.username, u.email
+       FROM support_tickets st
+       JOIN users u ON u.id = st.user_id
+       ORDER BY CASE WHEN st.status = 'OPEN' THEN 0 ELSE 1 END, st.last_message_at DESC
+       LIMIT 10`
+    ).all<{ id: string; subject: string; status: string; channel: string; last_message_at: string; username: string; email: string }>().catch(() => ({ results: [] }));
+
+    const lines = tickets.results.length
+      ? tickets.results.map((t, i) => `${i + 1}. [${t.status === 'OPEN' ? '🟢 باز' : t.status === 'ANSWERED' ? '🔵 پاسخ‌داده‌شده' : '⚪️ بسته'}] ${t.username} (${t.channel}) — ${t.subject}`).join('\n')
+      : '📭 هیچ تیکت پشتیبانی فعالی ثبت نشده است.';
+
+    const kb: InlineKeyboardButton[][] = tickets.results.slice(0, 6).map((t) => [
+      { text: `✍️ پاسخ به ${t.username}`, callback_data: `adm:sup_reply:${t.id}`, style: 'primary' },
+      { text: `🔒 بستن`, callback_data: `adm:sup_close:${t.id}`, style: 'danger' },
+    ]);
+    kb.push([{ text: '🔄 بروزرسانی تیکت‌ها', callback_data: 'adm:support' }]);
+    kb.push([{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }]);
+    await render(`💬 تیکت‌های پشتیبانی آنلاین:\n\n${lines}`, kb);
+    await bot.answerCallbackQuery(cqId);
+    return true;
+  }
+
+  if (data.startsWith('adm:sup_reply:')) {
+    const ticketId = data.slice('adm:sup_reply:'.length);
+    const msgs = await env.DB.prepare(
+      `SELECT sender_role, sender_name, message, created_at FROM support_messages WHERE ticket_id = ? ORDER BY created_at DESC LIMIT 5`
+    ).bind(ticketId).all<{ sender_role: string; sender_name: string | null; message: string }>().catch(() => ({ results: [] }));
+
+    await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+      .bind(JSON.stringify({ step: 'ADM_AWAIT_SUP_REPLY', targetKey: ticketId } satisfies AdminStepState), actor.id).run();
+
+    const history = msgs.results.reverse().map((m) => `${m.sender_role === 'admin' ? '🛡 ادمین' : '👤 کاربر'}: ${m.message}`).join('\n');
+    await bot.answerCallbackQuery(cqId);
+    await bot.sendMessage(
+      chatId,
+      `✍️ پاسخ به تیکت #${ticketId}\n\nآخرین پیام‌ها:\n${history || '—'}\n\nمتن پاسخ خود را بنویسید (مستقیماً در وب و تلگرام کاربر ارسال می‌شود):`
+    );
+    return true;
+  }
+
+  if (data.startsWith('adm:sup_close:')) {
+    const ticketId = data.slice('adm:sup_close:'.length);
+    await env.DB.prepare(`UPDATE support_tickets SET status = 'CLOSED' WHERE id = ?`).bind(ticketId).run();
+    await bot.answerCallbackQuery(cqId, 'تیکت بسته شد ✅');
+    return handleAdminCallback(env, bot, actor, cqId, chatId, msgId, 'adm:support');
+  }
+
+  // Verified Copy Traders overview inside Admin Bot
+  if (data === 'adm:copy') {
+    const traders = await env.DB.prepare(
+      `SELECT id, display_name, specialty, win_rate, roi_30d_pct, followers_count, is_verified FROM copy_traders ORDER BY roi_30d_pct DESC LIMIT 10`
+    ).all<{ id: string; display_name: string; specialty: string; win_rate: number; roi_30d_pct: number; followers_count: number; is_verified: number }>().catch(() => ({ results: [] }));
+    const lines = traders.results.length
+      ? traders.results.map((t, i) => `${i + 1}. ${t.is_verified ? '✅' : '⏳'} ${t.display_name} (${t.specialty})\n   Win: ${t.win_rate}% | ROI 30d: +${t.roi_30d_pct}% | Followers: ${t.followers_count}`).join('\n\n')
+      : 'هیچ تریدری ثبت نشده است.';
+    const kb: InlineKeyboardButton[][] = [
+      [{ text: '🔄 بروزرسانی لیست', callback_data: 'adm:copy', style: 'primary' }],
+      [{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }],
+    ];
+    await render(`🏆 کپی‌تریدرهای تاییدشده دلارینو:\n(برای افزودن تریدر جدید یا ثبت ترید، از پنل مدیریت وب استفاده کنید)\n\n${lines}`, kb);
+    await bot.answerCallbackQuery(cqId);
+    return true;
+  }
+
   await bot.answerCallbackQuery(cqId);
   return true;
 }
@@ -1000,9 +1071,9 @@ async function renderAdminUserCard(
     `• نام: ${u.username} (${u.telegram_username ? '@' + u.telegram_username : 'بدون یوزرنیم'})\n` +
     `• آیدی تلگرام: ${u.telegram_id ?? '—'}\n` +
     `• نقش: ${u.role} | وضعیت: ${u.is_blocked ? '🔒 مسدود' : '🟢 فعال'}\n` +
-    `• اشتراک: ${sub ? `💎 ${sub.plan_code} (تا ${formatIranDateTime(sub.expires_at)})` : 'عادی / دمو'}\n` +
+    `• اشتراک: ${sub ? `💎 ${sub.plan_code} (تا ${formatIranDateTime(sub.expires_at)})` : 'بدون اشتراک فعال'}\n` +
     `• کیف پول: ${walletUsdt.toFixed(2)} USDT (${formatToman(walletUsdt, rate)} ت)\n` +
-    `• موجودی دمو: ${cfg?.paper_balance ?? '10000'} USDT (${cfg?.trading_mode ?? 'PAPER'})\n` +
+    `• موجودی شبیه‌ساز: ${cfg?.paper_balance ?? '10000'} USDT (${cfg?.trading_mode ?? 'PAPER'})\n` +
     `• عضویت: ${formatIranDateTime(u.created_at)}\n` +
     `• آخرین فعالیت: ${formatIranDateTime(u.last_active_at)}`;
 
@@ -1182,6 +1253,31 @@ export async function handleAdminStepInput(
       `✅ کد هدیه با موفقیت ساخته شد!\n\n🎁 کد: ${code}\n📦 نوع: ${state.giftType === 'WALLET' ? `${state.giftCredit}$ شارژ کیف پول` : `${state.giftPlan} (${state.giftDays} روز)`}\n🔢 سقف مصرف: ${state.giftMaxUses}\n⏳ انقضا: ${expSql ? formatIranDateTime(expSql) : 'بدون انقضا'}`,
       { inlineKeyboard: [[{ text: '🎁 مشاهده کدهای هدیه', callback_data: 'adm:gifts' }]] }
     );
+    return true;
+  }
+
+  if (state.step === 'ADM_AWAIT_SUP_REPLY' && state.targetKey) {
+    const ticketId = state.targetKey;
+    await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(actor.id).run();
+    const ticket = await env.DB.prepare(
+      `SELECT st.id, u.telegram_id FROM support_tickets st JOIN users u ON u.id = st.user_id WHERE st.id = ? LIMIT 1`
+    ).bind(ticketId).first<{ id: string; telegram_id: string | null }>();
+    if (!ticket) {
+      await bot.sendMessage(chatId, '❌ تیکت یافت نشد.');
+      return true;
+    }
+    await env.DB.prepare(
+      `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message)
+       VALUES (?, ?, ?, 'admin', ?, ?)`
+    ).bind(randomId('smsg'), ticketId, actor.id, actor.username || 'پشتیبانی دلارینو', text.trim().slice(0, 2000)).run();
+    await env.DB.prepare(`UPDATE support_tickets SET status = 'ANSWERED', last_message_at = datetime('now') WHERE id = ?`).bind(ticketId).run();
+    if (ticket.telegram_id) {
+      await bot.sendMessage(ticket.telegram_id, `💬 پاسخ پشتیبانی آنلاین دلارینو:\n\n${text.trim()}`).catch(() => {});
+    }
+    await auditAdmin(env.DB, actor.id, `Replied to support ticket ${ticketId}`);
+    await bot.sendMessage(chatId, `✅ پاسخ شما برای تیکت #${ticketId} ثبت و برای کاربر ارسال شد!`, {
+      inlineKeyboard: [[{ text: '💬 بازگشت به تیکت‌ها', callback_data: 'adm:support', style: 'primary' }]],
+    });
     return true;
   }
 
