@@ -1641,5 +1641,46 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       message: { message_id: 9904, from: { id: 1001001, first_name: 'علی' }, chat: { id: 1001001, type: 'private' }, text: '/about' },
     });
     expect(tgCalls.some((c) => String(c.body.text).includes('آوید کیا') && String(c.body.text).includes('@avid_kiya'))).toBe(true);
+
+    // 4. Public unauthenticated AI Chat endpoints & built-in zero-downtime failover (even with NO external API keys)
+    const noKeyEnv = { ...env, HILINKUP_API_KEY: '' };
+    await db.prepare(`DELETE FROM platform_ai_engines`).run();
+
+    const pubModelsRes = await worker.fetch(
+      new Request('https://dollarino.local/api/public/ai-models'),
+      noKeyEnv
+    );
+    expect(pubModelsRes.status).toBe(200);
+    const pubModelsJson = (await pubModelsRes.json()) as { models: Array<{ id: string }> };
+    expect(pubModelsJson.models.some((m) => m.id === 'dollarino-live-ai')).toBe(true);
+
+    const pubChatRes = await worker.fetch(
+      new Request('https://dollarino.local/api/public/ai-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'سازنده دلارینو کیه؟' }),
+      }),
+      noKeyEnv
+    );
+    expect(pubChatRes.status).toBe(200);
+    const pubChatJson = (await pubChatRes.json()) as { modelId: string; reply: string };
+    expect(pubChatJson.modelId).toBe('dollarino-live-ai');
+    expect(pubChatJson.reply).toContain('آوید کیا');
+
+    const pubBtcRes = await worker.fetch(
+      new Request('https://dollarino.local/api/public/ai-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'تحلیل BTC 15m بده و ستاپ بده' }),
+      }),
+      noKeyEnv
+    );
+    expect(pubBtcRes.status).toBe(200);
+    const pubBtcJson = (await pubBtcRes.json()) as {
+      reply: string;
+      setup: { symbol: string; direction: string; entry: string; stopLoss: string; tp1: string } | null;
+    };
+    expect(pubBtcJson.setup?.symbol).toBe('BTCUSDT');
+    expect(['LONG', 'SHORT']).toContain(pubBtcJson.setup?.direction);
   });
 });

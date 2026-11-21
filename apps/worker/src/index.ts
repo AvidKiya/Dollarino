@@ -7,7 +7,12 @@ import { reconcileOpenPositionsForUser } from './engine/executor.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
-import { DOLLARINO_CREATOR_INFO } from './ai/assistant.js';
+import {
+  DOLLARINO_CREATOR_INFO,
+  listSelectableAIModels,
+  runPublicGuestAIChat,
+} from './ai/assistant.js';
+import { buildClientFingerprints, enforceRateLimit } from './security.js';
 import { adminRoutes } from './routes/admin.js';
 import { aiAssistantRoutes } from './routes/ai-assistant.js';
 import { buildProfitCardSvg, renderProfitCardPng } from './cards/renderer.js';
@@ -97,6 +102,61 @@ app.get('/api/health', (c) => {
 });
 
 app.get('/api/public/creator', (c) => c.json({ creator: DOLLARINO_CREATOR_INFO }));
+
+app.get('/api/public/ai-models', async (c) => {
+  const data = await listSelectableAIModels(c.env);
+  return c.json({
+    ...data,
+    creator: DOLLARINO_CREATOR_INFO,
+  });
+});
+
+app.post('/api/public/ai-chat', async (c) => {
+  const fp = await buildClientFingerprints(c.req.raw, c.env).catch(() => ({ ipHash: 'anon' }));
+  const rl = await enforceRateLimit(c.env, `pub_ai:${fp.ipHash}`, 20, 60).catch(() => ({
+    allowed: true,
+    retryAfterSec: 0,
+  }));
+  if (!rl.allowed) {
+    return c.json(
+      { error: `تعداد درخواست زیاد است. لطفاً ${rl.retryAfterSec} ثانیه دیگر امتحان کنید.` },
+      429
+    );
+  }
+
+  const body = await c.req
+    .json<{
+      modelId?: string | null;
+      message?: string;
+      imageDataUrl?: string | null;
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    }>()
+    .catch(() => ({} as { modelId?: string; message?: string; imageDataUrl?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }));
+
+  const message = String(body.message || '').trim();
+  const imageDataUrl = body.imageDataUrl ? String(body.imageDataUrl).trim() : null;
+  if (!message && !imageDataUrl) {
+    return c.json({ error: 'لطفاً پیام یا تصویر چارت ارسال کنید.' }, 400);
+  }
+  if (imageDataUrl && (!imageDataUrl.startsWith('data:image/') || imageDataUrl.length > 6_500_000)) {
+    return c.json({ error: 'فرمت یا حجم تصویر نامعتبر است.' }, 400);
+  }
+
+  const history = Array.isArray(body.history)
+    ? body.history
+        .filter((h) => (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string')
+        .slice(-8)
+    : [];
+
+  const res = await runPublicGuestAIChat(c.env, {
+    modelId: body.modelId || null,
+    message,
+    imageDataUrl,
+    history,
+  });
+
+  return c.json(res);
+});
 
 app.get('/api/public/verify-card/:cardId', async (c) => {
   const cardId = (c.req.param('cardId') || '').trim();

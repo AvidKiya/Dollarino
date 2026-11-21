@@ -15,6 +15,7 @@ export interface Env {
   HILINKUP_API_KEY?: string;
   HILINKUP_BASE_URL?: string;
   HILINKUP_MODEL?: string;
+  AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
 
 export interface AuthUser {

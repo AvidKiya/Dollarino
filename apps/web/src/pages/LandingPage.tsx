@@ -205,21 +205,15 @@ export function LandingPage({
 
   return (
     <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell relative overflow-x-clip">
-      {/* Subtle Cupertino Backdrop */}
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-[760px] z-0 overflow-hidden">
+      {/* Clean Subtle Dot Pattern (no color halos on mobile) */}
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-[560px] z-0 overflow-hidden">
         <div
-          className={`absolute inset-0 ${look === 'paper' ? 'opacity-25' : 'opacity-45'}`}
+          className={`absolute inset-0 ${look === 'paper' ? 'opacity-15' : 'opacity-20'}`}
           style={{
-            backgroundImage: 'radial-gradient(color-mix(in srgb, var(--text) 14%, transparent) 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(color-mix(in srgb, var(--text) 12%, transparent) 1px, transparent 1px)',
             backgroundSize: '28px 28px',
-            maskImage: 'radial-gradient(ellipse 80% 65% at 72% 20%, #000, transparent 78%)',
+            maskImage: 'linear-gradient(to bottom, #000 10%, transparent 90%)',
           }}
-        />
-        <div
-          className={`absolute -top-32 end-[10%] h-[380px] w-[380px] rounded-full blur-[130px] ${
-            look === 'paper' ? 'opacity-10' : 'opacity-22'
-          }`}
-          style={{ background: 'var(--gold)' }}
         />
       </div>
 

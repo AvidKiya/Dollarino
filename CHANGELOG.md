@@ -1,5 +1,17 @@
 # Changelog
 
+## [9.9.1] - 2026-11-22
+### Fixed & Improved
+- **Mobile UI Cleanup — Removed Background Halos (`apps/web/src/index.css`, `LandingPage.tsx`, `BrandGraphics.tsx`)**:
+  - Removed multi-spot radial gradient color halos (`--bg-art`) and `background-attachment: fixed` that rendered blotchy mobile backdrop artifacts, removed the `blur-[130px]` hero halo in `LandingPage.tsx`, toned down `.glow-card-anim` and mobile tab indicator bloom, and softened logo drop-shadows.
+- **iPhone AssistiveTouch-Style Collapsible Floating AI Orb (`apps/web/src/components/FloatingAiChat.tsx`)**:
+  - Replaced the oversized capsule button with a subtle, compact `44×44` circular glass orb modeled after iOS AssistiveTouch with concentric white rings, free pointer drag-to-move with left/right edge snapping, persistent position (`localStorage`), and automatic soft edge-collapse (`opacity: 0.48`, tucked half off-edge after 2.4s idle) so it stays unobtrusive on mobile and desktop.
+- **Always-On Zero-Downtime AI Chat & Guest Support (`apps/worker/src/ai/assistant.ts`, `index.ts`, `env.ts`, `FloatingAiChat.tsx`)**:
+  - Added public rate-limited `/api/public/ai-models` and `/api/public/ai-chat` endpoints so the floating AI orb opens an active chat immediately even before login.
+  - Added seamless multi-model auto-failover across admin `platform_ai_engines`, `HILINKUP_API_KEY`, personal `ai_connections`, optional Cloudflare `env.AI`, and a zero-downtime built-in live market AI (`dollarino-live-ai`) that pulls real-time prices/candles and computes Entry/SL/TP1–TP3 setups, position sizing, Pine Script strategies, and platform/creator answers whenever external LLM gateways are unconfigured or unreachable.
+- **Branded Open Graph & Social Link Preview (`apps/web/public/images/dollarino-og-brand.jpg`, `index.html`, `_headers`)**:
+  - Created and optimized a `1200×630` Progressive JPEG (`114 KB`) featuring the official Dollarino logo (`logo.png`) alongside cache-busted Open Graph/Twitter meta tags and Cloudflare Pages `_headers` for crisp Telegram & Instagram DM previews.
+
 ## [9.9.0] - 2026-11-22
 ### Added
 - **Floating AI Assistant & Dedicated Multi-Model Chat Page (`apps/web/src/components/FloatingAiChat.tsx`, `AiChatPage.tsx`, `apps/worker/src/ai/assistant.ts`, `routes/ai-assistant.ts`)**:

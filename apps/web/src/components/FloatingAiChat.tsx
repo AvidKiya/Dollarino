@@ -6,6 +6,7 @@ import {
   Eye,
   ImagePlus,
   Loader2,
+  LogIn,
   Maximize2,
   MessageSquarePlus,
   Minimize2,
@@ -216,24 +217,38 @@ function SetupActionCard({
   );
 }
 
+const DEFAULT_FALLBACK_MODEL: SelectableAIModel = {
+  id: 'dollarino-live-ai',
+  label: 'هوش مصنوعی زنده دلارینو',
+  provider: 'deepseek',
+  model: 'dollarino-live-quant-v1',
+  source: 'PLATFORM',
+  supportsVision: false,
+  isDefault: true,
+};
+
 export function DedicatedAiChatSurface({
   lang,
+  authenticated = true,
   compact = false,
   onNavigate,
   onSelectSymbolForTerminal,
   onExpandFullScreen,
   onCloseFloating,
+  onGoAuth,
 }: {
   lang: Lang;
+  authenticated?: boolean;
   compact?: boolean;
   onNavigate?: (tab: NavTab) => void;
   onSelectSymbolForTerminal?: (symbol: string) => void;
   onExpandFullScreen?: () => void;
   onCloseFloating?: () => void;
+  onGoAuth?: () => void;
 }) {
   const isFa = lang === 'fa';
-  const [models, setModels] = useState<SelectableAIModel[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [models, setModels] = useState<SelectableAIModel[]>([DEFAULT_FALLBACK_MODEL]);
+  const [selectedModelId, setSelectedModelId] = useState<string>('dollarino-live-ai');
   const [creator, setCreator] = useState<CreatorInfo>({
     nameFa: 'آوید کیا',
     nameEn: 'Avid Kiya',
@@ -261,14 +276,30 @@ export function DedicatedAiChatSurface({
   const loadModelsAndSessions = useCallback(async () => {
     setLoadingSessions(true);
     try {
+      if (!authenticated) {
+        const mRes = await apiFetch<{
+          models: SelectableAIModel[];
+          selectedModelId: string;
+          creator?: CreatorInfo;
+        }>('/api/public/ai-models');
+        if (mRes.models?.length) {
+          setModels(mRes.models);
+          setSelectedModelId(mRes.selectedModelId || mRes.models[0]!.id);
+        }
+        if (mRes.creator) setCreator(mRes.creator);
+        return;
+      }
+
       const [mRes, sRes] = await Promise.all([
         apiFetch<{ models: SelectableAIModel[]; selectedModelId: string; creator?: CreatorInfo }>(
           '/api/ai-assistant/models'
         ),
         apiFetch<{ sessions: AiChatSessionItem[] }>('/api/ai-assistant/sessions'),
       ]);
-      setModels(mRes.models || []);
-      setSelectedModelId(mRes.selectedModelId || mRes.models?.[0]?.id || '');
+      if (mRes.models?.length) {
+        setModels(mRes.models);
+        setSelectedModelId(mRes.selectedModelId || mRes.models[0]!.id);
+      }
       if (mRes.creator) setCreator(mRes.creator);
       const list = sRes.sessions || [];
       setSessions(list);
@@ -280,11 +311,11 @@ export function DedicatedAiChatSurface({
         setMessages(detail.messages || []);
       }
     } catch {
-      // silent if unauthenticated
+      // Keep built-in fallback model ready
     } finally {
       setLoadingSessions(false);
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, authenticated]);
 
   useEffect(() => {
     void loadModelsAndSessions();
@@ -309,6 +340,10 @@ export function DedicatedAiChatSurface({
     setErrorMsg(null);
     setMessages([]);
     setPendingImage(null);
+    if (!authenticated) {
+      setActiveSessionId(null);
+      return;
+    }
     try {
       const res = await apiFetch<{ session: AiChatSessionItem }>('/api/ai-assistant/sessions', {
         method: 'POST',
@@ -332,6 +367,7 @@ export function DedicatedAiChatSurface({
 
   const handleModelChange = async (newId: string) => {
     setSelectedModelId(newId);
+    if (!authenticated) return;
     await apiFetch('/api/ai-assistant/select-model', {
       method: 'POST',
       body: JSON.stringify({ modelId: newId }),
@@ -372,6 +408,10 @@ export function DedicatedAiChatSurface({
       previewImageUrl: attachedImg || undefined,
     };
 
+    const historySnapshot = messages
+      .slice(-8)
+      .map((m) => ({ role: m.role, content: m.content }));
+
     setMessages((prev) => [...prev, optimisticUserMsg]);
     if (!overrideText) setInput('');
     setPendingImage(null);
@@ -379,6 +419,7 @@ export function DedicatedAiChatSurface({
     setErrorMsg(null);
 
     try {
+      const endpoint = authenticated ? '/api/ai-assistant/chat' : '/api/public/ai-chat';
       const res = await apiFetch<{
         sessionId: string;
         reply: string;
@@ -387,17 +428,18 @@ export function DedicatedAiChatSurface({
         usedVision: boolean;
         visionFallbackNotice?: string;
         setup: ExtractedChartSetup | null;
-      }>('/api/ai-assistant/chat', {
+      }>(endpoint, {
         method: 'POST',
         body: JSON.stringify({
-          sessionId: activeSessionId,
+          sessionId: authenticated ? activeSessionId : undefined,
           modelId: selectedModelId || undefined,
           message: cleanText,
           imageDataUrl: attachedImg,
+          history: !authenticated ? historySnapshot : undefined,
         }),
       });
 
-      if (!activeSessionId || activeSessionId !== res.sessionId) {
+      if (authenticated && (!activeSessionId || activeSessionId !== res.sessionId)) {
         setActiveSessionId(res.sessionId);
         const sRes = await apiFetch<{ sessions: AiChatSessionItem[] }>('/api/ai-assistant/sessions').catch(() => ({
           sessions: [],
@@ -428,15 +470,15 @@ export function DedicatedAiChatSurface({
   const activeModel = models.find((m) => m.id === selectedModelId) || models[0];
   const quickStarters = isFa
     ? [
-        '📊 تحلیل روند بیت‌کوین و ستاپ معاملاتی امروز',
-        '🧠 کد Pine Script برای استراتژی EMA + RSI بنویس',
-        '🛡 با سرمایه ۵۰۰ دلار و ریسک ۲٪ چطور حجم بگیرم؟',
+        '📊 تحلیل لحظه‌ای بیت‌کوین و ستاپ امروز',
+        '🧠 کد Pine Script استراتژی EMA + RSI بنویس',
+        '🛡 با سرمایه ۵۰۰ دلار و ریسک ۲٪ چقدر حجم بگیرم؟',
         '👨‍💻 دلارینو و سازنده‌اش آوید کیا را معرفی کن',
       ]
     : [
-        '📊 BTC trend & intraday trade setup',
+        '📊 Live BTC analysis & setup',
         '🧠 Write an EMA + RSI Pine Script strategy',
-        '🛡 Position sizing with $500 & 2% risk',
+        '🛡 Position sizing for $500 & 2% risk',
         '👨‍💻 Who built Dollarino?',
       ];
 
@@ -456,7 +498,7 @@ export function DedicatedAiChatSurface({
       }}
     >
       {/* Sessions Sidebar in full page mode */}
-      {!compact && (
+      {!compact && authenticated && (
         <aside className="lg:w-72 shrink-0 panel rounded-[24px] p-3.5 flex flex-col justify-between gap-3">
           <div className="space-y-3 overflow-hidden flex flex-col">
             <button
@@ -548,25 +590,27 @@ export function DedicatedAiChatSurface({
         {/* Top Header + Model Selector */}
         <div className="px-3.5 py-2.5 border-b hairline flex flex-wrap items-center justify-between gap-2 bg-[var(--soft)]/60 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-amber-400 grid place-items-center text-white shrink-0 shadow">
+            <div className="w-8 h-8 rounded-xl bg-[#1652f0] grid place-items-center text-white shrink-0">
               <Bot className="w-4 h-4" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h3 className="font-display font-bold text-xs sm:text-sm text-main truncate">
-                  {isFa ? 'هوش مصنوعی اختصاصی دلارینو' : 'Dollarino Dedicated AI'}
+                  {isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI'}
                 </h3>
+                <span className="inline-flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  {isFa ? 'متصل' : 'Online'}
+                </span>
                 {activeModel?.supportsVision && (
-                  <span className="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
+                  <span className="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400">
                     <Eye className="w-2.5 h-2.5" />
                     Vision
                   </span>
                 )}
               </div>
               <p className="text-[10px] text-dim truncate">
-                {isFa
-                  ? `چت عمومی + تحلیل عکس چارت + ستاپ · سازنده: ${creator.nameFa} (${creator.telegram})`
-                  : `Chat & Chart Vision AI · Creator: ${creator.nameEn}`}
+                {isFa ? `سازنده: ${creator.nameFa} (${creator.telegram})` : `Creator: ${creator.nameEn}`}
               </p>
             </div>
           </div>
@@ -577,7 +621,7 @@ export function DedicatedAiChatSurface({
                 value={selectedModelId}
                 onChange={(e) => void handleModelChange(e.target.value)}
                 aria-label={isFa ? 'انتخاب مدل هوش مصنوعی' : 'Select AI Model'}
-                className="input-field !py-1.5 !px-2.5 !text-[11px] font-bold max-w-[185px] sm:max-w-[230px]"
+                className="input-field !py-1.5 !px-2 !text-[11px] font-bold max-w-[160px] sm:max-w-[210px]"
               >
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -586,6 +630,21 @@ export function DedicatedAiChatSurface({
                   </option>
                 ))}
               </select>
+            )}
+
+            {!authenticated && onGoAuth && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCloseFloating?.();
+                  onGoAuth();
+                }}
+                title={isFa ? 'ورود برای ذخیره چت‌ها' : 'Sign in'}
+                className="h-8 px-2.5 rounded-xl btn-ghost text-[10px] font-black inline-flex items-center gap-1"
+              >
+                <LogIn className="w-3 h-3" />
+                <span className="hidden sm:inline">{isFa ? 'ورود' : 'Login'}</span>
+              </button>
             )}
 
             {compact && (
@@ -614,7 +673,7 @@ export function DedicatedAiChatSurface({
               <button
                 type="button"
                 onClick={onCloseFloating}
-                title={isFa ? 'بستن' : 'Close'}
+                title={isFa ? 'جمع کردن به گوی' : 'Minimize to orb'}
                 className="h-8 w-8 rounded-xl btn-ghost grid place-items-center"
               >
                 <Minimize2 className="w-3.5 h-3.5" />
@@ -626,18 +685,18 @@ export function DedicatedAiChatSurface({
         {/* Messages Feed */}
         <div className="flex-1 overflow-y-auto p-3.5 space-y-3">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center py-6 px-3 space-y-4">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-amber-500/20 border hairline grid place-items-center">
-                <Sparkles className="w-6 h-6 text-[var(--gold)]" />
+            <div className="h-full flex flex-col items-center justify-center text-center py-5 px-3 space-y-4">
+              <div className="w-11 h-11 rounded-2xl surface-soft border hairline grid place-items-center">
+                <Sparkles className="w-5 h-5 text-[var(--gold)]" />
               </div>
               <div className="space-y-1 max-w-md">
                 <h4 className="font-display font-bold text-sm sm:text-base text-main">
-                  {isFa ? 'سلام! من هوش مصنوعی اختصاصی دلارینو هستم' : 'Hello! I am Dollarino Dedicated AI'}
+                  {isFa ? 'هوش مصنوعی دلارینو آماده پاسخ‌گویی است' : 'Dollarino AI is Ready'}
                 </h4>
                 <p className="text-[11px] sm:text-xs text-dim leading-relaxed">
                   {isFa
-                    ? `مثل یک هوش مصنوعی کامل هر سوالی داری بپرس، مدل دلخواهت را از بالا انتخاب کن، یا اسکرین‌شات چارت را اینجا بفرست/Paste کن تا تحلیل و ستاپ دقیق (Entry / SL / TP1-3) بدهم.`
-                    : 'Ask anything, switch between connected AI models above, or drop/paste a chart screenshot for full technical analysis and trade setup.'}
+                    ? 'هر سوالی دارید بپرسید، نام هر ارزی را برای تحلیل لحظه‌ای و ستاپ معاملاتی بنویسید یا عکس چارت بفرستید.'
+                    : 'Ask anything, request live coin analysis & trade setups, or drop a chart screenshot.'}
                 </p>
               </div>
 
@@ -660,7 +719,7 @@ export function DedicatedAiChatSurface({
                 <div
                   className={`max-w-[90%] sm:max-w-[82%] rounded-2xl px-3.5 py-2.5 ${
                     m.role === 'user'
-                      ? 'bg-[var(--cobalt)] text-white rounded-ee-sm'
+                      ? 'bg-[#1652f0] text-white rounded-ee-sm'
                       : 'surface-soft border hairline text-sub rounded-es-sm'
                   }`}
                 >
@@ -697,14 +756,19 @@ export function DedicatedAiChatSurface({
                       setup={m.setup}
                       isFa={isFa}
                       onOpenTerminal={
-                        onNavigate
+                        authenticated && onNavigate
                           ? (sym) => {
                               const clean = sym.endsWith('USDT') ? sym : `${sym}USDT`;
                               onSelectSymbolForTerminal?.(clean);
                               onNavigate('terminal');
                               onCloseFloating?.();
                             }
-                          : undefined
+                          : !authenticated && onGoAuth
+                            ? () => {
+                                onCloseFloating?.();
+                                onGoAuth();
+                              }
+                            : undefined
                       }
                     />
                   )}
@@ -717,7 +781,7 @@ export function DedicatedAiChatSurface({
             <div className="flex justify-start">
               <div className="surface-soft border hairline rounded-2xl px-3.5 py-2.5 flex items-center gap-2 text-xs text-dim">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--gold)]" />
-                <span>{isFa ? 'هوش مصنوعی در حال تحلیل و نوشتن پاسخ...' : 'Thinking...'}</span>
+                <span>{isFa ? 'در حال تحلیل و نوشتن پاسخ...' : 'Thinking...'}</span>
               </div>
             </div>
           )}
@@ -826,6 +890,37 @@ export function DedicatedAiChatSurface({
   );
 }
 
+const ORB_STORAGE_KEY = 'dollarino_ai_orb_pos_v2';
+const ORB_SIZE = 44;
+
+interface OrbPos {
+  side: 'left' | 'right';
+  y: number;
+}
+
+function clampOrbY(y: number): number {
+  if (typeof window === 'undefined') return 320;
+  const min = 76;
+  const max = Math.max(min + 40, window.innerHeight - 148);
+  return Math.min(max, Math.max(min, y));
+}
+
+function loadSavedOrbPos(): OrbPos {
+  if (typeof window === 'undefined') return { side: 'right', y: 320 };
+  try {
+    const raw = localStorage.getItem(ORB_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<OrbPos>;
+      const side = parsed.side === 'left' ? 'left' : 'right';
+      const y = clampOrbY(typeof parsed.y === 'number' ? parsed.y : window.innerHeight - 170);
+      return { side, y };
+    }
+  } catch {
+    // ignore storage limits
+  }
+  return { side: 'right', y: clampOrbY(window.innerHeight - 170) };
+}
+
 export function FloatingAiChat({
   lang,
   authenticated,
@@ -843,124 +938,187 @@ export function FloatingAiChat({
 }) {
   const isFa = lang === 'fa';
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<OrbPos>(() => loadSavedOrbPos());
+  const [vw, setVw] = useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 390));
+  const [collapsed, setCollapsed] = useState(true);
+  const [dragging, setDragging] = useState(false);
+  const [dragCoords, setDragCoords] = useState<{ x: number; y: number } | null>(null);
 
-  // Hide floating launcher when user is already inside the dedicated full-page AI Chat view
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragMetaRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+
+  const scheduleCollapse = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      setCollapsed(true);
+    }, 2400);
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      setVw(window.innerWidth);
+      setPos((p) => ({ ...p, y: clampOrbY(p.y) }));
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open && !dragging) {
+      scheduleCollapse();
+    }
+  }, [open, dragging, scheduleCollapse]);
+
+  // Hide floating orb when user is already inside the dedicated full-page AI Chat view
   if (authenticated && activeTab === 'aichat') return null;
+
+  const restX = pos.side === 'right' ? Math.max(8, vw - ORB_SIZE - 8) : 8;
+
+  const activeX = dragCoords ? dragCoords.x : restX;
+  const activeY = dragCoords ? dragCoords.y : clampOrbY(pos.y);
+
+  const collapsedShiftX = !dragging && collapsed ? (pos.side === 'right' ? 22 : -22) : 0;
 
   return (
     <>
       {open && (
         <div
           dir={isFa ? 'rtl' : 'ltr'}
-          className="fixed bottom-24 lg:bottom-20 end-3 sm:end-6 z-[180] w-[calc(100vw-1.5rem)] sm:w-[430px] h-[540px] max-h-[76vh] panel rounded-[28px] shadow-2xl border border-[var(--glass-border)] overflow-hidden flex flex-col pop-in"
+          className={`fixed bottom-24 lg:bottom-16 ${
+            pos.side === 'left' ? 'left-3 sm:left-5' : 'right-3 sm:right-5'
+          } z-[180] w-[calc(100vw-1.5rem)] sm:w-[410px] h-[510px] max-h-[72vh] panel rounded-[26px] border border-[var(--glass-border)] shadow-xl overflow-hidden flex flex-col pop-in`}
         >
-          {authenticated ? (
-            <DedicatedAiChatSurface
-              lang={lang}
-              compact
-              onNavigate={onNavigate}
-              onSelectSymbolForTerminal={onSelectSymbolForTerminal}
-              onExpandFullScreen={
-                onNavigate
-                  ? () => {
-                      setOpen(false);
-                      onNavigate('aichat');
-                    }
-                  : undefined
-              }
-              onCloseFloating={() => setOpen(false)}
-            />
-          ) : (
-            <div className="p-5 flex flex-col justify-between h-full space-y-4">
-              <div className="flex items-center justify-between border-b hairline pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-amber-400 grid place-items-center text-white">
-                    <Bot className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="font-display font-bold text-sm text-main">
-                      {isFa ? 'هوش مصنوعی اختصاصی دلارینو' : 'Dollarino Dedicated AI'}
-                    </h4>
-                    <p className="text-[10px] text-dim">
-                      {isFa ? 'تحلیل چارت + انتخاب مدل + گفتگو' : 'Chart Vision + Multi-Model Chat'}
-                    </p>
-                  </div>
-                </div>
-                <button type="button" onClick={() => setOpen(false)} className="h-8 w-8 rounded-full btn-ghost grid place-items-center">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-3 text-xs text-sub leading-relaxed flex-1 overflow-y-auto">
-                <div className="surface-soft rounded-2xl p-3.5 space-y-2 border hairline">
-                  <p className="font-bold text-main">
-                    {isFa
-                      ? '✨ آماده پاسخ‌گویی به هر سوال و تحلیل عکس چارت شما!'
-                      : '✨ Ready for free-form chat & chart screenshot analysis!'}
-                  </p>
-                  <p className="text-dim">
-                    {isFa
-                      ? 'وارد حساب کاربری شوید (یا در ربات تلگرام @Dollarino_bot پیام دهید) تا بین مدل‌های متصل انتخاب کنید، عکس چارت بفرستید و ستاپ کامل با Entry / SL / TP1-3 بگیرید.'
-                      : 'Sign in or open @Dollarino_bot on Telegram to switch AI models, upload chart screenshots, and get Entry/SL/3-TP setups.'}
-                  </p>
-                </div>
-
-                <div className="surface-soft rounded-2xl p-3.5 space-y-1.5 border hairline text-[11px]">
-                  <p className="font-black text-main">
-                    {isFa ? '👨‍💻 سازنده و طراح پروژه: آوید کیا (Avid Kiya)' : '👨‍💻 Creator: Avid Kiya'}
-                  </p>
-                  <div className="flex flex-wrap gap-3 text-dim" dir="ltr">
-                    <a href="https://t.me/avidkiya" target="_blank" rel="noreferrer" className="underline hover:text-main">
-                      Telegram: @avidkiya
-                    </a>
-                    <a href="https://instagram.com/avid_kiya" target="_blank" rel="noreferrer" className="underline hover:text-main">
-                      IG: @avid_kiya
-                    </a>
-                    <a href="https://x.com/avid_kiya" target="_blank" rel="noreferrer" className="underline hover:text-main">
-                      X: @avid_kiya
-                    </a>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                {onGoAuth && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpen(false);
-                      onGoAuth();
-                    }}
-                    className="btn-cobalt flex-1 py-3 rounded-2xl text-xs font-black"
-                  >
-                    {isFa ? 'ورود / شروع چت با AI' : 'Sign In & Open AI'}
-                  </button>
-                )}
-                <a
-                  href="https://t.me/Dollarino_bot"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-emerald px-4 py-3 rounded-2xl text-xs font-black text-center"
-                >
-                  {isFa ? 'ربات تلگرام' : 'Telegram Bot'}
-                </a>
-              </div>
-            </div>
-          )}
+          <DedicatedAiChatSurface
+            lang={lang}
+            authenticated={authenticated}
+            compact
+            onNavigate={onNavigate}
+            onSelectSymbolForTerminal={onSelectSymbolForTerminal}
+            onGoAuth={onGoAuth}
+            onExpandFullScreen={
+              authenticated && onNavigate
+                ? () => {
+                    setOpen(false);
+                    onNavigate('aichat');
+                  }
+                : undefined
+            }
+            onCloseFloating={() => {
+              setOpen(false);
+              setCollapsed(false);
+              scheduleCollapse();
+            }}
+          />
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={isFa ? 'هوش مصنوعی شناور دلارینو' : 'Floating Dollarino AI'}
-        className="fixed bottom-24 lg:bottom-6 end-3 sm:end-6 z-[175] h-12 px-4 rounded-full bg-gradient-to-r from-indigo-600 via-blue-600 to-amber-500 text-white shadow-xl hover:scale-[1.03] active:scale-[0.98] transition flex items-center gap-2 border border-white/25"
-      >
-        <Sparkles className="w-4 h-4 shrink-0" />
-        <span className="text-xs font-black whitespace-nowrap">
-          {open ? (isFa ? 'بستن چت AI' : 'Close AI') : isFa ? 'چت هوش مصنوعی AI' : 'Dollarino AI'}
-        </span>
-      </button>
+      {/* iPhone AssistiveTouch-Style Collapsible Floating Orb */}
+      {!open && (
+        <button
+          type="button"
+          aria-label={isFa ? 'گوی هوش مصنوعی دلارینو' : 'Dollarino AI Floating Orb'}
+          title={isFa ? 'لمس برای چت AI · کشیدن برای جابجایی' : 'Tap for AI Chat · Drag to move'}
+          onPointerDown={(e) => {
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+            setCollapsed(false);
+            dragMetaRef.current = {
+              pointerId: e.pointerId,
+              startX: e.clientX,
+              startY: e.clientY,
+              originX: restX,
+              originY: activeY,
+              moved: false,
+            };
+          }}
+          onPointerMove={(e) => {
+            const meta = dragMetaRef.current;
+            if (!meta || meta.pointerId !== e.pointerId) return;
+            const dx = e.clientX - meta.startX;
+            const dy = e.clientY - meta.startY;
+            if (!meta.moved && Math.hypot(dx, dy) > 6) {
+              meta.moved = true;
+              setDragging(true);
+            }
+            if (meta.moved) {
+              const maxX = Math.max(8, window.innerWidth - ORB_SIZE - 8);
+              const nextX = Math.min(maxX, Math.max(8, meta.originX + dx));
+              const nextY = clampOrbY(meta.originY + dy);
+              setDragCoords({ x: nextX, y: nextY });
+            }
+          }}
+          onPointerUp={(e) => {
+            const meta = dragMetaRef.current;
+            if (!meta || meta.pointerId !== e.pointerId) return;
+            dragMetaRef.current = null;
+            if (meta.moved && dragCoords) {
+              const mid = window.innerWidth / 2;
+              const nextSide: 'left' | 'right' = dragCoords.x + ORB_SIZE / 2 < mid ? 'left' : 'right';
+              const nextPos: OrbPos = { side: nextSide, y: clampOrbY(dragCoords.y) };
+              setPos(nextPos);
+              setDragCoords(null);
+              setDragging(false);
+              try {
+                localStorage.setItem(ORB_STORAGE_KEY, JSON.stringify(nextPos));
+              } catch {
+                // ignore
+              }
+              scheduleCollapse();
+            } else {
+              setDragCoords(null);
+              setDragging(false);
+              setOpen(true);
+            }
+          }}
+          onPointerCancel={() => {
+            dragMetaRef.current = null;
+            setDragCoords(null);
+            setDragging(false);
+            scheduleCollapse();
+          }}
+          style={{
+            left: `${activeX}px`,
+            top: `${activeY}px`,
+            width: `${ORB_SIZE}px`,
+            height: `${ORB_SIZE}px`,
+            transform: `translate3d(${collapsedShiftX}px, 0, 0)`,
+            background: 'rgba(24, 29, 40, 0.58)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255, 255, 255, 0.22)',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+            opacity: dragging ? 0.96 : collapsed ? 0.48 : 0.85,
+            transition: dragging
+              ? 'none'
+              : 'left 0.28s cubic-bezier(0.22, 1, 0.36, 1), top 0.22s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease',
+            touchAction: 'none',
+          }}
+          className="fixed z-[175] rounded-full grid place-items-center cursor-pointer select-none hover:!opacity-95 focus:outline-none"
+        >
+          {/* Classic iPhone AssistiveTouch Concentric White Rings */}
+          <svg viewBox="0 0 36 36" className="w-7 h-7 pointer-events-none" fill="none" aria-hidden="true">
+            <circle cx="18" cy="18" r="14" stroke="rgba(255,255,255,0.28)" strokeWidth="1.5" />
+            <circle cx="18" cy="18" r="9.5" stroke="rgba(255,255,255,0.48)" strokeWidth="1.5" />
+            <circle cx="18" cy="18" r="5" fill="rgba(255,255,255,0.92)" />
+          </svg>
+          {/* Minimal online dot */}
+          <span
+            className="absolute top-1.5 end-1.5 w-1.5 h-1.5 rounded-full bg-emerald-400 pointer-events-none"
+            aria-hidden="true"
+          />
+        </button>
+      )}
     </>
   );
 }

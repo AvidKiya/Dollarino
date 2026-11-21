@@ -16,7 +16,7 @@ export function DollarinoBrandMark({
       style={{
         width: size,
         height: size,
-        filter: glow ? 'drop-shadow(0 8px 24px rgba(20, 100, 246, 0.42))' : undefined,
+        filter: glow ? 'drop-shadow(0 2px 6px rgba(0, 0, 0, 0.16))' : undefined,
       }}
       className={`object-contain shrink-0 select-none ${className}`}
     />
