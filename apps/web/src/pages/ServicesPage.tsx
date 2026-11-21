@@ -608,7 +608,7 @@ export function ServicesPage({
       {/* 3. Studio Generated Banner Card matching image-6.png */}
       <div className="rounded-[24px] relative overflow-hidden border hairline shadow-sm min-h-[124px] flex items-center bg-[#F3F5F8] dark:bg-slate-900">
         <img
-          src="/assets/banner-radar-studio.png"
+          src="/assets/banner-radar-studio.webp"
           alt=""
           aria-hidden="true"
           className={`absolute inset-0 w-full h-full object-cover pointer-events-none select-none opacity-95 dark:opacity-45 ${
