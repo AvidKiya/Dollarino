@@ -355,7 +355,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // 1-minute watchdog across all running bots & open trades
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '9.7.0-autotrading').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '9.7.0-ux').catch(() => {});
 
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);

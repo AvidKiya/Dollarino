@@ -26,9 +26,31 @@ interface SupportMsg {
   id: string;
   ticket_id: string;
   sender_role: 'user' | 'admin' | 'ai' | 'system';
-  sender_name: string;
+  sender_name: string | null;
   message: string;
   created_at: string;
+}
+
+function renderFormattedSupportText(raw: string) {
+  const normalized = raw.replace(/\\n/g, '\n');
+  const tokens = normalized.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
+  return tokens.map((part, idx) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return (
+        <strong key={idx} className="font-black text-main">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return (
+        <code key={idx} dir="ltr" className="px-1.5 py-0.5 rounded bg-black/25 font-mono text-[11px] text-amber-300">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return <span key={idx}>{part}</span>;
+  });
 }
 
 interface Props {
@@ -414,7 +436,7 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
                         · {m.created_at.slice(11, 16)}
                       </span>
                     </div>
-                    <div>{m.message}</div>
+                    <div>{renderFormattedSupportText(m.message)}</div>
                   </div>
                   {isAi && supportMode === 'AI_ASSISTANT' && (
                     <button

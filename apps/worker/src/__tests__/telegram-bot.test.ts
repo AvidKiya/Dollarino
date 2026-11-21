@@ -268,7 +268,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       },
     });
 
-    const introCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('دلارینو چیست'));
+    const introCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('ابزارهای هوشمند معاملاتی'));
     expect(introCall).toBeTruthy();
     const introMarkup = JSON.stringify(introCall!.body.reply_markup);
     expect(introMarkup).toContain('request_contact');
@@ -300,7 +300,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
         contact: { phone_number: '+989120000000', first_name: 'Stranger', user_id: 999888777 },
       },
     });
-    expect(tgCalls[0]?.body.text).toContain('فقط شماره تماس **اکانت تلگرام خودتان**');
+    expect(tgCalls[0]?.body.text).toContain('فقط شماره تماس <b>اکانت تلگرام خودتان</b>');
 
     // 3. Sharing own contact verifies KYC, unlocks Simple Mode + main keyboards, AND immediately issues web magic login link
     tgCalls = [];
@@ -323,12 +323,29 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const autoMagicCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('tg_login='));
     expect(autoMagicCall).toBeTruthy();
 
-    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('سلام خوش اومدی علی 🌹'));
+    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو</b> خوش آمدید، علی!'));
     expect(welcomeCall).toBeTruthy();
+    expect(String(welcomeCall!.body.text)).not.toContain('**');
+    expect(welcomeCall!.body.parse_mode).toBe('HTML');
     const kbText = JSON.stringify(welcomeCall!.body.reply_markup);
     expect(kbText).toContain('اتصال به صرافی 🔗');
     expect(kbText).toContain('Trust Wallet و DEX');
     expect(kbText).toContain('راهنما 📚');
+
+    // Help text must never emit literal backslash-n or giant 10-row inline menu
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 41,
+      message: {
+        message_id: 131,
+        from: { id: 1001001, first_name: 'علی', username: 'ali_trader' },
+        chat: { id: 1001001, type: 'private' },
+        text: 'راهنما 📚',
+      },
+    });
+    const helpTextOut = String(tgCalls[0]?.body.text || '');
+    expect(helpTextOut).not.toContain('\\n');
+    expect(helpTextOut).not.toContain('**');
 
     // 4. Verified user can trigger /weblogin & /wizard & /myai
     tgCalls = [];

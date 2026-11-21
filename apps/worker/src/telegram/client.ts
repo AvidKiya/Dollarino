@@ -29,6 +29,33 @@ export function stripButtonStyles(markup: unknown): unknown {
   };
 }
 
+export function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function formatTelegramHtml(raw: string): string {
+  const normalized = raw.replace(/\\n/g, '\n');
+  const escaped = escapeTelegramHtml(normalized);
+  return escaped
+    .replace(/\*\*([^\n*]+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^\n`]+?)`/g, '<code>$1</code>');
+}
+
+export function stripMarkdownSyntax(raw: string): string {
+  return raw
+    .replace(/\\n/g, '\n')
+    .replace(/\*\*([^\n*]+?)\*\*/g, '$1')
+    .replace(/`([^\n`]+?)`/g, '$1');
+}
+
+export function stripTelegramHtmlTags(html: string): string {
+  return html
+    .replace(/<\/?(b|code|i|u|s|pre)>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 export class TelegramBotClient {
   constructor(private token: string) {}
 
@@ -40,6 +67,23 @@ export class TelegramBotClient {
       signal: AbortSignal.timeout(12_000),
     });
     const json = await res.json() as { ok: boolean; result?: T; description?: string };
+    if (!json.ok && body.parse_mode && /parse|entit|tag/i.test(json.description ?? '')) {
+      const cleanBody: Record<string, unknown> = { ...body };
+      delete cleanBody.parse_mode;
+      if (typeof cleanBody.text === 'string') cleanBody.text = stripTelegramHtmlTags(cleanBody.text);
+      if (typeof cleanBody.caption === 'string') cleanBody.caption = stripTelegramHtmlTags(cleanBody.caption);
+      const retryPlain = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanBody),
+        signal: AbortSignal.timeout(12_000),
+      });
+      const retryJson = await retryPlain.json() as { ok: boolean; result?: T; description?: string };
+      if (!retryJson.ok) {
+        throw new Error(`Telegram ${method} failed: ${retryJson.description ?? retryPlain.status}`);
+      }
+      return retryJson.result as T;
+    }
     if (!json.ok && body.reply_markup && /style|button|markup|field/i.test(json.description ?? '')) {
       const retryRes = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
         method: 'POST',
@@ -182,7 +226,8 @@ export class TelegramBotClient {
   ) {
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
-      text,
+      text: formatTelegramHtml(text),
+      parse_mode: 'HTML',
       reply_markup: this.buildMarkup(options),
       reply_to_message_id: options?.replyToMessageId,
       disable_web_page_preview: true,
@@ -202,7 +247,8 @@ export class TelegramBotClient {
     return this.call<{ message_id: number }>('sendPhoto', {
       chat_id: chatId,
       photo: photoUrl,
-      caption,
+      caption: caption ? formatTelegramHtml(caption) : undefined,
+      parse_mode: caption ? 'HTML' : undefined,
       reply_markup: this.buildMarkup(options),
       reply_to_message_id: options?.replyToMessageId,
     });
@@ -303,7 +349,8 @@ export class TelegramBotClient {
     return this.call('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
-      text,
+      text: formatTelegramHtml(text),
+      parse_mode: 'HTML',
       reply_markup: inlineKeyboard ? { inline_keyboard: inlineKeyboard } : undefined,
       disable_web_page_preview: true,
     });

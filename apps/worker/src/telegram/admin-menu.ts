@@ -85,27 +85,30 @@ export function isAdminSessionExpired(lastActiveAt?: string | null): boolean {
 export function adminMainKeyboard(actor: AdminActor): InlineKeyboardButton[][] {
   const rows: InlineKeyboardButton[][] = [
     [
-      { text: '📊 داشبورد مالی و آمار', callback_data: 'adm:dash', style: 'primary' },
-      { text: '👥 مدیریت کاربران', callback_data: 'adm:users', style: 'primary' },
+      { text: '⏳ تایید اشتراک‌ها', callback_data: 'adm:tx:PENDING_REVIEW:0', style: 'success' },
+      { text: '👥 کاربران', callback_data: 'adm:users', style: 'primary' },
     ],
     [
-      { text: '💬 تیکت‌های پشتیبانی', callback_data: 'adm:support', style: 'success' },
-      { text: '🏆 مدیریت کپی‌تریدرها', callback_data: 'adm:copy', style: 'success' },
+      { text: '💬 تیکت پشتیبانی', callback_data: 'adm:support', style: 'primary' },
+      { text: '💰 تراکنش‌ها', callback_data: 'adm:tx:ALL:0' },
     ],
     [
-      { text: '📡 مدیریت کانال و اخبار', callback_data: 'adm:channel', style: 'primary' },
+      { text: '📊 آمار و درآمد', callback_data: 'adm:dash' },
+      { text: '🏆 کپی‌تریدرها', callback_data: 'adm:copy' },
+    ],
+    [
+      { text: '📡 کانال و اخبار', callback_data: 'adm:channel' },
       { text: '📨 پیام همگانی', callback_data: 'adm:broadcast' },
     ],
     [
-      { text: '💰 مدیریت تراکنش‌ها', callback_data: 'adm:tx:ALL:0', style: 'primary' },
-      { text: '🎁 کدهای هدیه', callback_data: 'adm:gifts' },
+      { text: '🎁 کد هدیه', callback_data: 'adm:gifts' },
+      { text: '⚙️ تنظیمات', callback_data: 'adm:settings' },
     ],
     [
-      { text: '⚙️ تنظیمات سیستم', callback_data: 'adm:settings' },
-      { text: '📈 گزارش‌گیری پیشرفته', callback_data: 'adm:reports' },
+      ...(actor.isSuperAdmin ? [{ text: '🔑 مدیران', callback_data: 'adm:admins' }] : []),
+      { text: '📈 گزارش', callback_data: 'adm:reports' },
+      { text: '🔙 خروج', callback_data: 'adm:exit', style: 'danger' as const },
     ],
-    ...(actor.isSuperAdmin ? [[{ text: '👤 مدیریت ادمین‌ها', callback_data: 'adm:admins' }]] : []),
-    [{ text: '🔙 خروج از پنل مدیریت', callback_data: 'adm:exit', style: 'danger' }],
   ];
   return rows;
 }
@@ -118,17 +121,18 @@ export async function openAdminPanelHome(
   editMsgId?: number
 ) {
   await touchAdminActivity(env.DB, actor.id);
-  const [uTotal, subActive, pendingTx] = await Promise.all([
+  const [uTotal, subActive, pendingTx, openTickets] = await Promise.all([
     env.DB.prepare(`SELECT COUNT(*) as cnt FROM users`).first<{ cnt: number }>(),
     env.DB.prepare(`SELECT COUNT(*) as cnt FROM user_subscriptions WHERE status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > datetime('now'))`).first<{ cnt: number }>(),
     env.DB.prepare(`SELECT COUNT(*) as cnt FROM user_subscriptions WHERE status = 'PENDING_REVIEW'`).first<{ cnt: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) as cnt FROM support_tickets WHERE status = 'OPEN'`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
   ]);
   const text =
-    `💼 پنل مدیریت جامع دلارینو\n\n` +
+    `💼 **پنل مدیریت جامع دلارینو**\n\n` +
     `👤 مدیر: ${actor.username} (${actor.isSuperAdmin ? 'مدیر اصلی 👑' : 'ادمین'})\n` +
-    `👥 کل کاربران: ${uTotal?.cnt ?? 0} | 💎 اشتراک فعال: ${subActive?.cnt ?? 0}\n` +
-    `⏳ تراکنش‌های در انتظار تایید: ${pendingTx?.cnt ?? 0}\n\n` +
-    `بخش مورد نظر را انتخاب کنید (خروج خودکار پس از ۱۵ دقیقه عدم فعالیت):`;
+    `👥 کاربران: ${uTotal?.cnt ?? 0} | 💎 اشتراک فعال: ${subActive?.cnt ?? 0}\n` +
+    `⏳ فیش در انتظار تایید: **${pendingTx?.cnt ?? 0}** | 💬 تیکت باز: **${openTickets?.cnt ?? 0}**\n\n` +
+    `بخش مورد نظر را انتخاب کنید:`;
 
   const kb = adminMainKeyboard(actor);
   if (editMsgId) {

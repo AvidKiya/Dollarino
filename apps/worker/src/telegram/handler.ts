@@ -1484,8 +1484,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, nextMode)
         ).catch(() => {});
       }
-      await bot.sendMessage(chatId, nextMode === 'pro' ? '⚡ منوی کامل حالت حرفه‌ای فعال شد:' : '🌱 منوی سریع حالت ساده فعال شد:', {
-        replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode),
+      await bot.sendMessage(chatId, nextMode === 'pro' ? '⚡ منوی حالت حرفه‌ای فعال شد:' : '🌱 منوی حالت ساده فعال شد:', {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode, isUserAdmin(tgId, user.role, env)),
       });
       return { ok: true };
     }
@@ -2386,15 +2386,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     if (pendingStartArg && pendingStartArg.toUpperCase().startsWith('LINK-')) {
       const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, pendingStartArg);
-      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
+      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) });
       await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
       return { ok: true };
     }
 
-    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
-      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
+      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
     });
-    await bot.sendMessage(chatId, '🚀 پنل کنترل سریع، راه‌اندازی ۴ مرحله‌ای و ابزارهای دلارینو:', {
+    await bot.sendMessage(chatId, '🎛 کنترل سریع ربات:', {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
     });
     await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
@@ -2414,7 +2414,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const payload = text.slice(7).trim();
     if (payload.toUpperCase().startsWith('LINK-')) {
       const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, payload);
-      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
+      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) });
       return { ok: true };
     }
     if (payload.startsWith('sig_') || payload.startsWith('exec_') || payload.startsWith('open_')) {
@@ -2435,7 +2435,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       }>();
       if (!sigRow) {
         await bot.sendMessage(chatId, '⚠️ سیگنال درخواستی یافت نشد یا منقضی شده است.', {
-          replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+          replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
         });
         return { ok: true };
       }
@@ -2470,8 +2470,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
     if (payload.toUpperCase().startsWith('REF_') || payload.toUpperCase().startsWith('DLR-')) {
       await applyReferralIfPresent(env, user.id, payload, user.phone_number);
-      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
-        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
       });
       await bot.sendMessage(chatId, '🎁 شما از طریق لینک دعوت دوستتان وارد شدید! با فعال‌سازی اشتراک، پورسانت و هدیه اشتراک ثبت می‌شود.', {
         inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
@@ -2483,8 +2483,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       if (payload.toLowerCase().includes('ref_') || payload.toUpperCase().includes('DLR-')) {
         await applyReferralIfPresent(env, user.id, payload, user.phone_number);
       }
-      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
-        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
       });
       await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
       return { ok: true };
@@ -2495,10 +2495,10 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await clearState();
     const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
     const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
-    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
-      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
+      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
     });
-    await bot.sendMessage(chatId, '🚀 دسترسی سریع به پنل معاملاتی، راه‌اندازی ۴ مرحله‌ای، Trust Wallet و کنترل ربات:', {
+    await bot.sendMessage(chatId, '🎛 کنترل سریع ربات:', {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, uiMode),
     });
     return { ok: true };
@@ -2524,7 +2524,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text.startsWith('/link ')) {
     const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, text.slice(6));
-    await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
+    await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) });
     return { ok: true };
   }
 
@@ -2596,20 +2596,20 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await bot.sendMessage(
           chatId,
           `🔐 کلید ${state.provider.toUpperCase()} با رمزنگاری AES-256 ذخیره شد (در حالت Standby).\n\nبرای فعال‌سازی معاملات واقعی روی Toobit یا KCEX لطفاً اشتراک تهیه کنید.`,
-          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) }
         );
       } else if (test.ok && test.balance) {
         await env.DB.prepare(`UPDATE bot_configs SET trading_mode = 'LIVE' WHERE user_id = ?`).bind(user.id).run();
         await bot.sendMessage(
           chatId,
           `✅ اتصال به ${state.provider.toUpperCase()} با موفقیت برقرار شد!\n\n${formatBalanceCard(state.provider, test.balance)}`,
-          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) }
         );
       } else {
         await bot.sendMessage(
           chatId,
           `⚠️ کلیدها به‌صورت رمزنگاری‌شده ذخیره شدند اما تست اتصال صرافی پیام داد:\n${test.message}`,
-          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) }
         );
       }
       return { ok: true };
@@ -2751,21 +2751,25 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const isMainMenuCommand =
         text.startsWith('/') ||
         [
+          '🟢 شروع خودکار ربات',
+          '⚡️ شکار فوری AI',
           '🚀 راه‌اندازی ۴ مرحله‌ای ربات',
           '🦊 کیف‌پول Trust Wallet',
+          '🦊 Trust Wallet و DEX',
           'ربات و هوش مصنوعی من',
-          '🏆 کپی‌ترید تاییدشده',
+          '🏆 کپی‌ترید',
           'حساب کاربری 👤',
           'خرید اشتراک 💎',
           'اتصال به صرافی 🔗',
           '⚡ رفتن به حالت حرفه‌ای',
           '🌱 رفتن به حالت ساده',
           '🔍 رادار DexScreener',
+          '🔍 اسکنر DEX',
           'تنظیمات ⚙️',
           '📈 معاملات باز',
           '🎯 استراتژی شکار',
           '🧩 اکستنشن و ویجت موبایل',
-          '💬 پشتیبانی آنلاین',
+          '💬 پشتیبانی',
           'راهنما 📚',
           'بازگشت به صفحه قبل 🔙',
           'پنل مدیریت 💼',
@@ -2935,19 +2939,19 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const targetTg = text.replace(/[^0-9]/g, '');
       await clearState();
       if (!targetTg) {
-        await bot.sendMessage(chatId, '❌ آیدی عددی تلگرام نامعتبر است.', { replyKeyboard: settingsKeyboard(admin, superAdmin) });
+        await bot.sendMessage(chatId, '❌ آیدی عددی تلگرام نامعتبر است.', { replyKeyboard: settingsKeyboard(admin, superAdmin, uiMode) });
         return { ok: true };
       }
       const existingTarget = await env.DB.prepare('SELECT id, username FROM users WHERE telegram_id = ?').bind(targetTg).first<{ id: string; username: string }>();
       if (!existingTarget) {
         await bot.sendMessage(chatId, `⚠️ کاربر با آیدی ${targetTg} هنوز ربات را استارت نزده است. ابتدا یک بار /start بزند.`, {
-          replyKeyboard: settingsKeyboard(admin, superAdmin),
+          replyKeyboard: settingsKeyboard(admin, superAdmin, uiMode),
         });
         return { ok: true };
       }
       await env.DB.prepare(`UPDATE users SET role = 'admin' WHERE id = ? AND role != 'owner'`).bind(existingTarget.id).run();
       await bot.sendMessage(chatId, `✅ کاربر ${existingTarget.username} (${targetTg}) با موفقیت به لیست مدیران اضافه شد.`, {
-        replyKeyboard: settingsKeyboard(admin, superAdmin),
+        replyKeyboard: settingsKeyboard(admin, superAdmin, uiMode),
       });
       return { ok: true };
     }
@@ -2963,13 +2967,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const nextMode: 'simple' | 'pro' = text.includes('حرفه‌ای') ? 'pro' : 'simple';
     await env.DB.prepare(`UPDATE users SET ui_mode = ? WHERE id = ?`).bind(nextMode, user.id).run();
     user.ui_mode = nextMode;
-    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, nextMode), {
-      replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode),
+    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, nextMode, webAppUrl), {
+      replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode, admin),
     });
     return { ok: true };
   }
 
-  if (text.startsWith('🦊 کیف‌پول Trust Wallet') || text === '/wallet') {
+  if (text.startsWith('🦊 کیف‌پول Trust Wallet') || text === '🦊 Trust Wallet و DEX' || text === '/wallet') {
     await showTrustWalletMenu(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
@@ -3005,7 +3009,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🔍 رادار DexScreener و توکن داغ' || text === '/dex') {
+  if (text === '🔍 رادار DexScreener و توکن داغ' || text === '🔍 اسکنر DEX' || text === '/dex') {
     await showDexTrendingMenu(bot, chatId);
     return { ok: true };
   }
@@ -3053,7 +3057,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🏆 کپی‌ترید تاییدشده' || text === '/copy') {
+  if (text === '🏆 کپی‌ترید تاییدشده' || text === '🏆 کپی‌ترید' || text === '/copy') {
     const traders = await env.DB.prepare(
       `SELECT id, display_name, specialty, win_rate, roi_30d_pct, followers_count FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
     ).all<{ id: string; display_name: string; specialty: string; win_rate: number; roi_30d_pct: number; followers_count: number }>().catch(() => ({ results: [] }));
@@ -3086,7 +3090,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '💬 پشتیبانی آنلاین' || text === '/support') {
+  if (text === '💬 پشتیبانی آنلاین' || text === '💬 پشتیبانی' || text === '/support') {
     await setState({ step: 'AWAIT_SUPPORT_MSG' });
     const supportId = await getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE);
     const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
@@ -3146,19 +3150,31 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const { adapter } = await resolveUserExchangeAdapter(env, user.id, 'paper');
     const bal = await adapter.getBalance();
     await bot.sendMessage(chatId, `✅ حالت شبیه‌ساز حساب فعال شد:\n\n${formatBalanceCard('PAPER', bal)}`, {
-      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
     });
     return { ok: true };
   }
 
   if (text === 'تنظیمات ⚙️' || text === '/settings') {
     await bot.sendMessage(chatId, '⚙️ منوی تنظیمات ربات دلارینو:', {
-      replyKeyboard: settingsKeyboard(admin, superAdmin),
+      replyKeyboard: settingsKeyboard(admin, superAdmin, uiMode),
     });
     return { ok: true };
   }
 
-  if (text === 'تنظیم نوع بازار (اسپات/فیوچرز) ⚖️') {
+  if (text === '🎛 انتخاب روش ترید') {
+    const cfg = await env.DB.prepare('SELECT strategy_key, bot_state FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ strategy_key: string; bot_state: string }>();
+    const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+    await bot.sendMessage(
+      chatId,
+      `🎛 **انتخاب روش معاملاتی ربات:**\nروش فعلی: **${resolveEngineDisplayLabel(cfg?.strategy_key)}**\n\nیکی از موتورهای زیر را انتخاب کنید:`,
+      { inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', isRunning, uiMode) }
+    );
+    return { ok: true };
+  }
+
+  if (text === 'تنظیم نوع بازار (اسپات/فیوچرز) ⚖️' || text === '⚖️ اسپات / فیوچرز') {
     const cfg = await env.DB.prepare('SELECT market_type FROM bot_configs WHERE user_id = ?')
       .bind(user.id).first<{ market_type?: string }>();
     await bot.sendMessage(
@@ -3176,7 +3192,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === 'جهت معاملات (لانگ/شورت) ↕️') {
+  if (text === 'جهت معاملات (لانگ/شورت) ↕️' || text === '↕️ جهت معاملات') {
     const cfg = await env.DB.prepare('SELECT direction_mode, hedge_mode FROM bot_configs WHERE user_id = ?')
       .bind(user.id).first<{ direction_mode?: string; hedge_mode?: number }>();
     await bot.sendMessage(
@@ -3232,7 +3248,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🟢 شروع خودکار ربات (یک کلیک)' || text === '🟢 شروع سریع ربات' || text === '/autostart') {
+  if (text === '🟢 شروع خودکار ربات' || text === '🟢 شروع خودکار ربات (یک کلیک)' || text === '🟢 شروع سریع ربات' || text === '/autostart') {
     await clearState();
     const res = await startBotOneClickForTelegram({
       env,
@@ -3247,12 +3263,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
     await bot.sendMessage(chatId, res.text, {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', res.ok, uiMode),
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, uiMode),
     });
     return { ok: true };
   }
 
-  if (text === '⚡️ شکار و ترید فوری AI' || text === '/scan') {
+  if (text === '⚡️ شکار فوری AI' || text === '⚡️ شکار و ترید فوری AI' || text === '/scan') {
     await clearState();
     await bot.sendMessage(chatId, '⚡️ در حال تحلیل لحظه‌ای ۵ نماد اصلی با هوش مصنوعی دلارینو و اجرای خودکار سیگنال معتبر...');
     const res = await runInstantAiAutoTradeForTelegram({ env, user, tgId });
@@ -3261,7 +3277,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
     await bot.sendMessage(chatId, res.text, {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', true, uiMode),
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', true, uiMode),
     });
     return { ok: true };
   }
@@ -3373,21 +3389,24 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE),
     ]);
     const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
-    const fallbackText = await getSystemSetting(env.DB, 'help_text', '📚 راهنمای دلارینو در پنل وب در دسترس است.');
-    const caption = `${helpText || fallbackText}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
+    const rawHelp = (helpText || (await getSystemSetting(env.DB, 'help_text', '📚 راهنمای دلارینو در پنل وب در دسترس است.'))).replace(/\\n/g, '\n');
+    const caption = `${rawHelp}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
+    const faqKb: InlineKeyboardButton[][] | undefined = webAppUrl.startsWith('https://')
+      ? [[{ text: '🚀 راهنمای کامل در مینی‌اپ دلارینو', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/faq` }, style: 'primary' }]]
+      : undefined;
     if (helpMedia && helpMedia.startsWith('https://')) {
       if (/\.(mp4|mov|webm)(\?|$)/i.test(helpMedia)) {
-        await bot.sendVideo(chatId, helpMedia, caption).catch(() => bot.sendMessage(chatId, caption));
+        await bot.sendVideo(chatId, helpMedia, caption).catch(() => bot.sendMessage(chatId, caption, { inlineKeyboard: faqKb }));
       } else {
-        await bot.sendPhoto(chatId, helpMedia, caption).catch(() => bot.sendMessage(chatId, caption));
+        await bot.sendPhoto(chatId, helpMedia, caption).catch(() => bot.sendMessage(chatId, caption, { inlineKeyboard: faqKb }));
       }
     } else {
-      await bot.sendMessage(chatId, caption, { inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '/faq') });
+      await bot.sendMessage(chatId, caption, { inlineKeyboard: faqKb });
     }
     return { ok: true };
   }
 
-  if (text === 'پنل مدیریت 💼' && admin) {
+  if ((text === 'پنل مدیریت 💼' || text === '/admin') && admin) {
     await openAdminPanelHome(env, bot, chatId, buildAdminActor(user, tgId, env));
     return { ok: true };
   }
@@ -3421,7 +3440,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   await bot.sendMessage(chatId, 'لطفاً یکی از گزینه‌های منو را انتخاب کنید یا سیگنال را برای بررسی ارسال کنید:', {
-    replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+    replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
   });
   return { ok: true };
 }
