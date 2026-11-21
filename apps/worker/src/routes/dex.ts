@@ -8,22 +8,23 @@ import {
   searchDexPairs,
 } from '../dex/screener.js';
 import type { AuthUser, Env } from '../env.js';
+import { enforceRateLimit } from '../security.js';
 
 export const dexRoutes = new Hono<{ Bindings: Env; Variables: { user: AuthUser } }>();
 
 dexRoutes.get('/trending', async (c) => {
   const data = await fetchDexTrendingOverview();
-  return c.json({ ok: true, ...data, source: 'dexscreener.com' });
+  return c.json({ ok: true, trending: data.pairs, ...data, source: 'dexscreener.com' });
 });
 
 dexRoutes.get('/search', async (c) => {
   const q = (c.req.query('q') || '').trim();
   if (!q) {
     const data = await fetchDexTrendingOverview();
-    return c.json({ ok: true, pairs: data.pairs, source: 'dexscreener.com' });
+    return c.json({ ok: true, pairs: data.pairs, results: data.pairs, source: 'dexscreener.com' });
   }
   const pairs = await searchDexPairs(q);
-  return c.json({ ok: true, query: q, pairs, source: 'dexscreener.com' });
+  return c.json({ ok: true, query: q, pairs, results: pairs, source: 'dexscreener.com' });
 });
 
 dexRoutes.get('/token/:chainId/:tokenAddress', async (c) => {
@@ -45,6 +46,10 @@ dexRoutes.get('/token/:chainId/:tokenAddress', async (c) => {
 
 dexRoutes.post('/ai-analyze', requireAuth, async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `dexai:${user.id}`, 12, 300);
+  if (!rl.allowed) {
+    return c.json({ error: `تعداد تحلیل‌های سریع DEX زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   const body = (await c.req.json().catch(() => ({}))) as {
     chainId?: string;
     tokenAddress?: string;

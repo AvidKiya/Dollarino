@@ -3,6 +3,7 @@ import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
 import { logAudit } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
+import { enforceRateLimit, maskUsernameForReferral } from '../security.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter.js';
 import { notifyAllAdmins } from '../telegram/publisher.js';
@@ -165,28 +166,181 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
   };
 }
 
-export async function rewardReferrerIfEligible(env: Env, referredUserId: string): Promise<void> {
+export async function rewardReferrerIfEligible(
+  env: Env,
+  referredUserId: string,
+  subscriptionId?: string,
+  paidAmountUsd = 0
+): Promise<void> {
+  if (!Number.isFinite(paidAmountUsd) || paidAmountUsd <= 0) {
+    // Do not grant referral bonuses or USD commissions on $0 gift codes / admin grants
+    return;
+  }
+
   const ref = await env.DB.prepare(
-    `SELECT id, referrer_user_id, reward_days, status FROM referrals WHERE referred_user_id = ? LIMIT 1`
-  ).bind(referredUserId).first<{ id: string; referrer_user_id: string; reward_days: number; status: string }>().catch(() => null);
+    `SELECT id, referrer_user_id, reward_days, status, COALESCE(fraud_flag, 0) as fraud_flag
+     FROM referrals WHERE referred_user_id = ? LIMIT 1`
+  )
+    .bind(referredUserId)
+    .first<{ id: string; referrer_user_id: string; reward_days: number; status: string; fraud_flag: number }>()
+    .catch(() => null);
 
-  if (!ref || ref.status === 'REWARDED') return;
-  const days = Math.max(1, ref.reward_days || 7);
+  if (!ref || ref.referrer_user_id === referredUserId) return;
+  if (ref.fraud_flag === 1 || ref.status === 'FLAGGED_DUPLICATE') {
+    await logAudit(
+      env.DB,
+      ref.referrer_user_id,
+      'SYSTEM',
+      'WARN',
+      `Referral reward blocked due to anti-abuse flag on user ${referredUserId}`
+    ).catch(() => {});
+    return;
+  }
 
-  await env.DB.prepare(`UPDATE referrals SET status = 'REWARDED' WHERE id = ?`).bind(ref.id).run();
+  // Cross-check phone number / Trust Wallet overlap between referrer & referred to prevent self-farming
+  const [referrerUser, referredUser] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, phone_number, trust_wallet_address, signup_ip_hash, telegram_id FROM users WHERE id = ?`
+    )
+      .bind(ref.referrer_user_id)
+      .first<{
+        id: string;
+        phone_number: string | null;
+        trust_wallet_address: string | null;
+        signup_ip_hash: string | null;
+        telegram_id: string | null;
+      }>()
+      .catch(() => null),
+    env.DB.prepare(
+      `SELECT id, phone_number, trust_wallet_address, signup_ip_hash, telegram_id FROM users WHERE id = ?`
+    )
+      .bind(referredUserId)
+      .first<{
+        id: string;
+        phone_number: string | null;
+        trust_wallet_address: string | null;
+        signup_ip_hash: string | null;
+        telegram_id: string | null;
+      }>()
+      .catch(() => null),
+  ]);
+
+  if (!referrerUser || !referredUser) return;
+
+  let abuseReason = '';
+  if (
+    referredUser.phone_number &&
+    referrerUser.phone_number &&
+    referredUser.phone_number === referrerUser.phone_number
+  ) {
+    abuseReason = 'شماره تماس یکسان با معرف';
+  } else if (
+    referredUser.trust_wallet_address &&
+    referrerUser.trust_wallet_address &&
+    referredUser.trust_wallet_address.toLowerCase() === referrerUser.trust_wallet_address.toLowerCase()
+  ) {
+    abuseReason = 'کیف‌پول Trust Wallet یکسان با معرف';
+  } else if (referredUser.phone_number) {
+    const dupPhone = await env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM referrals r
+       JOIN users u ON u.id = r.referred_user_id
+       WHERE r.status = 'REWARDED' AND r.referred_user_id != ? AND u.phone_number = ?`
+    )
+      .bind(referredUserId, referredUser.phone_number)
+      .first<{ cnt: number }>()
+      .catch(() => ({ cnt: 0 }));
+    if ((dupPhone?.cnt ?? 0) > 0) abuseReason = 'استفاده مجدد از شماره تماس قبلی برای پاداش رفرال';
+  }
+
+  if (abuseReason) {
+    await env.DB.prepare(
+      `UPDATE referrals SET fraud_flag = 1, status = 'FLAGGED_DUPLICATE', fraud_reason = ? WHERE id = ?`
+    )
+      .bind(abuseReason, ref.id)
+      .run()
+      .catch(() => {});
+    await logAudit(env.DB, ref.referrer_user_id, 'SYSTEM', 'WARN', `Referral flagged (${abuseReason})`).catch(() => {});
+    return;
+  }
+
+  // Compute tier commission rate based on qualified referrals count
+  const qualifiedCntRow = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM referrals WHERE referrer_user_id = ? AND status = 'REWARDED'`
+  )
+    .bind(ref.referrer_user_id)
+    .first<{ cnt: number }>()
+    .catch(() => ({ cnt: 0 }));
+  const qualifiedCount = Number(qualifiedCntRow?.cnt ?? 0);
+
+  const isFirstPurchase = ref.status !== 'REWARDED';
+  let tier = 'BRONZE';
+  let firstPct = 0.15;
+  if (qualifiedCount >= 15) {
+    tier = 'GOLD';
+    firstPct = 0.22;
+  } else if (qualifiedCount >= 5) {
+    tier = 'SILVER';
+    firstPct = 0.18;
+  }
+
+  const rate = isFirstPurchase ? firstPct : 0.1; // 15%-22% first order, 10% recurring renewals
+  const commissionUsd = Math.round(paidAmountUsd * rate * 100) / 100;
+  const days = isFirstPurchase ? Math.max(1, ref.reward_days || 7) : 0;
+
   await env.DB.prepare(
-    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
-     VALUES (?, ?, 'pro_monthly', 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'پاداش دعوت دوست (رفرال)')`
-  ).bind(randomId('sub'), ref.referrer_user_id, `REFERRAL:${referredUserId}`, days).run();
+    `UPDATE referrals
+     SET status = 'REWARDED',
+         commission_usd = COALESCE(commission_usd, 0) + ?,
+         subscription_id = COALESCE(subscription_id, ?),
+         unlocked_at = COALESCE(unlocked_at, datetime('now'))
+     WHERE id = ?`
+  )
+    .bind(commissionUsd, subscriptionId ?? null, ref.id)
+    .run();
 
-  await logAudit(env.DB, ref.referrer_user_id, 'SYSTEM', 'INFO', `Referral bonus credited: +${days} days for inviting ${referredUserId}`);
-  const referrerTg = await env.DB.prepare(`SELECT telegram_id FROM users WHERE id = ?`).bind(ref.referrer_user_id).first<{ telegram_id: string | null }>().catch(() => null);
+  await env.DB.prepare(
+    `UPDATE users
+     SET referral_balance_usd = COALESCE(referral_balance_usd, 0) + ?,
+         referral_total_earned_usd = COALESCE(referral_total_earned_usd, 0) + ?,
+         referral_tier = ?
+     WHERE id = ?`
+  )
+    .bind(commissionUsd, commissionUsd, tier, ref.referrer_user_id)
+    .run();
+
+  if (days > 0) {
+    await env.DB.prepare(
+      `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
+       VALUES (?, ?, 'pro_monthly', 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'پاداش دعوت دوست (رفرال)')`
+    )
+      .bind(randomId('sub'), ref.referrer_user_id, `REFERRAL:${referredUserId}`, days)
+      .run();
+  }
+
+  await logAudit(
+    env.DB,
+    ref.referrer_user_id,
+    'SYSTEM',
+    'INFO',
+    `Referral bonus credited: +$${commissionUsd.toFixed(2)} USD${days > 0 ? ` & +${days} Pro days` : ''} (${tier})`
+  );
+
+  const referrerTg = await env.DB.prepare(`SELECT telegram_id FROM users WHERE id = ?`)
+    .bind(ref.referrer_user_id)
+    .first<{ telegram_id: string | null }>()
+    .catch(() => null);
   if (referrerTg?.telegram_id && env.TELEGRAM_BOT_TOKEN) {
     const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
-    await tg.sendMessage(
-      referrerTg.telegram_id,
-      `🎁 تبریک! دوست دعوت‌شده شما اشتراک دلارینو را فعال کرد و ${days} روز اشتراک هدیه به حساب شما اضافه شد!`
-    ).catch(() => {});
+    await tg
+      .sendMessage(
+        referrerTg.telegram_id,
+        `کمیسیون جدید رفرال در دلارینو!\n` +
+          `• پاداش نقدی واریزشده: +$${commissionUsd.toFixed(2)} USDT\n` +
+          (days > 0 ? `• هدیه اشتراک: +${days} روز اشتراک Pro\n` : '') +
+          `• سطح همکاری شما: ${tier}\n` +
+          `می‌توانید از بخش اشتراک/رفرال در سایت مبلغ را به USDT برداشت یا تبدیل به اشتراک کنید.`
+      )
+      .catch(() => {});
   }
 }
 
@@ -330,6 +484,10 @@ subscriptionRoutes.get('/me', async (c) => {
 
 subscriptionRoutes.post('/checkout', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `chk:${user.id}`, 10, 300);
+  if (!rl.allowed) {
+    return c.json({ error: `تعداد ثبت سفارش زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   const body = await c.req.json<{
     planCode?: string;
     paymentMethod?: 'USDT_TRC20' | 'TRUST_WALLET_BEP20' | 'TRUST_WALLET_TRC20' | 'CARD_TO_CARD';
@@ -409,7 +567,7 @@ subscriptionRoutes.post('/checkout', async (c) => {
       autoNote
     ).run();
 
-    await rewardReferrerIfEligible(c.env, user.id).catch(() => {});
+    await rewardReferrerIfEligible(c.env, user.id, id, plan.price_usd).catch(() => {});
     await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Subscription ${id} AUTO-ACTIVATED via Tronscan (${plan.name_en})`);
     await notifyAllAdmins(
       c.env,
@@ -484,7 +642,7 @@ subscriptionRoutes.post('/admin/orders/:id/review', async (c) => {
      FROM user_subscriptions us
      LEFT JOIN subscription_plans sp ON sp.code = us.plan_code
      WHERE us.id = ?`
-  ).bind(id).first<{ id: string; user_id: string; plan_code: string; duration_days: number | null }>();
+  ).bind(id).first<{ id: string; user_id: string; plan_code: string; amount_usd: number; duration_days: number | null }>();
   if (!order) return c.json({ error: 'Order not found' }, 404);
 
   if (body.decision === 'APPROVE') {
@@ -499,7 +657,7 @@ subscriptionRoutes.post('/admin/orders/:id/review', async (c) => {
            admin_note = ?
        WHERE id = ?`
     ).bind(days, actor.id, body.adminNote || 'Approved', id).run();
-    await rewardReferrerIfEligible(c.env, order.user_id).catch(() => {});
+    await rewardReferrerIfEligible(c.env, order.user_id, order.id, Number(order.amount_usd || 0)).catch(() => {});
     await logAudit(c.env.DB, order.user_id, 'SYSTEM', 'INFO', `Subscription ${order.plan_code} approved for ${days} days`);
   } else {
     await c.env.DB.prepare(
@@ -585,18 +743,206 @@ subscriptionRoutes.patch('/admin/config', async (c) => {
 subscriptionRoutes.get('/referrals', async (c) => {
   const user = c.get('user');
   const code = `DLR-${user.id.slice(-6).toUpperCase()}`;
-  const refs = await c.env.DB.prepare(
-    `SELECT r.id, r.reward_days, r.status, r.created_at, u.username
-     FROM referrals r JOIN users u ON u.id = r.referred_user_id
-     WHERE r.referrer_user_id = ? ORDER BY r.created_at DESC LIMIT 50`
-  ).bind(user.id).all<{ id: string; reward_days: number; status: string; created_at: string; username: string }>().catch(() => ({ results: [] }));
+  const [userBal, refs, withdrawals] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COALESCE(referral_balance_usd, 0) as bal, COALESCE(referral_total_earned_usd, 0) as total, COALESCE(referral_tier, 'BRONZE') as tier
+       FROM users WHERE id = ?`
+    )
+      .bind(user.id)
+      .first<{ bal: number; total: number; tier: string }>()
+      .catch(() => ({ bal: 0, total: 0, tier: 'BRONZE' })),
+    c.env.DB.prepare(
+      `SELECT r.id, r.reward_days, r.status, COALESCE(r.commission_usd, 0) as commission_usd,
+              COALESCE(r.fraud_flag, 0) as fraud_flag, r.fraud_reason, r.created_at, r.unlocked_at,
+              u.username, COALESCE(u.phone_verified, 0) as phone_verified
+       FROM referrals r JOIN users u ON u.id = r.referred_user_id
+       WHERE r.referrer_user_id = ? ORDER BY r.created_at DESC LIMIT 80`
+    )
+      .bind(user.id)
+      .all<{
+        id: string;
+        reward_days: number;
+        status: string;
+        commission_usd: number;
+        fraud_flag: number;
+        fraud_reason: string | null;
+        created_at: string;
+        unlocked_at: string | null;
+        username: string;
+        phone_verified: number;
+      }>()
+      .catch(() => ({ results: [] })),
+    c.env.DB.prepare(
+      `SELECT id, amount_usd, target_type, wallet_address, network, status, tx_hash, admin_note, created_at, processed_at
+       FROM referral_withdrawals WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
+    )
+      .bind(user.id)
+      .all()
+      .catch(() => ({ results: [] })),
+  ]);
+
   const totalReferred = refs.results.length;
-  const rewardDaysEarned = refs.results.filter((r) => r.status === 'REWARDED').reduce((acc, r) => acc + Number(r.reward_days || 0), 0);
-  return c.json({ referralCode: code, totalReferred, rewardDaysEarned, referrals: refs.results });
+  const qualifiedReferred = refs.results.filter((r) => r.status === 'REWARDED').length;
+  const flaggedCount = refs.results.filter((r) => r.fraud_flag === 1 || r.status === 'FLAGGED_DUPLICATE').length;
+  const rewardDaysEarned = refs.results
+    .filter((r) => r.status === 'REWARDED')
+    .reduce((acc, r) => acc + Number(r.reward_days || 0), 0);
+
+  let tier = 'BRONZE';
+  let commissionPct = 15;
+  if (qualifiedReferred >= 15) {
+    tier = 'GOLD';
+    commissionPct = 22;
+  } else if (qualifiedReferred >= 5) {
+    tier = 'SILVER';
+    commissionPct = 18;
+  }
+
+  const webUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/+$/, '');
+  const sanitizedRefs = refs.results.map((r) => ({
+    id: r.id,
+    username: maskUsernameForReferral(r.username),
+    reward_days: r.reward_days,
+    commission_usd: Number(r.commission_usd || 0),
+    status: r.status,
+    fraud_flag: r.fraud_flag,
+    phone_verified: r.phone_verified === 1,
+    created_at: r.created_at,
+    unlocked_at: r.unlocked_at,
+  }));
+
+  return c.json({
+    referralCode: code,
+    inviteUrl: `${webUrl}/?ref=${encodeURIComponent(code)}`,
+    telegramInviteUrl: `https://t.me/Dollarino_bot?start=REF_${encodeURIComponent(code)}`,
+    tier,
+    commissionPct,
+    renewalPct: 10,
+    balanceUsd: Number(userBal?.bal ?? 0),
+    totalEarnedUsd: Number(userBal?.total ?? 0),
+    totalReferred,
+    qualifiedReferred,
+    flaggedCount,
+    rewardDaysEarned,
+    referrals: sanitizedRefs,
+    withdrawals: withdrawals.results,
+  });
+});
+
+subscriptionRoutes.post('/referrals/redeem-balance', async (c) => {
+  const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `refred:${user.id}`, 8, 300);
+  if (!rl.allowed) return c.json({ error: 'درخواست زیاد است. کمی بعد تلاش کنید.' }, 429);
+
+  const body = (await c.req.json().catch(() => ({}))) as { amountUsd?: number };
+  const amt = Math.round(Number(body.amountUsd || 0) * 100) / 100;
+  if (!Number.isFinite(amt) || amt < 5) {
+    return c.json({ error: 'حداقل مبلغ برای تبدیل به اشتراک ۵ دلار است.' }, 400);
+  }
+
+  // Atomic balance deduction to eliminate double-spend races
+  const res = await c.env.DB.prepare(
+    `UPDATE users SET referral_balance_usd = ROUND(referral_balance_usd - ?, 2)
+     WHERE id = ? AND COALESCE(referral_balance_usd, 0) >= ?`
+  )
+    .bind(amt, user.id, amt)
+    .run();
+
+  if (!res.meta?.changes || res.meta.changes < 1) {
+    return c.json({ error: 'موجودی کمیسیون رفرال کافی نیست.' }, 400);
+  }
+
+  const days = Math.max(7, Math.min(365, Math.round(amt * 2))); // $1 = 2 days Pro
+  const subId = randomId('sub');
+  const wId = randomId('rw');
+  await c.env.DB.prepare(
+    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
+     VALUES (?, ?, 'pro_monthly', 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'تبدیل کمیسیون رفرال به اشتراک')`
+  )
+    .bind(subId, user.id, `REF_REDEEM:${wId}`, days)
+    .run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO referral_withdrawals (id, user_id, amount_usd, target_type, status, admin_note, processed_at)
+     VALUES (?, ?, ?, 'SUBSCRIPTION_CREDIT', 'APPROVED', ?, datetime('now'))`
+  )
+    .bind(wId, user.id, amt, `Converted to ${days} Pro days (${subId})`)
+    .run();
+
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Converted $${amt.toFixed(2)} referral balance to +${days} Pro days`);
+  return c.json({ ok: true, convertedUsd: amt, daysGranted: days });
+});
+
+subscriptionRoutes.post('/referrals/withdraw', async (c) => {
+  const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `refwd:${user.id}`, 5, 600);
+  if (!rl.allowed) return c.json({ error: 'درخواست برداشت بیش از حد مجاز. چند دقیقه دیگر تلاش کنید.' }, 429);
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    amountUsd?: number;
+    walletAddress?: string;
+    network?: 'BEP20' | 'TRC20';
+  };
+  const amt = Math.round(Number(body.amountUsd || 0) * 100) / 100;
+  const wallet = (body.walletAddress || '').trim();
+  const network = body.network === 'TRC20' ? 'TRC20' : 'BEP20';
+
+  if (!Number.isFinite(amt) || amt < 10) {
+    return c.json({ error: 'حداقل مبلغ برداشت نقدی کمیسیون ۱۰ USDT است.' }, 400);
+  }
+  if (network === 'BEP20' && !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+    return c.json({ error: 'آدرس کیف‌پول BEP20 (Trust Wallet) نامعتبر است.' }, 400);
+  }
+  if (network === 'TRC20' && !/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(wallet)) {
+    return c.json({ error: 'آدرس کیف‌پول TRC20 نامعتبر است.' }, 400);
+  }
+
+  // Require phone verification before cash payout for anti-abuse security
+  const uRow = await c.env.DB.prepare(
+    `SELECT COALESCE(phone_verified, 0) as pv FROM users WHERE id = ?`
+  )
+    .bind(user.id)
+    .first<{ pv: number }>()
+    .catch(() => null);
+  if (!uRow?.pv) {
+    return c.json(
+      { error: 'برای برداشت نقدی USDT ابتدا باید شماره تماس تلگرام خود را از طریق ربات @Dollarino_bot احراز (KYC) کنید.' },
+      403
+    );
+  }
+
+  const ded = await c.env.DB.prepare(
+    `UPDATE users SET referral_balance_usd = ROUND(referral_balance_usd - ?, 2)
+     WHERE id = ? AND COALESCE(referral_balance_usd, 0) >= ?`
+  )
+    .bind(amt, user.id, amt)
+    .run();
+
+  if (!ded.meta?.changes || ded.meta.changes < 1) {
+    return c.json({ error: 'موجودی قابل برداشت کافی نیست.' }, 400);
+  }
+
+  const wid = randomId('rwd');
+  await c.env.DB.prepare(
+    `INSERT INTO referral_withdrawals (id, user_id, amount_usd, target_type, wallet_address, network, status)
+     VALUES (?, ?, ?, 'USDT_WALLET', ?, ?, 'PENDING')`
+  )
+    .bind(wid, user.id, amt, wallet, network)
+    .run();
+
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Referral withdrawal requested: $${amt.toFixed(2)} ${network} -> ${wallet}`);
+  await notifyAllAdmins(
+    c.env,
+    `💸 درخواست برداشت کمیسیون رفرال\nکاربر: ${user.username} (${user.email})\nمبلغ: $${amt.toFixed(2)} USDT\nشبکه: ${network}\nآدرس: ${wallet}\nشناسه: ${wid}`
+  ).catch(() => {});
+
+  return c.json({ ok: true, withdrawalId: wid, status: 'PENDING' }, 201);
 });
 
 subscriptionRoutes.post('/redeem-gift', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `gift:${user.id}`, 8, 300);
+  if (!rl.allowed) return c.json({ error: 'تعداد تلاش برای کد هدیه زیاد است. چند دقیقه دیگر امتحان کنید.' }, 429);
   const body = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
   const code = (body.code || '').trim().toUpperCase();
   if (!code) return c.json({ error: 'Gift code is required' }, 400);
@@ -632,7 +978,7 @@ subscriptionRoutes.post('/redeem-gift', async (c) => {
      VALUES (?, ?, ?, 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'Gift code redeemed')`
   ).bind(subId, user.id, gift.plan_code, `GIFT:${code}`, gift.duration_days).run();
 
-  await rewardReferrerIfEligible(c.env, user.id).catch(() => {});
+  // Free gift codes activate subscription only; they do not unlock USD referral commissions (anti-farming)
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Redeemed gift code ${code} (${gift.duration_days}d)`);
   return c.json({ ok: true, durationDays: gift.duration_days, planCode: gift.plan_code });
 });

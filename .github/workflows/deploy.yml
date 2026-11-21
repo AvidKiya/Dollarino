@@ -21,24 +21,25 @@ jobs:
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
         run: npm run build
-      - name: Apply D1 Migrations
+      - name: Apply D1 Migrations (Remote)
         if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply dollarino-db --remote
-      - name: Deploy Unified Cloudflare Worker + Static Assets
+      - name: Deploy Cloudflare Worker (v9.6 API + DO + Assets)
         if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
-      - name: Sync Optional Cloudflare Pages Static Mirror
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.DEPLOY_CLOUDFLARE_PAGES == 'true' }}
+      - name: Deploy Cloudflare Pages Frontend + Functions Proxy
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.SKIP_PAGES_DEPLOY != 'true' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/web/dist --project-name=dollarino
+          workingDirectory: apps/web
+          command: pages deploy dist --project-name=dollarino

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowDown,
   ArrowUp,
@@ -65,6 +66,8 @@ export function QuickWidgetsBar({
   const [customizing, setCustomizing] = useState(false);
   const [extOpen, setExtOpen] = useState(false);
   const [extKey, setExtKey] = useState(user.extension_api_key || '');
+  const [extErr, setExtErr] = useState('');
+  const [extOkMsg, setExtOkMsg] = useState('');
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -98,13 +101,29 @@ export function QuickWidgetsBar({
 
   const handleGenerateExtKey = async (rotate = false) => {
     setBusy(true);
+    setExtErr('');
+    setExtOkMsg('');
     try {
-      const res = await apiFetch<{ extensionApiKey: string }>('/api/auth/extension-key', {
+      const res = await apiFetch<{ extensionApiKey?: string; error?: string }>('/api/auth/extension-key', {
         method: 'POST',
         body: JSON.stringify({ rotate }),
       });
-      setExtKey(res.extensionApiKey);
-      await onUserUpdated();
+      if (res.extensionApiKey) {
+        setExtKey(res.extensionApiKey);
+        setExtOkMsg(isFa ? 'کلید اتصال اختصاصی با موفقیت ایجاد و آماده کپی شد.' : 'Extension key generated & synced.');
+        await onUserUpdated();
+      } else {
+        setExtErr(res.error || (isFa ? 'ساخت کلید ناموفق بود.' : 'Key generation failed.'));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Request failed';
+      setExtErr(
+        msg.includes('404') || msg.includes('Route not found')
+          ? isFa
+            ? 'سرور API نیاز به همگام‌سازی نسخه جدید (Deploy Worker v9.6) دارد. پس از انتشار Worker، این دکمه کلید اختصاصی dlr_ext_ شما را می‌سازد.'
+            : 'API Worker needs v9.6 deployment before generating extension keys.'
+          : msg
+      );
     } finally {
       setBusy(false);
     }
@@ -288,27 +307,39 @@ export function QuickWidgetsBar({
             </a>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <code dir="ltr" className="flex-1 bg-black/30 px-3 py-2 rounded-xl font-mono text-[11px] text-main truncate">
-              {extKey || (busy ? '...' : isFa ? 'برای ساخت کلید کلیک کنید' : 'Click to generate')}
+            <code dir="ltr" className="flex-1 min-w-[200px] bg-black/30 px-3 py-2 rounded-xl font-mono text-[11px] text-main truncate border border-white/10">
+              {extKey || (busy ? (isFa ? 'در حال تولید کلید امن...' : 'Generating...') : isFa ? 'هنوز کلیدی ایجاد نشده — روی دکمه ساخت کلید بزنید' : 'No key yet — click Generate Key')}
             </code>
-            <button type="button" onClick={handleCopyKey} className="btn-ghost px-3 py-2 rounded-xl text-[11px] font-bold inline-flex items-center gap-1">
-              {copied ? <Check className="w-3.5 h-3.5 text-jade" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی کلید' : 'Copy'}</span>
-            </button>
+            {extKey && (
+              <button type="button" onClick={handleCopyKey} className="btn-ghost px-3 py-2 rounded-xl text-[11px] font-bold inline-flex items-center gap-1">
+                {copied ? <Check className="w-3.5 h-3.5 text-jade" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copied ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی کلید' : 'Copy'}</span>
+              </button>
+            )}
             <button
               type="button"
               disabled={busy}
-              onClick={() => void handleGenerateExtKey(true)}
-              className="btn-ghost px-3 py-2 rounded-xl text-[11px] font-bold inline-flex items-center gap-1"
+              onClick={() => void handleGenerateExtKey(Boolean(extKey))}
+              className="btn-cobalt px-3 py-2 rounded-xl text-[11px] font-bold inline-flex items-center gap-1"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>{isFa ? 'کلید جدید' : 'Rotate'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
+              <span>{extKey ? (isFa ? 'کلید جدید' : 'Rotate') : isFa ? 'ساخت کلید اکستنشن' : 'Generate Key'}</span>
             </button>
           </div>
-          <p className="text-[11px] text-dim">
+          {extErr && (
+            <div className="rounded-xl bg-rose-500/15 border border-rose-500/30 px-3 py-2 text-[11px] font-bold text-loss">
+              {extErr}
+            </div>
+          )}
+          {extOkMsg && (
+            <div className="rounded-xl bg-[#0D9455]/15 border border-[#0D9455]/30 px-3 py-2 text-[11px] font-bold text-jade">
+              {extOkMsg}
+            </div>
+          )}
+          <p className="text-[11px] text-dim leading-relaxed">
             {isFa
-              ? 'فایل ZIP را Unzip کرده و در chrome://extensions با فعال‌سازی Developer mode گزینه Load unpacked را بزنید. سپس آدرس سایت و کلید بالا را وارد کنید.'
-              : 'Unzip package, enable Developer mode in chrome://extensions, click Load unpacked, and paste your extension key.'}
+              ? 'فایل ZIP را Extract کرده و در مرورگر به آدرس chrome://extensions بروید، Developer mode را فعال کرده و Load unpacked را بزنید. سپس در تب «اتصال» کلید بالا را وارد کنید.'
+              : 'Extract the ZIP, open chrome://extensions, enable Developer mode, click Load unpacked, and paste your extension key in the Sync tab.'}
           </p>
         </div>
       )}
@@ -333,13 +364,13 @@ export function QuickLauncherModal({
   onNavigate: (tab: NavTab) => void;
   onClose: () => void;
 }) {
-  if (!action) return null;
+  if (!action || typeof document === 'undefined') return null;
   const isFa = lang === 'fa';
   const isRunning = dashboard.config.bot_state.startsWith('RUNNING');
   const openPnl = dashboard.openTrades.reduce((a, t) => a + Number(t.unrealized_pnl || 0), 0);
 
-  return (
-    <div className="fixed inset-0 z-[98] bg-black/70 backdrop-blur-md p-4 grid place-items-center" onClick={onClose}>
+  return createPortal(
+    <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-md p-4 grid place-items-center" onClick={onClose}>
       <div className="panel rounded-[28px] max-w-sm w-full p-5 space-y-4 border border-amber-500/35" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
@@ -395,6 +426,7 @@ export function QuickLauncherModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -4,15 +4,15 @@ import { fetchBitunixKlinesFallback, findMarketSpec, normalizeCanonicalSymbol } 
 import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
 
 const FALLBACK_PRICES: Record<string, number> = {
-  BTCUSDT: 63000,
-  ETHUSDT: 3120,
-  SOLUSDT: 198,
-  BNBUSDT: 640,
-  XRPUSDT: 1.48,
-  TONUSDT: 1.78,
-  DOGEUSDT: 0.24,
-  ADAUSDT: 0.45,
-  AVAXUSDT: 28,
+  BTCUSDT: 72000,
+  ETHUSDT: 1750,
+  SOLUSDT: 115,
+  BNBUSDT: 580,
+  XRPUSDT: 1.45,
+  TONUSDT: 1.75,
+  DOGEUSDT: 0.14,
+  ADAUSDT: 0.35,
+  AVAXUSDT: 18,
 };
 
 function tfToMs(tf: Timeframe): number {
@@ -175,6 +175,31 @@ export async function fetchPublicTickerPrice(symbol: string, proxyConfig?: Toobi
     if (res.ok) {
       const data = await res.json() as { price?: string };
       if (data.price && Number(data.price) > 0) return String(data.price);
+    }
+  } catch { /* fall through */ }
+
+  // Public OKX & Coinbase ticker fallbacks (high uptime on Cloudflare edge)
+  try {
+    const base = clean.replace(/USDT$/, '');
+    const okxRes = await fetch(`https://www.okx.com/api/v5/market/ticker?instId=${encodeURIComponent(`${base}-USDT`)}`, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (okxRes.ok) {
+      const json = await okxRes.json() as { data?: Array<{ last?: string }> };
+      const p = json.data?.[0]?.last;
+      if (p && Number(p) > 0) return String(p);
+    }
+  } catch { /* fall through */ }
+
+  try {
+    const base = clean.replace(/USDT$/, '');
+    const cbRes = await fetch(`https://api.coinbase.com/v2/prices/${encodeURIComponent(base)}-USD/spot`, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (cbRes.ok) {
+      const json = await cbRes.json() as { data?: { amount?: string } };
+      const p = json.data?.amount;
+      if (p && Number(p) > 0) return String(p);
     }
   } catch { /* fall through */ }
 

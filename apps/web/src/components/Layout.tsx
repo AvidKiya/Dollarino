@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -1109,41 +1110,48 @@ export function Layout({
       </div>
 
       {/* Notifications Popover */}
-      {notifOpen && (
-        <div className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px]" onClick={() => setNotifOpen(false)}>
+      {notifOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            className="pop-in fixed top-16 end-3 sm:end-8 w-[92vw] max-w-sm panel rounded-[26px] p-4 shadow-2xl space-y-3"
-            onClick={(e) => e.stopPropagation()}
+            dir={isFa ? 'rtl' : 'ltr'}
+            className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-[2px]"
+            onClick={() => setNotifOpen(false)}
           >
-            <div className="flex items-center justify-between border-b hairline pb-2.5">
-              <span className="font-display font-bold text-sm text-main flex items-center gap-2">
-                <Bell className="w-4 h-4 text-[#F59E0B]" />
-                {isFa ? 'اعلان‌ها و رویدادها' : 'Live Notifications'}
-              </span>
-              <button type="button" onClick={() => setNotifOpen(false)} className="h-7 w-7 rounded-full btn-ghost grid place-items-center">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="max-h-72 overflow-y-auto space-y-2">
-              {notifications.length === 0 ? (
-                <p className="text-xs text-dim py-6 text-center">
-                  {isFa ? 'اعلان جدیدی ثبت نشده است.' : 'No notifications yet.'}
-                </p>
-              ) : (
-                notifications.slice(0, 12).map((n) => (
-                  <div key={n.id} className="surface-soft rounded-2xl p-3 space-y-0.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-black text-main truncate">{n.title}</span>
-                      <span className="text-[10px] text-dim shrink-0">{n.created_at.slice(11, 16)}</span>
+            <div
+              className="pop-in fixed top-16 end-3 sm:end-8 w-[92vw] max-w-sm panel rounded-[26px] p-4 shadow-2xl space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b hairline pb-2.5">
+                <span className="font-display font-bold text-sm text-main flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-[#F59E0B]" />
+                  {isFa ? 'اعلان‌ها و رویدادها' : 'Live Notifications'}
+                </span>
+                <button type="button" onClick={() => setNotifOpen(false)} className="h-7 w-7 rounded-full btn-ghost grid place-items-center">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="max-h-72 overflow-y-auto space-y-2">
+                {notifications.length === 0 ? (
+                  <p className="text-xs text-dim py-6 text-center">
+                    {isFa ? 'اعلان جدیدی ثبت نشده است.' : 'No notifications yet.'}
+                  </p>
+                ) : (
+                  notifications.slice(0, 12).map((n) => (
+                    <div key={n.id} className="surface-soft rounded-2xl p-3 space-y-0.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-black text-main truncate">{n.title}</span>
+                        <span className="text-[10px] text-dim shrink-0">{n.created_at.slice(11, 16)}</span>
+                      </div>
+                      <p className="text-[11px] text-sub leading-relaxed">{n.body}</p>
                     </div>
-                    <p className="text-[11px] text-sub leading-relaxed">{n.body}</p>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       <LiquidGlassDock
         isFa={isFa}
@@ -1154,17 +1162,20 @@ export function Layout({
       />
 
       {/* Command Palette (⌘K) */}
-      {paletteOpen && (
-        <div
-          className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm p-4 grid place-items-start justify-items-center pt-[12vh]"
-          onClick={() => setPaletteOpen(false)}
-        >
+      {paletteOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            className="pop-in w-full max-w-lg panel rounded-3xl overflow-hidden shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            dir={isFa ? 'rtl' : 'ltr'}
+            className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-sm p-4 grid place-items-start justify-items-center pt-[12vh]"
+            onClick={() => setPaletteOpen(false)}
           >
+            <div
+              role="dialog"
+              aria-modal="true"
+              className="pop-in w-full max-w-lg panel rounded-3xl overflow-hidden shadow-2xl border hairline"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center gap-3 px-5 py-4 border-b hairline">
               <Command className="w-5 h-5 shrink-0" style={{ color: 'var(--gold-soft)' }} />
               <input
@@ -1225,15 +1236,19 @@ export function Layout({
               )}
             </div>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* iPhone QuickTrade Modal */}
-      {qtOpen && (
-        <div
-          className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-md p-4 grid place-items-center overflow-y-auto"
-          onClick={() => setQtOpen(false)}
-        >
+      {qtOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            dir={isFa ? 'rtl' : 'ltr'}
+            className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-md p-4 grid place-items-center overflow-y-auto"
+            onClick={() => setQtOpen(false)}
+          >
           <div
             role="dialog"
             aria-modal="true"
@@ -1319,8 +1334,9 @@ export function Layout({
               <span>{isFa ? 'دلارینو ترید کن برام' : 'Execute Protected Trade'}</span>
             </button>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       <ConfirmTradeSheet
         open={Boolean(pendingConfirm)}

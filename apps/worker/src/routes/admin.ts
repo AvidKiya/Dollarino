@@ -892,3 +892,65 @@ adminRoutes.patch('/users/:id/kyc', async (c) => {
   ).run();
   return c.json({ ok: true });
 });
+
+adminRoutes.get('/referrals', async (c) => {
+  const [referrals, withdrawals] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT r.*, u1.username as referrer_name, u1.email as referrer_email, u2.username as referred_name, u2.email as referred_email
+       FROM referrals r
+       LEFT JOIN users u1 ON u1.id = r.referrer_user_id
+       LEFT JOIN users u2 ON u2.id = r.referred_user_id
+       ORDER BY r.fraud_flag DESC, r.created_at DESC LIMIT 80`
+    )
+      .all()
+      .catch(() => ({ results: [] })),
+    c.env.DB.prepare(
+      `SELECT rw.*, u.username, u.email
+       FROM referral_withdrawals rw
+       JOIN users u ON u.id = rw.user_id
+       ORDER BY CASE WHEN rw.status = 'PENDING' THEN 0 ELSE 1 END, rw.created_at DESC LIMIT 60`
+    )
+      .all()
+      .catch(() => ({ results: [] })),
+  ]);
+  return c.json({ referrals: referrals.results, withdrawals: withdrawals.results });
+});
+
+adminRoutes.post('/referrals/withdrawals/:id/decide', async (c) => {
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    decision: 'APPROVE' | 'REJECT';
+    txHash?: string;
+    adminNote?: string;
+  };
+  const wd = await c.env.DB.prepare(`SELECT * FROM referral_withdrawals WHERE id = ?`)
+    .bind(id)
+    .first<{ id: string; user_id: string; amount_usd: number; status: string }>();
+  if (!wd) return c.json({ error: 'Withdrawal request not found' }, 404);
+  if (wd.status !== 'PENDING') return c.json({ error: 'Withdrawal already processed' }, 409);
+
+  if (body.decision === 'APPROVE') {
+    await c.env.DB.prepare(
+      `UPDATE referral_withdrawals
+       SET status = 'APPROVED', tx_hash = ?, admin_note = ?, processed_at = datetime('now')
+       WHERE id = ?`
+    )
+      .bind(body.txHash?.trim() || null, body.adminNote?.trim() || 'Paid', id)
+      .run();
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE referral_withdrawals
+       SET status = 'REJECTED', admin_note = ?, processed_at = datetime('now')
+       WHERE id = ?`
+    )
+      .bind(body.adminNote?.trim() || 'Rejected by admin', id)
+      .run();
+    // Refund locked amount back to user's referral balance
+    await c.env.DB.prepare(
+      `UPDATE users SET referral_balance_usd = ROUND(COALESCE(referral_balance_usd, 0) + ?, 2) WHERE id = ?`
+    )
+      .bind(wd.amount_usd, wd.user_id)
+      .run();
+  }
+  return c.json({ ok: true });
+});

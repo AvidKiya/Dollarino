@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity,
   ArrowDownRight,
@@ -394,68 +395,74 @@ export function OverviewPage({
         />
       )}
 
-      {editPos && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => setEditPos(null)}>
-          <form onSubmit={saveEditTpSl} className="pop-in panel rounded-[26px] w-full max-w-sm p-6 space-y-3 text-xs" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h3 className="font-display font-bold text-base text-main">
-                {isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}
-              </h3>
-              <button type="button" onClick={() => setEditPos(null)}><X className="w-4 h-4" /></button>
-            </div>
-            <div>
-              <label className="text-dim block mb-1">Stop Loss</label>
-              <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} className="field font-num" required />
-            </div>
-            <div>
-              <label className="text-dim block mb-1">TP 1</label>
-              <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} className="field font-num" required />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-dim block mb-1">TP 2</label>
-                <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} className="field font-num" />
+      {editPos &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => setEditPos(null)}>
+            <form onSubmit={saveEditTpSl} className="pop-in panel rounded-[26px] w-full max-w-sm p-6 space-y-3 text-xs" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-display font-bold text-base text-main">
+                  {isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}
+                </h3>
+                <button type="button" onClick={() => setEditPos(null)}><X className="w-4 h-4" /></button>
               </div>
               <div>
-                <label className="text-dim block mb-1">TP 3</label>
-                <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} className="field font-num" />
+                <label className="text-dim block mb-1">Stop Loss</label>
+                <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} className="field font-num" required />
               </div>
-            </div>
-            <button type="submit" disabled={busy} className="btn-gold w-full py-3 rounded-xl font-black">
-              {isFa ? 'ذخیره تغییرات TP/SL' : 'Save TP/SL'}
-            </button>
-          </form>
-        </div>
-      )}
+              <div>
+                <label className="text-dim block mb-1">TP 1</label>
+                <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} className="field font-num" required />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-dim block mb-1">TP 2</label>
+                  <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} className="field font-num" />
+                </div>
+                <div>
+                  <label className="text-dim block mb-1">TP 3</label>
+                  <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} className="field font-num" />
+                </div>
+              </div>
+              <button type="submit" disabled={busy} className="btn-gold w-full py-3 rounded-xl font-black">
+                {isFa ? 'ذخیره تغییرات TP/SL' : 'Save TP/SL'}
+              </button>
+            </form>
+          </div>,
+          document.body
+        )}
 
-      {stopConfirmOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => setStopConfirmOpen(false)}>
-          <div className="pop-in panel rounded-[26px] w-full max-w-sm p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
-              <Flame className="w-5 h-5 text-flame" />
-              <span>{isFa ? 'توقف ربات' : 'Stop Bot'}</span>
-            </h3>
-            <p className="text-xs text-dim leading-relaxed">
-              {isFa
-                ? 'آیا معاملات باز فعلی با حد ضرر خودشان ادامه پیدا کنند یا همین الان همگی بسته و تسویه شوند؟'
-                : 'Pause scanning only or close all open positions now?'}
-            </p>
-            <div className="space-y-2">
-              <button type="button" onClick={() => void handleConfirmStop(false)} className="btn-gold w-full py-3 rounded-xl text-xs">
-                {isFa ? 'توقف اسکن جدید (بازها بمانند)' : 'Pause Bot Only'}
-              </button>
-              {data.openTrades.length > 0 && (
-                <button type="button" onClick={() => void handleConfirmStop(true)} className="w-full py-3 rounded-xl bg-rose-500 text-white text-xs font-black">
-                  {isFa ? 'توقف و بستن همه معاملات باز' : 'Stop & Close Open Positions'}
+      {stopConfirmOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => setStopConfirmOpen(false)}>
+            <div className="pop-in panel rounded-[26px] w-full max-w-sm p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
+                <Flame className="w-5 h-5 text-flame" />
+                <span>{isFa ? 'توقف ربات' : 'Stop Bot'}</span>
+              </h3>
+              <p className="text-xs text-dim leading-relaxed">
+                {isFa
+                  ? 'آیا معاملات باز فعلی با حد ضرر خودشان ادامه پیدا کنند یا همین الان همگی بسته و تسویه شوند؟'
+                  : 'Pause scanning only or close all open positions now?'}
+              </p>
+              <div className="space-y-2">
+                <button type="button" onClick={() => void handleConfirmStop(false)} className="btn-gold w-full py-3 rounded-xl text-xs">
+                  {isFa ? 'توقف اسکن جدید (بازها بمانند)' : 'Pause Bot Only'}
                 </button>
-              )}
-              <button type="button" onClick={() => setStopConfirmOpen(false)} className="btn-ghost w-full py-2.5 rounded-xl text-xs font-bold">
-                {isFa ? 'انصراف' : 'Cancel'}
-              </button>
+                {data.openTrades.length > 0 && (
+                  <button type="button" onClick={() => void handleConfirmStop(true)} className="w-full py-3 rounded-xl bg-rose-500 text-white text-xs font-black">
+                    {isFa ? 'توقف و بستن همه معاملات باز' : 'Stop & Close Open Positions'}
+                  </button>
+                )}
+                <button type="button" onClick={() => setStopConfirmOpen(false)} className="btn-ghost w-full py-2.5 rounded-xl text-xs font-bold">
+                  {isFa ? 'انصراف' : 'Cancel'}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 

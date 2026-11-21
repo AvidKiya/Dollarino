@@ -30,6 +30,7 @@ import { requireAuth, type AppVariables } from '../auth.js';
 import { getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
 import { buildProfitCardSvg, renderProfitCardPng } from '../cards/renderer.js';
 import { decryptVaultJson, hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
+import { enforceRateLimit } from '../security.js';
 import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
@@ -45,6 +46,80 @@ import type { ExchangeProviderId } from '@dollarino/core';
 
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 tradingRoutes.use('*', requireAuth);
+
+tradingRoutes.get('/overview', async (c) => {
+  const user = c.get('user');
+  const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+    .bind(user.id)
+    .first<UserBotConfigRow>();
+
+  const activeRow = await c.env.DB.prepare(
+    `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+  ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
+
+  const effectiveProvider: ExchangeProviderId =
+    activeRow?.provider === 'kcex'
+      ? 'kcex'
+      : cfg?.trading_mode === 'PAPER'
+        ? 'paper'
+        : activeRow?.provider ?? 'paper';
+
+  const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
+
+  const [balance, openTradesRaw, unreadNotifications, stats] = await Promise.all([
+    adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
+    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 25`).bind(user.id).all<{
+      id: string;
+      symbol: string;
+      direction: Direction;
+      entry_price: string;
+      remaining_quantity: string;
+      leverage: number;
+      margin_used: string;
+      current_stop_loss: string;
+      tp1: string;
+      realized_pnl: string;
+      mode: string;
+      opened_at: string;
+    }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM notifications WHERE user_id = ? AND is_read = 0`).bind(user.id).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as total_trades,
+              SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN 1 ELSE 0 END) as winning_trades,
+              SUM(CAST(realized_pnl AS REAL)) as total_realized_pnl
+       FROM trades WHERE user_id = ? AND status = 'CLOSED'`
+    ).bind(user.id).first<{ total_trades: number; winning_trades: number | null; total_realized_pnl: number | null }>(),
+  ]);
+
+  const openTrades = [];
+  for (const pos of openTradesRaw.results) {
+    const rawMark = await adapter.getTickerPrice(pos.symbol).catch(() => null);
+    const mark = rawMark ? Number(rawMark) : Number(pos.entry_price);
+    const entry = Number(pos.entry_price);
+    const qty = Number(pos.remaining_quantity);
+    const uPnl = pos.direction === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+    openTrades.push({
+      ...pos,
+      mark_price: mark.toFixed(mark >= 100 ? 2 : 4),
+      unrealized_pnl: uPnl.toFixed(2),
+    });
+  }
+
+  const totalClosed = Number(stats?.total_trades || 0);
+  const wins = Number(stats?.winning_trades || 0);
+  return c.json({
+    config: cfg,
+    activeExchange: { provider, label },
+    balance,
+    openTrades,
+    unreadNotifications: Number(unreadNotifications?.cnt || 0),
+    stats: {
+      totalTrades: totalClosed,
+      winRatePct: totalClosed > 0 ? Number(((wins / totalClosed) * 100).toFixed(1)) : 0,
+      totalRealizedPnlUsd: Number((stats?.total_realized_pnl || 0).toFixed(2)),
+    },
+  });
+});
 
 tradingRoutes.get('/dashboard', async (c) => {
   const user = c.get('user');
@@ -947,6 +1022,10 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
 
 tradingRoutes.post('/orders/manual', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `order:${user.id}`, 30, 60);
+  if (!rl.allowed) {
+    return c.json({ ok: false, error: `تعداد سفارش‌ها زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   const gate = await requirePaidEntitlement(c.env.DB, user);
   if (!gate.ok) {
     return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
@@ -2153,6 +2232,10 @@ tradingRoutes.post('/strategies/:id/activate', async (c) => {
 // =========================================================================
 tradingRoutes.post('/ai-scan-now', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `aiscan:${user.id}`, 10, 180);
+  if (!rl.allowed) {
+    return c.json({ ok: false, error: `لطفاً برای اسکن مجدد هوشمند ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   const body = await c.req.json<{
     symbol?: string;
     symbols?: string[];

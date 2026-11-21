@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, Next } from 'hono';
 import type { AuthUser, Env } from './env.js';
 import { hashPassword, randomId, signJwt, verifyJwt, verifyPassword, verifyTelegramWebAppInitData } from './crypto.js';
+import { buildClientFingerprints, enforceRateLimit, getClientIp } from './security.js';
 import { TelegramBotClient } from './telegram/client.js';
 
 export async function syncTelegramAvatarForUser(
@@ -157,6 +158,15 @@ export async function ensureUserDefaults(db: D1Database, userId: string) {
 export const authRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 authRoutes.post('/register', async (c) => {
+  const clientIp = getClientIp(c.req.raw);
+  const rl = await enforceRateLimit(c.env, `reg:${clientIp}`, 10, 600);
+  if (!rl.allowed) {
+    return c.json(
+      { error: `تعداد درخواست ثبت‌نام زیاد است. لطفاً ${rl.retryAfterSec} ثانیه دیگر تلاش کنید.` },
+      429
+    );
+  }
+
   const body = await c.req.json<{ email?: string; username?: string; password?: string; referralCode?: string }>().catch(
     () => ({} as { email?: string; username?: string; password?: string; referralCode?: string })
   );
@@ -179,20 +189,49 @@ authRoutes.post('/register', async (c) => {
   const id = randomId('usr');
   const myReferralCode = `DLR-${id.slice(-6).toUpperCase()}`;
   const passwordHash = await hashPassword(password);
+  const fp = await buildClientFingerprints(c.req.raw, c.env);
+
   await c.env.DB.prepare(
-    `INSERT INTO users (id, email, username, password_hash, role, referral_code, referred_by) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, email, username, passwordHash, role, myReferralCode, referralCode || null).run();
+    `INSERT INTO users (id, email, username, password_hash, role, referral_code, referred_by, signup_ip_hash, signup_ua_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, email, username, passwordHash, role, myReferralCode, referralCode || null, fp.ipHash, fp.uaHash).run();
 
   await ensureUserDefaults(c.env.DB, id);
 
   if (referralCode) {
-    const referrerId = await c.env.DB.prepare(
-      `SELECT id FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
-    ).bind(referralCode, referralCode).first<{ id: string }>().catch(() => null);
-    if (referrerId?.id && referrerId.id !== id) {
+    const referrer = await c.env.DB.prepare(
+      `SELECT id, signup_ip_hash FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
+    ).bind(referralCode, referralCode).first<{ id: string; signup_ip_hash: string | null }>().catch(() => null);
+    if (referrer?.id && referrer.id !== id) {
+      let fraudFlag = 0;
+      let fraudReason: string | null = null;
+      if (clientIp !== 'unknown' && referrer.signup_ip_hash && referrer.signup_ip_hash === fp.ipHash) {
+        fraudFlag = 1;
+        fraudReason = 'تطابق IP ثبت‌نامی با معرف (مشکوک به خود-دعوتی)';
+      } else if (clientIp !== 'unknown') {
+        const recentSameIp = await c.env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM users u
+           JOIN referrals r ON r.referred_user_id = u.id
+           WHERE r.referrer_user_id = ? AND u.signup_ip_hash = ? AND u.created_at >= datetime('now', '-24 hours')`
+        ).bind(referrer.id, fp.ipHash).first<{ cnt: number }>().catch(() => ({ cnt: 0 }));
+        if ((recentSameIp?.cnt ?? 0) >= 2) {
+          fraudFlag = 1;
+          fraudReason = 'ثبت‌نام مکرر از یک آی‌پی برای یک کد معرف در ۲۴ ساعت اخیر';
+        }
+      }
+
       await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REGISTERED')`
-      ).bind(randomId('ref'), referrerId.id, id, referralCode).run();
+        `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status, fraud_flag, fraud_reason)
+         VALUES (?, ?, ?, ?, 7, ?, ?, ?)`
+      ).bind(
+        randomId('ref'),
+        referrer.id,
+        id,
+        referralCode,
+        fraudFlag ? 'FLAGGED_DUPLICATE' : 'REGISTERED',
+        fraudFlag,
+        fraudReason
+      ).run();
     }
   }
 
@@ -213,6 +252,15 @@ authRoutes.post('/register', async (c) => {
 });
 
 authRoutes.post('/login', async (c) => {
+  const clientIp = getClientIp(c.req.raw);
+  const rl = await enforceRateLimit(c.env, `login:${clientIp}`, 20, 300);
+  if (!rl.allowed) {
+    return c.json(
+      { error: `تلاش بیش از حد برای ورود. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` },
+      429
+    );
+  }
+
   const body = await c.req.json<{ email?: string; password?: string }>().catch(() => ({} as { email?: string; password?: string }));
   const email = (body.email ?? '').trim().toLowerCase();
   const password = body.password ?? '';
@@ -276,23 +324,39 @@ authRoutes.post('/logout', (c) => {
 });
 
 authRoutes.get('/session', async (c) => {
-  const customHeader = c.req.header('X-Dollarino-Token');
-  const authHeader = c.req.header('Authorization');
-  const cookieToken = getCookie(c, 'dollarino_session');
-  const token = customHeader || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken);
-  if (!token) return c.json({ authenticated: false, user: null });
+  const extKey = c.req.header('X-Dollarino-Extension-Key')?.trim();
+  let userId: string | null = null;
 
-  const payload = await verifyJwt(token, c.env.SESSION_JWT_SECRET);
-  if (!payload || typeof payload.sub !== 'string') {
-    return c.json({ authenticated: false, user: null });
+  if (extKey && extKey.startsWith('dlr_ext_')) {
+    const extRow = await c.env.DB.prepare('SELECT id, is_blocked FROM users WHERE extension_api_key = ? LIMIT 1')
+      .bind(extKey)
+      .first<{ id: string; is_blocked?: number }>()
+      .catch(() => null);
+    if (!extRow || extRow.is_blocked) {
+      return c.json({ authenticated: false, user: null });
+    }
+    userId = extRow.id;
+  } else {
+    const customHeader = c.req.header('X-Dollarino-Token');
+    const authHeader = c.req.header('Authorization');
+    const cookieToken = getCookie(c, 'dollarino_session');
+    const token = customHeader || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken);
+    if (!token) return c.json({ authenticated: false, user: null });
+
+    const payload = await verifyJwt(token, c.env.SESSION_JWT_SECRET);
+    if (!payload || typeof payload.sub !== 'string') {
+      return c.json({ authenticated: false, user: null });
+    }
+    userId = payload.sub;
   }
+
   const full = await c.env.DB.prepare(
     `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
             wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
             trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
             ui_mode, mobile_widgets_json, extension_api_key, created_at
      FROM users WHERE id = ?`
-  ).bind(payload.sub).first<{ is_blocked?: number; id: string; telegram_id?: string | null; avatar_url?: string | null; avatar_custom?: number }>();
+  ).bind(userId).first<{ is_blocked?: number; id: string; telegram_id?: string | null; avatar_url?: string | null; avatar_custom?: number }>();
   if (!full || full.is_blocked) {
     return c.json({ authenticated: false, user: null });
   }
@@ -682,6 +746,10 @@ authRoutes.post('/telegram-magic-login', async (c) => {
 // Generate or retrieve personal Browser Extension & Mobile Shortcut API key
 authRoutes.post('/extension-key', requireAuth, async (c) => {
   const u = c.get('user');
+  const rl = await enforceRateLimit(c.env, `extkey:${u.id}`, 15, 300);
+  if (!rl.allowed) {
+    return c.json({ error: 'درخواست بیش از حد برای کلید اکستنشن. چند دقیقه دیگر تلاش کنید.' }, 429);
+  }
   const body = (await c.req.json().catch(() => ({}))) as { rotate?: boolean };
   const row = await c.env.DB.prepare(`SELECT extension_api_key FROM users WHERE id = ?`)
     .bind(u.id)

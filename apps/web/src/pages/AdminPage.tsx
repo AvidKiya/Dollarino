@@ -248,6 +248,33 @@ export function AdminPage({
   });
   const [dexTrades, setDexTrades] = useState<AdminDexTrade[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [adminReferrals, setAdminReferrals] = useState<
+    Array<{
+      id: string;
+      referrer_name?: string;
+      referred_name?: string;
+      status: string;
+      commission_usd?: number;
+      fraud_flag?: number;
+      fraud_reason?: string | null;
+      created_at: string;
+    }>
+  >([]);
+  const [refWithdrawals, setRefWithdrawals] = useState<
+    Array<{
+      id: string;
+      username?: string;
+      email?: string;
+      amount_usd: number;
+      target_type: string;
+      wallet_address?: string | null;
+      network?: string | null;
+      status: string;
+      tx_hash?: string | null;
+      created_at: string;
+    }>
+  >([]);
+  const [wdTxInputs, setWdTxInputs] = useState<Record<string, string>>({});
 
   // Channel (@Dollarino_official) Management State
   const [channelCheck, setChannelCheck] = useState<{
@@ -349,7 +376,7 @@ export function AdminPage({
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes, refAdminRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -365,6 +392,7 @@ export function AdminPage({
       apiFetch<{ news: Array<{ id: string; title: string; category: string; impact: string; created_at: string }> }>('/api/admin/channel/news').catch(() => ({ news: [] })),
       apiFetch<{ trades: AdminDexTrade[] }>('/api/admin/dex-trades').catch(() => ({ trades: [] })),
       apiFetch<{ logs: AdminAuditLog[] }>('/api/admin/audit-logs').catch(() => ({ logs: [] })),
+      apiFetch<{ referrals: typeof adminReferrals; withdrawals: typeof refWithdrawals }>('/api/admin/referrals').catch(() => ({ referrals: [], withdrawals: [] })),
     ]);
     setData(ov);
     setOrders(ordRes.orders);
@@ -372,6 +400,8 @@ export function AdminPage({
     setChannelNewsList(newsRes.news || []);
     setDexTrades(dexRes.trades || []);
     setAuditLogs(logRes.logs || []);
+    setAdminReferrals(refAdminRes.referrals || []);
+    setRefWithdrawals(refAdminRes.withdrawals || []);
     setRequirePhoneKyc((ov.settings.require_telegram_phone_kyc ?? 'true') !== 'false');
     setTrustReceivers({
       evm: ov.settings.trust_wallet_evm_receiver || '',
@@ -1400,6 +1430,94 @@ export function AdminPage({
                 <span>{isFa ? 'افزودن / آپدیت' : 'Save Plan'}</span>
               </button>
             </form>
+          </div>
+
+          {/* Referral Payouts & Anti-Fraud Audit Queue */}
+          <div className="surface-card p-5 space-y-4 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-black text-sm text-main flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-jade" />
+                <span>{isFa ? 'مدیریت تسویه برداشت‌های رفرال و کنترل تقلب' : 'Referral Payout Queue & Anti-Fraud'}</span>
+              </h3>
+              <span className="px-2.5 py-0.5 rounded-full surface-soft text-[10px] font-bold">
+                {refWithdrawals.filter((w) => w.status === 'PENDING').length} PENDING · {adminReferrals.filter((r) => r.fraud_flag === 1).length} FLAGGED
+              </span>
+            </div>
+
+            {refWithdrawals.length === 0 ? (
+              <p className="text-dim">{isFa ? 'هنوز درخواست برداشت رفرالی ثبت نشده است.' : 'No referral withdrawal requests yet.'}</p>
+            ) : (
+              <div className="space-y-2">
+                {refWithdrawals.slice(0, 20).map((wd) => (
+                  <div key={wd.id} className="surface-soft rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 border hairline">
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="font-bold text-main">
+                        {wd.username || wd.email} · <span className="font-mono-num text-jade">${Number(wd.amount_usd).toFixed(2)}</span> ({wd.target_type === 'SUBSCRIPTION_CREDIT' ? 'Pro Days' : wd.network})
+                      </div>
+                      {wd.wallet_address && (
+                        <div dir="ltr" className="font-mono-num text-[11px] text-sub break-all">{wd.wallet_address}</div>
+                      )}
+                      {wd.tx_hash && <div dir="ltr" className="text-[10px] text-jade font-mono-num">TX: {wd.tx_hash}</div>}
+                    </div>
+                    {wd.status === 'PENDING' ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          dir="ltr"
+                          value={wdTxInputs[wd.id] || ''}
+                          onChange={(e) => setWdTxInputs((m) => ({ ...m, [wd.id]: e.target.value }))}
+                          placeholder="TX Hash (optional)"
+                          className="surface-input rounded-xl px-2.5 py-1.5 font-mono-num text-[11px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/referrals/withdrawals/${wd.id}/decide`, {
+                              method: 'POST',
+                              body: JSON.stringify({ decision: 'APPROVE', txHash: wdTxInputs[wd.id] || undefined }),
+                            });
+                            setMsg(isFa ? 'برداشت رفرال تایید و ثبت شد.' : 'Referral withdrawal approved.');
+                            void load();
+                          }}
+                          className="btn-emerald px-3 py-1.5 rounded-xl font-black"
+                        >
+                          {isFa ? 'تایید واریز' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/referrals/withdrawals/${wd.id}/decide`, {
+                              method: 'POST',
+                              body: JSON.stringify({ decision: 'REJECT', adminNote: 'Rejected & refunded' }),
+                            });
+                            setMsg(isFa ? 'برداشت رد شد و موجودی به حساب کاربر بازگشت.' : 'Withdrawal rejected & refunded.');
+                            void load();
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-rose-500/15 text-loss font-black"
+                        >
+                          {isFa ? 'رد و برگشت' : 'Reject'}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${wd.status === 'APPROVED' ? 'badge-signal' : 'bg-rose-500/15 text-loss'}`}>
+                        {wd.status}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {adminReferrals.some((r) => r.fraud_flag === 1) && (
+              <div className="pt-3 border-t hairline space-y-1.5">
+                <p className="font-bold text-loss">{isFa ? 'دعوت‌های مشکوک/مسدودشده توسط سیستم ضدتقلب:' : 'Anti-Fraud Flagged Referrals:'}</p>
+                {adminReferrals.filter((r) => r.fraud_flag === 1).slice(0, 10).map((fr) => (
+                  <div key={fr.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
+                    <span>{fr.referrer_name} ← {fr.referred_name}</span>
+                    <span className="text-loss font-mono-num">{fr.fraud_reason || fr.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           </>
           )}

@@ -29,13 +29,19 @@ app.use('*', cors({
   credentials: true,
 }));
 
+app.use('/api/*', async (c, next) => {
+  await next();
+  c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+});
+
 app.get('/', (c) => {
   if (c.env.ASSETS) {
     return c.env.ASSETS.fetch(c.req.raw);
   }
   return c.json({
     ok: true,
-    service: 'Dollarino API Worker v8.5',
+    service: 'Dollarino API Worker v9.6',
     health: '/api/health',
     note: 'Open the Website preview (port 5173) or unified Worker URL to use the full Dollarino UI.',
   });
@@ -45,7 +51,7 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '6.0.0',
+    version: '9.6.0',
     openSource: false,
     paidSubscriptions: true,
     centralMultiAI: true,
@@ -68,6 +74,11 @@ app.get('/api/health', (c) => {
       dualDirection: true,
       hedgeMode: true,
       verifiedProfitCards: true,
+      dexScreenerRadar: true,
+      trustWalletDapp: true,
+      browserExtension: true,
+      smartSupportEscalation: true,
+      antiAbuseReferralSystem: true,
     },
     timestamp: new Date().toISOString(),
   });

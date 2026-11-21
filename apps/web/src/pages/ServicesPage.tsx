@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  Award,
   Bot,
   BrainCircuit,
   Camera,
@@ -9,6 +10,7 @@ import {
   ChevronRight,
   CircleHelp,
   CreditCard,
+  Download,
   ExternalLink,
   Gift,
   Headphones,
@@ -762,14 +764,37 @@ export function ServicesPage({
             className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
           >
             <span className="w-10 h-10 rounded-2xl bg-[#F59E0B]/15 text-[#D97706] grid place-items-center shrink-0">
-              <CreditCard className="w-5 h-5" />
+              <Award className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'اشتراک، کد هدیه و دعوت دوستان' : 'Plans, Gift Codes & Referrals'}</span>
-              <span className="text-[11px] text-dim block">{activePlanLabel}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اشتراک، باشگاه رفرال و درآمد دلاری' : 'Plans, Partner Club & Referrals'}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#0D9455]/15 text-[#0D9455]">
+                  {isFa ? 'تا ۲۲٪ پورسانت' : 'Up to 22%'}
+                </span>
+              </div>
+              <span className="text-[11px] text-dim block">{activePlanLabel} · {isFa ? 'برداشت USDT یا تبدیل به اشتراک' : 'USDT Payout & Pro Credit'}</span>
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>
+
+          <a
+            href="/downloads/dollarino-extension.zip"
+            download="dollarino-extension.zip"
+            className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
+          >
+            <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/15 text-[#1652F0] grid place-items-center shrink-0">
+              <Download className="w-5 h-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (v9.6 ZIP)'}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0]">v9.6</span>
+              </div>
+              <span className="text-[11px] text-dim block">{isFa ? 'کنترل ربات، بازار زنده، رادار DEX و لینک رفرال' : 'Quick bot control, live markets & DEX radar'}</span>
+            </div>
+            <ExternalLink className="w-4 h-4 text-dim shrink-0" />
+          </a>
 
           {onOpenSupport && (
             <button

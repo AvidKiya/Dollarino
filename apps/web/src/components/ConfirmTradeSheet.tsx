@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, ShieldCheck, X, XCircle } from 'lucide-react';
 import type { Lang } from '../lib/i18n';
 import { CoinIcon } from './CoinIcon';
@@ -32,14 +33,14 @@ export function ConfirmTradeSheet({
   onConfirm: () => Promise<void> | void;
   onCancel: () => void;
 }) {
-  if (!open || !order) return null;
+  if (!open || !order || typeof document === 'undefined') return null;
   const isFa = lang === 'fa';
   const isLong = order.direction === 'LONG';
 
-  return (
+  return createPortal(
     <div
       dir={isFa ? 'rtl' : 'ltr'}
-      className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-md p-4 grid place-items-center overflow-y-auto"
+      className="fixed inset-0 z-[220] bg-black/70 backdrop-blur-md p-4 grid place-items-center overflow-y-auto"
       onClick={onCancel}
     >
       <div
@@ -161,6 +162,7 @@ export function ConfirmTradeSheet({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

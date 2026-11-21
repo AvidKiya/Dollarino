@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowUpRight,
+  Award,
   CheckCircle2,
   Clock,
   Copy,
   CreditCard,
   Crown,
   Gift,
+  Send,
   ShieldCheck,
   Sparkles,
   Users,
@@ -79,11 +83,45 @@ export function SubscriptionPage({
   const [copied, setCopied] = useState('');
   const [giftCode, setGiftCode] = useState('');
   const [redeeming, setRedeeming] = useState(false);
+  const [redeemUsd, setRedeemUsd] = useState('5');
+  const [wdAmount, setWdAmount] = useState('10');
+  const [wdNetwork, setWdNetwork] = useState<'BEP20' | 'TRC20'>('BEP20');
+  const [wdWallet, setWdWallet] = useState('');
+  const [refBusy, setRefBusy] = useState(false);
   const [referral, setReferral] = useState<{
     referralCode: string;
+    inviteUrl?: string;
+    telegramInviteUrl?: string;
+    tier?: 'BRONZE' | 'SILVER' | 'GOLD' | string;
+    commissionPct?: number;
+    renewalPct?: number;
+    balanceUsd?: number;
+    totalEarnedUsd?: number;
     totalReferred: number;
+    qualifiedReferred?: number;
+    flaggedCount?: number;
     rewardDaysEarned: number;
-    referrals: Array<{ username: string; created_at: string }>;
+    referrals: Array<{
+      id?: string;
+      username: string;
+      reward_days?: number;
+      commission_usd?: number;
+      status?: string;
+      fraud_flag?: number;
+      phone_verified?: boolean;
+      created_at: string;
+    }>;
+    withdrawals?: Array<{
+      id: string;
+      amount_usd: number;
+      target_type: string;
+      wallet_address?: string | null;
+      network?: string | null;
+      status: string;
+      tx_hash?: string | null;
+      admin_note?: string | null;
+      created_at: string;
+    }>;
   } | null>(null);
 
   const loadData = async () => {
@@ -94,12 +132,7 @@ export function SubscriptionPage({
         orders: SubOrder[];
         paymentConfig: Record<string, string>;
       }>('/api/subscriptions/me'),
-      apiFetch<{
-        referralCode: string;
-        totalReferred: number;
-        rewardDaysEarned: number;
-        referrals: Array<{ username: string; created_at: string }>;
-      }>('/api/subscriptions/referrals').catch(() => null),
+      apiFetch<NonNullable<typeof referral>>('/api/subscriptions/referrals').catch(() => null),
     ]);
     setEntitlement(res.entitlement);
     setPlans(res.plans);
@@ -109,6 +142,58 @@ export function SubscriptionPage({
     if (!selectedPlan) {
       const def = res.plans.find((p) => p.code === 'pro_monthly') || res.plans.find((p) => p.price_usd > 0) || null;
       setSelectedPlan(def);
+    }
+  };
+
+  const handleRedeemRefBalance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRefBusy(true);
+    setMsg(null);
+    try {
+      const amt = Number(redeemUsd || 0);
+      const r = await apiFetch<{ ok: boolean; convertedUsd: number; daysGranted: number }>('/api/subscriptions/referrals/redeem-balance', {
+        method: 'POST',
+        body: JSON.stringify({ amountUsd: amt }),
+      });
+      setMsg(
+        isFa
+          ? `$${r.convertedUsd.toFixed(2)} از موجودی رفرال شما تبدیل به +${r.daysGranted} روز اشتراک پرو شد!`
+          : `Converted $${r.convertedUsd.toFixed(2)} referral balance to +${r.daysGranted} Pro days!`
+      );
+      await loadData();
+      await onRefreshDashboard();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Redeem failed');
+    } finally {
+      setRefBusy(false);
+    }
+  };
+
+  const handleWithdrawRef = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRefBusy(true);
+    setMsg(null);
+    try {
+      const amt = Number(wdAmount || 0);
+      const r = await apiFetch<{ ok: boolean; withdrawalId: string }>('/api/subscriptions/referrals/withdraw', {
+        method: 'POST',
+        body: JSON.stringify({
+          amountUsd: amt,
+          network: wdNetwork,
+          walletAddress: wdWallet.trim(),
+        }),
+      });
+      setWdWallet('');
+      setMsg(
+        isFa
+          ? `درخواست برداشت $${amt.toFixed(2)} USDT (${wdNetwork}) ثبت شد (کد پیگیری: ${r.withdrawalId}). پس از تایید امنیتی ادمین واریز می‌شود.`
+          : `Withdrawal request $${amt.toFixed(2)} USDT (${wdNetwork}) submitted (#${r.withdrawalId}).`
+      );
+      await loadData();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Withdrawal failed');
+    } finally {
+      setRefBusy(false);
     }
   };
 
@@ -420,13 +505,18 @@ export function SubscriptionPage({
                 <Users className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-display font-bold text-sm text-main">
-                  {isFa ? 'دعوت از دوستان = روزهای هدیه اشتراک' : 'Invite Friends = Bonus Days'}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display font-bold text-sm text-main">
+                    {isFa ? 'باشگاه همکاران رفرال دلارینو' : 'Dollarino Partner & Referral Hub'}
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-400">
+                    {referral?.tier || 'BRONZE'} · {referral?.commissionPct ?? 15}%
+                  </span>
+                </div>
                 <p className="text-[11px] text-dim">
                   {isFa
-                    ? `${referral?.totalReferred ?? 0} دعوت موفق · ${referral?.rewardDaysEarned ?? 0} روز هدیه`
-                    : `${referral?.totalReferred ?? 0} invited · ${referral?.rewardDaysEarned ?? 0} bonus days`}
+                    ? `${referral?.qualifiedReferred ?? 0} خرید موفق از ${referral?.totalReferred ?? 0} دعوت · +${referral?.rewardDaysEarned ?? 0} روز هدیه`
+                    : `${referral?.qualifiedReferred ?? 0}/${referral?.totalReferred ?? 0} qualified · +${referral?.rewardDaysEarned ?? 0} bonus days`}
                 </p>
               </div>
             </div>
@@ -436,9 +526,10 @@ export function SubscriptionPage({
               readOnly
               dir="ltr"
               value={
-                typeof window !== 'undefined' && referral?.referralCode
+                referral?.inviteUrl ||
+                (typeof window !== 'undefined' && referral?.referralCode
                   ? `${window.location.origin}/?ref=${referral.referralCode}`
-                  : 'Loading...'
+                  : 'Loading...')
               }
               className="field font-mono-num text-xs flex-1"
             />
@@ -446,20 +537,270 @@ export function SubscriptionPage({
               type="button"
               onClick={() =>
                 copyText(
-                  typeof window !== 'undefined' && referral?.referralCode
-                    ? `${window.location.origin}/?ref=${referral.referralCode}`
-                    : '',
+                  referral?.inviteUrl ||
+                    (typeof window !== 'undefined' && referral?.referralCode
+                      ? `${window.location.origin}/?ref=${referral.referralCode}`
+                      : ''),
                   'ref'
                 )
               }
-              className="btn-cobalt px-4 py-2.5 rounded-xl text-xs font-black shrink-0 inline-flex items-center gap-1"
+              className="btn-cobalt px-3.5 py-2.5 rounded-xl text-xs font-black shrink-0 inline-flex items-center gap-1"
             >
               <Copy className="w-3.5 h-3.5" />
-              <span>{copied === 'ref' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'کپی لینک' : 'Copy'}</span>
+              <span>{copied === 'ref' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'لینک وب' : 'Web Link'}</span>
             </button>
+            {referral?.telegramInviteUrl && (
+              <button
+                type="button"
+                onClick={() => copyText(referral.telegramInviteUrl || '', 'reftg')}
+                className="btn-gold px-3 py-2.5 rounded-xl text-xs font-black shrink-0 inline-flex items-center gap-1"
+                title={isFa ? 'کپی لینک مستقیم ربات تلگرام' : 'Copy Telegram Invite'}
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{copied === 'reftg' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'لینک تلگرام' : 'TG'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Expanded Tiered Referral Cashout, Subscription Conversion & Anti-Abuse Dashboard */}
+      {referral && (
+        <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5 border border-blue-500/20">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl btn-gold grid place-items-center shrink-0">
+                <Award className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="font-display font-bold text-base text-main">
+                  {isFa ? 'کسب درآمد دلاری و مدیریت کمیسیون دعوت دوستان' : 'Referral Earnings, Tiers & Instant Cashout'}
+                </h2>
+                <p className="text-xs text-sub">
+                  {isFa
+                    ? 'برنز (۱۵٪) → نقره‌ای در ۵ خرید موفق (۱۸٪) → طلایی در ۱۵ خرید موفق (۲۲٪) + ۱۰٪ پورسانت تمدیدها + ۷ روز اشتراک هدیه'
+                    : 'Bronze (15%) → Silver @ 5 paid (18%) → Gold @ 15 paid (22%) + 10% renewals + 7 Pro days per friend'}
+                </p>
+              </div>
+            </div>
+            {(referral.flaggedCount ?? 0) > 0 && (
+              <span className="px-3 py-1 rounded-full bg-rose-500/15 text-loss text-[11px] font-black inline-flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>
+                  {isFa ? `${referral.flaggedCount} دعوت مسدودشده ضدتقلب` : `${referral.flaggedCount} flagged duplicate`}
+                </span>
+              </span>
+            )}
+          </div>
+
+          {/* 3 KPI Stat Cards + Tier Progress */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+            <div className="surface-soft rounded-2xl p-3.5 border hairline">
+              <span className="text-[10.5px] text-dim block">{isFa ? 'موجودی قابل برداشت' : 'Available Balance'}</span>
+              <strong dir="ltr" className="font-num text-xl font-black text-jade">
+                ${(referral.balanceUsd ?? 0).toFixed(2)}
+              </strong>
+            </div>
+            <div className="surface-soft rounded-2xl p-3.5 border hairline">
+              <span className="text-[10.5px] text-dim block">{isFa ? 'مجموع درآمد تا امروز' : 'Total Earned'}</span>
+              <strong dir="ltr" className="font-num text-xl font-black text-main">
+                ${(referral.totalEarnedUsd ?? 0).toFixed(2)}
+              </strong>
+            </div>
+            <div className="surface-soft rounded-2xl p-3.5 border hairline">
+              <span className="text-[10.5px] text-dim block">{isFa ? 'سطح همکاری شما' : 'Partner Tier'}</span>
+              <strong className="text-base font-black text-[var(--gold)]">
+                {referral.tier || 'BRONZE'} · {referral.commissionPct ?? 15}%
+              </strong>
+            </div>
+            <div className="surface-soft rounded-2xl p-3.5 border hairline">
+              <span className="text-[10.5px] text-dim block">
+                {isFa ? 'پیشرفت تا سطح بعدی' : 'Next Tier Progress'}
+              </span>
+              {(() => {
+                const q = referral.qualifiedReferred ?? 0;
+                const nextTarget = q >= 15 ? 15 : q >= 5 ? 15 : 5;
+                const pct = Math.min(100, Math.round((q / nextTarget) * 100));
+                return (
+                  <div className="space-y-1.5 mt-1">
+                    <div className="flex justify-between font-num text-[11px] font-bold">
+                      <span>{q >= 15 ? (isFa ? 'حداکثر سطح طلایی!' : 'Max Gold!') : `${q} / ${nextTarget}`}</span>
+                      <span>{pct}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-black/25 overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-[#1652F0] to-[#F5B731]" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* 2 Action Forms: Convert to Pro Days OR Withdraw USDT */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+            <form onSubmit={handleRedeemRefBalance} className="surface-soft rounded-2xl p-4 space-y-3 border hairline">
+              <div className="flex items-center justify-between">
+                <h4 className="font-black text-main flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-[#0D9455]" />
+                  <span>{isFa ? 'تبدیل آنی کمیسیون به اشتراک پرو' : 'Convert Commission to Pro Days'}</span>
+                </h4>
+                <span className="text-[10px] text-dim">{isFa ? 'هر ۱ دلار = ۲ روز اشتراک (حداقل ۵$)' : '$1 = 2 Pro days (min $5)'}</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  step="0.5"
+                  min={5}
+                  value={redeemUsd}
+                  onChange={(e) => setRedeemUsd(e.target.value)}
+                  dir="ltr"
+                  className="field font-num flex-1"
+                  placeholder="5.00"
+                />
+                <button
+                  type="submit"
+                  disabled={refBusy || (referral.balanceUsd ?? 0) < 5}
+                  className="btn-emerald px-4 py-2 rounded-xl font-black shrink-0 disabled:opacity-50"
+                >
+                  {isFa ? `دریافت +${Math.max(10, Math.round(Number(redeemUsd || 5) * 2))} روز Pro` : 'Redeem Pro'}
+                </button>
+              </div>
+            </form>
+
+            <form onSubmit={handleWithdrawRef} className="surface-soft rounded-2xl p-4 space-y-3 border hairline">
+              <div className="flex items-center justify-between">
+                <h4 className="font-black text-main flex items-center gap-1.5">
+                  <ArrowUpRight className="w-4 h-4 text-[var(--gold)]" />
+                  <span>{isFa ? 'درخواست برداشت نقدی USDT (حداقل ۱۰$)' : 'Withdraw Commission (USDT · Min $10)'}</span>
+                </h4>
+                <span className="text-[10px] text-amber-400 font-bold">{isFa ? 'نیازمند تایید شماره تلگرام' : 'Phone KYC Required'}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <select
+                  value={wdNetwork}
+                  onChange={(e) => setWdNetwork(e.target.value as 'BEP20' | 'TRC20')}
+                  className="field"
+                >
+                  <option value="BEP20">BEP20 (Trust Wallet)</option>
+                  <option value="TRC20">TRC20 (Tron USDT)</option>
+                </select>
+                <input
+                  type="number"
+                  step="1"
+                  min={10}
+                  value={wdAmount}
+                  onChange={(e) => setWdAmount(e.target.value)}
+                  dir="ltr"
+                  placeholder="10"
+                  className="field font-num"
+                />
+                <button
+                  type="submit"
+                  disabled={refBusy || (referral.balanceUsd ?? 0) < 10}
+                  className="btn-gold py-2 rounded-xl font-black disabled:opacity-50"
+                >
+                  {isFa ? 'ثبت برداشت' : 'Request Payout'}
+                </button>
+              </div>
+              <input
+                required
+                dir="ltr"
+                value={wdWallet}
+                onChange={(e) => setWdWallet(e.target.value)}
+                placeholder={wdNetwork === 'BEP20' ? '0x... (BSC / Trust Wallet Address)' : 'T... (TRC20 Address)'}
+                className="field font-mono-num w-full"
+              />
+            </form>
+          </div>
+
+          {/* Security Rule Banner + Referral & Withdrawal Logs */}
+          <div className="rounded-2xl bg-blue-500/10 border border-blue-500/25 px-3.5 py-2.5 text-[11px] text-sub flex items-start gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#1652F0] shrink-0 mt-0.5" />
+            <span>
+              {isFa
+                ? 'سپر ضدسوءاستفاده دلارینو: دعوت از خود، ساخت اکانت تکراری روی یک دستگاه/شماره/کیف‌پول یا استفاده از کد هدیه رایگان پورسانت نقدی آزاد نمی‌کند. پورسانت تنها پس از پرداخت تاییدشده و واقعی فعال می‌شود.'
+                : 'Anti-Abuse Shield: Self-referrals, duplicate devices/phones/wallets, and $0 gift redemptions never unlock cash commissions. Only verified paid orders earn USD rewards.'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+            <div className="space-y-2">
+              <h4 className="font-black text-main">{isFa ? `دوستان دعوت‌شده (${referral.referrals.length})` : `Invited Users (${referral.referrals.length})`}</h4>
+              <div className="max-h-44 overflow-y-auto space-y-1.5">
+                {referral.referrals.length === 0 ? (
+                  <p className="text-dim py-3">{isFa ? 'هنوز کاربری با لینک شما ثبت‌نام نکرده است.' : 'No referrals yet.'}</p>
+                ) : (
+                  referral.referrals.map((r, idx) => (
+                    <div key={r.id || idx} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                      <div>
+                        <span className="font-bold text-main" dir="ltr">{r.username}</span>
+                        <span className="text-[10px] text-dim block">{r.created_at.slice(0, 10)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {Number(r.commission_usd || 0) > 0 && (
+                          <span dir="ltr" className="font-num font-black text-jade">+${Number(r.commission_usd).toFixed(2)}</span>
+                        )}
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[9.5px] font-black ${
+                            r.status === 'REWARDED'
+                              ? 'badge-signal'
+                              : r.status === 'FLAGGED_DUPLICATE'
+                                ? 'bg-rose-500/15 text-loss'
+                                : 'bg-white/10 text-dim'
+                          }`}
+                        >
+                          {r.status === 'REWARDED'
+                            ? isFa ? 'پورسانت واریز شد' : 'Rewarded'
+                            : r.status === 'FLAGGED_DUPLICATE'
+                              ? isFa ? 'تکراری/مسدود' : 'Flagged'
+                              : isFa ? 'در انتظار خرید' : 'Pending Pay'}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h4 className="font-black text-main">
+                {isFa ? `تاریخچه تسویه و برداشت‌ها (${referral.withdrawals?.length || 0})` : `Payout & Redemption History (${referral.withdrawals?.length || 0})`}
+              </h4>
+              <div className="max-h-44 overflow-y-auto space-y-1.5">
+                {!referral.withdrawals || referral.withdrawals.length === 0 ? (
+                  <p className="text-dim py-3">{isFa ? 'هنوز برداشتی ثبت نکرده‌اید.' : 'No payouts yet.'}</p>
+                ) : (
+                  referral.withdrawals.map((w) => (
+                    <div key={w.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-num font-black text-main">
+                          ${Number(w.amount_usd).toFixed(2)} · {w.target_type === 'SUBSCRIPTION_CREDIT' ? (isFa ? 'تبدیل به Pro' : 'Pro Credit') : w.network}
+                        </div>
+                        {w.wallet_address && (
+                          <div dir="ltr" className="text-[10px] text-dim font-mono truncate max-w-[200px]">
+                            {w.wallet_address}
+                          </div>
+                        )}
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9.5px] font-black shrink-0 ${
+                          w.status === 'APPROVED'
+                            ? 'badge-signal'
+                            : w.status === 'REJECTED'
+                              ? 'bg-rose-500/15 text-loss'
+                              : 'bg-amber-500/15 text-amber-400'
+                        }`}
+                      >
+                        {w.status}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Checkout Panel */}
       {selectedPlan && selectedPlan.price_usd > 0 && (

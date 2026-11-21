@@ -1,108 +1,207 @@
 <!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="fa" dir="rtl" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dollarino Companion</title>
+    <title>Dollarino Pro Companion</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
+    <div class="ambient-glow"></div>
     <div class="shell">
-      <header class="top-bar">
+      <!-- Top Liquid-Glass Header -->
+      <header class="top-bar glass-panel">
         <div class="brand">
-          <img src="icons/icon-192.png" alt="Dollarino" class="brand-logo" />
+          <div class="logo-ring">
+            <img src="icons/icon-192.png" alt="Dollarino" class="brand-logo" />
+            <span id="connDot" class="conn-dot offline"></span>
+          </div>
           <div>
-            <h1>دلارینو <span class="badge-v">v9.0</span></h1>
-            <p id="userMeta" class="sub">اکستنشن کنترل سریع ترید</p>
+            <div class="brand-title">
+              <h1>دلارینو</h1>
+              <span class="badge-gold">PRO v9.6</span>
+            </div>
+            <p id="userMeta" class="sub">آماده اتصال امن به حساب...</p>
           </div>
         </div>
         <div class="top-actions">
-          <button id="refreshBtn" class="icon-btn" title="بروزرسانی">⟳</button>
-          <button id="settingsToggleBtn" class="icon-btn" title="تنظیمات اتصال">⚙️</button>
+          <button id="themeBtn" class="icon-btn" title="تغییر حالت روز / شب" aria-label="Theme">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+            </svg>
+          </button>
+          <button id="refreshBtn" class="icon-btn" title="بروزرسانی زنده" aria-label="Refresh">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+              <path d="M16 16h5v5" />
+            </svg>
+          </button>
+          <button id="settingsToggleBtn" class="icon-btn" title="تنظیمات اتصال" aria-label="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+            </svg>
+          </button>
         </div>
       </header>
 
-      <section id="setupCard" class="card setup-card hidden">
-        <h2>🔑 اتصال به حساب دلارینو</h2>
-        <p class="hint">
-          در ربات تلگرام <b>@Dollarino_bot</b> دکمه «🧩 اکستنشن و ویجت موبایل» یا در پنل وب بخش ابزارها را بزنید و کلید اختصاصی خود (<code>dlr_ext_...</code>) را کپی کنید.
-        </p>
-        <label class="field">
-          <span>آدرس سرور وب دلارینو</span>
-          <input id="apiBaseInput" type="url" dir="ltr" placeholder="https://dollarino.pages.dev" />
-        </label>
-        <label class="field">
-          <span>کلید اتصال اکستنشن</span>
-          <input id="extKeyInput" type="password" dir="ltr" placeholder="dlr_ext_..." />
-        </label>
-        <button id="saveConfigBtn" class="btn btn-primary w-full">ذخیره و اتصال فوری</button>
-      </section>
-
-      <nav class="tabs">
-        <button class="tab active" data-tab="bot">🤖 کنترل ربات</button>
-        <button class="tab" data-tab="dex">🔍 رادار DEX</button>
+      <!-- Segmented Navigation Bar (4 Tabs matching Dollarino Pro) -->
+      <nav class="tabs glass-panel">
+        <button class="tab active" data-tab="bot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect width="18" height="10" x="3" y="11" rx="2" />
+            <circle cx="12" cy="5" r="2" />
+            <path d="M12 7v4" />
+          </svg>
+          <span>ربات</span>
+        </button>
+        <button class="tab" data-tab="markets">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 3v18h18" />
+            <path d="m19 9-5 5-4-4-3 3" />
+          </svg>
+          <span>بازارها</span>
+        </button>
+        <button class="tab" data-tab="dex">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <span>رادار DEX</span>
+        </button>
+        <button class="tab" data-tab="sync">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+            <polyline points="10 17 15 12 10 7" />
+            <line x1="15" y1="12" x2="3" y2="12" />
+          </svg>
+          <span>اتصال و رفرال</span>
+        </button>
       </nav>
 
+      <!-- Tab 1: Bot Command Center -->
       <main id="tab-bot" class="tab-panel active">
-        <div id="statusCard" class="card">
+        <div class="glass-card hero-card">
           <div class="status-row">
             <div>
-              <span class="label">وضعیت ربات</span>
+              <span class="label">وضعیت موتور معاملاتی</span>
               <div id="botStateLabel" class="state-pill stopped">در انتظار اتصال</div>
             </div>
             <div class="text-end">
-              <span class="label">حالت بازار</span>
+              <span class="label">حالت و استراتژی</span>
               <div id="botModeLabel" class="mode-tag">—</div>
             </div>
           </div>
 
           <div class="metrics-grid">
-            <div class="metric">
+            <div class="metric-box">
               <span class="label">موجودی کل</span>
               <strong id="balanceTotal" dir="ltr">—</strong>
             </div>
-            <div class="metric">
+            <div class="metric-box">
               <span class="label">سود باز (PnL)</span>
               <strong id="openPnl" dir="ltr">—</strong>
             </div>
-            <div class="metric">
-              <span class="label">پوزیشن باز</span>
+            <div class="metric-box">
+              <span class="label">پوزیشن فعال</span>
               <strong id="openCount" dir="ltr">—</strong>
             </div>
           </div>
 
           <div class="btn-row">
-            <button id="toggleBotBtn" class="btn btn-success flex-1">🟢 روشن کردن ربات</button>
-            <button id="killSwitchBtn" class="btn btn-danger" title="توقف کامل و تسویه معاملات باز">🛑 توقف اضطراری</button>
+            <button id="toggleBotBtn" class="btn btn-emerald flex-1">روشن کردن ربات</button>
+            <button id="aiScanBtn" class="btn btn-cobalt" title="اسکن فوری بازار با هوش مصنوعی">اسکن AI</button>
+            <button id="killSwitchBtn" class="btn btn-danger" title="توقف اضطراری و بستن همه">توقف اضطراری</button>
           </div>
         </div>
 
-        <div class="card">
+        <div class="glass-card">
           <div class="card-head">
-            <span>📈 پوزیشن‌های فعال</span>
-            <a id="openWebLink" href="https://dollarino.pages.dev" target="_blank" class="link">باز کردن پنل کامل ↗</a>
+            <span>پوزیشن‌های باز و مدیریت آنی</span>
+            <a id="openWebLink" href="https://dollarino.pages.dev" target="_blank" rel="noopener noreferrer" class="link">پنل کامل ↗</a>
           </div>
           <div id="positionsList" class="list-box">
-            <p class="empty">برای مشاهده معاملات، کلید اکستنشن را متصل کنید.</p>
+            <p class="empty">برای کنترل ربات و دیدن پوزیشن‌ها، از تب «اتصال» کلید را ثبت کنید.</p>
           </div>
         </div>
       </main>
 
+      <!-- Tab 2: Live Markets -->
+      <main id="tab-markets" class="tab-panel">
+        <div class="glass-card">
+          <div class="card-head">
+            <span>نبض زنده بازار فیوچرز</span>
+            <button id="refreshMarketsBtn" class="btn btn-ghost btn-xs">بروزرسانی</button>
+          </div>
+          <div id="marketsList" class="list-box tall">
+            <p class="empty">در حال بارگذاری قیمت‌های لحظه‌ای...</p>
+          </div>
+        </div>
+      </main>
+
+      <!-- Tab 3: DexScreener & Trust Wallet -->
       <main id="tab-dex" class="tab-panel">
-        <div class="card">
+        <div class="glass-card">
           <div class="search-row">
-            <input id="dexSearchInput" type="text" placeholder="جستجو نماد یا کانترکت (مثلاً PEPE)" />
-            <button id="dexSearchBtn" class="btn btn-primary btn-sm">جستجو</button>
+            <input id="dexSearchInput" type="text" placeholder="نام توکن، نماد یا آدرس کانترکت (مثلاً PEPE)" />
+            <button id="dexSearchBtn" class="btn btn-gold btn-sm">جستجو</button>
           </div>
-          <div id="dexList" class="list-box">
-            <p class="empty">در حال بارگذاری توکن‌های داغ DexScreener...</p>
+          <div class="chip-row">
+            <button class="chip dex-chip" data-q="">داغ‌ترین‌ها</button>
+            <button class="chip dex-chip" data-q="PEPE">PEPE</button>
+            <button class="chip dex-chip" data-q="SOL">SOL</button>
+            <button class="chip dex-chip" data-q="TON">TON</button>
+            <button class="chip dex-chip" data-q="BONK">BONK</button>
+          </div>
+          <div id="dexList" class="list-box tall">
+            <p class="empty">در حال دریافت توکن‌های زنده DexScreener...</p>
           </div>
         </div>
       </main>
 
+      <!-- Tab 4: Secure Connection & Referral Share -->
+      <main id="tab-sync" class="tab-panel">
+        <div class="glass-card">
+          <div class="card-head">
+            <span>اتصال امن با کلید اکستنشن</span>
+            <span class="badge-cobalt">SHA-256 Auth</span>
+          </div>
+          <p class="hint">
+            کلید اختصاصی (<code>dlr_ext_...</code>) را از بخش «ابزارها» در سایت یا ربات تلگرام <b>@Dollarino_bot</b> دریافت کنید.
+          </p>
+          <label class="field">
+            <span>آدرس سرور وب دلارینو</span>
+            <input id="apiBaseInput" type="url" dir="ltr" placeholder="https://dollarino.pages.dev" />
+          </label>
+          <label class="field">
+            <span>کلید اختصاصی اکستنشن</span>
+            <input id="extKeyInput" type="password" dir="ltr" placeholder="dlr_ext_..." />
+          </label>
+          <div class="btn-row">
+            <button id="saveConfigBtn" class="btn btn-gold flex-1">ذخیره و تست اتصال</button>
+            <button id="clearConfigBtn" class="btn btn-ghost">پاک کردن</button>
+          </div>
+        </div>
+
+        <div id="referralBox" class="glass-card hidden">
+          <div class="card-head">
+            <span>کسب درآمد رفرال تا ۲۲٪</span>
+            <span id="refTierBadge" class="badge-gold">سطح ۱</span>
+          </div>
+          <p class="hint">با معرفی هر دوست با پرداخت موفق، تا ۲۲٪ پورسانت نقدی + ۷ روز اشتراک رایگان هدیه بگیرید.</p>
+          <div class="ref-row">
+            <code id="refCodeText" dir="ltr">—</code>
+            <button id="copyRefBtn" class="btn btn-cobalt btn-sm">کپی لینک دعوت</button>
+          </div>
+        </div>
+      </main>
+
+      <!-- Footer Status Bar -->
       <footer class="foot">
-        <span id="toastText">آماده به کار</span>
-        <a href="https://t.me/Dollarino_bot" target="_blank" class="link">@Dollarino_bot</a>
+        <span id="toastText">آماده به کار · Dollarino v9.6</span>
+        <a href="https://t.me/Dollarino_bot" target="_blank" rel="noopener noreferrer" class="link">@Dollarino_bot</a>
       </footer>
     </div>
     <script src="popup.js"></script>

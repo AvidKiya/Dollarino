@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Search, Star, TrendingDown, TrendingUp, X } from 'lucide-react';
 import type { Lang } from '../lib/i18n';
 import { CoinIcon } from './CoinIcon';
@@ -87,6 +88,15 @@ export function SymbolPicker({
 
   const visibleList = useMemo(() => filtered.slice(0, visibleLimit), [filtered, visibleLimit]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
   return (
     <>
       <button
@@ -114,9 +124,18 @@ export function SymbolPicker({
         <ChevronDown className="w-4 h-4 text-dim shrink-0" />
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="surface-card rounded-t-3xl sm:rounded-3xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+      {open &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            dir={lang === 'fa' ? 'rtl' : 'ltr'}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="surface-card rounded-t-3xl sm:rounded-3xl w-full max-w-2xl max-h-[86vh] flex flex-col shadow-2xl overflow-hidden border hairline"
+            >
             <div className="p-4 border-b flex items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-black text-main">
@@ -268,9 +287,10 @@ export function SymbolPicker({
                 </>
               )}
             </div>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body
+        )}
     </>
   );
 }

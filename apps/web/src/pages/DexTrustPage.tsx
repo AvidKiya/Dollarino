@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity,
   AlertTriangle,
@@ -156,18 +157,166 @@ export function DexTrustPage({
   const [dexTrades, setDexTrades] = useState<DexTradeItem[]>([]);
   const [tradeAmtUsd, setTradeAmtUsd] = useState(50);
 
+  const fetchPublicDexFallback = useCallback(async (searchQuery?: string): Promise<DexTokenCardItem[]> => {
+    const buildItem = (p: {
+      chainId?: string;
+      dexId?: string;
+      url?: string;
+      pairAddress?: string;
+      baseToken?: { address?: string; name?: string; symbol?: string };
+      quoteToken?: { address?: string; name?: string; symbol?: string };
+      priceUsd?: string | null;
+      info?: { imageUrl?: string };
+      volume?: { h24?: number };
+      priceChange?: { m5?: number; h1?: number; h24?: number };
+      liquidity?: { usd?: number };
+      fdv?: number | null;
+    }): DexTokenCardItem | null => {
+      const sym = p.baseToken?.symbol || '';
+      if (!sym || !Number(p.priceUsd || 0)) return null;
+      const chain = p.chainId || 'bsc';
+      const addr = p.baseToken?.address || p.pairAddress || '';
+      const liq = Number(p.liquidity?.usd || 0);
+      const vol = Number(p.volume?.h24 || 0);
+      let safetyScore = 60;
+      const riskFlags: string[] = [];
+      if (liq >= 250_000) safetyScore += 20;
+      else if (liq >= 50_000) safetyScore += 10;
+      else if (liq < 15_000) {
+        safetyScore -= 18;
+        riskFlags.push('نقدینگی پایین');
+      }
+      if (vol >= 200_000) safetyScore += 10;
+      const dexUrl = p.url || `https://dexscreener.com/${chain}/${p.pairAddress || addr}`;
+      const coinId = chain === 'ethereum' ? 60 : chain === 'solana' ? 501 : chain === 'ton' ? 607 : chain === 'polygon' ? 966 : 20000714;
+      const swapUrl =
+        chain === 'solana'
+          ? `https://jup.ag/swap/SOL-${encodeURIComponent(addr)}`
+          : chain === 'bsc'
+            ? `https://pancakeswap.finance/swap?outputCurrency=${encodeURIComponent(addr)}`
+            : `https://app.uniswap.org/swap?outputCurrency=${encodeURIComponent(addr)}`;
+      return {
+        chainId: chain,
+        dexId: p.dexId || 'dex',
+        url: dexUrl,
+        pairAddress: p.pairAddress || addr,
+        baseToken: { address: addr, name: p.baseToken?.name || sym, symbol: sym },
+        quoteToken: { address: p.quoteToken?.address || '', name: p.quoteToken?.name || 'USDT', symbol: p.quoteToken?.symbol || 'USDT' },
+        priceUsd: p.priceUsd,
+        info: p.info,
+        volume: p.volume,
+        priceChange: p.priceChange,
+        liquidity: p.liquidity,
+        fdv: p.fdv ?? null,
+        safetyScore: Math.max(10, Math.min(96, safetyScore)),
+        riskFlags,
+        isOnCentralizedHint: new Set(['BTC', 'ETH', 'SOL', 'BNB', 'TON', 'XRP', 'DOGE', 'PEPE']).has(sym.toUpperCase()),
+        trustWallet: {
+          chainId: chain,
+          coinId,
+          dexName: chain === 'solana' ? 'Jupiter' : chain === 'bsc' ? 'PancakeSwap' : 'Uniswap',
+          swapUrl,
+          trustWalletDappUrl: `https://link.trustwallet.com/open_url?coin_id=${coinId}&url=${encodeURIComponent(swapUrl)}`,
+          dexScreenerUrl: dexUrl,
+        },
+      };
+    };
+
+    try {
+      const q = (searchQuery || 'PEPE').trim();
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`, {
+        signal: AbortSignal.timeout(7000),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { pairs?: Array<Parameters<typeof buildItem>[0]> };
+        const items = (json.pairs || []).map(buildItem).filter((x): x is DexTokenCardItem => Boolean(x));
+        if (items.length > 0) return items.slice(0, 24);
+      }
+    } catch {
+      /* fallback to gecko */
+    }
+    try {
+      const url = searchQuery
+        ? `https://api.geckoterminal.com/api/v2/search/pools?query=${encodeURIComponent(searchQuery)}&include=base_token`
+        : `https://api.geckoterminal.com/api/v2/networks/trending_pools?include=base_token`;
+      const gRes = await fetch(url, { signal: AbortSignal.timeout(7000) });
+      if (gRes.ok) {
+        const gj = (await gRes.json()) as {
+          data?: Array<{
+            id: string;
+            attributes?: {
+              address?: string;
+              name?: string;
+              base_token_price_usd?: string;
+              reserve_in_usd?: string;
+              volume_usd?: { h24?: string };
+              price_change_percentage?: { h24?: string; h1?: string; m5?: string };
+              fdv_usd?: string;
+            };
+            relationships?: { base_token?: { data?: { id?: string } }; network?: { data?: { id?: string } } };
+          }>;
+          included?: Array<{ id: string; attributes?: { address?: string; name?: string; symbol?: string; image_url?: string } }>;
+        };
+        const inc = new Map((gj.included || []).map((i) => [i.id, i.attributes]));
+        const out: DexTokenCardItem[] = [];
+        for (const p of (gj.data || []).slice(0, 24)) {
+          const a = p.attributes;
+          if (!a?.address || !a.base_token_price_usd) continue;
+          const rawNet = p.relationships?.network?.data?.id || 'bsc';
+          const chainId = rawNet === 'eth' ? 'ethereum' : rawNet === 'polygon_pos' ? 'polygon' : rawNet;
+          const bMeta = inc.get(p.relationships?.base_token?.data?.id || '');
+          const nameParts = (a.name || '').split('/').map((s) => s.trim());
+          const item = buildItem({
+            chainId,
+            dexId: 'geckoterminal',
+            url: `https://www.geckoterminal.com/${rawNet}/pools/${a.address}`,
+            pairAddress: a.address,
+            baseToken: { address: bMeta?.address || a.address, name: bMeta?.name || nameParts[0] || 'Token', symbol: bMeta?.symbol || nameParts[0] || 'TOKEN' },
+            quoteToken: { address: '', name: nameParts[1] || 'USDT', symbol: nameParts[1] || 'USDT' },
+            priceUsd: a.base_token_price_usd,
+            info: bMeta?.image_url ? { imageUrl: bMeta.image_url } : undefined,
+            volume: { h24: Number(a.volume_usd?.h24 || 0) },
+            priceChange: {
+              h24: Number(a.price_change_percentage?.h24 || 0),
+              h1: Number(a.price_change_percentage?.h1 || 0),
+              m5: Number(a.price_change_percentage?.m5 || 0),
+            },
+            liquidity: { usd: Number(a.reserve_in_usd || 0) },
+            fdv: a.fdv_usd ? Number(a.fdv_usd) : null,
+          });
+          if (item) out.push(item);
+        }
+        return out;
+      }
+    } catch {
+      /* ignore */
+    }
+    return [];
+  }, []);
+
   const loadTrending = useCallback(async () => {
     setLoadingDex(true);
     setErr(null);
     try {
       const res = await apiFetch<{ trending?: DexTokenCardItem[]; pairs?: DexTokenCardItem[] }>('/api/dex/trending');
-      setTokens(res.trending || res.pairs || []);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'DexScreener load failed');
+      const list = res.trending || res.pairs || [];
+      if (list.length > 0) {
+        setTokens(list);
+      } else {
+        const fb = await fetchPublicDexFallback();
+        setTokens(fb);
+      }
+    } catch {
+      const fb = await fetchPublicDexFallback();
+      if (fb.length > 0) {
+        setTokens(fb);
+      } else {
+        setErr(isFa ? 'دریافت داده DEX موقتاً با اختلال مواجه شد. دوباره تلاش کنید.' : 'DexScreener load failed');
+      }
     } finally {
       setLoadingDex(false);
     }
-  }, []);
+  }, [fetchPublicDexFallback, isFa]);
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -178,10 +327,21 @@ export function DexTrustPage({
     setLoadingDex(true);
     setErr(null);
     try {
-      const res = await apiFetch<{ pairs: DexTokenCardItem[] }>(`/api/dex/search?q=${encodeURIComponent(query.trim())}`);
-      setTokens(res.pairs || []);
-    } catch (e2) {
-      setErr(e2 instanceof Error ? e2.message : 'Search failed');
+      const res = await apiFetch<{ pairs?: DexTokenCardItem[]; results?: DexTokenCardItem[] }>(`/api/dex/search?q=${encodeURIComponent(query.trim())}`);
+      const list = res.pairs || res.results || [];
+      if (list.length > 0) {
+        setTokens(list);
+      } else {
+        const fb = await fetchPublicDexFallback(query.trim());
+        setTokens(fb);
+      }
+    } catch {
+      const fb = await fetchPublicDexFallback(query.trim());
+      if (fb.length > 0) {
+        setTokens(fb);
+      } else {
+        setErr(isFa ? 'جستجو در شبکه DEX ناموفق بود.' : 'Search failed');
+      }
     } finally {
       setLoadingDex(false);
     }
@@ -833,60 +993,63 @@ export function DexTrustPage({
       )}
 
       {/* AI Token Analysis Modal */}
-      {aiModal && (
-        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-md p-4 grid place-items-center" onClick={() => setAiModal(null)}>
-          <div className="panel rounded-[28px] max-w-lg w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[var(--gold)]" />
-                <span>
-                  {isFa ? `تحلیل هوشمند AI برای ${aiModal.token.baseToken.symbol}` : `AI Analysis: ${aiModal.token.baseToken.symbol}`}
-                </span>
-              </h3>
-              <button type="button" onClick={() => setAiModal(null)} className="btn-ghost p-1.5 rounded-xl text-xs">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {aiModal.loading ? (
-              <p className="text-xs text-dim py-6 text-center">{isFa ? 'در حال تحلیل نقدینگی، مومنتوم و امنیت استخر...' : 'Analyzing...'}</p>
-            ) : (
-              <>
-                <div className="surface-soft rounded-2xl p-4 text-xs leading-relaxed whitespace-pre-wrap text-main">{aiModal.analysis}</div>
-                {aiModal.levels && (
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                    <div className="surface-soft rounded-xl p-2">
-                      <span className="block text-[10px] text-dim">{isFa ? 'ورود' : 'Entry'}</span>
-                      <strong dir="ltr">{fmtTokenPrice(aiModal.levels.entryUsd)}</strong>
+      {aiModal &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-md p-4 grid place-items-center" onClick={() => setAiModal(null)}>
+            <div className="panel rounded-[28px] max-w-lg w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[var(--gold)]" />
+                  <span>
+                    {isFa ? `تحلیل هوشمند AI برای ${aiModal.token.baseToken.symbol}` : `AI Analysis: ${aiModal.token.baseToken.symbol}`}
+                  </span>
+                </h3>
+                <button type="button" onClick={() => setAiModal(null)} className="btn-ghost p-1.5 rounded-xl text-xs">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {aiModal.loading ? (
+                <p className="text-xs text-dim py-6 text-center">{isFa ? 'در حال تحلیل نقدینگی، مومنتوم و امنیت استخر...' : 'Analyzing...'}</p>
+              ) : (
+                <>
+                  <div className="surface-soft rounded-2xl p-4 text-xs leading-relaxed whitespace-pre-wrap text-main">{aiModal.analysis}</div>
+                  {aiModal.levels && (
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="surface-soft rounded-xl p-2">
+                        <span className="block text-[10px] text-dim">{isFa ? 'ورود' : 'Entry'}</span>
+                        <strong dir="ltr">{fmtTokenPrice(aiModal.levels.entryUsd)}</strong>
+                      </div>
+                      <div className="surface-soft rounded-xl p-2">
+                        <span className="block text-[10px] text-loss">{isFa ? 'حد ضرر پیشنهادی' : 'Suggested SL'}</span>
+                        <strong dir="ltr">{fmtTokenPrice(aiModal.levels.stopLossUsd)}</strong>
+                      </div>
+                      <div className="surface-soft rounded-xl p-2">
+                        <span className="block text-[10px] text-jade">{isFa ? 'تارگت ۱' : 'Suggested TP1'}</span>
+                        <strong dir="ltr">{fmtTokenPrice(aiModal.levels.tp1Usd)}</strong>
+                      </div>
                     </div>
-                    <div className="surface-soft rounded-xl p-2">
-                      <span className="block text-[10px] text-loss">{isFa ? 'حد ضرر پیشنهادی' : 'Suggested SL'}</span>
-                      <strong dir="ltr">{fmtTokenPrice(aiModal.levels.stopLossUsd)}</strong>
-                    </div>
-                    <div className="surface-soft rounded-xl p-2">
-                      <span className="block text-[10px] text-jade">{isFa ? 'تارگت ۱' : 'Suggested TP1'}</span>
-                      <strong dir="ltr">{fmtTokenPrice(aiModal.levels.tp1Usd)}</strong>
-                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <a
+                      href={aiModal.token.trustWallet.trustWalletDappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-gold flex-1 py-2.5 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
+                    >
+                      <Wallet className="w-4 h-4" />
+                      <span>{isFa ? 'خرید غیرحضانتی در Trust Wallet' : 'Swap in Trust Wallet'}</span>
+                    </a>
+                    <button type="button" onClick={() => setAiModal(null)} className="btn-ghost px-4 py-2.5 rounded-2xl text-xs font-bold">
+                      {isFa ? 'بستن' : 'Close'}
+                    </button>
                   </div>
-                )}
-                <div className="flex gap-2">
-                  <a
-                    href={aiModal.token.trustWallet.trustWalletDappUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-gold flex-1 py-2.5 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
-                  >
-                    <Wallet className="w-4 h-4" />
-                    <span>{isFa ? 'خرید غیرحضانتی در Trust Wallet' : 'Swap in Trust Wallet'}</span>
-                  </a>
-                  <button type="button" onClick={() => setAiModal(null)} className="btn-ghost px-4 py-2.5 rounded-2xl text-xs font-bold">
-                    {isFa ? 'بستن' : 'Close'}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+                </>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
