@@ -5,6 +5,8 @@ import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../index.js';
 import type { Env } from '../env.js';
+import { encryptVaultJson } from '../crypto.js';
+import { resolveAIEnsemble, resolvePlatformAIEngines } from '../ai/providers.js';
 
 let mf: Miniflare;
 let db: D1Database;
@@ -133,6 +135,21 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
       }
+      if (url.includes('api.telegram.org')) {
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 99 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('NONEXISTENT99USDT') || url.includes('NONEXISTENT99')) {
+        return new Response('Not Found', { status: 404 });
+      }
+      if (url.includes('fapi.bitunix.com') && url.includes('BTCUSDT')) {
+        return new Response(
+          JSON.stringify({ code: 0, data: [{ symbol: 'BTCUSDT', lastPrice: '90000', last: '90000', open: '89500', high: '90500', low: '89000', quoteVol: '500000000' }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
       return realFetch(input, init);
     });
   });
@@ -228,6 +245,29 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
       env
     );
     expect(loginRes.status).toBe(200);
+
+    // 6. Delete Account requires DELETE/حذف + valid password (when custom password exists), then purges user & returns 401 on subsequent /me
+    const badDel = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${magicJson.token}` },
+        body: JSON.stringify({ confirmText: 'DELETE', password: 'WrongPassword' }),
+      }),
+      env
+    );
+    expect(badDel.status).toBe(401);
+
+    const okDel = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${magicJson.token}` },
+        body: JSON.stringify({ confirmText: 'DELETE', password: 'StrongPassword99' }),
+      }),
+      env
+    );
+    expect(okDel.status).toBe(200);
+    const delRow = await db.prepare('SELECT id FROM users WHERE id = ?').bind('usr_tg_prof_1').first();
+    expect(delRow).toBeNull();
   });
 
   it('serves v9.7.0 health with security headers and falls back cleanly to GeckoTerminal when DexScreener fails', async () => {
@@ -473,5 +513,159 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     const extOvJson = (await extOv.json()) as { balance: { total: string }; openTrades: unknown[] };
     expect(extOvJson.balance).toBeTruthy();
     expect(Array.isArray(extOvJson.openTrades)).toBe(true);
+  });
+
+  it('does not burn calls_today on non-LLM resolution, auto-repairs hilinkup "deep" model, and reports AI_DAILY_CAP_REACHED cleanly', async () => {
+    const env = makeEnv();
+    const encryptedKey = await encryptVaultJson({ apiKey: 'sk-hilinkup-test-key' }, env.MASTER_ENCRYPTION_KEY);
+    const today = new Date().toISOString().slice(0, 10);
+
+    await db.prepare(
+      `INSERT INTO users (id, email, username, role, password_hash, referral_code, telegram_id, phone_verified)
+       VALUES (?, ?, ?, 'owner', 'hash', 'DLR-AI01', '944021185', 1)`
+    ).bind('usr_ai_owner_1', 'aiowner@dollarino.test', 'AiOwner').run();
+    await db.prepare(
+      `INSERT INTO bot_configs (user_id, trading_mode, market_type, strategy_key, symbol, entry_timeframe, webhook_secret)
+       VALUES (?, 'PAPER', 'FUTURES', 'ai_autonomous_agent', 'BTCUSDT', '15m', 'wh_test_1')`
+    ).bind('usr_ai_owner_1').run();
+    await db.prepare(
+      `INSERT INTO platform_ai_engines (id, slot_order, provider, label, model, base_url, weight, is_active, api_key_masked, encrypted_api_key, daily_call_cap, calls_today, calls_reset_date)
+       VALUES (?, 1, 'deepseek', 'دیپی', 'deep', 'https://api.hilinkup.com/v1', 100, 1, 'sk-h***key', ?, 50000, 0, ?)`
+    ).bind('paie_test_1', encryptedKey, today).run();
+
+    // 1. Multiple resolution checks must NOT increment calls_today and must normalize 'deep' on hilinkup.com
+    for (let i = 0; i < 3; i++) {
+      const resolved = await resolvePlatformAIEngines(env);
+      expect(resolved.engines.length).toBe(1);
+      expect(resolved.engines[0]!.model).toBe('baidu/deepseek-v4.1-flash-1017');
+      expect(resolved.capExceededCount).toBe(0);
+    }
+    const afterResolve = await db
+      .prepare('SELECT calls_today FROM platform_ai_engines WHERE id = ?')
+      .bind('paie_test_1')
+      .first<{ calls_today: number }>();
+    expect(afterResolve?.calls_today).toBe(0);
+
+    // 2. Starting bot with ai_autonomous_agent succeeds and still keeps calls_today = 0
+    const { signJwt } = await import('../crypto.js');
+    const ownerJwt = await signJwt({ sub: 'usr_ai_owner_1', role: 'owner', username: 'AiOwner' }, env.SESSION_JWT_SECRET);
+    const startOk = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/bot/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerJwt}` },
+        body: JSON.stringify({ strategyKey: 'ai_autonomous_agent' }),
+      }),
+      env
+    );
+    expect(startOk.status).toBe(200);
+    const afterStart = await db
+      .prepare('SELECT calls_today FROM platform_ai_engines WHERE id = ?')
+      .bind('paie_test_1')
+      .first<{ calls_today: number }>();
+    expect(afterStart?.calls_today).toBe(0);
+
+    // 3. When daily_call_cap is exhausted, resolveAIEnsemble flags capExceeded and bot/start returns AI_DAILY_CAP_REACHED (not NO_ACTIVE_AI_KEY)
+    await db
+      .prepare('UPDATE platform_ai_engines SET daily_call_cap = 500, calls_today = 500, calls_reset_date = ? WHERE id = ?')
+      .bind(today, 'paie_test_1')
+      .run();
+
+    const cappedEnsemble = await resolveAIEnsemble(env, 'usr_ai_owner_1');
+    expect(cappedEnsemble.engines.length).toBe(0);
+    expect(cappedEnsemble.capExceeded).toBe(true);
+
+    const startCapped = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/bot/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerJwt}` },
+        body: JSON.stringify({ strategyKey: 'ai_autonomous_agent' }),
+      }),
+      env
+    );
+    expect(startCapped.status).toBe(400);
+    const startCappedBody = (await startCapped.json()) as { code: string; error: string };
+    expect(startCappedBody.code).toBe('AI_DAILY_CAP_REACHED');
+  });
+
+  it('never returns fake price 100, isolates PAPER/LIVE daily loss, and activates auto-trading with 1 click in Telegram', async () => {
+    const env = makeEnv();
+    env.TELEGRAM_BOT_TOKEN = '12345:TEST_BOT_TOKEN';
+    env.TELEGRAM_WEBHOOK_SECRET = 'tg_sec_test';
+
+    const { fetchPublicTickerPrice } = await import('../exchanges/paper.js');
+    const { executeSignalForUser } = await import('../engine/executor.js');
+
+    // 1. Unknown altcoin must return '0' (never hardcoded 100) when market endpoints lack it
+    const unknownPx = await fetchPublicTickerPrice('NONEXISTENT99USDT');
+    expect(unknownPx).toBe('0');
+
+    // 2. Setup owner user with LIVE trading mode & an active KCEX connection, PLUS a huge old PAPER loss today
+    await db.prepare(
+      `INSERT INTO users (id, email, username, role, password_hash, referral_code, telegram_id, phone_verified)
+       VALUES (?, ?, ?, 'owner', 'hash', 'DLR-AUTO1', '944021185', 1)`
+    ).bind('usr_auto_fix_1', 'autofix@dollarino.test', 'AutoFix').run();
+    await db.prepare(
+      `INSERT INTO bot_configs (user_id, bot_state, trading_mode, trade_execution_mode, market_type, strategy_key, symbol, entry_timeframe, webhook_secret, paper_balance, daily_max_loss_pct)
+       VALUES (?, 'STOPPED', 'LIVE', 'MANUAL_CONFIRM', 'FUTURES', 'dollarino_v01', 'BTCUSDT', '15m', 'wh_auto_1', '10000', 10)`
+    ).bind('usr_auto_fix_1').run();
+    await db.prepare(
+      `INSERT INTO exchange_connections (id, user_id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials, last_test_status)
+       VALUES ('ex_kcex_fix', 'usr_auto_fix_1', 'kcex', 'KCEX Test', 0, 1, 'kc***12', '{}', 'OK')`
+    ).bind().run();
+
+    // Insert a PAPER trade with -$50,000 loss today; must NOT block LIVE execution
+    await db.prepare(
+      `INSERT INTO trades (id, user_id, mode, market_type, exchange_provider, symbol, strategy_key, direction, status, entry_price, exit_price, initial_quantity, remaining_quantity, leverage, margin_used, current_stop_loss, initial_stop_loss, tp1, realized_pnl, client_id)
+       VALUES ('trd_paper_loss_1', 'usr_auto_fix_1', 'PAPER', 'FUTURES', 'paper', 'MEWUSDT', 'dollarino_v01', 'LONG', 'CLOSED', '0.001', '0.0005', '1000', '0', 5, '100', '0.0008', '0.0008', '0.0012', '-50000', 'cli_paper_1')`
+    ).run();
+
+    const execLive = await executeSignalForUser(
+      env,
+      'usr_auto_fix_1',
+      {
+        symbol: 'BTCUSDT',
+        direction: 'LONG',
+        timeframe: '15m',
+        price: '90000',
+        stopLoss: '88000',
+        leverage: 5,
+        tp1: '92500',
+        tp2: '94500',
+        tp3: '97000',
+      },
+      { forceBypassState: true, strategyKey: 'dollarino_v01', marketType: 'FUTURES' }
+    );
+    expect(execLive).toMatchObject({ ok: true });
+    expect(execLive.tradeId).toBeTruthy();
+
+    // 3. Telegram 1-click button ('🟢 شروع خودکار ربات (یک کلیک)') sets trade_execution_mode='AUTO', auto_scan_top=1, bot_state=RUNNING_*
+    const tgRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/webhook/telegram', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Bot-Api-Secret-Token': 'tg_sec_test',
+        },
+        body: JSON.stringify({
+          update_id: 99001,
+          message: {
+            message_id: 501,
+            from: { id: 944021185, first_name: 'Owner', username: 'owner' },
+            chat: { id: 944021185, type: 'private' },
+            text: '🟢 شروع خودکار ربات (یک کلیک)',
+          },
+        }),
+      }),
+      env
+    );
+    expect(tgRes.status).toBe(200);
+    const cfgAfter = await db
+      .prepare('SELECT bot_state, trade_execution_mode, auto_scan_top, scan_scope FROM bot_configs WHERE user_id = ?')
+      .bind('usr_auto_fix_1')
+      .first<{ bot_state: string; trade_execution_mode: string; auto_scan_top: number; scan_scope: string }>();
+    expect(cfgAfter?.trade_execution_mode).toBe('AUTO');
+    expect(cfgAfter?.auto_scan_top).toBe(1);
+    expect(cfgAfter?.scan_scope).toBe('ALL_MARKET');
+    expect(cfgAfter?.bot_state).toBe('RUNNING_LIVE');
   });
 });

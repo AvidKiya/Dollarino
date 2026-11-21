@@ -203,7 +203,22 @@ export async function fetchPublicTickerPrice(symbol: string, proxyConfig?: Toobi
     }
   } catch { /* fall through */ }
 
-  return String(FALLBACK_PRICES[clean] ?? 100);
+  // Public Bitget USDT-Futures fallback (covers hundreds of altcoins & meme pairs)
+  try {
+    const bgRes = await fetch(
+      `https://api.bitget.com/api/v2/mix/market/ticker?symbol=${clean}&productType=USDT-FUTURES`,
+      { signal: AbortSignal.timeout(3500) }
+    );
+    if (bgRes.ok) {
+      const json = (await bgRes.json()) as { data?: Array<{ symbol?: string; lastPr?: string; markPrice?: string }> };
+      const item = json.data?.[0];
+      const p = item?.symbol?.toUpperCase() === clean ? (item.lastPr ?? item.markPrice) : undefined;
+      if (p && Number(p) > 0) return String(p);
+    }
+  } catch { /* fall through */ }
+
+  // Never inject a hardcoded 100 price for arbitrary altcoins/memecoins
+  return FALLBACK_PRICES[clean] ? String(FALLBACK_PRICES[clean]) : '0';
 }
 
 export async function fetchPublicOrderBook(symbol: string, limit = 15, proxyConfig?: ToobitProxyConfig): Promise<{ bids: [string, string][]; asks: [string, string][] }> {
@@ -235,6 +250,7 @@ export async function fetchPublicOrderBook(symbol: string, limit = 15, proxyConf
   } catch { /* fallback */ }
 
   const price = Number(await fetchPublicTickerPrice(clean, proxyConfig));
+  if (!Number.isFinite(price) || price <= 0) return { bids: [], asks: [] };
   const step = price * 0.00025;
   const bids: [string, string][] = [];
   const asks: [string, string][] = [];
@@ -481,7 +497,21 @@ export class PaperExchangeAdapter implements IExchangeAdapter {
   async updatePositionStopLoss(): Promise<void> {}
 
   async closePositionPartialOrFull(symbol: string, _dir: Direction, quantity: string, clientOrderId: string, _marketType: MarketType = 'FUTURES'): Promise<OrderResult> {
-    const price = await this.getTickerPrice(symbol);
+    let price = await this.getTickerPrice(symbol);
+    if (!(Number(price) > 0)) {
+      const klines = await this.getKlines(symbol, '5m', 3).catch(() => []);
+      if (klines.length > 0 && klines[klines.length - 1]!.close > 0) {
+        price = String(klines[klines.length - 1]!.close);
+      } else {
+        const openTrade = await this.db.prepare(
+          `SELECT entry_price FROM trades WHERE user_id = ? AND symbol = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`
+        ).bind(this.userId, symbol).first<{ entry_price: string }>().catch(() => null);
+        price = openTrade?.entry_price && Number(openTrade.entry_price) > 0 ? openTrade.entry_price : '0';
+      }
+    }
+    if (!(Number(price) > 0)) {
+      throw new Error(`No reliable live price available to close ${symbol}`);
+    }
     const fee = (Number(price) * Number(quantity) * 0.0005).toFixed(4);
     return {
       orderId: `paper_cls_${Date.now()}`,

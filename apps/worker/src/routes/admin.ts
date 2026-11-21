@@ -198,7 +198,7 @@ adminRoutes.post('/ai-engines', async (c) => {
         encrypted,
         Number(body.temperature ?? 0.2),
         Math.max(256, Number(body.maxTokens ?? 1536)),
-        Math.max(10, Number(body.dailyCallCap ?? 500))
+        Math.max(10, Number(body.dailyCallCap ?? 50000))
       )
       .run();
     return c.json({ ok: true, id, slotOrder }, 201);
@@ -226,7 +226,7 @@ adminRoutes.post('/ai-engines', async (c) => {
         encrypted,
         Number(body.temperature ?? 0.2),
         Math.max(256, Number(body.maxTokens ?? 1536)),
-        Math.max(10, Number(body.dailyCallCap ?? 500)),
+        Math.max(10, Number(body.dailyCallCap ?? 50000)),
         existing.id
       )
       .run();
@@ -247,7 +247,7 @@ adminRoutes.post('/ai-engines', async (c) => {
         body.isActive !== false ? 1 : 0,
         Number(body.temperature ?? 0.2),
         Math.max(256, Number(body.maxTokens ?? 1536)),
-        Math.max(10, Number(body.dailyCallCap ?? 500)),
+        Math.max(10, Number(body.dailyCallCap ?? 50000)),
         existing.id
       )
       .run();

@@ -10,8 +10,10 @@ import { handleTelegramUpdate } from '../telegram/handler.js';
 
 export const webhookRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-const DEFAULT_TG_COMMANDS = [
+export const DEFAULT_TG_COMMANDS = [
   { command: 'start', description: 'شروع، احراز هویت و منوی اصلی دلارینو' },
+  { command: 'autostart', description: 'شروع خودکار ربات با یک کلیک' },
+  { command: 'scan', description: 'شکار و ترید فوری با هوش مصنوعی' },
   { command: 'app', description: 'باز کردن مینی‌اپ معاملاتی دلارینو' },
   { command: 'weblogin', description: 'دریافت لینک ورود فوری با یک کلیک به سایت' },
   { command: 'wizard', description: 'راه‌اندازی ۴ مرحله‌ای ربات ترید' },
@@ -199,3 +201,26 @@ webhookRoutes.post('/telegram/setup', requireAuth, async (c) => {
     webhookInfo: info,
   });
 });
+
+export async function syncTelegramBotAutoOnVersion(env: Env, targetVersion = '9.7.0'): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  const row = await env.DB.prepare(
+    `SELECT value FROM system_settings WHERE key = 'tg_bot_synced_version' LIMIT 1`
+  ).first<{ value: string }>().catch(() => null);
+  if (row?.value === targetVersion) return;
+
+  const client = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const webAppUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
+  const webhookUrl = `${webAppUrl}/api/webhook/telegram`;
+
+  await client.setMyCommands(DEFAULT_TG_COMMANDS);
+  if (webAppUrl.startsWith('https://')) {
+    await client.setChatMenuButton(webAppUrl, 'پنل دلارینو');
+    await client.setWebhook(webhookUrl, env.TELEGRAM_WEBHOOK_SECRET);
+  }
+  await env.DB.prepare(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ('tg_bot_synced_version', ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+  ).bind(targetVersion).run();
+}
+

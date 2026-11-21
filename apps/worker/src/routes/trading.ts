@@ -585,14 +585,26 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0) {
     return c.json({
-      error: 'موتور «هوش مصنوعی دلارینو» هنوز توسط مدیریت فعال نشده است. تا فعال‌سازی می‌توانید از «هوش مصنوعی من» یا استراتژی‌های کوانت استفاده کنید.',
-      code: 'NO_ACTIVE_AI_KEY',
+      error: ensemble.capExceeded
+        ? 'سقف درخواست روزانه موتور «هوش مصنوعی دلارینو» پر شده است. لطفاً در پنل مدیریت سقف روزانه موتور را افزایش دهید.'
+        : 'موتور «هوش مصنوعی دلارینو» هنوز توسط مدیریت فعال نشده است. تا فعال‌سازی می‌توانید از «هوش مصنوعی من» یا استراتژی‌های کوانت استفاده کنید.',
+      code: ensemble.capExceeded ? 'AI_DAILY_CAP_REACHED' : 'NO_ACTIVE_AI_KEY',
     }, 400);
   }
 
-  const nextState = cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+  const { provider: activeExProvider } = await resolveUserExchangeAdapter(
+    c.env,
+    user.id,
+    cfg?.trading_mode === 'PAPER' ? 'paper' : undefined
+  );
+  const nextState = cfg?.trading_mode === 'LIVE' && activeExProvider !== 'paper' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
 
-  const sets = [`bot_state = ?`, `started_at = datetime('now')`, `updated_at = datetime('now')`];
+  const sets = [
+    `bot_state = ?`,
+    `trade_execution_mode = 'AUTO'`,
+    `started_at = datetime('now')`,
+    `updated_at = datetime('now')`,
+  ];
   const vals: unknown[] = [nextState];
 
   if (typeof body.marginPct === 'number') {
@@ -697,7 +709,16 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   await Promise.race([runTick, new Promise((resolve) => setTimeout(resolve, 4500))]);
 
-  return c.json({ ok: true, bot_state: nextState, strategy_key: targetStrategy });
+  return c.json({
+    ok: true,
+    bot_state: nextState,
+    strategy_key: targetStrategy,
+    activeExchangeProvider: activeExProvider,
+    warning:
+      cfg?.trading_mode === 'LIVE' && activeExProvider === 'paper'
+        ? 'صرافی واقعی فعال نیست (یا Toobit نیاز به پروکسی دارد)؛ ربات در حالت شبیه‌ساز Paper فعال شد.'
+        : undefined,
+  });
 });
 
 tradingRoutes.post('/bot/stop', async (c) => {
@@ -2309,8 +2330,8 @@ tradingRoutes.post('/ai-scan-now', async (c) => {
             reason: decision.thesis,
           };
           await c.env.DB.prepare(
-            `INSERT INTO signals (id, user_id, symbol, direction, timeframe, entry_price, stop_loss, tp1, tp2, tp3, leverage, raw_message, source, engine_source, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_agent', 'ai_autonomous_agent', 'PENDING')`
+            `INSERT INTO signals (id, user_id, symbol, direction, timeframe, price, stop_loss, tp1, tp2, tp3, leverage, raw_text, source, engine_source, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_agent', 'ai_autonomous_agent', 'NEW')`
           ).bind(
             signalId,
             user.id,

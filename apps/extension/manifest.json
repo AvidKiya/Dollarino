@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dollarino Companion — ترمینال سریع و رادار DEX دلارینو",
   "short_name": "Dollarino",
-  "version": "9.6.0",
+  "version": "9.7.0",
   "description": "Apple Liquid-Glass Quick Trading Companion: Bot Control, Kill Switch, AI Scan, Live Markets, DexScreener & Trust Wallet Swap, and Referral Hub.",
   "icons": {
     "48": "icons/icon-192.png",

@@ -120,8 +120,8 @@ export function QuickWidgetsBar({
       setExtErr(
         msg.includes('404') || msg.includes('Route not found')
           ? isFa
-            ? 'سرور API نیاز به همگام‌سازی نسخه جدید (Deploy Worker v9.6) دارد. پس از انتشار Worker، این دکمه کلید اختصاصی dlr_ext_ شما را می‌سازد.'
-            : 'API Worker needs v9.6 deployment before generating extension keys.'
+            ? 'سرور API نیاز به همگام‌سازی نسخه جدید (Deploy Worker v9.7) دارد. پس از انتشار Worker، این دکمه کلید اختصاصی dlr_ext_ شما را می‌سازد.'
+            : 'API Worker needs v9.7 deployment before generating extension keys.'
           : msg
       );
     } finally {

@@ -218,6 +218,7 @@ export async function executeSignalForUser(
   const marketType: MarketType = options?.marketType ?? cfgRow.market_type ?? 'FUTURES';
   const forceProvider = cfgRow.trading_mode === 'PAPER' ? 'paper' : undefined;
   const { adapter, provider } = await resolveUserExchangeAdapter(env, userId, forceProvider);
+  const effectiveMode: TradingMode = provider === 'paper' ? 'PAPER' : cfgRow.trading_mode;
 
   if (cfgRow.trading_mode === 'LIVE' && env.ALLOW_LIVE_TRADING !== 'true' && provider !== 'paper') {
     return {
@@ -229,17 +230,24 @@ export async function executeSignalForUser(
   const [bal, spec, openCountRow, todayPnlRow, livePrice] = await Promise.all([
     adapter.getBalance(marketType),
     adapter.getInstrumentSpec(signal.symbol, marketType),
-    env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN'`)
-      .bind(userId).first<{ cnt: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ?`)
+      .bind(userId, effectiveMode).first<{ cnt: number }>(),
     env.DB.prepare(
-      `SELECT COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as pnl FROM trades WHERE user_id = ? AND date(opened_at) = date('now')`
-    ).bind(userId).first<{ pnl: number }>(),
+      `SELECT COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as pnl FROM trades WHERE user_id = ? AND mode = ? AND date(opened_at) = date('now')`
+    ).bind(userId, effectiveMode).first<{ pnl: number }>(),
     adapter.getTickerPrice(signal.symbol),
   ]);
 
+  const sigPxNum = Number(signal.price);
+  const livePxNum = Number(livePrice);
+  const useLivePx =
+    Number.isFinite(livePxNum) &&
+    livePxNum > 0 &&
+    (!(Number.isFinite(sigPxNum) && sigPxNum > 0) || Math.abs(livePxNum - sigPxNum) / sigPxNum <= 0.35);
+
   const effectiveSignal: DollarinoSignal = {
     ...signal,
-    price: Number(livePrice) > 0 ? livePrice : signal.price,
+    price: useLivePx ? livePrice : signal.price,
   };
 
   const botConfig = rowToBotConfig(cfgRow);
@@ -319,7 +327,7 @@ export async function executeSignalForUser(
     tradeId,
     userId,
     options?.signalId ?? null,
-    cfgRow.trading_mode,
+    effectiveMode,
     marketType,
     provider,
     effectiveSignal.symbol,
@@ -344,7 +352,7 @@ export async function executeSignalForUser(
     aiReasoning
   ).run();
 
-  if (cfgRow.trading_mode === 'PAPER') {
+  if (effectiveMode === 'PAPER') {
     const newFree = Math.max(0, Number(cfgRow.paper_balance) - Number(decision.marginUsed) - Number(order.fee));
     await env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?')
       .bind(newFree.toFixed(2), userId).run();

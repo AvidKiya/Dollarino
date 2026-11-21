@@ -165,7 +165,7 @@ export async function publishSignalBroadcast(
        FROM users u
        JOIN bot_configs bc ON bc.user_id = u.id
        WHERE u.telegram_id IS NOT NULL AND u.telegram_id != ''
-         AND (bc.telegram_notifications = 1 OR bc.bot_state = 'RUNNING')`
+         AND (bc.telegram_notifications = 1 OR bc.bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE'))`
     ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
 
     for (const s of subs.results) {

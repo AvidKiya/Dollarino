@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Award,
@@ -115,6 +116,12 @@ export function ServicesPage({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   useEffect(() => {
     setEditUsername(user.username || '');
@@ -247,6 +254,33 @@ export function ServicesPage({
       });
     } finally {
       setPasswordBusy(false);
+    }
+  };
+
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeleteErr(null);
+    const clean = deleteConfirmText.trim();
+    if (clean.toUpperCase() !== 'DELETE' && clean !== 'حذف' && clean !== 'حذف حساب') {
+      setDeleteErr(isFa ? 'لطفاً عبارت DELETE یا «حذف» را تایپ کنید.' : 'Please type DELETE to confirm.');
+      return;
+    }
+    setDeleteBusy(true);
+    try {
+      const hasExistingPwd = Boolean(user.has_custom_password) && !isTelegramPseudo;
+      await apiFetch<{ ok: boolean; deleted: boolean }>('/api/auth/account', {
+        method: 'DELETE',
+        body: JSON.stringify({
+          confirmText: clean,
+          password: hasExistingPwd ? deletePassword : undefined,
+        }),
+      });
+      setStoredToken(null);
+      await onLogout();
+    } catch (err) {
+      setDeleteErr(err instanceof Error ? err.message : isFa ? 'خطا در حذف حساب کاربری' : 'Failed to delete account');
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -573,6 +607,105 @@ export function ServicesPage({
           <LogOut className="w-4 h-4" />
           <span>{isFa ? 'خروج از حساب کاربری' : 'Sign Out'}</span>
         </button>
+
+        {/* Danger Zone: Permanent Account Deletion */}
+        <div className="panel rounded-[24px] p-4 sm:p-5 border border-rose-500/30 bg-rose-500/5 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-loss shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-xs font-black text-loss">
+                  {isFa ? 'حذف دائمی حساب کاربری (Delete Account)' : 'Danger Zone — Delete Account'}
+                </h3>
+                <p className="text-[11px] text-sub mt-0.5 leading-relaxed">
+                  {isFa
+                    ? 'با حذف حساب، تمامی اطلاعات پروفایل، کلیدهای API صرافی، اتصال ربات، تاریخچه معاملات و کلید اکستنشن برای همیشه پاک می‌شوند و قابل بازیابی نیستند.'
+                    : 'Permanently erases your profile, exchange APIs, trades, alerts, and extension key. This cannot be undone.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {user.role.toLowerCase() === 'owner' ? (
+            <p className="text-[11px] font-bold text-amber-400">
+              {isFa
+                ? 'حساب مالک اصلی پلتفرم جهت حفظ امنیت سیستم قابل حذف نیست.'
+                : 'Primary platform owner account cannot be deleted.'}
+            </p>
+          ) : !deleteOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteOpen(true);
+                setDeleteErr(null);
+              }}
+              className="px-4 py-2.5 rounded-xl bg-rose-500/15 text-loss border border-rose-500/30 text-xs font-black inline-flex items-center gap-2 hover:bg-rose-500/25 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'حذف حساب کاربری من' : 'Delete My Account'}</span>
+            </button>
+          ) : (
+            <form onSubmit={handleDeleteAccount} className="space-y-2.5 pt-2 border-t border-rose-500/20 text-xs">
+              <div>
+                <label className="text-[11px] font-bold text-sub block mb-1">
+                  {isFa ? 'برای تایید، کلمه DELETE یا «حذف» را بنویسید:' : 'Type DELETE to confirm:'}
+                </label>
+                <input
+                  dir="ltr"
+                  required
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="DELETE"
+                  className="field text-xs font-mono-num"
+                />
+              </div>
+
+              {hasExistingPwd && (
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">
+                    {isFa ? 'رمز عبور فعلی جهت تایید امنیتی:' : 'Current Password:'}
+                  </label>
+                  <input
+                    type="password"
+                    dir="ltr"
+                    required
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    placeholder={isFa ? 'رمز عبور فعلی' : 'Current Password'}
+                    className="field text-xs"
+                  />
+                </div>
+              )}
+
+              {deleteErr && (
+                <div className="p-2.5 rounded-xl bg-rose-500/20 text-loss text-[11px] font-bold">{deleteErr}</div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  disabled={deleteBusy}
+                  className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-black inline-flex items-center gap-1.5 hover:bg-rose-700 transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{deleteBusy ? '...' : isFa ? 'تایید و حذف کامل حساب' : 'Permanently Delete Account'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteOpen(false);
+                    setDeleteConfirmText('');
+                    setDeletePassword('');
+                    setDeleteErr(null);
+                  }}
+                  className="btn-ghost px-4 py-2.5 rounded-xl text-xs font-bold"
+                >
+                  {isFa ? 'انصراف' : 'Cancel'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     );
   }
@@ -882,8 +1015,8 @@ export function ServicesPage({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (v9.6 ZIP)'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0]">v9.6</span>
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (v9.7 ZIP)'}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0]">v9.7</span>
               </div>
               <span className="text-[11px] text-dim block">{isFa ? 'کنترل ربات، بازار زنده، رادار DEX و لینک رفرال' : 'Quick bot control, live markets & DEX radar'}</span>
             </div>

@@ -17,7 +17,7 @@ import { getPublicPlans, subscriptionRoutes } from './routes/subscriptions.js';
 import { supportRoutes } from './routes/support.js';
 import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/trading.js';
 import { trustWalletRoutes } from './routes/trustwallet.js';
-import { webhookRoutes } from './routes/webhooks.js';
+import { syncTelegramBotAutoOnVersion, webhookRoutes } from './routes/webhooks.js';
 
 export { TradingBotCoordinator };
 
@@ -355,6 +355,8 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // 1-minute watchdog across all running bots & open trades
     ctx.waitUntil((async () => {
+      await syncTelegramBotAutoOnVersion(env, '9.7.0-autotrading').catch(() => {});
+
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);
       await stub.fetch('https://do/start').catch(() => {});

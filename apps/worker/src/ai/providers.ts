@@ -291,10 +291,27 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
   };
 }
 
+export async function recordPlatformEngineUsage(env: Env, engines: AIRecord[]): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const eng of engines) {
+    if (!eng.id || eng.id === 'env-hilinkup-default' || eng.id === 'user-personal') continue;
+    await env.DB.prepare(
+      `UPDATE platform_ai_engines
+       SET calls_today = CASE WHEN calls_reset_date = ? THEN calls_today + 1 ELSE 1 END,
+           calls_reset_date = ?
+       WHERE id = ?`
+    )
+      .bind(today, today, eng.id)
+      .run()
+      .catch(() => {});
+  }
+}
+
 export async function resolvePlatformAIEngines(env: Env): Promise<{
   engines: AIRecord[];
   consensusMode: AIConsensusMode;
   cacheTtlSec: number;
+  capExceededCount: number;
 }> {
   const consensusRaw = await getSetting(env.DB, 'ai_consensus_mode', 'ENSEMBLE_AUTO');
   const ttlRaw = await getSetting(env.DB, 'ai_cache_ttl_sec', '180');
@@ -328,18 +345,23 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
 
   const today = new Date().toISOString().slice(0, 10);
   const engines: AIRecord[] = [];
+  let capExceededCount = 0;
 
   for (const row of rows.results ?? []) {
     const callsToday = row.calls_reset_date === today ? row.calls_today : 0;
-    if (callsToday >= row.daily_call_cap) continue;
+    if (row.daily_call_cap > 0 && callsToday >= row.daily_call_cap) {
+      capExceededCount += 1;
+      continue;
+    }
     const creds = await decryptVaultJson<{ apiKey?: string }>(row.encrypted_api_key, env.MASTER_ENCRYPTION_KEY).catch(() => ({
       apiKey: undefined,
     }));
     if (!creds.apiKey) continue;
 
-    await env.DB.prepare(
-      `UPDATE platform_ai_engines SET calls_today = ?, calls_reset_date = ? WHERE id = ?`
-    ).bind(callsToday + 1, today, row.id).run().catch(() => {});
+    let normalizedModel = row.model;
+    if ((row.base_url || '').includes('hilinkup.com') && normalizedModel.trim().toLowerCase() === 'deep') {
+      normalizedModel = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+    }
 
     engines.push({
       id: row.id,
@@ -347,7 +369,7 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
       label: row.label,
       weight: Math.max(1, row.weight || 100),
       provider: row.provider,
-      model: row.model,
+      model: normalizedModel,
       baseUrl: row.base_url,
       apiKey: creds.apiKey,
       temperature: row.temperature,
@@ -371,7 +393,7 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
     });
   }
 
-  return { engines, consensusMode, cacheTtlSec };
+  return { engines, consensusMode, cacheTtlSec, capExceededCount };
 }
 
 export async function resolveUserActiveAI(env: Env, userId: string): Promise<AIRecord | null> {
@@ -420,6 +442,7 @@ export async function resolveAIEnsemble(env: Env, userId?: string): Promise<{
   engines: AIRecord[];
   consensusMode: AIConsensusMode;
   cacheTtlSec: number;
+  capExceeded?: boolean;
 }> {
   const platform = await resolvePlatformAIEngines(env);
   if (platform.engines.length > 0) {
@@ -428,6 +451,7 @@ export async function resolveAIEnsemble(env: Env, userId?: string): Promise<{
       engines: platform.engines,
       consensusMode: platform.consensusMode,
       cacheTtlSec: platform.cacheTtlSec,
+      capExceeded: false,
     };
   }
   if (userId) {
@@ -438,6 +462,7 @@ export async function resolveAIEnsemble(env: Env, userId?: string): Promise<{
         engines: [{ ...userAi, id: 'user-personal', slotOrder: 1, label: userAi.model, weight: 100 }],
         consensusMode: 'SINGLE',
         cacheTtlSec: 60,
+        capExceeded: false,
       };
     }
   }
@@ -446,6 +471,7 @@ export async function resolveAIEnsemble(env: Env, userId?: string): Promise<{
     engines: [],
     consensusMode: platform.consensusMode,
     cacheTtlSec: platform.cacheTtlSec,
+    capExceeded: platform.capExceededCount > 0,
   };
 }
 
@@ -1026,6 +1052,10 @@ export async function runAutonomousAITrader(
     mixerWeights: params.mixerWeights,
     mixerThreshold: params.mixerThreshold,
   });
+
+  if (ensemble.source === 'PLATFORM') {
+    await recordPlatformEngineUsage(env, ensemble.engines);
+  }
 
   const sysPrompt = `You are part of Dollarino Central AI Trading Committee — an institutional perpetual futures decision model.
 Analyze raw multi-timeframe price action, market microstructure, momentum, volatility (ATR), orderbook imbalance, and structural S/R to vote on LONG, SHORT, HOLD, or CLOSE.

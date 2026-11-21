@@ -985,3 +985,97 @@ authRoutes.patch('/ui-preferences', requireAuth, async (c) => {
   }
   return c.json({ ok: true });
 });
+
+// Permanently delete current user account and purge all associated data
+authRoutes.delete('/account', requireAuth, async (c) => {
+  const u = c.get('user');
+  if (u.role === 'owner') {
+    return c.json({ error: 'حساب مالک اصلی پلتفرم جهت حفظ امنیت سیستم قابل حذف نیست.' }, 403);
+  }
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    confirmText?: string;
+    password?: string;
+  };
+  const cleanConfirm = (body.confirmText || '').trim();
+  if (cleanConfirm.toUpperCase() !== 'DELETE' && cleanConfirm !== 'حذف' && cleanConfirm !== 'حذف حساب') {
+    return c.json(
+      { error: 'برای تایید حذف کامل حساب، لطفاً عبارت DELETE یا «حذف» را به درستی وارد کنید.' },
+      400
+    );
+  }
+
+  const row = await c.env.DB.prepare(
+    `SELECT id, email, password_hash, telegram_id, COALESCE(has_custom_password, 0) as has_custom_password
+     FROM users WHERE id = ?`
+  )
+    .bind(u.id)
+    .first<{
+      id: string;
+      email: string;
+      password_hash: string;
+      telegram_id: string | null;
+      has_custom_password: number;
+    }>();
+  if (!row) {
+    return c.json({ error: 'Account not found' }, 404);
+  }
+
+  const hasWebPwd = row.has_custom_password === 1 && !row.email.endsWith('@telegram.dollarino.local');
+  if (hasWebPwd) {
+    if (!body.password || !(await verifyPassword(body.password, row.password_hash))) {
+      return c.json({ error: 'رمز عبور فعلی جهت تایید حذف حساب صحیح نیست.' }, 401);
+    }
+  }
+
+  if (row.telegram_id && c.env.TELEGRAM_BOT_TOKEN) {
+    const bot = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
+    await bot
+      .sendMessage(
+        row.telegram_id,
+        '🗑 حساب کاربری شما در پلتفرم دلارینو با درخواست خودتان به صورت کامل حذف و کلیه اطلاعات پاکسازی شدند.\nهر زمان مایل بودید می‌توانید مجدداً با ارسال /start حساب جدید بسازید.'
+      )
+      .catch(() => {});
+  }
+
+  // Stop active bot & clean up any tables referencing user_id (including those without ON DELETE CASCADE)
+  const cleanupStatements = [
+    c.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED' WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(
+      `DELETE FROM support_messages WHERE user_id = ? OR ticket_id IN (SELECT id FROM support_tickets WHERE user_id = ?)`
+    ).bind(u.id, u.id),
+    c.env.DB.prepare(`DELETE FROM support_tickets WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM user_ai_messages WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM user_ai_agents WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM copy_subscriptions WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM copy_traders WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM verified_profit_cards WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM price_alerts WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM notifications WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM gift_redemptions WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM referrals WHERE referrer_user_id = ? OR referred_user_id = ?`).bind(u.id, u.id),
+    c.env.DB.prepare(`DELETE FROM referral_withdrawals WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM dex_trades WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM user_strategies WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM wallet_ledger WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM pending_orders WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM trades WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM signals WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM chart_ai_chats WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM audit_logs WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM bot_configs WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM ai_connections WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM exchange_connections WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM telegram_bots WHERE user_id = ?`).bind(u.id),
+    c.env.DB.prepare(`DELETE FROM user_subscriptions WHERE user_id = ?`).bind(u.id),
+  ];
+
+  for (const stmt of cleanupStatements) {
+    await stmt.run().catch(() => {});
+  }
+
+  await c.env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(u.id).run();
+  deleteCookie(c, 'dollarino_session', { path: '/' });
+
+  return c.json({ ok: true, deleted: true });
+});

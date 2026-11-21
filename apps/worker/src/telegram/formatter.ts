@@ -85,6 +85,7 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
   const safeUrl = webAppUrl?.startsWith('https://') ? webAppUrl : undefined;
   if (uiMode === 'simple') {
     return [
+      [{ text: '🟢 شروع خودکار ربات (یک کلیک)' }, { text: '⚡️ شکار و ترید فوری AI' }],
       [{ text: '🚀 راه‌اندازی ۴ مرحله‌ای ربات' }, { text: '🦊 کیف‌پول Trust Wallet و DEX' }],
       [{ text: 'ربات و هوش مصنوعی من 🤖' }, { text: '🏆 کپی‌ترید تاییدشده' }],
       [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
@@ -95,6 +96,7 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
     ];
   }
   return [
+    [{ text: '🟢 شروع خودکار ربات (یک کلیک)' }, { text: '⚡️ شکار و ترید فوری AI' }],
     [{ text: '🔍 رادار DexScreener و توکن داغ' }, { text: '🦊 کیف‌پول Trust Wallet و DEX' }],
     [{ text: 'اتصال به صرافی 🔗' }, { text: 'تنظیمات ⚙️' }],
     [{ text: '📈 معاملات باز' }, { text: 'ربات و هوش مصنوعی من 🤖' }],
@@ -139,14 +141,22 @@ export function miniAppInlineKeyboard(
     ]);
   }
 
+  rows.push([
+    {
+      text: isBotRunning ? '🔴 توقف فوری ربات' : '🟢 شروع خودکار ربات (یک کلیک)',
+      callback_data: 'tg_bot_toggle',
+      style: isBotRunning ? 'danger' : 'success',
+    },
+    {
+      text: '⚡️ شکار و ترید فوری AI',
+      callback_data: 'tg_instant_ai_trade',
+      style: 'primary',
+    },
+  ]);
+
   if (uiMode === 'simple') {
     rows.push([
       { text: '🚀 راه‌اندازی گام‌به‌گام (۴ مرحله)', callback_data: 'tg_simple_wizard:1', style: 'primary' },
-      {
-        text: isBotRunning ? '🔴 توقف فوری ربات' : '🟢 شروع سریع ربات',
-        callback_data: 'tg_bot_toggle',
-        style: isBotRunning ? 'danger' : 'success',
-      },
     ]);
   }
 
