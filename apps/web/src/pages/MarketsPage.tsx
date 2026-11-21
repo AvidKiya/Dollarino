@@ -21,7 +21,7 @@ import { Sparkline } from '../components/DollarinoViz';
 
 function fmtPx(px: number): string {
   if (!Number.isFinite(px) || px <= 0) return '—';
-  if (px >= 1000) return px.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (px >= 1000) return px.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (px >= 1) return px.toFixed(3);
   return px.toFixed(5);
 }
@@ -388,8 +388,8 @@ export function MarketsPage({
             </div>
           )}
 
-          <div className="relative flex-1 sm:flex-none">
-            <Search className="absolute start-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dim" />
+          <div className="panel rounded-2xl px-3.5 py-2 flex items-center gap-2 flex-1 sm:flex-none sm:w-52">
+            <Search className="w-4 h-4 text-dim shrink-0" />
             <input
               value={q}
               onChange={(e) => {
@@ -397,7 +397,7 @@ export function MarketsPage({
                 setVisibleCount(60);
               }}
               placeholder={isFa ? 'جستجوی ارز...' : 'Search coin...'}
-              className="field ps-10 text-xs sm:w-52"
+              className="bg-transparent flex-1 min-w-0 text-xs text-main outline-none placeholder:text-dim"
             />
           </div>
 

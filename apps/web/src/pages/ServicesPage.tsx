@@ -176,7 +176,7 @@ export function ServicesPage({
       ? data.entitlement.planNameFa
       : data.entitlement.planNameEn
     : isFa
-      ? 'نسخه رایگان ($۱۰K دمو)'
+      ? 'نسخه رایگان دمو ($10K)'
       : 'Free Paper ($10K)';
 
   /* Dedicated Account Management View matching image-2.png + Real Profile Photo Upload */
@@ -604,9 +604,14 @@ export function ServicesPage({
               {isFa ? 'رادار هوشمند و استراتژی کاستوم دلارینو' : 'Dollarino Smart Radar & Pine/Py IDE'}
             </p>
             <p className={`text-[11px] leading-relaxed ${currentLook === 'paper' ? 'text-slate-600' : 'text-slate-300'}`}>
-              {isFa
-                ? 'اسکن زنده ۸۰۷ جفت‌ارز، بک‌تست ۹۰۰ کندلی و اتصال ۱-کلیکی به @Dollarino_bot'
-                : '807-pair live scanner, 900-candle backtest & @Dollarino_bot sync'}
+              {isFa ? (
+                <>
+                  اسکن زنده ۸۰۷ جفت‌ارز، بک‌تست ۹۰۰ کندلی و اتصال ۱-کلیکی به{' '}
+                  <span dir="ltr" className="font-bold">@Dollarino_bot</span>
+                </>
+              ) : (
+                '807-pair live scanner, 900-candle backtest & @Dollarino_bot sync'
+              )}
             </p>
             <button
               type="button"

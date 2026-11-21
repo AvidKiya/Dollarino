@@ -113,11 +113,18 @@ export function PortfolioPage({
       map.set(base, prev);
     });
     const q = assetQ.trim().toLowerCase();
-    return [...map.values()].filter((a) => {
-      if (hideZero && a.usd <= 0.01) return false;
-      if (!q) return true;
-      return a.base.toLowerCase().includes(q) || coinDisplayName(a.base, isFa).toLowerCase().includes(q);
-    });
+    return [...map.values()]
+      .filter((a) => {
+        if (hideZero && a.usd <= 0.01) return false;
+        if (!q) return true;
+        return a.base.toLowerCase().includes(q) || coinDisplayName(a.base, isFa).toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        if (a.base === 'USDT') return -1;
+        if (b.base === 'USDT') return 1;
+        if (b.usd !== a.usd) return b.usd - a.usd;
+        return 0;
+      });
   }, [data.openTrades, freeCash, assetQ, hideZero, isFa]);
 
   const closeAll = async () => {
@@ -207,19 +214,23 @@ export function PortfolioPage({
 
         <div className="relative z-10 text-center space-y-1 py-1">
           <p className="text-xs text-white/80 font-bold">{isFa ? 'موجودی کل' : 'Total Equity'}</p>
-          <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-white">
-            {hideBal ? '••••••' : `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-white font-num">
+            {hideBal ? '••••••' : `$${totalEq.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
           </p>
           {!hideBal && isFa && (
             <p className="text-xs text-white/80 font-semibold">معادل {formatTomanEq(totalEq)} تومان</p>
           )}
           <div className="flex items-center justify-center gap-3 text-[11px] text-white/75 pt-1">
-            <span>{isFa ? `آزاد: $${freeCash.toFixed(0)}` : `Free: $${freeCash.toFixed(0)}`}</span>
+            <span>
+              {isFa ? 'آزاد:' : 'Free:'} <span dir="ltr" className="inline-block font-num">${freeCash.toFixed(0)}</span>
+            </span>
             <span>·</span>
-            <span>{isFa ? `درگیر: $${usedMargin.toFixed(0)}` : `Used: $${usedMargin.toFixed(0)}`}</span>
+            <span>
+              {isFa ? 'درگیر:' : 'Used:'} <span dir="ltr" className="inline-block font-num">${usedMargin.toFixed(0)}</span>
+            </span>
             <span>·</span>
-            <span dir="ltr" className={unreal >= 0 ? 'text-[#8EFFB6] font-bold' : 'text-rose-200 font-bold'}>
-              {unreal >= 0 ? '+' : ''}${unreal.toFixed(2)}
+            <span dir="ltr" className={`inline-block font-bold font-num ${unreal >= 0 ? 'text-[#8EFFB6]' : 'text-rose-200'}`}>
+              {unreal >= 0 ? `+$${unreal.toFixed(2)}` : `-$${Math.abs(unreal).toFixed(2)}`}
             </span>
           </div>
         </div>
@@ -277,7 +288,15 @@ export function PortfolioPage({
           <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
             <RotateCcw className="w-5 h-5" />
           </span>
-          <span className="text-[11px] font-extrabold text-main">{isFa ? 'ریست $۱۰K' : 'Reset $10K'}</span>
+          <span className="text-[11px] font-extrabold text-main">
+            {isFa ? (
+              <>
+                ریست <span dir="ltr" className="font-num">$10K</span>
+              </>
+            ) : (
+              'Reset $10K'
+            )}
+          </span>
         </button>
 
         <button
@@ -352,13 +371,13 @@ export function PortfolioPage({
               <div className="flex items-end justify-between gap-1">
                 <div>
                   <p dir="ltr" className="font-num font-black text-sm text-main">
-                    ${a.usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    ${a.usd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
                   </p>
                   {isFa && <p className="text-[10px] text-dim">{formatTomanEq(a.usd)} تومان</p>}
                 </div>
                 {a.pnl !== 0 && (
-                  <span dir="ltr" className={`text-[11px] font-black tabular ${a.pnl >= 0 ? 'text-jade' : 'text-loss'}`}>
-                    {a.pnl >= 0 ? '+' : ''}${a.pnl.toFixed(2)}
+                  <span dir="ltr" className={`inline-block text-[11px] font-black tabular font-num ${a.pnl >= 0 ? 'text-jade' : 'text-loss'}`}>
+                    {a.pnl >= 0 ? `+$${a.pnl.toFixed(2)}` : `-$${Math.abs(a.pnl).toFixed(2)}`}
                   </span>
                 )}
               </div>

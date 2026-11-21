@@ -671,8 +671,8 @@ export function OverviewPage({
           </div>
 
           <div className="flex items-baseline justify-center gap-1.5">
-            <span dir="ltr" className="font-display font-bold text-4xl sm:text-5xl tabular text-main tracking-tight">
-              {hideBal ? '••••••' : `$${totalEq.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+            <span dir="ltr" className="font-display font-bold text-4xl sm:text-5xl tabular text-main tracking-tight font-num">
+              {hideBal ? '••••••' : `$${totalEq.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
             </span>
             <span className="text-xs font-bold text-dim">USD</span>
           </div>
@@ -1678,8 +1678,8 @@ export function OverviewPage({
                     </>
                   )}
                 </div>
-                <div dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-main mt-1">
-                  {hideBal ? '••••••' : <AnimatedNumber value={totalEq} format={(n) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />}
+                <div dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-main mt-1 font-num">
+                  {hideBal ? '••••••' : <AnimatedNumber value={totalEq} format={(n) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />}
                 </div>
               </div>
 
@@ -1700,7 +1700,7 @@ export function OverviewPage({
 
             <div className="grid grid-cols-3 gap-2.5">
               {[
-                { icon: Wallet, l: isFa ? 'موجودی آزاد' : 'Free Cash', v: hideBal ? '•••' : `$${freeBal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, cls: 'text-jade' },
+                { icon: Wallet, l: isFa ? 'موجودی آزاد' : 'Free Cash', v: hideBal ? '•••' : `$${freeBal.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, cls: 'text-jade' },
                 { icon: Trophy, l: isFa ? 'سود کل' : 'Total PnL', v: `${data.stats.totalPnl >= 0 ? '+' : ''}$${data.stats.totalPnl.toFixed(0)}`, cls: 'text-goldsoft' },
                 { icon: ShieldCheck, l: isFa ? 'اهرم فعلی' : 'Max Lev', v: `${data.config.max_leverage}×`, cls: 'text-brand' },
               ].map((c) => {
@@ -1729,7 +1729,7 @@ export function OverviewPage({
               <div className="text-start">
                 <p className="text-[10px] text-dim font-bold">BTC/USDT</p>
                 <p dir="ltr" className="font-num font-bold text-xs tabular text-main">
-                  ${Number(btc.lastPrice).toLocaleString()}
+                  ${Number(btc.lastPrice).toLocaleString('en-US', { maximumFractionDigits: 2 })}
                 </p>
               </div>
             </button>

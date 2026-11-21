@@ -33,7 +33,7 @@ export function coinDisplayName(symbolOrBase: string, isFa: boolean): string {
 
 export function formatUsdPrice(px: number): string {
   if (!Number.isFinite(px) || px <= 0) return '0';
-  if (px >= 1000) return px.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  if (px >= 1000) return px.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (px >= 1) return px.toFixed(2);
   return px.toFixed(4);
 }

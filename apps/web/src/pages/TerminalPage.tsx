@@ -85,7 +85,7 @@ interface ChartAIResult {
 function fmtPx(v?: number | string): string {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1000) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n >= 1000) return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   return n.toFixed(6);
 }
@@ -398,7 +398,7 @@ export function TerminalPage({
         )}
 
         {/* 2. Kifpool image-3.png Clean Open Coin Strip + Live Price + Candle Toggle */}
-        <div className="px-1 flex items-center justify-between gap-3">
+        <div className="px-1 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <SymbolPicker
               lang={lang}
@@ -410,27 +410,9 @@ export function TerminalPage({
               onChangeMarketType={(m) => void onChangeMarketType?.(m)}
               onChange={(sym) => setSymbol(sym)}
             />
-            {onChangeMarketType && (
-              <div className="ios-segmented p-0.5">
-                <button
-                  type="button"
-                  onClick={() => void onChangeMarketType('FUTURES')}
-                  className={`px-2 py-1 rounded-full text-[10px] font-black transition ${marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'}`}
-                >
-                  {isFa ? 'فیوچرز' : 'Futures'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void onChangeMarketType('SPOT')}
-                  className={`px-2 py-1 rounded-full text-[10px] font-black transition ${marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'}`}
-                >
-                  {isFa ? 'اسپات' : 'Spot'}
-                </button>
-              </div>
-            )}
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             <div className="text-end leading-tight">
               <span className="block text-[10px] font-bold text-dim">{isFa ? 'قیمت لحظه‌ای' : 'Live Price'}</span>
               <span dir="ltr" className="font-num font-black text-sm text-[#0D9455]">
@@ -449,6 +431,28 @@ export function TerminalPage({
             </button>
           </div>
         </div>
+
+        {onChangeMarketType && (
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-bold text-dim">{isFa ? 'نوع بازار معامله:' : 'Market Type:'}</span>
+            <div className="ios-segmented p-0.5">
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('FUTURES')}
+                className={`px-3 py-1 rounded-full text-[10px] font-black transition ${marketType === 'FUTURES' ? 'ios-pill-active' : 'text-dim'}`}
+              >
+                {isFa ? 'فیوچرز' : 'Futures'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onChangeMarketType('SPOT')}
+                className={`px-3 py-1 rounded-full text-[10px] font-black transition ${marketType === 'SPOT' ? 'ios-pill-active' : 'text-dim'}`}
+              >
+                {isFa ? 'اسپات' : 'Spot'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Expandable Interactive Candlestick Chart */}
         {showSimpleChart && (
@@ -600,15 +604,17 @@ export function TerminalPage({
           >
             <Zap className="w-4 h-4 fill-current" />
             <span>
-              {submitting
-                ? '...'
-                : effectiveSide === 'LONG'
-                  ? isFa
-                    ? `خرید ${coinFaTitle} ($${usdAmountStr})`
-                    : `Buy ${coinBase} ($${usdAmountStr})`
-                  : isFa
-                    ? `فروش ${coinFaTitle} ($${usdAmountStr})`
-                    : `Sell ${coinBase} ($${usdAmountStr})`}
+              {submitting ? (
+                '...'
+              ) : effectiveSide === 'LONG' ? (
+                <>
+                  {isFa ? `خرید ${coinFaTitle}` : `Buy ${coinBase}`} <span dir="ltr" className="font-num">(${usdAmountStr})</span>
+                </>
+              ) : (
+                <>
+                  {isFa ? `فروش ${coinFaTitle}` : `Sell ${coinBase}`} <span dir="ltr" className="font-num">(${usdAmountStr})</span>
+                </>
+              )}
             </span>
           </button>
 
@@ -620,7 +626,7 @@ export function TerminalPage({
               className="text-dim font-bold hover:text-[#1652F0] transition inline-flex items-center gap-1"
             >
               <span>{isFa ? 'موجودی در دسترس:' : 'Available:'}</span>
-              <strong dir="ltr" className="text-[#F59E0B] font-num">${freeCash.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong>
+              <strong dir="ltr" className="text-[#F59E0B] font-num">${freeCash.toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong>
             </button>
             <span className="text-dim font-bold">
               {isFa ? 'حدضرر / تارگت:' : 'SL / TP1:'}{' '}
