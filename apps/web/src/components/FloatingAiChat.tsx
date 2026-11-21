@@ -420,7 +420,15 @@ export function DedicatedAiChatSurface({
 
     try {
       const endpoint = authenticated ? '/api/ai-assistant/chat' : '/api/public/ai-chat';
-      const res = await apiFetch<{
+      const payload = JSON.stringify({
+        sessionId: authenticated ? activeSessionId : undefined,
+        modelId: selectedModelId || undefined,
+        message: cleanText,
+        imageDataUrl: attachedImg,
+        history: !authenticated ? historySnapshot : undefined,
+      });
+
+      let res: {
         sessionId: string;
         reply: string;
         modelId: string;
@@ -428,16 +436,48 @@ export function DedicatedAiChatSurface({
         usedVision: boolean;
         visionFallbackNotice?: string;
         setup: ExtractedChartSetup | null;
-      }>(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({
-          sessionId: authenticated ? activeSessionId : undefined,
-          modelId: selectedModelId || undefined,
-          message: cleanText,
-          imageDataUrl: attachedImg,
-          history: !authenticated ? historySnapshot : undefined,
-        }),
-      });
+      };
+
+      try {
+        res = await apiFetch(endpoint, { method: 'POST', body: payload });
+      } catch (primaryErr) {
+        const errStatus = (primaryErr as { status?: number })?.status;
+        const errText = primaryErr instanceof Error ? primaryErr.message : '';
+        if (errStatus === 404 || /Route not found/i.test(errText)) {
+          if (authenticated) {
+            try {
+              res = await apiFetch('/api/public/ai-chat', {
+                method: 'POST',
+                body: JSON.stringify({
+                  modelId: selectedModelId || undefined,
+                  message: cleanText,
+                  imageDataUrl: attachedImg,
+                  history: historySnapshot,
+                }),
+              });
+            } catch (pubErr) {
+              const pStatus = (pubErr as { status?: number })?.status;
+              const pText = pubErr instanceof Error ? pubErr.message : '';
+              if (pStatus === 404 || /Route not found/i.test(pText)) {
+                throw new Error(
+                  isFa
+                    ? '⚠️ سرور بک‌اند (Cloudflare Worker) هنوز به نسخه جدید v9.9.1 آپدیت نشده است (Route not found). لطفاً دستور npx wrangler deploy را روی سرور اجرا کنید تا مسیر جدید هوش مصنوعی فعال شود.'
+                    : '⚠️ Backend Cloudflare Worker is still on an older version (Route not found). Run `npx wrangler deploy` to update the API routes.'
+                );
+              }
+              throw pubErr;
+            }
+          } else {
+            throw new Error(
+              isFa
+                ? '⚠️ سرور بک‌اند (Cloudflare Worker) هنوز به نسخه جدید v9.9.1 آپدیت نشده است (Route not found). لطفاً دستور npx wrangler deploy را روی سرور اجرا کنید.'
+                : '⚠️ Backend Cloudflare Worker is still on an older version (Route not found). Run `npx wrangler deploy`.'
+            );
+          }
+        } else {
+          throw primaryErr;
+        }
+      }
 
       if (authenticated && (!activeSessionId || activeSessionId !== res.sessionId)) {
         setActiveSessionId(res.sessionId);
@@ -588,125 +628,130 @@ export function DedicatedAiChatSurface({
         )}
 
         {/* Top Header + Model Selector */}
-        <div className="px-3.5 py-2.5 border-b hairline flex flex-wrap items-center justify-between gap-2 bg-[var(--soft)]/60 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-[#1652f0] grid place-items-center text-white shrink-0">
-              <Bot className="w-4 h-4" />
+        <div className="px-3.5 pt-2 sm:pt-3 pb-2.5 border-b hairline bg-[var(--panel)] shrink-0 space-y-2">
+          {compact && (
+            <div className="sm:hidden flex justify-center">
+              <span className="w-10 h-1 rounded-full bg-[var(--line-strong)]" aria-hidden="true" />
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h3 className="font-display font-bold text-xs sm:text-sm text-main truncate">
-                  {isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI'}
-                </h3>
-                <span className="inline-flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  {isFa ? 'متصل' : 'Online'}
-                </span>
-                {activeModel?.supportsVision && (
-                  <span className="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400">
-                    <Eye className="w-2.5 h-2.5" />
-                    Vision
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <DollarinoRobotLogoIcon size={34} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-display font-bold text-xs sm:text-sm text-main truncate">
+                    {isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI'}
+                  </h3>
+                  <span className="inline-flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    {isFa ? 'آنلاین' : 'Live'}
                   </span>
-                )}
+                  {activeModel?.supportsVision && (
+                    <span className="hidden xs:inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400">
+                      <Eye className="w-2.5 h-2.5" />
+                      Vision
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-dim truncate">
+                  {isFa ? `سازنده: ${creator.nameFa} (${creator.telegram})` : `Creator: ${creator.nameEn}`}
+                </p>
               </div>
-              <p className="text-[10px] text-dim truncate">
-                {isFa ? `سازنده: ${creator.nameFa} (${creator.telegram})` : `Creator: ${creator.nameEn}`}
-              </p>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {!authenticated && onGoAuth && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCloseFloating?.();
+                    onGoAuth();
+                  }}
+                  title={isFa ? 'ورود برای ذخیره چت‌ها' : 'Sign in'}
+                  className="h-8 px-2.5 rounded-full btn-ghost text-[10px] font-black inline-flex items-center gap-1"
+                >
+                  <LogIn className="w-3 h-3" />
+                  <span className="hidden sm:inline">{isFa ? 'ورود' : 'Login'}</span>
+                </button>
+              )}
+
+              {compact && (
+                <button
+                  type="button"
+                  onClick={() => void startNewChat()}
+                  title={isFa ? 'گفتگوی جدید' : 'New chat'}
+                  className="h-8 w-8 rounded-full btn-ghost grid place-items-center"
+                >
+                  <MessageSquarePlus className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {onExpandFullScreen && (
+                <button
+                  type="button"
+                  onClick={onExpandFullScreen}
+                  title={isFa ? 'باز کردن صفحه کامل چت' : 'Open Full AI Page'}
+                  className="h-8 w-8 rounded-full btn-ghost grid place-items-center"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {onCloseFloating && (
+                <button
+                  type="button"
+                  onClick={onCloseFloating}
+                  title={isFa ? 'جمع کردن به گوی' : 'Minimize to orb'}
+                  className="h-8 w-8 rounded-full btn-ghost grid place-items-center"
+                >
+                  <Minimize2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {models.length > 0 && (
+          {models.length > 0 && (
+            <div className="flex items-center gap-2">
               <select
                 value={selectedModelId}
                 onChange={(e) => void handleModelChange(e.target.value)}
                 aria-label={isFa ? 'انتخاب مدل هوش مصنوعی' : 'Select AI Model'}
-                className="input-field !py-1.5 !px-2 !text-[11px] font-bold max-w-[160px] sm:max-w-[210px]"
+                className="w-full rounded-full bg-[var(--soft)] border hairline py-1.5 px-3 text-[11px] font-bold text-main outline-none focus:border-[var(--gold)] transition"
               >
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.supportsVision ? '👁️ ' : '💬 '}
+                    {m.supportsVision ? '👁️ ' : '🤖 '}
                     {m.label}
                   </option>
                 ))}
               </select>
-            )}
-
-            {!authenticated && onGoAuth && (
-              <button
-                type="button"
-                onClick={() => {
-                  onCloseFloating?.();
-                  onGoAuth();
-                }}
-                title={isFa ? 'ورود برای ذخیره چت‌ها' : 'Sign in'}
-                className="h-8 px-2.5 rounded-xl btn-ghost text-[10px] font-black inline-flex items-center gap-1"
-              >
-                <LogIn className="w-3 h-3" />
-                <span className="hidden sm:inline">{isFa ? 'ورود' : 'Login'}</span>
-              </button>
-            )}
-
-            {compact && (
-              <button
-                type="button"
-                onClick={() => void startNewChat()}
-                title={isFa ? 'گفتگوی جدید' : 'New chat'}
-                className="h-8 w-8 rounded-xl btn-ghost grid place-items-center"
-              >
-                <MessageSquarePlus className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {onExpandFullScreen && (
-              <button
-                type="button"
-                onClick={onExpandFullScreen}
-                title={isFa ? 'باز کردن صفحه کامل چت' : 'Open Full AI Page'}
-                className="h-8 w-8 rounded-xl btn-ghost grid place-items-center"
-              >
-                <Maximize2 className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {onCloseFloating && (
-              <button
-                type="button"
-                onClick={onCloseFloating}
-                title={isFa ? 'جمع کردن به گوی' : 'Minimize to orb'}
-                className="h-8 w-8 rounded-xl btn-ghost grid place-items-center"
-              >
-                <Minimize2 className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Messages Feed */}
-        <div className="flex-1 overflow-y-auto p-3.5 space-y-3">
+        <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center py-5 px-3 space-y-4">
-              <div className="w-11 h-11 rounded-2xl surface-soft border hairline grid place-items-center">
-                <Sparkles className="w-5 h-5 text-[var(--gold)]" />
-              </div>
+            <div className="h-full flex flex-col items-center justify-center text-center py-4 px-2 space-y-4">
+              <DollarinoRobotLogoIcon size={52} />
               <div className="space-y-1 max-w-md">
                 <h4 className="font-display font-bold text-sm sm:text-base text-main">
-                  {isFa ? 'هوش مصنوعی دلارینو آماده پاسخ‌گویی است' : 'Dollarino AI is Ready'}
+                  {isFa ? 'ربات هوش مصنوعی دلارینو آماده است' : 'Dollarino AI is Ready'}
                 </h4>
                 <p className="text-[11px] sm:text-xs text-dim leading-relaxed">
                   {isFa
-                    ? 'هر سوالی دارید بپرسید، نام هر ارزی را برای تحلیل لحظه‌ای و ستاپ معاملاتی بنویسید یا عکس چارت بفرستید.'
-                    : 'Ask anything, request live coin analysis & trade setups, or drop a chart screenshot.'}
+                    ? 'سوال بپرسید، اسم ارز را برای تحلیل زنده و ستاپ بنویسید، یا عکس چارت بفرستید.'
+                    : 'Ask anything, request live coin setups, or drop a chart screenshot.'}
                 </p>
               </div>
 
-              <div className="grid sm:grid-cols-2 gap-2 w-full max-w-xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
                 {quickStarters.map((q) => (
                   <button
                     key={q}
                     type="button"
                     onClick={() => void sendMessage(q)}
-                    className="surface-soft hover:brightness-95 transition text-start px-3 py-2.5 rounded-2xl text-[11px] font-bold text-sub border hairline"
+                    className="surface-soft hover:brightness-95 active:scale-[0.98] transition text-start px-3 py-2.5 rounded-2xl text-[11px] font-bold text-sub border hairline"
                   >
                     {q}
                   </button>
@@ -717,10 +762,10 @@ export function DedicatedAiChatSurface({
             messages.map((m) => (
               <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
-                  className={`max-w-[90%] sm:max-w-[82%] rounded-2xl px-3.5 py-2.5 ${
+                  className={`max-w-[88%] sm:max-w-[82%] rounded-[20px] px-3.5 py-2.5 shadow-sm ${
                     m.role === 'user'
-                      ? 'bg-[#1652f0] text-white rounded-ee-sm'
-                      : 'surface-soft border hairline text-sub rounded-es-sm'
+                      ? 'bg-[#1652f0] text-white rounded-ee-md'
+                      : 'surface-soft border hairline text-sub rounded-es-md'
                   }`}
                 >
                   {m.previewImageUrl && (
@@ -779,7 +824,7 @@ export function DedicatedAiChatSurface({
 
           {sending && (
             <div className="flex justify-start">
-              <div className="surface-soft border hairline rounded-2xl px-3.5 py-2.5 flex items-center gap-2 text-xs text-dim">
+              <div className="surface-soft border hairline rounded-[20px] rounded-es-md px-3.5 py-2.5 flex items-center gap-2 text-xs text-dim">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--gold)]" />
                 <span>{isFa ? 'در حال تحلیل و نوشتن پاسخ...' : 'Thinking...'}</span>
               </div>
@@ -798,58 +843,59 @@ export function DedicatedAiChatSurface({
           </div>
         )}
 
-        {/* Composer + Chart Upload/Paste */}
+        {/* Modern Pill Chat Bar Composer + Chart Upload/Paste */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void sendMessage();
           }}
-          className="p-3 border-t hairline bg-[var(--soft)]/40 space-y-2 shrink-0"
+          className="px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t hairline bg-[var(--panel)] space-y-2 shrink-0"
         >
           {pendingImage && (
             <div className="flex items-center gap-3 p-2 rounded-2xl surface-soft border hairline">
-              <img src={pendingImage} alt="Preview" className="h-14 w-20 object-cover rounded-xl border hairline" />
+              <img src={pendingImage} alt="Preview" className="h-12 w-16 object-cover rounded-xl border hairline" />
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-main">
-                  {isFa ? '📸 عکس چارت آماده ارسال برای تحلیل AI' : '📸 Chart ready for AI analysis'}
+                <p className="text-[11px] font-bold text-main truncate">
+                  {isFa ? '📸 عکس چارت آماده ارسال به AI' : '📸 Chart ready for AI'}
                 </p>
-                <p className="text-[10px] text-dim">
-                  {isFa ? 'می‌توانید سوال اضافه بنویسید یا مستقیم ارسال کنید.' : 'Add prompt or send directly.'}
+                <p className="text-[10px] text-dim truncate">
+                  {isFa ? 'پیام بنویسید یا دکمه ارسال را بزنید.' : 'Add prompt or send.'}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setPendingImage(null)}
-                className="h-7 w-7 rounded-full btn-ghost grid place-items-center text-rose-400"
+                className="h-7 w-7 rounded-full btn-ghost grid place-items-center text-rose-400 shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           )}
 
-          <div className="flex items-end gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = '';
-                void handleImageFile(file);
-              }}
-            />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              void handleImageFile(file);
+            }}
+          />
+
+          <div className="flex items-end gap-1.5 rounded-[24px] bg-[var(--soft)] border border-[var(--line-strong)] focus-within:border-[var(--gold)] px-2 py-1.5 shadow-sm transition">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              title={isFa ? 'آپلود عکس چارت' : 'Upload chart image'}
-              className="h-10 w-10 shrink-0 rounded-2xl btn-ghost border hairline grid place-items-center hover:border-[var(--gold)] transition"
+              title={isFa ? 'ارسال عکس چارت' : 'Attach chart image'}
+              className="h-9 w-9 shrink-0 rounded-full hover:bg-[var(--panel)] grid place-items-center text-[var(--gold)] transition"
             >
-              <ImagePlus className="w-4 h-4 text-[var(--gold)]" />
+              <ImagePlus className="w-[18px] h-[18px]" />
             </button>
 
             <textarea
-              rows={compact ? 1 : 2}
+              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onPaste={(e) => {
@@ -869,19 +915,20 @@ export function DedicatedAiChatSurface({
               }}
               placeholder={
                 isFa
-                  ? 'پیام بنویس یا عکس چارت را اینجا Paste/آپلود کن...'
-                  : 'Ask anything or paste/upload a chart image...'
+                  ? 'هر سوالی دارید بپرسید یا عکس چارت بفرستید...'
+                  : 'Message Dollarino AI or attach a chart...'
               }
-              className="input-field flex-1 !py-2.5 !px-3.5 text-xs sm:text-sm resize-none max-h-32"
+              className="flex-1 bg-transparent border-0 outline-none focus:ring-0 py-1.5 px-1 text-xs sm:text-sm text-main placeholder:text-dim resize-none max-h-28 leading-relaxed"
             />
 
             <button
               type="submit"
               disabled={sending || (!input.trim() && !pendingImage)}
-              className="h-10 px-4 shrink-0 rounded-2xl btn-cobalt font-black text-xs inline-flex items-center gap-1.5 disabled:opacity-45"
+              aria-label={isFa ? 'ارسال پیام' : 'Send message'}
+              className="h-9 w-9 sm:w-auto sm:px-3.5 shrink-0 rounded-full btn-cobalt font-black text-xs inline-flex items-center justify-center gap-1.5 disabled:opacity-35 transition active:scale-95"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              {!compact && <span>{isFa ? 'ارسال' : 'Send'}</span>}
+              {!compact && <span className="hidden sm:inline">{isFa ? 'ارسال' : 'Send'}</span>}
             </button>
           </div>
         </form>
@@ -890,8 +937,60 @@ export function DedicatedAiChatSurface({
   );
 }
 
+/* Custom Dollarino Logo-Inspired Robot Avatar SVG (Hexagon Cobalt + Visor + Green Candles) */
+export function DollarinoRobotLogoIcon({ size = 34 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      width={size}
+      height={size}
+      className="shrink-0 select-none pointer-events-none"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="dlrHexBg" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#2563EB" />
+          <stop offset="55%" stopColor="#1652F0" />
+          <stop offset="100%" stopColor="#092E96" />
+        </linearGradient>
+        <linearGradient id="dlrHelmet" x1="20" y1="16" x2="44" y2="48" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#FFFFFF" />
+          <stop offset="100%" stopColor="#DBEAFE" />
+        </linearGradient>
+      </defs>
+      {/* Dollarino Hexagon Badge */}
+      <polygon
+        points="32,4 56,18 56,46 32,60 8,46 8,18"
+        fill="url(#dlrHexBg)"
+        stroke="#00C8FF"
+        strokeWidth="2.6"
+        strokeLinejoin="round"
+      />
+      {/* Antenna with Dollarino Emerald Tip */}
+      <line x1="32" y1="11" x2="32" y2="17" stroke="#E2E8F0" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="32" cy="9.5" r="2.8" fill="#16E664" />
+      {/* Robot Ear Pods (Matching Astronaut Helmet Pods) */}
+      <rect x="13.5" y="27" width="4.5" height="11" rx="2.2" fill="#00C8FF" />
+      <rect x="46" y="27" width="4.5" height="11" rx="2.2" fill="#00C8FF" />
+      {/* Robot White Rounded Head */}
+      <rect x="17" y="17" width="30" height="27" rx="11" fill="url(#dlrHelmet)" />
+      {/* Dark Glossy Visor */}
+      <rect x="20.5" y="22.5" width="23" height="14.5" rx="6.5" fill="#07122D" />
+      {/* Glowing Cyan/Emerald Robot Eyes */}
+      <circle cx="27" cy="29.5" r="2.7" fill="#00E5FF" />
+      <circle cx="37" cy="29.5" r="2.7" fill="#16E664" />
+      {/* Subtle Digital Smile */}
+      <path d="M29.2 33.6Q32 35.4 34.8 33.6" stroke="#93C5FD" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      {/* 3 Ascending Mini Green Candles (Signature Logo Motif) */}
+      <rect x="24" y="48.5" width="3.8" height="4.5" rx="1" fill="#10D856" />
+      <rect x="30.1" y="46.5" width="3.8" height="6.5" rx="1" fill="#10D856" />
+      <rect x="36.2" y="44.2" width="3.8" height="8.8" rx="1" fill="#16E664" />
+    </svg>
+  );
+}
+
 const ORB_STORAGE_KEY = 'dollarino_ai_orb_pos_v2';
-const ORB_SIZE = 44;
+const ORB_SIZE = 48;
 
 interface OrbPos {
   side: 'left' | 'right';
@@ -992,41 +1091,51 @@ export function FloatingAiChat({
   return (
     <>
       {open && (
-        <div
-          dir={isFa ? 'rtl' : 'ltr'}
-          className={`fixed bottom-24 lg:bottom-16 ${
-            pos.side === 'left' ? 'left-3 sm:left-5' : 'right-3 sm:right-5'
-          } z-[180] w-[calc(100vw-1.5rem)] sm:w-[410px] h-[510px] max-h-[72vh] panel rounded-[26px] border border-[var(--glass-border)] shadow-xl overflow-hidden flex flex-col pop-in`}
-        >
-          <DedicatedAiChatSurface
-            lang={lang}
-            authenticated={authenticated}
-            compact
-            onNavigate={onNavigate}
-            onSelectSymbolForTerminal={onSelectSymbolForTerminal}
-            onGoAuth={onGoAuth}
-            onExpandFullScreen={
-              authenticated && onNavigate
-                ? () => {
-                    setOpen(false);
-                    onNavigate('aichat');
-                  }
-                : undefined
-            }
-            onCloseFloating={() => {
+        <>
+          <div
+            className="sm:hidden fixed inset-0 z-[179] bg-black/45"
+            onClick={() => {
               setOpen(false);
               setCollapsed(false);
               scheduleCollapse();
             }}
           />
-        </div>
+          <div
+            dir={isFa ? 'rtl' : 'ltr'}
+            className={`fixed inset-x-0 bottom-0 h-[84dvh] rounded-t-[28px] sm:inset-x-auto sm:bottom-16 ${
+              pos.side === 'left' ? 'sm:left-5' : 'sm:right-5'
+            } sm:w-[420px] sm:h-[560px] sm:max-h-[80vh] sm:rounded-[28px] z-[180] bg-[var(--panel)] border border-[var(--glass-border)] shadow-2xl overflow-hidden flex flex-col pop-in`}
+          >
+            <DedicatedAiChatSurface
+              lang={lang}
+              authenticated={authenticated}
+              compact
+              onNavigate={onNavigate}
+              onSelectSymbolForTerminal={onSelectSymbolForTerminal}
+              onGoAuth={onGoAuth}
+              onExpandFullScreen={
+                authenticated && onNavigate
+                  ? () => {
+                      setOpen(false);
+                      onNavigate('aichat');
+                    }
+                  : undefined
+              }
+              onCloseFloating={() => {
+                setOpen(false);
+                setCollapsed(false);
+                scheduleCollapse();
+              }}
+            />
+          </div>
+        </>
       )}
 
-      {/* iPhone AssistiveTouch-Style Collapsible Floating Orb */}
+      {/* iPhone AssistiveTouch-Style Collapsible Floating Orb with Logo-Inspired Robot */}
       {!open && (
         <button
           type="button"
-          aria-label={isFa ? 'گوی هوش مصنوعی دلارینو' : 'Dollarino AI Floating Orb'}
+          aria-label={isFa ? 'ربات هوش مصنوعی دلارینو' : 'Dollarino AI Floating Orb'}
           title={isFa ? 'لمس برای چت AI · کشیدن برای جابجایی' : 'Tap for AI Chat · Drag to move'}
           onPointerDown={(e) => {
             if (e.button !== 0 && e.pointerType === 'mouse') return;
@@ -1093,28 +1202,22 @@ export function FloatingAiChat({
             width: `${ORB_SIZE}px`,
             height: `${ORB_SIZE}px`,
             transform: `translate3d(${collapsedShiftX}px, 0, 0)`,
-            background: 'rgba(24, 29, 40, 0.58)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            border: '1px solid rgba(255, 255, 255, 0.22)',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
-            opacity: dragging ? 0.96 : collapsed ? 0.48 : 0.85,
+            background: 'rgba(13, 24, 54, 0.78)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            border: '1px solid rgba(56, 189, 248, 0.42)',
+            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.28)',
+            opacity: dragging ? 0.98 : collapsed ? 0.58 : 0.92,
             transition: dragging
               ? 'none'
               : 'left 0.28s cubic-bezier(0.22, 1, 0.36, 1), top 0.22s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease',
             touchAction: 'none',
           }}
-          className="fixed z-[175] rounded-full grid place-items-center cursor-pointer select-none hover:!opacity-95 focus:outline-none"
+          className="fixed z-[175] rounded-full grid place-items-center cursor-pointer select-none hover:!opacity-100 focus:outline-none"
         >
-          {/* Classic iPhone AssistiveTouch Concentric White Rings */}
-          <svg viewBox="0 0 36 36" className="w-7 h-7 pointer-events-none" fill="none" aria-hidden="true">
-            <circle cx="18" cy="18" r="14" stroke="rgba(255,255,255,0.28)" strokeWidth="1.5" />
-            <circle cx="18" cy="18" r="9.5" stroke="rgba(255,255,255,0.48)" strokeWidth="1.5" />
-            <circle cx="18" cy="18" r="5" fill="rgba(255,255,255,0.92)" />
-          </svg>
-          {/* Minimal online dot */}
+          <DollarinoRobotLogoIcon size={34} />
           <span
-            className="absolute top-1.5 end-1.5 w-1.5 h-1.5 rounded-full bg-emerald-400 pointer-events-none"
+            className="absolute top-1 end-1 w-2 h-2 rounded-full bg-emerald-400 border border-slate-900 pointer-events-none"
             aria-hidden="true"
           />
         </button>

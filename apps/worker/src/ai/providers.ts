@@ -358,9 +358,14 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
     }));
     if (!creds.apiKey) continue;
 
-    let normalizedModel = row.model;
-    if ((row.base_url || '').includes('hilinkup.com') && normalizedModel.trim().toLowerCase() === 'deep') {
+    let normalizedModel = (row.model || '').trim();
+    const cleanBase = (row.base_url || '').trim();
+    const isHilinkup = cleanBase.includes('hilinkup.com');
+    const modelLower = normalizedModel.toLowerCase();
+    if (isHilinkup && (!normalizedModel || modelLower === 'deep' || modelLower === 'deepseek' || modelLower === 'دیپی' || modelLower === 'deepseek-v4')) {
       normalizedModel = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+    } else if (row.provider === 'deepseek' && (!normalizedModel || modelLower === 'deep' || modelLower === 'دیپی')) {
+      normalizedModel = isHilinkup ? (env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017') : 'deepseek-chat';
     }
 
     engines.push({
@@ -370,7 +375,7 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
       weight: Math.max(1, row.weight || 100),
       provider: row.provider,
       model: normalizedModel,
-      baseUrl: row.base_url,
+      baseUrl: cleanBase || null,
       apiKey: creds.apiKey,
       temperature: row.temperature,
       maxTokens: row.max_tokens,
@@ -528,26 +533,72 @@ export async function callBYOAI(
   if (ai.provider === 'deepseek') {
     const rawBase = (ai.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
     const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
-    const model = ai.model || 'deepseek-chat';
+    const primaryModel = ai.model || 'deepseek-chat';
+    const fallbackModels = rawBase.includes('hilinkup.com')
+      ? Array.from(new Set([primaryModel, 'baidu/deepseek-v4.1-flash-1017', 'deepseek-chat']))
+      : Array.from(new Set([primaryModel, 'deepseek-chat']));
+
+    let lastErr = '';
+    for (const model of fallbackModels) {
+      const isReasoningModel =
+        model.includes('reasoner') ||
+        model.includes('v4') ||
+        model.includes('r1') ||
+        model.includes('flash-1017');
+      const bodyPayload: Record<string, unknown> = {
+        model,
+        max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2400, 2400) : (ai.maxTokens || 1536),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      };
+      if (!isReasoningModel) {
+        bodyPayload.temperature = ai.temperature;
+      }
+      if (opts?.fastJson && model === 'deepseek-flash') {
+        bodyPayload.thinking = { type: 'disabled' };
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${ai.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bodyPayload),
+        signal: AbortSignal.timeout(35_000),
+      });
+      const json = await res.json() as {
+        choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+        error?: { message?: string };
+      };
+      if (res.ok) {
+        const msg = json.choices?.[0]?.message;
+        return msg?.content || msg?.reasoning_content || '';
+      }
+      lastErr = json.error?.message ?? `DeepSeek HTTP ${res.status}`;
+      if (!/model|not found|unsupported/i.test(lastErr)) {
+        throw new Error(lastErr);
+      }
+    }
+    throw new Error(lastErr || 'DeepSeek gateway error');
+  }
+
+  const rawBase = (ai.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
+  const primaryModel = ai.model || 'gpt-4o-mini';
+  const candidateModels = rawBase.includes('hilinkup.com')
+    ? Array.from(new Set([primaryModel, 'baidu/deepseek-v4.1-flash-1017', 'deepseek-chat']))
+    : [primaryModel];
+
+  let lastGatewayErr = '';
+  for (const model of candidateModels) {
     const isReasoningModel =
+      model.includes('deepseek-v4') ||
       model.includes('reasoner') ||
-      model.includes('v4') ||
-      model.includes('r1') ||
-      model.includes('flash-1017');
-    const bodyPayload: Record<string, unknown> = {
-      model,
-      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2400, 2400) : (ai.maxTokens || 1536),
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    };
-    if (!isReasoningModel) {
-      bodyPayload.temperature = ai.temperature;
-    }
-    if (opts?.fastJson && model === 'deepseek-flash') {
-      bodyPayload.thinking = { type: 'disabled' };
-    }
+      model.includes('flash-1017') ||
+      /\bo1\b|\bo3\b|\br1\b/i.test(model);
 
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -555,50 +606,30 @@ export async function callBYOAI(
         Authorization: `Bearer ${ai.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(bodyPayload),
+      body: JSON.stringify({
+        model,
+        ...(isReasoningModel ? {} : { temperature: ai.temperature }),
+        max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2400, 2400) : (ai.maxTokens || 1536),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
       signal: AbortSignal.timeout(35_000),
     });
     const json = await res.json() as {
       choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
       error?: { message?: string };
     };
-    if (!res.ok) throw new Error(json.error?.message ?? `DeepSeek HTTP ${res.status}`);
-    const msg = json.choices?.[0]?.message;
-    return msg?.content || msg?.reasoning_content || '';
+    if (res.ok) {
+      return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+    }
+    lastGatewayErr = json.error?.message ?? `OpenAI/Gateway HTTP ${res.status}`;
+    if (!/model|not found|unsupported/i.test(lastGatewayErr)) {
+      throw new Error(lastGatewayErr);
+    }
   }
-
-  const rawBase = (ai.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
-  const model = ai.model || 'gpt-4o-mini';
-  const isReasoningModel =
-    model.includes('deepseek-v4') ||
-    model.includes('reasoner') ||
-    model.includes('flash-1017') ||
-    /\bo1\b|\bo3\b|\br1\b/i.test(model);
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${ai.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      ...(isReasoningModel ? {} : { temperature: ai.temperature }),
-      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2400, 2400) : (ai.maxTokens || 1536),
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }),
-    signal: AbortSignal.timeout(35_000),
-  });
-  const json = await res.json() as {
-    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-    error?: { message?: string };
-  };
-  if (!res.ok) throw new Error(json.error?.message ?? `OpenAI/Gateway HTTP ${res.status}`);
-  return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+  throw new Error(lastGatewayErr || 'OpenAI/Gateway error');
 }
 
 function buildMarketContext(

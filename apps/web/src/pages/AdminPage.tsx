@@ -6,6 +6,7 @@ import {
   Copy,
   CreditCard,
   Crown,
+  Eye,
   Flame,
   Gift,
   Headphones,
@@ -144,6 +145,7 @@ interface SubOrder {
   status: string;
   payment_method: string;
   payment_reference: string | null;
+  receipt_image_url?: string | null;
   amount_usd: number;
   amount_toman: number;
   created_at: string;
@@ -196,9 +198,10 @@ interface AdminSupportTicket {
 interface AdminSupportMessage {
   id: string;
   ticket_id: string;
-  sender_role: 'user' | 'admin';
+  sender_role: 'user' | 'admin' | 'ai' | 'system';
   sender_name: string | null;
   message: string;
+  image_data_url?: string | null;
   created_at: string;
 }
 
@@ -315,6 +318,8 @@ export function AdminPage({
   const [consensusMode, setConsensusMode] = useState('ENSEMBLE_AUTO');
   const [cacheTtlSec, setCacheTtlSec] = useState(180);
   const [testingAi, setTestingAi] = useState(false);
+  const [hilinkupSecretReady, setHilinkupSecretReady] = useState(false);
+  const [adminLightboxImg, setAdminLightboxImg] = useState<string | null>(null);
   const [aiTestResults, setAiTestResults] = useState<Array<{ slot_order: number; label: string; model: string; ok: boolean; latencyMs: number; reply: string }>>([]);
   const [aiForm, setAiForm] = useState({
     slotOrder: 1,
@@ -387,6 +392,7 @@ export function AdminPage({
         consensusMode: string;
         cacheTtlSec: number;
         latestSignals: PlatformAISignal[];
+        hilinkupSecretConfigured?: boolean;
       }>('/api/admin/ai-engines').catch(() => null),
       apiFetch<{ traders: AdminCopyTrader[]; trades: Array<{ id: string; trader_id: string; symbol: string; direction: string; entry_price: string; leverage: number; pnl_pct: number; status: string }> }>('/api/admin/copy-traders').catch(() => ({ traders: [], trades: [] })),
       apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
@@ -437,6 +443,7 @@ export function AdminPage({
       setConsensusMode(aiRes.consensusMode || 'ENSEMBLE_AUTO');
       setCacheTtlSec(aiRes.cacheTtlSec || 180);
       setAiSignals(aiRes.latestSignals || []);
+      setHilinkupSecretReady(Boolean(aiRes.hilinkupSecretConfigured));
     }
 
     if (subMe) {
@@ -947,9 +954,20 @@ export function AdminPage({
             {/* Add / Update Slot Form */}
             <form onSubmit={savePlatformAiEngine} className="pt-3 border-t space-y-3 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-bold text-sub">
-                  {isFa ? 'افزودن یا ویرایش موتور هوش مصنوعی (پشتیبانی کامل از Base URL سفارشی / گیت‌وی Hilinkup):' : 'Add / Edit AI Engine Slot (Supports custom Base URL / Gateway):'}
-                </span>
+                <div className="space-y-0.5">
+                  <span className="font-bold text-sub block">
+                    {isFa ? 'افزودن یا ویرایش موتور هوش مصنوعی (پشتیبانی کامل از گیت‌وی Hilinkup / DeepSeek):' : 'Add / Edit AI Engine Slot (Supports custom Base URL / Gateway):'}
+                  </span>
+                  <span className={`inline-flex items-center gap-1 text-[10.5px] font-bold ${hilinkupSecretReady ? 'text-jade' : 'text-amber-400'}`}>
+                    {hilinkupSecretReady
+                      ? isFa
+                        ? '✓ کلید مرکزی DeepSeek / Hilinkup روی سرور (Secret) فعال است.'
+                        : '✓ Central DeepSeek / Hilinkup Secret is active on Worker.'
+                      : isFa
+                        ? 'ℹ️ برای اتصال سریع DeepSeek، کلید API خود را در اسلات ۱ ذخیره کنید (یا در Cloudflare Secret ست کنید).'
+                        : 'ℹ️ Paste your DeepSeek / Hilinkup API key in Slot 1 to connect immediately.'}
+                  </span>
+                </div>
                 <button
                   type="button"
                   onClick={() =>
@@ -961,10 +979,10 @@ export function AdminPage({
                       label: `مدل ${aiForm.slotOrder} (Hilinkup DeepSeek v4.1)`,
                     })
                   }
-                  className="px-3 py-1 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px] inline-flex items-center gap-1"
+                  className="px-3 py-1.5 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px] inline-flex items-center gap-1"
                 >
                   <Zap className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'پرکردن سریع Hilinkup Gateway' : 'Fill Hilinkup Gateway'}</span>
+                  <span>{isFa ? 'پرکردن سریع DeepSeek / Hilinkup' : 'Fill DeepSeek / Hilinkup'}</span>
                 </button>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5 items-end">
@@ -1128,6 +1146,16 @@ export function AdminPage({
                       <td className="py-3 px-2 font-mono-num text-[11px]">
                         <span className="text-sub">{o.payment_method}</span>
                         <div className="text-main break-all max-w-[200px]">{o.payment_reference || '-'}</div>
+                        {o.receipt_image_url && (
+                          <button
+                            type="button"
+                            onClick={() => setAdminLightboxImg(o.receipt_image_url || null)}
+                            className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 font-sans text-[10px] font-bold"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>{isFa ? 'مشاهده عکس رسید' : 'View Receipt'}</span>
+                          </button>
+                        )}
                       </td>
                       <td className="py-3 px-2">
                         <span
@@ -1883,6 +1911,15 @@ export function AdminPage({
                           .map((m) => (
                             <div key={m.id} className={`rounded-xl p-2 ${m.sender_role === 'admin' ? 'bg-[#1652F0]/15 text-main' : 'panel'}`}>
                               <p className="text-[10px] font-black text-dim">{m.sender_role === 'admin' ? 'پشتیبانی دلارینو' : m.sender_name || 'کاربر'}</p>
+                              {m.image_data_url && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAdminLightboxImg(m.image_data_url || null)}
+                                  className="block my-1.5 rounded-xl overflow-hidden border hairline"
+                                >
+                                  <img src={m.image_data_url} alt="Support attachment" className="max-h-36 w-auto object-contain" />
+                                </button>
+                              )}
                               <p className="text-xs text-main mt-0.5 whitespace-pre-wrap">{m.message}</p>
                             </div>
                           ))}
@@ -2330,6 +2367,26 @@ help - راهنمای کامل و امنیت حساب`}
             </div>
           )}
         </>
+      )}
+      {adminLightboxImg && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setAdminLightboxImg(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setAdminLightboxImg(null)}
+            className="absolute top-4 end-4 h-10 w-10 rounded-full bg-white/15 text-white grid place-items-center"
+          >
+            <XCircle className="w-5 h-5" />
+          </button>
+          <img
+            src={adminLightboxImg}
+            alt="Admin receipt or screenshot preview"
+            className="max-w-full max-h-[88vh] rounded-2xl object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

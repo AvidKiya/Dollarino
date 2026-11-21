@@ -305,18 +305,27 @@ export class TelegramBotClient {
       replyKeyboard?: ReplyKeyboardButton[][];
       inlineKeyboard?: InlineKeyboardButton[][];
       replyToMessageId?: number;
+      mimeType?: string;
     }
   ): Promise<{ message_id: number }> {
-    const sendAttempt = async (withStyles: boolean) => {
+    const sendAttempt = async (withStyles: boolean, plainCaption = false) => {
       const fd = new FormData();
       fd.append('chat_id', String(chatId));
-      if (caption) fd.append('caption', caption.slice(0, 1020));
+      if (caption) {
+        if (plainCaption) {
+          fd.append('caption', caption.slice(0, 1020));
+        } else {
+          fd.append('caption', formatTelegramHtml(caption).slice(0, 1020));
+          fd.append('parse_mode', 'HTML');
+        }
+      }
       if (options?.replyToMessageId) fd.append('reply_to_message_id', String(options.replyToMessageId));
       const markup = this.buildMarkup(options);
       if (markup) {
         fd.append('reply_markup', JSON.stringify(withStyles ? markup : stripButtonStyles(markup)));
       }
-      fd.append('photo', new Blob([pngBytes as unknown as BlobPart], { type: 'image/png' }), filename);
+      const mime = options?.mimeType || 'image/png';
+      fd.append('photo', new Blob([pngBytes as unknown as BlobPart], { type: mime }), filename);
 
       const res = await fetch(`https://api.telegram.org/bot${this.token}/sendPhoto`, {
         method: 'POST',
@@ -327,9 +336,13 @@ export class TelegramBotClient {
       return { res, json };
     };
 
-    const first = await sendAttempt(true);
+    const first = await sendAttempt(true, false);
+    if (!first.json.ok && caption && /parse|entit|tag/i.test(first.json.description ?? '')) {
+      const plainRetry = await sendAttempt(true, true);
+      if (plainRetry.json.ok) return plainRetry.json.result!;
+    }
     if (!first.json.ok && options?.inlineKeyboard && /style|button|markup|field/i.test(first.json.description ?? '')) {
-      const second = await sendAttempt(false);
+      const second = await sendAttempt(false, false);
       if (!second.json.ok) {
         throw new Error(`Telegram sendPhotoBuffer failed: ${second.json.description ?? second.res.status}`);
       }
@@ -339,6 +352,33 @@ export class TelegramBotClient {
       throw new Error(`Telegram sendPhotoBuffer failed: ${first.json.description ?? first.res.status}`);
     }
     return first.json.result!;
+  }
+
+  async sendDataUrlPhoto(
+    chatId: string | number,
+    dataUrl: string,
+    caption?: string,
+    options?: {
+      replyKeyboard?: ReplyKeyboardButton[][];
+      inlineKeyboard?: InlineKeyboardButton[][];
+      replyToMessageId?: number;
+    }
+  ): Promise<{ message_id: number }> {
+    const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s);
+    if (!match) {
+      throw new Error('Invalid image data URL');
+    }
+    const mimeType = match[1]!.toLowerCase();
+    const binStr = atob(match[2]!.replace(/\s+/g, ''));
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) {
+      bytes[i] = binStr.charCodeAt(i);
+    }
+    const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
+    return this.sendPhotoBuffer(chatId, bytes, `attachment.${ext}`, caption, {
+      ...options,
+      mimeType: mimeType === 'image/jpg' ? 'image/jpeg' : mimeType,
+    });
   }
 
   sendVideo(

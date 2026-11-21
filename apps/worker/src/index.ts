@@ -43,13 +43,38 @@ app.use('/api/*', async (c, next) => {
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 });
 
+async function serveAssetsWithDynamicOg(
+  req: Request,
+  assets: { fetch: (req: Request) => Promise<Response> }
+): Promise<Response> {
+  const res = await assets.fetch(req);
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('text/html')) {
+    return res;
+  }
+  const url = new URL(req.url);
+  if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+    return res;
+  }
+  const origin = url.origin.replace(/\/+$/, '');
+  const html = await res.text();
+  const rewritten = html
+    .replaceAll('https://dollarino.pages.dev/images/dollarino-og-brand.jpg', `${origin}/images/dollarino-og-brand.jpg`)
+    .replaceAll('content="https://dollarino.pages.dev/"', `content="${origin}/"`)
+    .replaceAll('href="https://dollarino.pages.dev/"', `href="${origin}/"`);
+  const headers = new Headers(res.headers);
+  headers.delete('content-length');
+  headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
+  return new Response(rewritten, { status: res.status, statusText: res.statusText, headers });
+}
+
 app.get('/', (c) => {
   if (c.env.ASSETS) {
-    return c.env.ASSETS.fetch(c.req.raw);
+    return serveAssetsWithDynamicOg(c.req.raw, c.env.ASSETS);
   }
   return c.json({
     ok: true,
-    service: 'Dollarino API Worker v9.6',
+    service: 'Dollarino API Worker v9.9.2',
     health: '/api/health',
     note: 'Open the Website preview (port 5173) or unified Worker URL to use the full Dollarino UI.',
   });
@@ -59,7 +84,7 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '9.9.0',
+    version: '9.9.2',
     openSource: false,
     paidSubscriptions: true,
     centralMultiAI: true,
@@ -417,7 +442,7 @@ app.post('/api/telegram/webhook/:botId', async (c) => {
 
 app.all('*', async (c) => {
   if (!c.req.path.startsWith('/api/') && c.env.ASSETS) {
-    return c.env.ASSETS.fetch(c.req.raw);
+    return serveAssetsWithDynamicOg(c.req.raw, c.env.ASSETS);
   }
   return c.json({ error: `Route not found: ${c.req.path}` }, 404);
 });
@@ -427,7 +452,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // 1-minute watchdog across running bots, open trades, always-on signal radar & AI market intel
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '9.9.0').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '9.9.2').catch(() => {});
 
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);

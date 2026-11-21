@@ -131,6 +131,8 @@ adminRoutes.get('/ai-engines', async (c) => {
     cacheTtlSec: summary.cacheTtlSec,
     activeCount: summary.activeCount,
     latestSignals: summary.latestSignals,
+    hilinkupSecretConfigured: Boolean(c.env.HILINKUP_API_KEY?.trim()),
+    hilinkupModel: c.env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017',
   });
 });
 
@@ -163,7 +165,11 @@ adminRoutes.post('/ai-engines', async (c) => {
     gemini: 'gemini-2.0-flash',
     openai_compatible: body.model,
   };
-  const model = body.model.trim() || defaultModelMap[body.provider] || 'gpt-4o-mini';
+  let model = body.model.trim() || defaultModelMap[body.provider] || 'gpt-4o-mini';
+  const cleanBase = body.baseUrl?.trim() || null;
+  if (cleanBase && cleanBase.includes('hilinkup.com') && ['deep', 'deepseek', 'دیپی', 'deepseek-v4'].includes(model.toLowerCase())) {
+    model = c.env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+  }
   const label = (body.label ?? '').trim() || `مدل ${slotOrder} (${body.provider.toUpperCase()})`;
 
   // Check if updating an existing slot or creating a new one (max 3 slots!)
@@ -701,20 +707,25 @@ adminRoutes.get('/support', async (c) => {
 adminRoutes.post('/support/:ticketId/reply', async (c) => {
   const actor = c.get('user');
   const ticketId = c.req.param('ticketId');
-  const body = await c.req.json<{ message: string; close?: boolean }>();
+  const body = await c.req.json<{ message?: string; imageDataUrl?: string | null; close?: boolean }>();
   const text = String(body.message || '').trim();
-  if (!text) return c.json({ error: 'پاسخ نمی‌تواند خالی باشد.' }, 400);
+  const imageDataUrl =
+    body.imageDataUrl && String(body.imageDataUrl).startsWith('data:image/') && String(body.imageDataUrl).length < 4_500_000
+      ? String(body.imageDataUrl)
+      : null;
+  if (!text && !imageDataUrl) return c.json({ error: 'پاسخ یا تصویر نمی‌تواند خالی باشد.' }, 400);
 
   const ticket = await c.env.DB.prepare(
     `SELECT st.id, st.user_id, u.telegram_id FROM support_tickets st JOIN users u ON u.id = st.user_id WHERE st.id = ? LIMIT 1`
   ).bind(ticketId).first<{ id: string; user_id: string; telegram_id: string | null }>();
   if (!ticket) return c.json({ error: 'تیکت یافت نشد.' }, 404);
 
+  const displayMsg = text || '📷 تصویر پیوست پاسخ پشتیبانی';
   const msgId = randomId('smsg');
   await c.env.DB.prepare(
-    `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message)
-     VALUES (?, ?, ?, 'admin', ?, ?)`
-  ).bind(msgId, ticketId, actor.id, actor.username || 'پشتیبانی دلارینو', text.slice(0, 2000)).run();
+    `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message, image_data_url)
+     VALUES (?, ?, ?, 'admin', ?, ?, ?)`
+  ).bind(msgId, ticketId, actor.id, actor.username || 'پشتیبانی دلارینو', displayMsg.slice(0, 2000), imageDataUrl).run();
 
   await c.env.DB.prepare(
     `UPDATE support_tickets SET status = ?, last_message_at = datetime('now') WHERE id = ?`
@@ -722,10 +733,12 @@ adminRoutes.post('/support/:ticketId/reply', async (c) => {
 
   if (ticket.telegram_id && c.env.TELEGRAM_BOT_TOKEN) {
     const tg = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
-    await tg.sendMessage(
-      ticket.telegram_id,
-      `💬 <b>پاسخ پشتیبانی آنلاین دلارینو:</b>\n\n${text}`
-    ).catch(() => {});
+    const caption = `💬 <b>پاسخ پشتیبانی آنلاین دلارینو:</b>\n\n${displayMsg}`;
+    if (imageDataUrl) {
+      await tg.sendDataUrlPhoto(ticket.telegram_id, imageDataUrl, caption).catch(() => tg.sendMessage(ticket.telegram_id!, caption).catch(() => {}));
+    } else {
+      await tg.sendMessage(ticket.telegram_id, caption).catch(() => {});
+    }
   }
 
   return c.json({ ok: true, messageId: msgId });

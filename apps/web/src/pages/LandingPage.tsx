@@ -217,19 +217,19 @@ export function LandingPage({
         />
       </div>
 
-      {/* Sticky Floating Pill Navbar */}
-      <header className="sticky top-0 z-40 px-3 sm:px-6 pt-3">
+      {/* Sticky Floating Pill Navbar (Clean mobile layout without overlap) */}
+      <header className="sticky top-0 z-40 px-2.5 sm:px-6 pt-2.5 sm:pt-3">
         <div
-          className="mx-auto max-w-6xl panel rounded-full px-3 sm:px-5 py-2 flex items-center gap-2 shadow-xl backdrop-blur-2xl"
-          style={{ background: 'color-mix(in srgb, var(--panel) 88%, transparent)' }}
+          className="mx-auto max-w-6xl panel rounded-full px-3 sm:px-5 py-2 flex items-center gap-2 shadow-xl lg:backdrop-blur-2xl"
+          style={{ background: 'color-mix(in srgb, var(--panel) 92%, transparent)' }}
         >
-          <button type="button" onClick={() => scrollTo('top')} className="flex items-center gap-2.5 shrink-0">
-            <DollarinoBrandMark size={38} glow />
+          <button type="button" onClick={() => scrollTo('top')} className="flex items-center gap-2 shrink-0 min-w-0">
+            <DollarinoBrandMark size={34} glow />
             <span className="leading-none text-start">
-              <span dir="ltr" className="block font-display font-bold text-base text-main">
+              <span dir="ltr" className="block font-display font-bold text-sm sm:text-base text-main">
                 Dollarino<span style={{ color: 'var(--gold)' }}>.</span>
               </span>
-              <span className="text-[9px] font-black tracking-[0.18em] text-dim">PRO · AI TRADING</span>
+              <span className="hidden sm:block text-[9px] font-black tracking-[0.18em] text-dim">PRO · AI TRADING</span>
             </span>
           </button>
 
@@ -251,7 +251,7 @@ export function LandingPage({
             ))}
           </nav>
 
-          <div className="ms-auto flex items-center gap-1.5">
+          <div className="ms-auto flex items-center gap-1.5 shrink-0">
             {onOpenSupport && (
               <button
                 type="button"
@@ -265,7 +265,7 @@ export function LandingPage({
             <button
               type="button"
               onClick={() => setLang(isFa ? 'en' : 'fa')}
-              className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-2 rounded-full btn-ghost"
+              className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-2 rounded-full btn-ghost"
             >
               <Globe className="h-3.5 w-3.5" />
               <span>{isFa ? 'EN' : 'فارسی'}</span>
@@ -274,7 +274,7 @@ export function LandingPage({
               type="button"
               onClick={onToggleDaylight}
               title={isFa ? 'تغییر حالت روز و شب' : 'Day / Night'}
-              className="inline-flex items-center justify-center h-9 w-9 sm:w-auto sm:px-3 gap-1.5 rounded-full btn-ghost text-xs font-bold"
+              className="inline-flex items-center justify-center h-8 w-8 sm:h-9 sm:w-auto sm:px-3 gap-1.5 rounded-full btn-ghost text-xs font-bold"
             >
               {look === 'paper' ? (
                 <>
@@ -298,15 +298,16 @@ export function LandingPage({
             <button
               type="button"
               onClick={() => onGoAuth('register')}
-              className="btn-gold inline-flex items-center gap-1.5 text-[11px] font-black px-4 py-2.5 rounded-full shrink-0"
+              className="btn-gold inline-flex items-center gap-1 text-[11px] font-black px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full shrink-0"
             >
-              <span>{isFa ? 'ورود به میز کار' : 'Enter Workspace'}</span>
+              <span className="sm:hidden">{isFa ? 'ورود / پنل' : 'Enter'}</span>
+              <span className="hidden sm:inline">{isFa ? 'ورود به میز کار' : 'Enter Workspace'}</span>
               <ArrowLeft className={`h-3.5 w-3.5 ${isFa ? '' : 'rotate-180'}`} />
             </button>
             <button
               type="button"
               onClick={() => setMobileMenu((v) => !v)}
-              className="lg:hidden h-9 w-9 grid place-items-center rounded-full btn-ghost"
+              className="lg:hidden h-8 w-8 grid place-items-center rounded-full btn-ghost"
               aria-label="Menu"
             >
               {mobileMenu ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -316,6 +317,17 @@ export function LandingPage({
 
         {mobileMenu && (
           <div className="panel rounded-3xl mt-2 p-3 lg:hidden max-w-6xl mx-auto space-y-1.5">
+            <div className="flex items-center justify-between px-2 pb-1.5 border-b hairline sm:hidden">
+              <span className="text-[11px] font-bold text-dim">{isFa ? 'زبان پلتفرم' : 'Language'}</span>
+              <button
+                type="button"
+                onClick={() => setLang(isFa ? 'en' : 'fa')}
+                className="inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1 rounded-full btn-ghost"
+              >
+                <Globe className="h-3.5 w-3.5" />
+                <span>{isFa ? 'English' : 'فارسی'}</span>
+              </button>
+            </div>
             {[
               ['pillars', isFa ? '۴ روش معامله (ساده تا حرفه‌ای)' : '4 Ways to Trade'],
               ['copy-leaders', isFa ? 'تریدرهای تاییدشده کپی‌ترید' : 'Verified Copy Traders'],

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import worker from '../index.js';
 import type { Env } from '../env.js';
 import { encryptVaultJson } from '../crypto.js';
+import { listSelectableAIModels } from '../ai/assistant.js';
 import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/renderer.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-intel.js';
@@ -1682,5 +1683,68 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     };
     expect(pubBtcJson.setup?.symbol).toBe('BTCUSDT');
     expect(['LONG', 'SHORT']).toContain(pubBtcJson.setup?.direction);
+
+    // 5. v9.9.2 Support photo attachments & Subscription receipt image checkout + Hilinkup DeepSeek alias normalization
+    const tinyPngDataUrl =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    // Support image upload (without requiring text)
+    const supImgRes = await worker.fetch(
+      new Request('https://dollarino.local/api/support/message', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ imageDataUrl: tinyPngDataUrl, mode: 'HUMAN' }),
+      }),
+      env
+    );
+    expect(supImgRes.status).toBe(201);
+    const supImgJson = (await supImgRes.json()) as { ok: boolean; ticketId: string; imageDataUrl: string };
+    expect(supImgJson.ok).toBe(true);
+    expect(supImgJson.imageDataUrl).toBe(tinyPngDataUrl);
+
+    const savedSupMsg = await db
+      .prepare(`SELECT image_data_url FROM support_messages WHERE ticket_id = ? AND sender_role = 'user' LIMIT 1`)
+      .bind(supImgJson.ticketId)
+      .first<{ image_data_url: string }>();
+    expect(savedSupMsg?.image_data_url).toBe(tinyPngDataUrl);
+
+    // Subscription checkout with receipt photo (TXID optional!)
+    const subCheckoutRes = await worker.fetch(
+      new Request('https://dollarino.local/api/subscriptions/checkout', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          planCode: 'pro_monthly',
+          paymentMethod: 'CARD_TO_CARD',
+          paymentReference: '',
+          receiptImageDataUrl: tinyPngDataUrl,
+        }),
+      }),
+      env
+    );
+    expect(subCheckoutRes.status).toBe(201);
+    const subCheckoutJson = (await subCheckoutRes.json()) as { ok: boolean; orderId: string; status: string };
+    expect(subCheckoutJson.ok).toBe(true);
+    expect(subCheckoutJson.status).toBe('PENDING_REVIEW');
+
+    const savedSubOrder = await db
+      .prepare(`SELECT payment_reference, receipt_image_url FROM user_subscriptions WHERE id = ?`)
+      .bind(subCheckoutJson.orderId)
+      .first<{ payment_reference: string; receipt_image_url: string }>();
+    expect(savedSubOrder?.receipt_image_url).toBe(tinyPngDataUrl);
+    expect(savedSubOrder?.payment_reference).toMatch(/^RECEIPT-/);
+
+    // Hilinkup 'deep' / 'دیپی' model alias normalizes cleanly to baidu/deepseek-v4.1-flash-1017
+    const encKey = await encryptVaultJson({ apiKey: 'sk-test-hilinkup' }, env.MASTER_ENCRYPTION_KEY);
+    await db
+      .prepare(
+        `INSERT INTO platform_ai_engines (id, slot_order, provider, label, model, base_url, weight, is_active, api_key_masked, encrypted_api_key)
+         VALUES ('paie_deep_alias', 1, 'openai_compatible', 'دیپی', 'deep', 'https://api.hilinkup.com/v1', 100, 1, 'sk-***', ?)`
+      )
+      .bind(encKey)
+      .run();
+    const normModels = await listSelectableAIModels(env, uRow!.id);
+    const aliased = normModels.models.find((m) => m.id === 'paie_deep_alias');
+    expect(aliased?.model).toBe('baidu/deepseek-v4.1-flash-1017');
   });
 });

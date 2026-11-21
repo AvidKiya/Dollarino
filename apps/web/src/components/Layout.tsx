@@ -962,13 +962,13 @@ export function Layout({
         )}
 
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-          {/* Unified Consistent Frosted Liquid-Glass Header Across Simple & Pro Modes */}
+          {/* Unified Consistent Frosted Liquid-Glass Header (Clean & spacious on mobile) */}
           <header
-            className="sticky top-0 z-30 backdrop-blur-2xl border-b border-[var(--glass-border)]"
+            className="sticky top-0 z-30 lg:backdrop-blur-2xl border-b border-[var(--glass-border)]"
             style={{ background: 'var(--header-glass)' }}
           >
-            <div className="mx-auto max-w-7xl px-2.5 sm:px-6 py-2 flex items-center justify-between gap-1.5 sm:gap-2">
-              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+            <div className="mx-auto max-w-7xl px-3 sm:px-6 py-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(true)}
@@ -980,9 +980,9 @@ export function Layout({
                 <button
                   type="button"
                   onClick={() => selectTab('services')}
-                  className="flex items-center gap-1.5 sm:gap-2 text-start group min-w-0"
+                  className="flex items-center gap-2 text-start group min-w-0"
                 >
-                  <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border border-[var(--glass-border)] shrink-0 overflow-hidden shadow-sm">
+                  <span className="hidden sm:grid h-8 w-8 rounded-full surface-soft place-items-center text-main font-display font-bold text-xs border border-[var(--glass-border)] shrink-0 overflow-hidden shadow-sm">
                     {user.avatar_url ? (
                       <img
                         src={user.avatar_url}
@@ -996,10 +996,10 @@ export function Layout({
                       user.username.slice(0, 1).toUpperCase()
                     )}
                   </span>
-                  <div className="leading-tight">
-                    <span className="flex items-center gap-1 text-[10.5px] sm:text-[11px] font-bold text-main whitespace-nowrap">
+                  <div className="leading-tight min-w-0">
+                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-main whitespace-nowrap">
                       <span className={`h-2 w-2 rounded-full shrink-0 ${isRunning ? 'bg-[#10B981] live-dot' : 'bg-slate-400'}`} />
-                      <span className="font-num">{isFa ? getPersianToday() : clock}</span>
+                      <span className="font-num truncate">{isFa ? getPersianToday() : clock}</span>
                     </span>
                     <span className="text-[10px] text-dim hidden sm:inline truncate">{user.username}</span>
                   </div>
@@ -1018,7 +1018,7 @@ export function Layout({
                 </kbd>
               </button>
 
-              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 {renderModeSwitcher(true)}
 
                 <button
@@ -1026,14 +1026,14 @@ export function Layout({
                   onClick={() => selectTab('aichat')}
                   aria-label={isFa ? 'چت هوش مصنوعی AI' : 'AI Chat'}
                   title={isFa ? 'چت هوش مصنوعی + تحلیل عکس چارت' : 'AI Chat & Chart Vision'}
-                  className={`h-7 px-2 sm:h-8 sm:px-2.5 inline-flex items-center gap-1 rounded-xl border transition text-[11px] font-bold ${
+                  className={`hidden lg:inline-flex h-8 px-2.5 items-center gap-1 rounded-xl border transition text-[11px] font-bold ${
                     activeTab === 'aichat'
                       ? 'bg-[var(--cobalt)] text-white border-[var(--cobalt)]'
                       : 'bg-[var(--soft)] border-[var(--glass-border)] text-main hover:brightness-95'
                   }`}
                 >
                   <Sparkles className="w-[14px] h-[14px] text-[var(--gold)] shrink-0" />
-                  <span className="hidden sm:inline">{isFa ? 'چت AI' : 'AI Chat'}</span>
+                  <span>{isFa ? 'چت AI' : 'AI Chat'}</span>
                 </button>
 
                 <button
@@ -1041,9 +1041,9 @@ export function Layout({
                   onClick={() => (onOpenSupport ? onOpenSupport() : selectTab('faq'))}
                   aria-label={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
                   title={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
-                  className="relative h-7 px-2 sm:h-8 sm:px-2.5 inline-flex items-center gap-1 rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition text-[11px] font-bold text-main"
+                  className="relative h-8 w-8 sm:w-auto sm:px-2.5 inline-flex items-center justify-center gap-1 rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition text-[11px] font-bold text-main shrink-0"
                 >
-                  <Headphones className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-jade shrink-0" />
+                  <Headphones className="w-[15px] h-[15px] text-jade shrink-0" />
                   <span className="hidden sm:inline">{isFa ? 'پشتیبانی' : 'Support'}</span>
                   <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)]" />
                 </button>
@@ -1059,9 +1059,9 @@ export function Layout({
                   }}
                   aria-label={isFa ? 'اعلان‌ها' : 'Notifications'}
                   title={isFa ? 'اعلان‌ها' : 'Notifications'}
-                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition"
+                  className="relative h-8 w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition shrink-0"
                 >
-                  <Bell className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-main" />
+                  <Bell className="w-[15px] h-[15px] text-main" />
                   {unreadNotifs > 0 && (
                     <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--bg)]" />
                   )}
@@ -1072,12 +1072,12 @@ export function Layout({
                   onClick={toggleDayNight}
                   aria-label="Toggle day or night"
                   title={isFa ? 'حالت روز / شب' : 'Day / Night'}
-                  className="h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition"
+                  className="h-8 w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition shrink-0"
                 >
                   {currentLook === 'paper' ? (
-                    <Moon className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-[var(--gold)]" />
+                    <Moon className="w-[15px] h-[15px] text-[var(--gold)]" />
                   ) : (
-                    <Sun className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-[#F59E0B]" />
+                    <Sun className="w-[15px] h-[15px] text-[#F59E0B]" />
                   )}
                 </button>
 

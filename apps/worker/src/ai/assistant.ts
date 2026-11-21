@@ -97,9 +97,13 @@ export async function listSelectableAIModels(
   for (const r of platformRows.results ?? []) {
     if (seenIds.has(r.id)) continue;
     seenIds.add(r.id);
-    let modelName = r.model;
-    if ((r.base_url || '').includes('hilinkup.com') && modelName.trim().toLowerCase() === 'deep') {
+    let modelName = (r.model || '').trim();
+    const lowerM = modelName.toLowerCase();
+    const isHilinkup = (r.base_url || '').includes('hilinkup.com');
+    if (isHilinkup && (!modelName || lowerM === 'deep' || lowerM === 'deepseek' || lowerM === 'دیپی' || lowerM === 'deepseek-v4')) {
       modelName = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+    } else if (r.provider === 'deepseek' && (!modelName || lowerM === 'deep' || lowerM === 'دیپی')) {
+      modelName = isHilinkup ? (env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017') : 'deepseek-chat';
     }
     models.push({
       id: r.id,
@@ -300,9 +304,13 @@ export async function resolveModelRecordById(
       apiKey: undefined,
     }));
     if (creds.apiKey) {
-      let modelName = platRow.model;
-      if ((platRow.base_url || '').includes('hilinkup.com') && modelName.trim().toLowerCase() === 'deep') {
+      let modelName = (platRow.model || '').trim();
+      const lowerM = modelName.toLowerCase();
+      const isHilinkup = (platRow.base_url || '').includes('hilinkup.com');
+      if (isHilinkup && (!modelName || lowerM === 'deep' || lowerM === 'deepseek' || lowerM === 'دیپی' || lowerM === 'deepseek-v4')) {
         modelName = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+      } else if (platRow.provider === 'deepseek' && (!modelName || lowerM === 'deep' || lowerM === 'دیپی')) {
+        modelName = isHilinkup ? (env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017') : 'deepseek-chat';
       }
       return {
         meta: targetMeta,
@@ -443,12 +451,12 @@ export async function callMultimodalChatAI(
   const defaultBase = ai.provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com/v1';
   const rawBase = (ai.baseUrl || defaultBase).replace(/\/+$/, '');
   const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
-  const model = ai.model || (ai.provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
-  const isReasoningModel =
-    model.includes('deepseek-v4') ||
-    model.includes('reasoner') ||
-    model.includes('flash-1017') ||
-    /\bo1\b|\bo3\b|\br1\b/i.test(model);
+  const primaryModel = ai.model || (ai.provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
+  const candidateModels = rawBase.includes('hilinkup.com')
+    ? Array.from(new Set([primaryModel, 'baidu/deepseek-v4.1-flash-1017', 'deepseek-chat']))
+    : ai.provider === 'deepseek'
+      ? Array.from(new Set([primaryModel, 'deepseek-chat']))
+      : [primaryModel];
 
   const messages: Array<{ role: string; content: unknown }> = [
     { role: 'system', content: systemPrompt },
@@ -467,30 +475,45 @@ export async function callMultimodalChatAI(
     messages.push({ role: 'user', content: currentText });
   }
 
-  const payload: Record<string, unknown> = {
-    model,
-    max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2600, 2600) : Math.max(ai.maxTokens || 2048, 2048),
-    messages,
-  };
-  if (!isReasoningModel) {
-    payload.temperature = ai.temperature ?? 0.35;
-  }
+  let lastGatewayErr = '';
+  for (const model of candidateModels) {
+    const isReasoningModel =
+      model.includes('deepseek-v4') ||
+      model.includes('reasoner') ||
+      model.includes('flash-1017') ||
+      /\bo1\b|\bo3\b|\br1\b/i.test(model);
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${ai.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(40_000),
-  });
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-    error?: { message?: string };
-  };
-  if (!res.ok) throw new Error(json.error?.message ?? `AI Gateway HTTP ${res.status}`);
-  return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+    const payload: Record<string, unknown> = {
+      model,
+      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2600, 2600) : Math.max(ai.maxTokens || 2048, 2048),
+      messages,
+    };
+    if (!isReasoningModel) {
+      payload.temperature = ai.temperature ?? 0.35;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ai.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(40_000),
+    });
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+      error?: { message?: string };
+    };
+    if (res.ok) {
+      return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+    }
+    lastGatewayErr = json.error?.message ?? `AI Gateway HTTP ${res.status}`;
+    if (!/model|not found|unsupported/i.test(lastGatewayErr)) {
+      throw new Error(lastGatewayErr);
+    }
+  }
+  throw new Error(lastGatewayErr || 'AI Gateway error');
 }
 
 function buildDedicatedSystemPrompt(hasImage: boolean, langHint: 'fa' | 'en'): string {

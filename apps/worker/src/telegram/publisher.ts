@@ -71,6 +71,41 @@ export async function notifyAllAdmins(
   return sent;
 }
 
+export async function notifyAllAdminsPhoto(
+  env: Env,
+  imageDataUrl: string,
+  caption: string,
+  options?: { inlineKeyboard?: InlineKeyboardButton[][] }
+): Promise<number> {
+  if (!env.TELEGRAM_BOT_TOKEN) return 0;
+  const admins = await env.DB.prepare(
+    `SELECT DISTINCT telegram_id FROM users WHERE role IN ('owner', 'admin') AND telegram_id IS NOT NULL AND telegram_id != ''`
+  ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
+
+  const targets = new Set<string>();
+  if (env.OWNER_TELEGRAM_ID?.trim()) targets.add(env.OWNER_TELEGRAM_ID.trim());
+  for (const r of admins.results) {
+    if (r.telegram_id?.trim()) targets.add(r.telegram_id.trim());
+  }
+
+  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  let sent = 0;
+  for (const chatId of targets) {
+    try {
+      await tg.sendDataUrlPhoto(chatId, imageDataUrl, caption, options);
+      sent++;
+    } catch {
+      try {
+        await tg.sendMessage(chatId, caption, options);
+        sent++;
+      } catch {
+        // Ignore unreachable admin chat
+      }
+    }
+  }
+  return sent;
+}
+
 export async function publishSignalBroadcast(
   env: Env,
   params: {

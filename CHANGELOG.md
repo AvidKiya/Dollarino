@@ -1,5 +1,18 @@
 # Changelog
 
+## [9.9.2] - 2026-11-22
+### Added & Improved
+- **Screenshot & Receipt Image Support End-to-End (Web, Admin & Telegram Bot + D1 Migration `0025`)**:
+  - Added `support_messages.image_data_url` and `user_subscriptions.receipt_image_url` (`migrations/0025_v992_receipt_and_support_images.sql`).
+  - Upgraded `SupportModal.tsx`, `routes/support.ts`, and Telegram `AWAIT_SUPPORT_MSG` so users can attach, paste (`Ctrl+V`), or send screenshots in Telegram and Web; AI Vision analyzes uploaded screenshots automatically, and human support relays photos directly to all Telegram admins via `sendPhoto` (`notifyAllAdminsPhoto`) + displays them inside `AdminPage.tsx` with full-screen lightbox preview.
+  - Redesigned `SubscriptionPage.tsx` into a clear 3-step checkout flow with compressed `receiptImageDataUrl` upload (making TXID optional when a payment receipt photo is uploaded), instant auto-scroll to checkout, order receipt lightbox, and admin photo relay (`sub_verify:` / `POST /api/subscriptions/checkout`).
+- **Central AI & DeepSeek / Hilinkup Gateway Normalization + Failover (`ai/providers.ts`, `ai/assistant.ts`, `routes/admin.ts`)**:
+  - Automatically normalizes legacy/alias model names (`deep`, `deepseek`, `دیپی`, `deepseek-v4`) on `hilinkup.com` and DeepSeek endpoints to `baidu/deepseek-v4.1-flash-1017` / `deepseek-chat`, with automatic multi-model failover retry and explicit `hilinkupSecretConfigured` status visibility in `AdminPage.tsx`.
+- **Logo-Inspired Floating AI Robot Orb & Unified Mobile Chat UX (`FloatingAiChat.tsx`, `Layout.tsx`, `LandingPage.tsx`)**:
+  - Replaced the plain orb with a bespoke `DollarinoRobotLogoIcon` SVG inspired by `public/logo.png` (cosmic astronaut-bot with ascending jade candles), added a responsive mobile full-width bottom-sheet (`84dvh`), unified rounded-pill composer bars with safe-area padding, and decluttered mobile headers.
+- **Mobile 60fps Performance, Lazy Routing & Dynamic Open Graph (`App.tsx`, `index.css`, `index.html`, `sw.js`, `worker/index.ts`)**:
+  - Added `React.lazy` + `<Suspense>` code splitting across 14 secondary pages, disabled heavy `.panel` `backdrop-filter` below `1024px` for smooth mobile scrolling, moved OG meta tags to early `<head>` (`?v=992`) with server-side origin rewriting (`serveAssetsWithDynamicOg`), and bumped PWA cache to `dollarino-pwa-v9.9.2`.
+
 ## [9.9.1] - 2026-11-22
 ### Fixed & Improved
 - **Mobile UI Cleanup — Removed Background Halos (`apps/web/src/index.css`, `LandingPage.tsx`, `BrandGraphics.tsx`)**:

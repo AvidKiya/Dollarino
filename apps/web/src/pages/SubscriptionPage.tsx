@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -8,17 +8,21 @@ import {
   Copy,
   CreditCard,
   Crown,
+  Eye,
   Gift,
+  ImagePlus,
   Send,
   ShieldCheck,
   Sparkles,
   Users,
   Wallet,
+  X,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { buildTrustWalletDappOpenUrl, sendBep20UsdtViaTrustWallet } from '../lib/trustwallet';
 import { ExchangeLogo, WalletLogo } from '../components/BrandLogos';
+import { compressChartImageFile } from '../components/FloatingAiChat';
 
 export interface UserEntitlement {
   hasPaidPlan: boolean;
@@ -57,6 +61,7 @@ interface SubOrder {
   status: string;
   payment_method: string;
   payment_reference: string | null;
+  receipt_image_url?: string | null;
   amount_usd: number;
   admin_note: string | null;
   expires_at: string | null;
@@ -76,8 +81,10 @@ export function SubscriptionPage({
   const [orders, setOrders] = useState<SubOrder[]>([]);
   const [payCfg, setPayCfg] = useState<Record<string, string>>({});
   const [selectedPlan, setSelectedPlan] = useState<PlanRow | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'TRUST_WALLET_BEP20' | 'USDT_TRC20' | 'CARD_TO_CARD'>('TRUST_WALLET_BEP20');
+  const [paymentMethod, setPaymentMethod] = useState<'TRUST_WALLET_BEP20' | 'USDT_TRC20' | 'CARD_TO_CARD'>('USDT_TRC20');
   const [paymentRef, setPaymentRef] = useState('');
+  const [receiptImage, setReceiptImage] = useState<string | null>(null);
+  const [lightboxReceipt, setLightboxReceipt] = useState<string | null>(null);
   const [payerNote, setPayerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -89,6 +96,8 @@ export function SubscriptionPage({
   const [wdNetwork, setWdNetwork] = useState<'BEP20' | 'TRC20'>('BEP20');
   const [wdWallet, setWdWallet] = useState('');
   const [refBusy, setRefBusy] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement | null>(null);
+  const checkoutRef = useRef<HTMLDivElement | null>(null);
   const [referral, setReferral] = useState<{
     referralCode: string;
     inviteUrl?: string;
@@ -233,9 +242,28 @@ export function SubscriptionPage({
     setTimeout(() => setCopied(''), 1800);
   };
 
+  const handleReceiptFile = async (file?: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setMsg(isFa ? 'فقط تصویر معتبر (PNG/JPG/WebP) به عنوان عکس رسید پذیرفته می‌شود.' : 'Please select a valid receipt image.');
+      return;
+    }
+    try {
+      const compressed = await compressChartImageFile(file);
+      setReceiptImage(compressed);
+      setMsg(null);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Receipt upload failed');
+    }
+  };
+
   const submitCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPlan || selectedPlan.price_usd <= 0) return;
+    if (!receiptImage && paymentRef.trim().length < 5) {
+      setMsg(isFa ? 'لطفاً عکس رسید واریز را آپلود کنید یا کد پیگیری / TXID وارد نمایید.' : 'Please upload a receipt photo or enter a TXID.');
+      return;
+    }
     setSubmitting(true);
     setMsg(null);
     try {
@@ -245,10 +273,12 @@ export function SubscriptionPage({
           planCode: selectedPlan.code,
           paymentMethod,
           paymentReference: paymentRef.trim(),
+          receiptImageDataUrl: receiptImage,
           payerNote: payerNote.trim(),
         }),
       });
       setPaymentRef('');
+      setReceiptImage(null);
       setPayerNote('');
       setMsg(
         res.autoVerified
@@ -257,8 +287,8 @@ export function SubscriptionPage({
             : 'Blockchain transaction auto-verified! Your subscription is now ACTIVE.'
           : res.message ||
             (isFa
-              ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر، اشتراک شما فوراً فعال می‌شود.'
-              : 'Subscription order submitted! Once verified by admin, your Pro/VIP license activates immediately.')
+              ? 'پرداخت و رسید شما با موفقیت ثبت شد! پس از تایید سریع مدیریت، اشتراک شما فعال می‌شود.'
+              : 'Payment submitted! Once verified by admin, your Pro/VIP license activates immediately.')
       );
       await loadData();
       await onRefreshDashboard();
@@ -448,7 +478,10 @@ export function SubscriptionPage({
               </div>
 
               <button
-                onClick={() => setSelectedPlan(p)}
+                onClick={() => {
+                  setSelectedPlan(p);
+                  setTimeout(() => checkoutRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                }}
                 className={`w-full py-3 rounded-2xl font-extrabold text-xs transition ${
                   p.is_popular
                     ? 'bg-[#059669] hover:bg-[#047857] text-white shadow'
@@ -806,169 +839,272 @@ export function SubscriptionPage({
         </div>
       )}
 
-      {/* Checkout Panel */}
+      {/* Clear Step-by-Step Simplified Checkout Panel */}
       {selectedPlan && selectedPlan.price_usd > 0 && (
-        <div className="surface-card p-6 space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-black text-main flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-brand" />
-              <span>
+        <div ref={checkoutRef} className="surface-card p-5 sm:p-6 space-y-5 border-brand/30">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b hairline">
+            <div className="space-y-0.5">
+              <h2 className="text-base sm:text-lg font-black text-main flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-brand" />
+                <span>
+                  {isFa
+                    ? `تکمیل خرید پلن ${selectedPlan.name_fa}`
+                    : `Checkout: ${selectedPlan.name_en}`}
+                </span>
+              </h2>
+              <p className="text-xs text-sub">
                 {isFa
-                  ? `پرداخت و فعال‌سازی: ${selectedPlan.name_fa} ($${selectedPlan.price_usd})`
-                  : `Checkout: ${selectedPlan.name_en} ($${selectedPlan.price_usd})`}
-              </span>
-            </h2>
-            <span className="text-xs text-sub font-semibold">
+                  ? `مبلغ قابل پرداخت: $${selectedPlan.price_usd} تتر یا ${selectedPlan.price_toman.toLocaleString()} تومان`
+                  : `Total: $${selectedPlan.price_usd} USDT or ${selectedPlan.price_toman.toLocaleString()} Toman`}
+              </p>
+            </div>
+            <span className="text-[11px] px-3 py-1 rounded-full surface-soft border hairline text-sub font-bold">
               {isFa
-                ? `ربات رسمی پشتیبانی: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`
-                : `Official Support Bot: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`}
+                ? `پشتیبانی رسمی: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`
+                : `Support Bot: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`}
             </span>
           </div>
 
-          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-main flex items-start gap-2">
-            <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <span>
-              {isFa
-                ? 'هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای دریافت وجه یا پشتیبانی ندارد. پرداخت را فقط به آدرس‌های داخل همین صفحه انجام دهید و در صورت نیاز فقط با پشتیبانی آنلاین سایت یا ربات @Dollarino_bot در ارتباط باشید.'
-                : 'Security Notice: Dollarino has NO personal DM support account. Only pay to addresses shown here and contact us via Online Support or @Dollarino_bot.'}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            <button
-              type="button"
-              onClick={() => setPaymentMethod('TRUST_WALLET_BEP20')}
-              className={`p-4 rounded-2xl border text-start flex items-center gap-3 transition ${
-                paymentMethod === 'TRUST_WALLET_BEP20' ? 'btn-gold' : 'surface-soft text-sub'
-              }`}
-            >
-              <WalletLogo wallet="trustwallet" size={28} />
-              <div>
-                <div className="font-extrabold">Trust Wallet (BEP20)</div>
-                <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT · کارمزد ناچیز</div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentMethod('USDT_TRC20')}
-              className={`p-4 rounded-2xl border text-start flex items-center gap-3 transition ${
-                paymentMethod === 'USDT_TRC20' ? 'btn-emerald' : 'surface-soft text-sub'
-              }`}
-            >
-              <Wallet className="w-5 h-5 shrink-0" />
-              <div>
-                <div className="font-extrabold">{isFa ? 'پرداخت با تتر (USDT · TRC20)' : 'Tether USDT (TRC20)'}</div>
-                <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT</div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPaymentMethod('CARD_TO_CARD')}
-              className={`p-4 rounded-2xl border text-start flex items-center gap-3 transition ${
-                paymentMethod === 'CARD_TO_CARD' ? 'btn-cobalt' : 'surface-soft text-sub'
-              }`}
-            >
-              <CreditCard className="w-5 h-5 shrink-0" />
-              <div>
-                <div className="font-extrabold">{isFa ? 'پرداخت کارت به کارت (تومانی)' : 'Card-to-Card (Toman)'}</div>
-                <div className="text-[11px] opacity-90">{selectedPlan.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}</div>
-              </div>
-            </button>
-          </div>
-
-          <div className="p-4 rounded-2xl surface-soft border flex flex-wrap items-center justify-between gap-3 text-xs">
-            {paymentMethod === 'TRUST_WALLET_BEP20' ? (
-              <div className="space-y-1 min-w-0">
-                <div className="text-sub">{isFa ? 'آدرس کیف‌پول دریافت Trust Wallet (شبکه BSC / BEP20):' : 'Trust Wallet USDT BEP20 Address:'}</div>
-                <div className="font-mono-num text-sm font-black text-main break-all" dir="ltr">
-                  {payCfg.trust_wallet_evm_receiver || (isFa ? 'هنوز در پنل ادمین تنظیم نشده' : 'Set trust_wallet_evm_receiver in Admin')}
-                </div>
-              </div>
-            ) : paymentMethod === 'USDT_TRC20' ? (
-              <div className="space-y-1 min-w-0">
-                <div className="text-sub">{isFa ? 'آدرس کیف‌پول تتر (TRC20):' : 'USDT TRC20 Address:'}</div>
-                <div className="font-mono-num text-sm font-black text-main break-all" dir="ltr">
-                  {payCfg.usdt_trc20_wallet || 'Set USDT wallet in Admin Panel'}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-1 min-w-0">
-                <div className="text-sub">
-                  {isFa ? `شماره کارت (${payCfg.iran_card_holder || 'مدیریت دلارینو'}):` : `Bank Card (${payCfg.iran_card_holder || 'Admin'}):`}
-                </div>
-                <div className="font-mono-num text-sm font-black text-main" dir="ltr">
-                  {payCfg.iran_card_number || '6037-9975-0000-0000'}
-                </div>
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2 shrink-0">
-              {paymentMethod === 'TRUST_WALLET_BEP20' && (
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => void handleInstantTrustWalletPay()}
-                  className="px-4 py-2 rounded-xl btn-gold font-black inline-flex items-center gap-1.5"
-                >
-                  <Wallet className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'پرداخت مستقیم از Trust Wallet' : 'Instant Pay in Trust Wallet'}</span>
-                </button>
-              )}
+          {/* Step 1: Select Payment Method */}
+          <div className="space-y-2">
+            <p className="text-xs font-black text-main">
+              {isFa ? '۱) روش پرداخت را انتخاب کنید:' : '1) Choose Payment Method:'}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
               <button
                 type="button"
-                onClick={() =>
-                  copyText(
-                    paymentMethod === 'TRUST_WALLET_BEP20'
-                      ? payCfg.trust_wallet_evm_receiver || ''
-                      : paymentMethod === 'USDT_TRC20'
-                        ? payCfg.usdt_trc20_wallet || ''
-                        : payCfg.iran_card_number || '',
-                    'addr'
-                  )
-                }
-                className="px-3.5 py-2 rounded-xl surface-card border text-main font-bold inline-flex items-center gap-1.5"
+                onClick={() => setPaymentMethod('USDT_TRC20')}
+                className={`p-3.5 rounded-2xl border text-start flex items-center gap-3 transition ${
+                  paymentMethod === 'USDT_TRC20' ? 'btn-emerald ring-2 ring-emerald-400/40' : 'surface-soft text-sub hover:border-[var(--line-strong)]'
+                }`}
               >
-                <Copy className="w-3.5 h-3.5 text-brand" />
-                <span>{copied === 'addr' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'کپی' : 'Copy'}</span>
+                <Wallet className="w-5 h-5 shrink-0" />
+                <div>
+                  <div className="font-extrabold">{isFa ? 'تتر (USDT · TRC20)' : 'Tether USDT (TRC20)'}</div>
+                  <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPaymentMethod('TRUST_WALLET_BEP20')}
+                className={`p-3.5 rounded-2xl border text-start flex items-center gap-3 transition ${
+                  paymentMethod === 'TRUST_WALLET_BEP20' ? 'btn-gold ring-2 ring-blue-400/40' : 'surface-soft text-sub hover:border-[var(--line-strong)]'
+                }`}
+              >
+                <WalletLogo wallet="trustwallet" size={26} />
+                <div>
+                  <div className="font-extrabold">Trust Wallet (BEP20)</div>
+                  <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT · {isFa ? 'کارمزد خیلی کم' : 'Low fee'}</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPaymentMethod('CARD_TO_CARD')}
+                className={`p-3.5 rounded-2xl border text-start flex items-center gap-3 transition ${
+                  paymentMethod === 'CARD_TO_CARD' ? 'btn-cobalt ring-2 ring-blue-400/40' : 'surface-soft text-sub hover:border-[var(--line-strong)]'
+                }`}
+              >
+                <CreditCard className="w-5 h-5 shrink-0" />
+                <div>
+                  <div className="font-extrabold">{isFa ? 'کارت به کارت (تومانی)' : 'Card-to-Card (Toman)'}</div>
+                  <div className="text-[11px] opacity-90">{selectedPlan.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}</div>
+                </div>
               </button>
             </div>
           </div>
 
-          <form onSubmit={submitCheckout} className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          {/* Step 2: Copy Address / Card or Pay Direct */}
+          <div className="space-y-2">
+            <p className="text-xs font-black text-main">
+              {isFa ? '۲) مبلغ را به مقصد زیر واریز کنید:' : '2) Transfer to the destination below:'}
+            </p>
+            <div className="p-4 rounded-2xl surface-soft border border-[var(--line-strong)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              {paymentMethod === 'TRUST_WALLET_BEP20' ? (
+                <div className="space-y-1 min-w-0">
+                  <div className="text-sub font-bold">{isFa ? 'آدرس ولت BEP20 (شبکه بایننس اسمارت چین):' : 'USDT BEP20 Address:'}</div>
+                  <div className="font-mono-num text-sm sm:text-base font-black text-main break-all select-all" dir="ltr">
+                    {payCfg.trust_wallet_evm_receiver || (isFa ? 'هنوز در پنل ادمین تنظیم نشده' : 'Set trust_wallet_evm_receiver in Admin')}
+                  </div>
+                </div>
+              ) : paymentMethod === 'USDT_TRC20' ? (
+                <div className="space-y-1 min-w-0">
+                  <div className="text-sub font-bold">{isFa ? 'آدرس ولت تتر TRC20:' : 'USDT TRC20 Address:'}</div>
+                  <div className="font-mono-num text-sm sm:text-base font-black text-main break-all select-all" dir="ltr">
+                    {payCfg.usdt_trc20_wallet || 'Set USDT wallet in Admin Panel'}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1 min-w-0">
+                  <div className="text-sub font-bold">
+                    {isFa ? `شماره کارت به نام «${payCfg.iran_card_holder || 'مدیریت دلارینو'}»:` : `Card (${payCfg.iran_card_holder || 'Admin'}):`}
+                  </div>
+                  <div className="font-mono-num text-base sm:text-lg font-black text-main tracking-wider select-all" dir="ltr">
+                    {payCfg.iran_card_number || '6037-9975-0000-0000'}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2 shrink-0">
+                {paymentMethod === 'TRUST_WALLET_BEP20' && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => void handleInstantTrustWalletPay()}
+                    className="px-4 py-2.5 rounded-xl btn-gold font-black inline-flex items-center gap-1.5"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    <span>{isFa ? 'پرداخت خودکار Trust Wallet' : 'Instant Trust Wallet Pay'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyText(
+                      paymentMethod === 'TRUST_WALLET_BEP20'
+                        ? payCfg.trust_wallet_evm_receiver || ''
+                        : paymentMethod === 'USDT_TRC20'
+                          ? payCfg.usdt_trc20_wallet || ''
+                          : payCfg.iran_card_number || '',
+                      'addr'
+                    )
+                  }
+                  className="px-4 py-2.5 rounded-xl btn-cobalt font-black inline-flex items-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copied === 'addr' ? (isFa ? 'کپی شد ✓' : 'Copied ✓') : isFa ? 'کپی مقصد' : 'Copy Address'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Step 3: Upload Receipt Photo and/or Enter Tracking Code */}
+          <form onSubmit={submitCheckout} className="space-y-4">
+            <p className="text-xs font-black text-main">
+              {isFa ? '۳) عکس رسید واریزی را بفرستید یا کد پیگیری را وارد کنید:' : '3) Upload receipt photo and/or enter TXID:'}
+            </p>
+
             <input
-              required
-              value={paymentRef}
-              onChange={(e) => setPaymentRef(e.target.value)}
-              placeholder={
-                paymentMethod === 'TRUST_WALLET_BEP20'
-                  ? isFa
-                    ? 'هش تراکنش BEP20 (0x...)...'
-                    : 'Paste BSC BEP20 TX Hash (0x...)...'
-                  : paymentMethod === 'USDT_TRC20'
+              ref={receiptInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                void handleReceiptFile(file);
+              }}
+            />
+
+            {!receiptImage ? (
+              <button
+                type="button"
+                onClick={() => receiptInputRef.current?.click()}
+                className="w-full p-5 rounded-2xl border-2 border-dashed border-[var(--line-strong)] hover:border-[var(--gold)] bg-[var(--soft)]/60 flex flex-col items-center justify-center gap-2 text-center transition"
+              >
+                <div className="h-11 w-11 rounded-2xl bg-[var(--cobalt)]/15 text-[var(--gold)] grid place-items-center">
+                  <ImagePlus className="w-6 h-6" />
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs sm:text-sm font-black text-main">
+                    {isFa ? '📸 آپلود عکس رسید / اسکرین‌شات واریزی (پیشنهادی)' : '📸 Upload Payment Receipt Screenshot'}
+                  </p>
+                  <p className="text-[11px] text-dim">
+                    {isFa ? 'با ارسال عکس رسید، نوشتن کد پیگیری اختیاری می‌شود.' : 'Uploading a receipt makes TXID optional.'}
+                  </p>
+                </div>
+              </button>
+            ) : (
+              <div className="flex items-center gap-3 p-3 rounded-2xl surface-soft border border-emerald-500/40">
+                <button
+                  type="button"
+                  onClick={() => setLightboxReceipt(receiptImage)}
+                  className="shrink-0 rounded-xl overflow-hidden border hairline"
+                >
+                  <img src={receiptImage} alt="Receipt preview" className="h-16 w-24 object-cover" />
+                </button>
+                <div className="flex-1 min-w-0 space-y-0.5">
+                  <p className="text-xs font-black text-jade">
+                    {isFa ? '✓ عکس رسید واریز آماده ارسال شد' : '✓ Receipt photo attached'}
+                  </p>
+                  <p className="text-[11px] text-dim">
+                    {isFa ? 'می‌توانید همین الان دکمه ثبت نهایی را بزنید یا کد پیگیری را هم بنویسید.' : 'Ready to submit.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReceiptImage(null)}
+                  className="h-8 w-8 rounded-full btn-ghost text-rose-400 grid place-items-center shrink-0"
+                  title={isFa ? 'حذف تصویر' : 'Remove image'}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-sub">
+                  {receiptImage
                     ? isFa
-                      ? 'هش تراکنش (TXID)...'
-                      : 'Paste USDT TRC20 TXID...'
+                      ? 'کد پیگیری / TXID (اختیاری)'
+                      : 'Tracking Code / TXID (Optional)'
                     : isFa
-                      ? 'شماره پیگیری / ۴ رقم آخر کارت...'
-                      : 'Paste tracking code...'
-              }
-              className="surface-input rounded-xl px-3.5 py-2.5 font-mono-num"
-            />
-            <input
-              value={payerNote}
-              onChange={(e) => setPayerNote(e.target.value)}
-              placeholder={isFa ? 'آیدی تلگرام یا توضیحات (اختیاری)' : 'Telegram @handle (optional)'}
-              className="surface-input rounded-xl px-3.5 py-2.5"
-            />
+                      ? 'کد پیگیری یا هش تراکنش (TXID)'
+                      : 'Tracking Code / TXID'}
+                </label>
+                <input
+                  required={!receiptImage}
+                  value={paymentRef}
+                  onChange={(e) => setPaymentRef(e.target.value)}
+                  placeholder={
+                    paymentMethod === 'TRUST_WALLET_BEP20'
+                      ? isFa
+                        ? 'هش تراکنش BEP20 (0x...) یا خالی اگر عکس فرستادید'
+                        : 'BSC TX Hash (0x...)'
+                      : paymentMethod === 'USDT_TRC20'
+                        ? isFa
+                          ? 'هش تراکنش TXID (یا خالی اگر عکس رسید فرستادید)'
+                          : 'USDT TRC20 TXID'
+                        : isFa
+                          ? 'شماره پیگیری / ۴ رقم آخر کارت'
+                          : 'Tracking code or last 4 digits'
+                  }
+                  className="w-full surface-input rounded-xl px-3.5 py-2.5 font-mono-num"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-sub">
+                  {isFa ? 'آیدی تلگرام یا یادداشت (اختیاری)' : 'Telegram @handle or Note (Optional)'}
+                </label>
+                <input
+                  value={payerNote}
+                  onChange={(e) => setPayerNote(e.target.value)}
+                  placeholder={isFa ? 'مثلاً @my_id یا زمان واریز...' : '@handle or note...'}
+                  className="w-full surface-input rounded-xl px-3.5 py-2.5"
+                />
+              </div>
+            </div>
+
             <button
-              disabled={submitting}
+              disabled={submitting || (!receiptImage && paymentRef.trim().length < 5)}
               type="submit"
-              className="px-5 py-2.5 rounded-xl btn-emerald font-extrabold flex items-center justify-center gap-2"
+              className="w-full py-3.5 px-6 rounded-2xl btn-emerald font-black text-sm flex items-center justify-center gap-2 disabled:opacity-45 shadow-lg"
             >
-              <ShieldCheck className="w-4 h-4" />
-              <span>{submitting ? '...' : isFa ? 'ثبت پرداخت و ارسال برای تایید' : 'Submit Payment Reference'}</span>
+              <ShieldCheck className="w-5 h-5" />
+              <span>{submitting ? (isFa ? 'در حال ثبت...' : 'Submitting...') : isFa ? 'ثبت نهایی پرداخت و ارسال برای فعال‌سازی' : 'Submit Payment & Receipt'}</span>
             </button>
+
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[10.5px] leading-relaxed text-sub flex items-center gap-2">
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>
+                {isFa
+                  ? 'نکته امنیتی: دلارینو هیچ پیوی شخصی برای دریافت وجه ندارد؛ فقط از همین فرم یا ربات @Dollarino_bot اقدام کنید.'
+                  : 'Security: Dollarino has NO personal DM support. Use only this checkout or @Dollarino_bot.'}
+              </span>
+            </div>
           </form>
         </div>
       )}
@@ -985,7 +1121,7 @@ export function SubscriptionPage({
                 <tr>
                   <th className="py-2 text-start">{isFa ? 'پلن' : 'Plan'}</th>
                   <th className="py-2 text-start">{isFa ? 'روش' : 'Method'}</th>
-                  <th className="py-2 text-start">{isFa ? 'کد پیگیری' : 'Reference'}</th>
+                  <th className="py-2 text-start">{isFa ? 'کد پیگیری / رسید' : 'Reference / Receipt'}</th>
                   <th className="py-2 text-start">{isFa ? 'وضعیت' : 'Status'}</th>
                   <th className="py-2 text-end">{isFa ? 'تاریخ' : 'Date'}</th>
                 </tr>
@@ -995,7 +1131,21 @@ export function SubscriptionPage({
                   <tr key={o.id}>
                     <td className="py-2.5 font-sans font-bold text-main">{isFa ? o.name_fa || o.plan_code : o.name_en || o.plan_code}</td>
                     <td className="py-2.5 text-sub">{o.payment_method}</td>
-                    <td className="py-2.5 text-sub max-w-[200px] truncate">{o.payment_reference || '-'}</td>
+                    <td className="py-2.5 text-sub max-w-[220px]">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate">{o.payment_reference || '-'}</span>
+                        {o.receipt_image_url && (
+                          <button
+                            type="button"
+                            onClick={() => setLightboxReceipt(o.receipt_image_url || null)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 font-sans text-[10px] font-bold shrink-0"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>{isFa ? 'رسید' : 'Receipt'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-2.5">
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[10px] font-sans font-bold ${
@@ -1015,6 +1165,27 @@ export function SubscriptionPage({
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {lightboxReceipt && (
+        <div
+          className="fixed inset-0 z-[90] bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setLightboxReceipt(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxReceipt(null)}
+            className="absolute top-4 end-4 h-10 w-10 rounded-full bg-white/15 text-white grid place-items-center"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={lightboxReceipt}
+            alt="Payment receipt"
+            className="max-w-full max-h-[88vh] rounded-2xl object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>

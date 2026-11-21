@@ -56,6 +56,7 @@ import {
 } from './formatter.js';
 import {
   notifyAllAdmins,
+  notifyAllAdminsPhoto,
   publishProfitCardToTelegram,
   publishSignalClosedCard,
   resolveChannelAndBotConfig,
@@ -1423,7 +1424,10 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
         .bind(JSON.stringify({ step: 'AWAIT_PAYMENT_TXID', subId: sub.id } satisfies TelegramStepState), user.id).run();
       await bot.answerCallbackQuery(cq.id);
-      await bot.sendMessage(chatId, `🔗 لطفاً هش تراکنش (TXID) یا شماره پیگیری واریز ${sub.amount_usd} USDT را برای فاکتور #${sub.id} ارسال کنید:`);
+      await bot.sendMessage(
+        chatId,
+        `🔗 لطفاً **عکس رسید واریز** یا **کد پیگیری / هش تراکنش (TXID)** مربوط به فاکتور #${sub.id} (مبلغ ${sub.amount_usd} USDT) را همین‌جا ارسال کنید:`
+      );
       return { ok: true };
     }
 
@@ -2211,7 +2215,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await bot.sendMessage(
         chatId,
         `💬 پشتیبانی هوشمند و آنلاین دلارینو (${safeSup})\n\n` +
-        `سوال یا مشکل خود را همین‌جا بنویسید تا **دستیار هوش مصنوعی پشتیبانی** ظرف چند ثانیه پاسخ شما را بدهد. همچنین هر زمان بخواهید می‌توانید دکمه «گفتگو مستقیم با مدیران» را بزنید تا به تیم مدیریت انسانی وصل شوید.\n\n` +
+        `سوال، خطا یا <b>عکس و اسکرین‌شات</b> خود را همین‌جا ارسال کنید تا دستیار هوش مصنوعی پشتیبانی ظرف چند ثانیه بررسی و پاسخ دهد.\n` +
+        `هر زمان بخواهید می‌توانید دکمه «گفتگو مستقیم با مدیران» را بزنید تا پیام یا تصویرتان مستقیماً برای تیم مدیریت ارسال شود.\n\n` +
         `${ANTI_SCAM_WARNING_FA}`,
         {
           inlineKeyboard: [
@@ -2251,7 +2256,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       ).catch(() => {});
       await bot.sendMessage(
         chatId,
-        `👨‍💼 درخواست شما برای گفتگوی مستقیم با **مدیران پشتیبانی دلارینو** در تیکت #${ticketId} ثبت شد.\n\nپیام یا توضیحات تکمیلی خود را بنویسید تا مستقیماً برای تیم مدیریت ارسال شود و پاسخ مدیریت در همین‌جا برایتان پیام شود.`
+        `👨‍💼 درخواست شما برای گفتگوی مستقیم با <b>مدیران پشتیبانی دلارینو</b> در تیکت #${ticketId} ثبت شد.\n\nپیام متنی یا <b>عکس و اسکرین‌شات</b> خود را همین‌جا ارسال کنید تا مستقیماً برای تیم مدیریت فرستاده شود و پاسخ مدیریت در همین‌جا برایتان پیام شود.`
       );
       return { ok: true };
     }
@@ -2266,7 +2271,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
         .bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }), user.id).run();
       await bot.answerCallbackQuery(cq.id, 'دستیار هوشمند فعال شد 🤖');
-      await bot.sendMessage(chatId, '🤖 دستیار هوشمند پشتیبانی آماده است! سوال خود را بنویسید:');
+      await bot.sendMessage(chatId, '🤖 دستیار هوشمند پشتیبانی آماده است! سوال یا <b>اسکرین‌شات/عکس</b> خود را بفرستید:');
       return { ok: true };
     }
 
@@ -3078,25 +3083,44 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (state.step === 'AWAIT_PAYMENT_TXID' && state.subId) {
-      const txid = text.trim();
-      await clearState();
-      await env.DB.prepare(`UPDATE user_subscriptions SET payment_reference = ? WHERE id = ? AND user_id = ?`)
-        .bind(txid, state.subId, user.id).run();
-      const sub = await env.DB.prepare(`SELECT plan_code, amount_usd FROM user_subscriptions WHERE id = ?`).bind(state.subId).first<{ plan_code: string; amount_usd: number }>();
-      const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
-      await bot.sendMessage(
-        ownerId,
-        `🔔 ثبت پرداخت جدید!\n\n👤 کاربر: ${user.username} (${tgId})\n🧾 سفارش: #${state.subId}\n📦 پلن: ${sub?.plan_code ?? '—'} | 💵 ${sub?.amount_usd ?? 0} USDT\n🔗 TXID: ${txid}`,
-        {
-          inlineKeyboard: [
-            [
-              { text: '✅ تایید فوری', callback_data: `adm:tx_approve:${state.subId}` },
-              { text: '❌ رد', callback_data: `adm:tx_reject:${state.subId}` },
-            ],
-          ],
+      let txid = text.trim();
+      let receiptDataUrl: string | null = null;
+      if (incomingImageFileId) {
+        try {
+          const dl = await bot.downloadFileAsDataUrl(incomingImageFileId, 3_500_000);
+          receiptDataUrl = dl.dataUrl;
+          if (!txid) txid = `TG-RECEIPT-${state.subId.slice(-6).toUpperCase()}`;
+        } catch (imgErr) {
+          await bot.sendMessage(chatId, `⚠️ خطا در دریافت عکس رسید: ${imgErr instanceof Error ? imgErr.message : 'لطفاً دوباره بفرستید یا کد پیگیری را تایپ کنید.'}`);
+          return { ok: true };
         }
-      ).catch(() => {});
-      await bot.sendMessage(chatId, `✅ کد پیگیری (${txid}) برای فاکتور #${state.subId} ثبت و برای تایید آنی ارسال شد! به محض تایید پیام فعال‌سازی دریافت می‌کنید.`);
+      }
+      if (!txid && !receiptDataUrl) {
+        await bot.sendMessage(chatId, 'لطفاً عکس رسید یا کد پیگیری / TXID را ارسال کنید:');
+        return { ok: true };
+      }
+      await clearState();
+      await env.DB.prepare(`UPDATE user_subscriptions SET payment_reference = ?, receipt_image_url = COALESCE(?, receipt_image_url) WHERE id = ? AND user_id = ?`)
+        .bind(txid.slice(0, 140), receiptDataUrl, state.subId, user.id).run();
+      const sub = await env.DB.prepare(`SELECT plan_code, amount_usd FROM user_subscriptions WHERE id = ?`).bind(state.subId).first<{ plan_code: string; amount_usd: number }>();
+      const alertText = `🔔 ثبت پرداخت جدید!\n\n👤 کاربر: ${user.username} (${tgId})\n🧾 سفارش: #${state.subId}\n📦 پلن: ${sub?.plan_code ?? '—'} | 💵 ${sub?.amount_usd ?? 0} USDT\n🔗 کد/TXID: ${txid}${receiptDataUrl ? '\n📸 به همراه عکس رسید' : ''}`;
+      const reviewMarkup = {
+        inlineKeyboard: [
+          [
+            { text: '✅ تایید فوری', callback_data: `adm:tx_approve:${state.subId}` },
+            { text: '❌ رد', callback_data: `adm:tx_reject:${state.subId}` },
+          ],
+        ],
+      };
+      if (receiptDataUrl) {
+        await notifyAllAdminsPhoto(env, receiptDataUrl, alertText, reviewMarkup).catch(() => {});
+      } else {
+        await notifyAllAdmins(env, alertText, reviewMarkup).catch(() => {});
+      }
+      await bot.sendMessage(
+        chatId,
+        `✅ ${receiptDataUrl ? 'عکس رسید واریز' : `کد پیگیری (${txid})`} برای فاکتور #${state.subId} ثبت و برای تایید آنی ارسال شد! به محض تایید پیام فعال‌سازی دریافت می‌کنید.`
+      );
       return { ok: true };
     }
 
@@ -3133,6 +3157,18 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       if (isMenuButtonTap) {
         await clearState();
       } else {
+        let supportImgDataUrl: string | null = null;
+        if (incomingImageFileId) {
+          try {
+            const dl = await bot.downloadFileAsDataUrl(incomingImageFileId, 3_500_000);
+            supportImgDataUrl = dl.dataUrl;
+          } catch {
+            // fallback to text if image fetch fails
+          }
+        }
+        const supportMsgText = text.trim() || (supportImgDataUrl ? '📷 تصویر پیوست‌شده در پشتیبانی' : '');
+        if (!supportMsgText) return { ok: true };
+
         let tkt = await env.DB.prepare(
           `SELECT id, COALESCE(support_mode, 'AI_ASSISTANT') as support_mode FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
         ).bind(user.id).first<{ id: string; support_mode: string }>();
@@ -3143,15 +3179,21 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           `INSERT INTO support_tickets (id, user_id, subject, status, channel, support_mode) VALUES (?, ?, 'پشتیبانی تلگرام', 'OPEN', 'TELEGRAM', 'AI_ASSISTANT')`
         ).bind(ticketId, user.id).run();
       }
-      await env.DB.prepare(`INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message) VALUES (?, ?, ?, 'user', ?, ?)`)
-        .bind(randomId('smsg'), ticketId, user.id, user.username, text.slice(0, 2000)).run();
+      await env.DB.prepare(`INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message, image_data_url) VALUES (?, ?, ?, 'user', ?, ?, ?)`)
+        .bind(randomId('smsg'), ticketId, user.id, user.username, supportMsgText.slice(0, 2000), supportImgDataUrl).run();
 
       if (supportMode === 'HUMAN_ADMIN') {
         await clearState();
         await env.DB.prepare(`UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`).bind(ticketId).run();
-        await notifyAllAdmins(env, `💬 پیام پشتیبانی جدید از ربات (گفتگوی مستقیم با مدیران):\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${text}`, {
-          inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }]],
-        }).catch(() => {});
+        const adminCaption = `💬 پیام پشتیبانی جدید از ربات (گفتگوی مستقیم با مدیران):\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${supportMsgText}`;
+        const adminMarkup = {
+          inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' as const }]],
+        };
+        if (supportImgDataUrl) {
+          await notifyAllAdminsPhoto(env, supportImgDataUrl, adminCaption, adminMarkup).catch(() => {});
+        } else {
+          await notifyAllAdmins(env, adminCaption, adminMarkup).catch(() => {});
+        }
         await bot.sendMessage(
           chatId,
           `✅ پیام شما به تیکت #${ticketId} برای مدیران پشتیبانی ارسال شد و به‌زودی همین‌جا پاسخ می‌گیرید.\n\n${ANTI_SCAM_WARNING_FA}`,
@@ -3167,7 +3209,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const aiRes = await generateSupportAIReply(env, {
         userId: user.id,
         username: user.username || tgId,
-        question: text,
+        question: supportImgDataUrl ? `${supportMsgText}\n[کاربر تصویر اسکرین‌شات ارسال کرده است؛ در صورت نیاز به بررسی دستی مدیر، یادآوری کن دکمه گفتگو با مدیران انسانی را بزند.]` : supportMsgText,
       });
       await env.DB.prepare(`INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message) VALUES (?, ?, ?, 'ai', ?, ?)`)
         .bind(randomId('smsg'), ticketId, user.id, `دستیار هوشمند (${aiRes.usedModel})`, aiRes.reply).run();
@@ -3175,7 +3217,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
         await bot.sendMessage(
           chatId,
-          `🤖 **پاسخ دستیار هوشمند دلارینو:**\n\n${aiRes.reply}\n\n—\nمی‌توانید سوال بعدی خود را همین‌جا بپرسید یا با دکمه زیر مستقیماً با مدیران صحبت کنید.`,
+          `🤖 **پاسخ دستیار هوشمند دلارینو:**\n\n${aiRes.reply}\n\n—\nمی‌توانید سوال یا تصویر بعدی خود را همین‌جا بپرسید یا با دکمه زیر مستقیماً با مدیران صحبت کنید.`,
           {
             inlineKeyboard: [
               [{ text: '👨‍💼 سوال من حل نشد / گفتگو با مدیران انسانی', callback_data: `tg_support_human:${ticketId}`, style: 'primary' }],
@@ -3472,7 +3514,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await bot.sendMessage(
       chatId,
       `💬 پشتیبانی هوشمند و آنلاین دلارینو (${safeSup})\n\n` +
-      `سوال خود را همین‌جا بنویسید تا **هوش مصنوعی پشتیبانی** فوری پاسخ دهد. هر زمان خواستید می‌توانید از دکمه زیر مستقیم با **مدیران انسانی** گفتگو کنید.\n\n` +
+      `سوال، مشکل یا <b>عکس / اسکرین‌شات</b> خود را همین‌جا ارسال کنید تا هوش مصنوعی پشتیبانی فوری بررسی و پاسخ دهد. هر زمان خواستید می‌توانید از دکمه زیر مستقیم با <b>مدیران انسانی</b> گفتگو کنید.\n\n` +
       `${ANTI_SCAM_WARNING_FA}`,
       {
         inlineKeyboard: [

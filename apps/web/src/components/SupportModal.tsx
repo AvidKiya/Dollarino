@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Headphones,
+  ImagePlus,
   Loader2,
   Send,
   ShieldAlert,
@@ -12,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { compressChartImageFile } from './FloatingAiChat';
 
 interface SupportTicket {
   id: string;
@@ -28,6 +30,7 @@ interface SupportMsg {
   sender_role: 'user' | 'admin' | 'ai' | 'system';
   sender_name: string | null;
   message: string;
+  image_data_url?: string | null;
   created_at: string;
 }
 
@@ -73,11 +76,14 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [messages, setMessages] = useState<SupportMsg[]>([]);
   const [text, setText] = useState('');
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [telegramSupport, setTelegramSupport] = useState('@Dollarino_bot');
   const [antiScam, setAntiScam] = useState('');
   const [statusMsg, setStatusMsg] = useState('');
   const [supportMode, setSupportMode] = useState<'AI_ASSISTANT' | 'HUMAN_ADMIN'>('AI_ASSISTANT');
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     if (!open || !authenticated) return;
@@ -125,10 +131,25 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
   const activeTicket = tickets.find((t) => t.status !== 'CLOSED') || tickets[0];
   const tgHandleClean = telegramSupport.replace(/^@/, '');
 
+  const handleAttachFile = async (file?: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setStatusMsg(isFa ? 'فقط فایل تصویری (PNG/JPG/WebP) مجاز است.' : 'Only image files are supported.');
+      return;
+    }
+    try {
+      const compressed = await compressChartImageFile(file);
+      setPendingImage(compressed);
+      setStatusMsg('');
+    } catch (err) {
+      setStatusMsg(err instanceof Error ? err.message : 'Image upload error');
+    }
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = text.trim();
-    if (!clean || sending || !authenticated) return;
+    if ((!clean && !pendingImage) || sending || !authenticated) return;
     setSending(true);
     setStatusMsg('');
     try {
@@ -143,10 +164,12 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
           ticketId: activeTicket?.id,
           subject: isFa ? 'پشتیبانی آنلاین دلارینو' : 'Dollarino Online Support',
           message: clean,
+          imageDataUrl: pendingImage,
           mode: supportMode === 'HUMAN_ADMIN' ? 'HUMAN' : 'AI',
         }),
       });
       setText('');
+      setPendingImage(null);
       if (res.supportMode) setSupportMode(res.supportMode);
       setStatusMsg(
         res.supportMode === 'HUMAN_ADMIN'
@@ -542,6 +565,19 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
                         · {m.created_at.slice(11, 16)}
                       </span>
                     </div>
+                    {m.image_data_url && (
+                      <button
+                        type="button"
+                        onClick={() => setLightboxImage(m.image_data_url || null)}
+                        className="block mb-2 rounded-xl overflow-hidden border border-white/20 hover:opacity-90 transition"
+                      >
+                        <img
+                          src={m.image_data_url}
+                          alt="Support attachment"
+                          className="max-h-48 w-auto object-contain rounded-xl"
+                        />
+                      </button>
+                    )}
                     <div>{renderFormattedSupportText(m.message)}</div>
                   </div>
                   {isAi && supportMode === 'AI_ASSISTANT' && (
@@ -575,42 +611,114 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
+        {/* Input with Image Upload + Modern Pill Composer */}
         {authenticated && (
-        <form onSubmit={sendMessage} className="p-4 border-t hairline space-y-2.5 bg-[var(--panel-translucent)] backdrop-blur-xl">
+        <form onSubmit={sendMessage} className="px-3 sm:px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t hairline space-y-2 bg-[var(--panel)]">
           {statusMsg && (
             <div className="text-[11px] font-bold text-jade inline-flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span>{statusMsg}</span>
             </div>
           )}
-          <div className="flex gap-2">
+          {pendingImage && (
+            <div className="flex items-center gap-3 p-2 rounded-2xl surface-soft border hairline">
+              <img src={pendingImage} alt="Preview" className="h-12 w-16 object-cover rounded-xl border hairline" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-bold text-main truncate">
+                  {isFa ? '📸 عکس پیوست آماده ارسال به پشتیبانی' : '📸 Image ready to send'}
+                </p>
+                <p className="text-[10px] text-dim truncate">
+                  {isFa ? 'توضیح اضافه بنویسید یا دکمه ارسال را بزنید.' : 'Add note or send.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingImage(null)}
+                className="h-7 w-7 rounded-full btn-ghost grid place-items-center text-rose-400 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              void handleAttachFile(f);
+            }}
+          />
+          <div className="flex items-center gap-1.5 rounded-[24px] bg-[var(--soft)] border border-[var(--line-strong)] focus-within:border-[var(--gold)] px-2 py-1.5 shadow-sm transition">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title={isFa ? 'ارسال عکس / اسکرین‌شات' : 'Attach screenshot'}
+              className="h-9 w-9 shrink-0 rounded-full hover:bg-[var(--panel)] grid place-items-center text-[var(--gold)] transition"
+            >
+              <ImagePlus className="w-[18px] h-[18px]" />
+            </button>
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
+              onPaste={(e) => {
+                const items = Array.from(e.clipboardData?.items || []);
+                const imgItem = items.find((it) => it.type.startsWith('image/'));
+                const f = imgItem?.getAsFile();
+                if (f) {
+                  e.preventDefault();
+                  void handleAttachFile(f);
+                }
+              }}
               placeholder={
                 supportMode === 'HUMAN_ADMIN'
                   ? isFa
-                    ? 'پیام مستقیم به مدیران پشتیبانی بنویسید...'
-                    : 'Write directly to human support admins...'
+                    ? 'پیام یا عکس اسکرین‌شات به مدیران...'
+                    : 'Message or screenshot to admins...'
                   : isFa
-                    ? 'سوال خود را از دستیار هوشمند بپرسید...'
-                    : 'Ask the AI support assistant...'
+                    ? 'سوال یا تصویر خطا را اینجا بفرستید...'
+                    : 'Ask AI or attach a screenshot...'
               }
-              className="field flex-1 text-xs py-2.5"
+              className="flex-1 bg-transparent border-0 outline-none focus:ring-0 py-1.5 px-1 text-xs sm:text-sm text-main placeholder:text-dim"
             />
             <button
               type="submit"
-              disabled={sending || !text.trim()}
-              className="btn-gold px-5 rounded-full text-xs font-black flex items-center gap-1.5 disabled:opacity-50 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 active:scale-95"
+              disabled={sending || (!text.trim() && !pendingImage)}
+              className="h-9 px-3.5 sm:px-4 shrink-0 rounded-full btn-gold text-xs font-black flex items-center gap-1.5 disabled:opacity-40 transition active:scale-95"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              <span>{isFa ? 'ارسال' : 'Send'}</span>
+              <span className="hidden sm:inline">{isFa ? 'ارسال' : 'Send'}</span>
             </button>
           </div>
         </form>
         )}
       </div>
+
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            setLightboxImage(null);
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxImage(null)}
+            className="absolute top-4 end-4 h-10 w-10 rounded-full bg-white/15 text-white grid place-items-center"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <img
+            src={lightboxImage}
+            alt="Full screenshot"
+            className="max-w-full max-h-[88vh] rounded-2xl object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

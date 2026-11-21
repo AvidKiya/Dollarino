@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
+import { callMultimodalChatAI, detectVisionSupport, resolveModelRecordById } from '../ai/assistant.js';
 import { generateSupportAIReply } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserEntitlement } from './subscriptions.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE, OFFICIAL_CHANNEL_HANDLE } from '../telegram/formatter.js';
-import { notifyAllAdmins } from '../telegram/publisher.js';
+import { notifyAllAdmins, notifyAllAdminsPhoto } from '../telegram/publisher.js';
 
 export const supportRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 supportRoutes.use('*', requireAuth);
@@ -93,11 +94,20 @@ supportRoutes.post('/message', async (c) => {
     ticketId?: string;
     subject?: string;
     message?: string;
+    imageDataUrl?: string | null;
     mode?: 'AI' | 'HUMAN' | 'ESCALATE';
-  }>().catch(() => ({} as { ticketId?: string; subject?: string; message?: string; mode?: 'AI' | 'HUMAN' | 'ESCALATE' }));
+  }>().catch(() => ({} as { ticketId?: string; subject?: string; message?: string; imageDataUrl?: string | null; mode?: 'AI' | 'HUMAN' | 'ESCALATE' }));
 
-  const text = String(body.message || '').trim();
-  if (!text) return c.json({ error: 'متن پیام پشتیبانی نمی‌تواند خالی باشد.' }, 400);
+  const rawText = String(body.message || '').trim();
+  const rawImg = body.imageDataUrl ? String(body.imageDataUrl).trim() : '';
+  if (rawImg && (!rawImg.startsWith('data:image/') || rawImg.length > 4_500_000)) {
+    return c.json({ error: 'فرمت تصویر نامعتبر است یا حجم آن بیش از حد مجاز (۴ مگابایت) است.' }, 400);
+  }
+  const imageDataUrl = rawImg || null;
+  if (!rawText && !imageDataUrl) {
+    return c.json({ error: 'متن پیام یا تصویر پشتیبانی نمی‌تواند خالی باشد.' }, 400);
+  }
+  const text = rawText || '📷 تصویر پیوست‌شده در پشتیبانی';
 
   let ticketId = (body.ticketId || '').trim();
   let currentMode = 'AI_ASSISTANT';
@@ -129,9 +139,9 @@ supportRoutes.post('/message', async (c) => {
   const wantsHuman = body.mode === 'HUMAN' || body.mode === 'ESCALATE' || currentMode === 'HUMAN_ADMIN';
   const msgId = randomId('smsg');
   await c.env.DB.prepare(
-    `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message)
-     VALUES (?, ?, ?, 'user', ?, ?)`
-  ).bind(msgId, ticketId, user.id, user.username || user.email, text.slice(0, 2000)).run();
+    `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message, image_data_url)
+     VALUES (?, ?, ?, 'user', ?, ?, ?)`
+  ).bind(msgId, ticketId, user.id, user.username || user.email, text.slice(0, 2000), imageDataUrl).run();
 
   if (wantsHuman) {
     await c.env.DB.prepare(
@@ -143,16 +153,21 @@ supportRoutes.post('/message', async (c) => {
       `کاربر: ${user.username} (${user.email})`,
       `تیکت: ${ticketId}`,
       ``,
-      text.slice(0, 800),
+      text.slice(0, 750),
     ].join('\n');
 
-    await notifyAllAdmins(c.env, alert, {
+    const adminOpts = {
       inlineKeyboard: [
-        [{ text: '✍️ پاسخ آنلاین به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }],
+        [{ text: '✍️ پاسخ آنلاین به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' as const }],
       ],
-    }).catch(() => {});
+    };
+    if (imageDataUrl) {
+      await notifyAllAdminsPhoto(c.env, imageDataUrl, alert, adminOpts).catch(() => {});
+    } else {
+      await notifyAllAdmins(c.env, alert, adminOpts).catch(() => {});
+    }
 
-    return c.json({ ok: true, ticketId, messageId: msgId, supportMode: 'HUMAN_ADMIN', aiReply: null }, 201);
+    return c.json({ ok: true, ticketId, messageId: msgId, imageDataUrl, supportMode: 'HUMAN_ADMIN', aiReply: null }, 201);
   }
 
   // AI Support Mode: answer immediately while keeping option to escalate to humans
@@ -161,19 +176,49 @@ supportRoutes.post('/message', async (c) => {
   ).bind(ticketId).all<{ sender_role: string; message: string }>().catch(() => ({ results: [] }));
 
   const contextSummary = await buildUserSupportContext(c.env.DB, user);
-  const aiRes = await generateSupportAIReply(c.env, {
-    userId: user.id,
-    username: user.username || user.email,
-    question: text,
-    contextSummary,
-    recentMessages: recentRows.results.reverse(),
-  });
+  let aiReplyText = '';
+  let usedModelLabel = 'Dollarino AI Support Core';
+
+  if (imageDataUrl) {
+    const resolved = await resolveModelRecordById(c.env, user.id, null).catch(() => null);
+    if (resolved && detectVisionSupport(resolved.record.provider, resolved.record.model, resolved.record.label)) {
+      try {
+        const visionAns = await callMultimodalChatAI(
+          resolved.record,
+          `شما دستیار پشتیبانی رسمی پلتفرم دلارینو هستید. کاربر اسکرین‌شات خطا، رسید یا صفحه پلتفرم را فرستاده است. تصویر را دقیق بررسی کنید و با زبان فارسی محترمانه و روشن راهنمایی کنید. اطلاعات حساب: ${contextSummary}`,
+          [],
+          text,
+          imageDataUrl
+        );
+        if (visionAns?.trim()) {
+          aiReplyText = visionAns.trim().slice(0, 1800);
+          usedModelLabel = resolved.meta.label;
+        }
+      } catch {
+        // fallback to text support AI below
+      }
+    }
+  }
+
+  if (!aiReplyText) {
+    const aiRes = await generateSupportAIReply(c.env, {
+      userId: user.id,
+      username: user.username || user.email,
+      question: imageDataUrl
+        ? `${text}\n\n[کاربر یک تصویر اسکرین‌شات هم پیوست کرده است؛ در صورت نیاز به بررسی تصویری توسط پشتیبان انسانی، راهنمایی کن دکمه «گفتگو با مدیران انسانی» را بزند تا عکس مستقیم به مدیران مخابره شود.]`
+        : text,
+      contextSummary,
+      recentMessages: recentRows.results.reverse(),
+    });
+    aiReplyText = aiRes.reply;
+    usedModelLabel = aiRes.usedModel;
+  }
 
   const aiMsgId = randomId('smsg');
   await c.env.DB.prepare(
     `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message)
      VALUES (?, ?, ?, 'ai', ?, ?)`
-  ).bind(aiMsgId, ticketId, user.id, `دستیار هوشمند دلارینو (${aiRes.usedModel})`, aiRes.reply).run();
+  ).bind(aiMsgId, ticketId, user.id, `دستیار هوشمند دلارینو (${usedModelLabel})`, aiReplyText).run();
 
   await c.env.DB.prepare(
     `UPDATE support_tickets SET status = 'OPEN', support_mode = 'AI_ASSISTANT', last_message_at = datetime('now') WHERE id = ?`
@@ -184,12 +229,13 @@ supportRoutes.post('/message', async (c) => {
       ok: true,
       ticketId,
       messageId: msgId,
+      imageDataUrl,
       supportMode: 'AI_ASSISTANT',
       aiReply: {
         id: aiMsgId,
         sender_role: 'ai',
-        sender_name: `دستیار هوشمند دلارینو (${aiRes.usedModel})`,
-        message: aiRes.reply,
+        sender_name: `دستیار هوشمند دلارینو (${usedModelLabel})`,
+        message: aiReplyText,
       },
     },
     201

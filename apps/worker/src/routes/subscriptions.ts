@@ -6,7 +6,7 @@ import type { AuthUser, Env } from '../env.js';
 import { enforceRateLimit, maskUsernameForReferral } from '../security.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter.js';
-import { notifyAllAdmins } from '../telegram/publisher.js';
+import { notifyAllAdmins, notifyAllAdminsPhoto } from '../telegram/publisher.js';
 
 export interface SubscriptionPlanRow {
   code: string;
@@ -492,8 +492,9 @@ subscriptionRoutes.post('/checkout', async (c) => {
     planCode?: string;
     paymentMethod?: 'USDT_TRC20' | 'TRUST_WALLET_BEP20' | 'TRUST_WALLET_TRC20' | 'CARD_TO_CARD';
     paymentReference?: string;
+    receiptImageDataUrl?: string | null;
     payerNote?: string;
-  }>().catch(() => ({} as Record<string, string>));
+  }>().catch(() => ({} as Record<string, string | null | undefined>));
 
   const planCode = (body.planCode || '').trim();
   const plan = await c.env.DB.prepare(
@@ -504,17 +505,25 @@ subscriptionRoutes.post('/checkout', async (c) => {
     return c.json({ error: 'Selected subscription plan is invalid' }, 400);
   }
 
-  const ref = (body.paymentReference || '').trim();
-  if (ref.length < 5) {
-    return c.json({ error: 'Please enter a valid TXID or payment tracking reference (min 5 chars)' }, 400);
+  const rawReceipt = body.receiptImageDataUrl ? String(body.receiptImageDataUrl).trim() : '';
+  if (rawReceipt && (!rawReceipt.startsWith('data:image/') || rawReceipt.length > 4_500_000)) {
+    return c.json({ error: 'فرمت تصویر رسید نامعتبر است یا حجم آن بیش از حد مجاز (۴ مگابایت) است.' }, 400);
+  }
+  const receiptImage = rawReceipt || null;
+
+  const userRef = (body.paymentReference || '').trim();
+  if (!receiptImage && userRef.length < 5) {
+    return c.json({ error: 'لطفاً تصویر رسید واریز را آپلود کنید یا کد پیگیری / TXID معتبر وارد نمایید.' }, 400);
   }
 
-  // Prevent reusing the exact same payment reference / TXID
-  const duplicateRef = await c.env.DB.prepare(
-    `SELECT id FROM user_subscriptions WHERE payment_reference = ? AND status IN ('ACTIVE', 'PENDING_REVIEW') LIMIT 1`
-  ).bind(ref.slice(0, 140)).first<{ id: string }>().catch(() => null);
-  if (duplicateRef) {
-    return c.json({ error: 'این کد پیگیری یا TXID قبلاً ثبت شده است.' }, 409);
+  // Prevent reusing the exact same user-entered payment reference / TXID
+  if (userRef.length >= 5) {
+    const duplicateRef = await c.env.DB.prepare(
+      `SELECT id FROM user_subscriptions WHERE payment_reference = ? AND status IN ('ACTIVE', 'PENDING_REVIEW') LIMIT 1`
+    ).bind(userRef.slice(0, 140)).first<{ id: string }>().catch(() => null);
+    if (duplicateRef) {
+      return c.json({ error: 'این کد پیگیری یا TXID قبلاً ثبت شده است.' }, 409);
+    }
   }
 
   const method =
@@ -526,41 +535,45 @@ subscriptionRoutes.post('/checkout', async (c) => {
           ? 'TRUST_WALLET_TRC20'
           : 'USDT_TRC20';
   const id = randomId('sub');
+  const ref = userRef.length >= 4 ? userRef : `RECEIPT-${id.slice(-6).toUpperCase()}`;
 
   // Auto-verify USDT TRC20 (Tronscan) or Trust Wallet BEP20 (BSC RPC) TXID when applicable
   let autoActivated = false;
   let autoNote = '';
-  if (method === 'USDT_TRC20' || method === 'TRUST_WALLET_TRC20') {
-    const walletSetting = await c.env.DB.prepare(
-      `SELECT value FROM system_settings WHERE key = 'usdt_trc20_wallet'`
-    ).first<{ value: string }>().catch(() => null);
-    const check = await verifyTronscanUsdtTrc20(ref, walletSetting?.value || '', plan.price_usd);
-    if (check.verified) {
-      autoActivated = true;
-      autoNote = check.note;
-    }
-  } else if (method === 'TRUST_WALLET_BEP20') {
-    const evmReceiver = await c.env.DB.prepare(
-      `SELECT value FROM system_settings WHERE key = 'trust_wallet_evm_receiver'`
-    ).first<{ value: string }>().catch(() => null);
-    const check = await verifyBscUsdtBep20(ref, evmReceiver?.value || '', plan.price_usd);
-    if (check.verified) {
-      autoActivated = true;
-      autoNote = check.note;
+  if (userRef.length >= 16) {
+    if (method === 'USDT_TRC20' || method === 'TRUST_WALLET_TRC20') {
+      const walletSetting = await c.env.DB.prepare(
+        `SELECT value FROM system_settings WHERE key = 'usdt_trc20_wallet'`
+      ).first<{ value: string }>().catch(() => null);
+      const check = await verifyTronscanUsdtTrc20(ref, walletSetting?.value || '', plan.price_usd);
+      if (check.verified) {
+        autoActivated = true;
+        autoNote = check.note;
+      }
+    } else if (method === 'TRUST_WALLET_BEP20') {
+      const evmReceiver = await c.env.DB.prepare(
+        `SELECT value FROM system_settings WHERE key = 'trust_wallet_evm_receiver'`
+      ).first<{ value: string }>().catch(() => null);
+      const check = await verifyBscUsdtBep20(ref, evmReceiver?.value || '', plan.price_usd);
+      if (check.verified) {
+        autoActivated = true;
+        autoNote = check.note;
+      }
     }
   }
 
   if (autoActivated) {
     const days = Math.max(1, plan.duration_days || 30);
     await c.env.DB.prepare(
-      `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, payer_note, started_at, expires_at, reviewed_at, admin_note)
-       VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' days'), datetime('now'), ?)`
+      `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, receipt_image_url, amount_usd, payer_note, started_at, expires_at, reviewed_at, admin_note)
+       VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' days'), datetime('now'), ?)`
     ).bind(
       id,
       user.id,
       plan.code,
       method,
       ref.slice(0, 140),
+      receiptImage,
       plan.price_usd,
       (body.payerNote || '').trim().slice(0, 240),
       days,
@@ -571,21 +584,22 @@ subscriptionRoutes.post('/checkout', async (c) => {
     await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Subscription ${id} AUTO-ACTIVATED via Tronscan (${plan.name_en})`);
     await notifyAllAdmins(
       c.env,
-      `✅ اشتراک کاربر ${user.username} (${user.email}) برای پلن ${plan.name_fa} به صورت خودکار از طریق شبکه TRC20 تایید و فعال شد!\nTXID: ${ref}`
+      `✅ اشتراک کاربر ${user.username} (${user.email}) برای پلن ${plan.name_fa} به صورت خودکار از طریق شبکه بلاک‌چین تایید و فعال شد!\nTXID: ${ref}`
     ).catch(() => {});
 
     return c.json({ ok: true, orderId: id, status: 'ACTIVE', autoVerified: true }, 201);
   }
 
   await c.env.DB.prepare(
-    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, payer_note)
-     VALUES (?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?)`
+    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, receipt_image_url, amount_usd, payer_note)
+     VALUES (?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, ?)`
   ).bind(
     id,
     user.id,
     plan.code,
     method,
     ref.slice(0, 140),
+    receiptImage,
     plan.price_usd,
     (body.payerNote || '').trim().slice(0, 240)
   ).run();
@@ -600,13 +614,30 @@ subscriptionRoutes.post('/checkout', async (c) => {
 
   const note = [
     `💳 درخواست اشتراک جدید در دلارینو`,
-    `کاربر: ${user.email} (${user.username})`,
-    `پلن: ${plan.name_fa} ($${plan.price_usd})`,
-    `روش: ${method}`,
-    `کد پیگیری / TXID: ${ref}`,
-    `شناسه سفارش: ${id}`,
-  ].join('\n');
-  await notifyAllAdmins(c.env, note).catch(() => {});
+    `👤 کاربر: ${user.email} (${user.username})`,
+    `📦 پلن: ${plan.name_fa} ($${plan.price_usd} / ${Number(plan.price_toman || 0).toLocaleString()} تومان)`,
+    `💳 روش: ${method}`,
+    userRef ? `🔗 کد پیگیری / TXID: ${userRef}` : `📸 ثبت‌شده با عکس رسید واریز`,
+    body.payerNote?.trim() ? `📝 توضیح: ${body.payerNote.trim().slice(0, 120)}` : '',
+    `🧾 سفارش: #${id}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const reviewKeyboard = {
+    inlineKeyboard: [
+      [
+        { text: '✅ تایید فوری اشتراک', callback_data: `adm:tx_approve:${id}`, style: 'success' as const },
+        { text: '❌ رد درخواست', callback_data: `adm:tx_reject:${id}`, style: 'danger' as const },
+      ],
+    ],
+  };
+
+  if (receiptImage) {
+    await notifyAllAdminsPhoto(c.env, receiptImage, note, reviewKeyboard).catch(() => {});
+  } else {
+    await notifyAllAdmins(c.env, note, reviewKeyboard).catch(() => {});
+  }
 
   return c.json({ ok: true, orderId: id, status: 'PENDING_REVIEW', autoVerified: false }, 201);
 });

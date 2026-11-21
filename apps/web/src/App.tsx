@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { FloatingAiChat } from './components/FloatingAiChat';
@@ -11,23 +11,24 @@ import { apiFetch, ApiError, setStoredToken } from './lib/api';
 import type { Lang } from './lib/i18n';
 import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
 import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
-import { AdminPage } from './pages/AdminPage';
-import { AiChatPage } from './pages/AiChatPage';
 import { AuthPage } from './pages/AuthPage';
-import { CopyConnectPage } from './pages/CopyConnectPage';
-import { DexTrustPage } from './pages/DexTrustPage';
-import { FaqPage } from './pages/FaqPage';
 import { LandingPage } from './pages/LandingPage';
-import { MarketsPage } from './pages/MarketsPage';
-import { MyAiPage } from './pages/MyAiPage';
 import { OverviewPage } from './pages/OverviewPage';
-import { PortfolioPage } from './pages/PortfolioPage';
-import { RadarLabPage } from './pages/RadarLabPage';
-import { ServicesPage } from './pages/ServicesPage';
-import { SubscriptionPage } from './pages/SubscriptionPage';
-import { TerminalPage } from './pages/TerminalPage';
-import { VerifyCardPage } from './pages/VerifyCardPage';
-import { WeeklyCardPage } from './pages/WeeklyCardPage';
+
+const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+const AiChatPage = lazy(() => import('./pages/AiChatPage').then((m) => ({ default: m.AiChatPage })));
+const CopyConnectPage = lazy(() => import('./pages/CopyConnectPage').then((m) => ({ default: m.CopyConnectPage })));
+const DexTrustPage = lazy(() => import('./pages/DexTrustPage').then((m) => ({ default: m.DexTrustPage })));
+const FaqPage = lazy(() => import('./pages/FaqPage').then((m) => ({ default: m.FaqPage })));
+const MarketsPage = lazy(() => import('./pages/MarketsPage').then((m) => ({ default: m.MarketsPage })));
+const MyAiPage = lazy(() => import('./pages/MyAiPage').then((m) => ({ default: m.MyAiPage })));
+const PortfolioPage = lazy(() => import('./pages/PortfolioPage').then((m) => ({ default: m.PortfolioPage })));
+const RadarLabPage = lazy(() => import('./pages/RadarLabPage').then((m) => ({ default: m.RadarLabPage })));
+const ServicesPage = lazy(() => import('./pages/ServicesPage').then((m) => ({ default: m.ServicesPage })));
+const SubscriptionPage = lazy(() => import('./pages/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
+const TerminalPage = lazy(() => import('./pages/TerminalPage').then((m) => ({ default: m.TerminalPage })));
+const VerifyCardPage = lazy(() => import('./pages/VerifyCardPage').then((m) => ({ default: m.VerifyCardPage })));
+const WeeklyCardPage = lazy(() => import('./pages/WeeklyCardPage').then((m) => ({ default: m.WeeklyCardPage })));
 
 function applyLookToRoot(look: LookId) {
   const root = document.documentElement;
@@ -266,14 +267,22 @@ export function App() {
 
   if (verifyCardId) {
     return (
-      <VerifyCardPage
-        cardId={verifyCardId}
-        lang={lang}
-        onBackHome={() => {
-          window.history.pushState({}, '', '/');
-          setVerifyCardId(null);
-        }}
-      />
+      <Suspense
+        fallback={
+          <div className="min-h-screen app-shell flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
+          </div>
+        }
+      >
+        <VerifyCardPage
+          cardId={verifyCardId}
+          lang={lang}
+          onBackHome={() => {
+            window.history.pushState({}, '', '/');
+            setVerifyCardId(null);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -408,6 +417,14 @@ export function App() {
         </div>
       )}
 
+      <Suspense
+        fallback={
+          <div className="py-16 flex flex-col items-center justify-center gap-3">
+            <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
+            <p className="text-xs font-bold text-dim">{lang === 'fa' ? 'در حال بارگذاری...' : 'Loading...'}</p>
+          </div>
+        }
+      >
       {activeTab === 'overview' && (
         <OverviewPage
           lang={lang}
@@ -523,6 +540,7 @@ export function App() {
       {activeTab === 'admin' && (user.role.toUpperCase() === 'ADMIN' || user.role.toUpperCase() === 'OWNER') && (
         <AdminPage lang={lang} currentUser={user} onUserUpdated={() => void loadSessionAndDashboard()} />
       )}
+      </Suspense>
     </Layout>
     <SupportModal
       open={supportOpen}
