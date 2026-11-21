@@ -12,6 +12,7 @@ export const webhookRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }
 
 export const DEFAULT_TG_COMMANDS = [
   { command: 'start', description: 'شروع، احراز هویت و منوی اصلی دلارینو' },
+  { command: 'ai', description: 'چت با هوش مصنوعی اختصاصی + تحلیل عکس چارت' },
   { command: 'autostart', description: 'شروع خودکار ربات با یک کلیک' },
   { command: 'scan', description: 'شکار و ترید فوری با هوش مصنوعی' },
   { command: 'app', description: 'باز کردن مینی‌اپ معاملاتی دلارینو' },
@@ -26,6 +27,7 @@ export const DEFAULT_TG_COMMANDS = [
   { command: 'card', description: 'صدور و دریافت تصویر کارت سود دلارینو' },
   { command: 'settings', description: 'تنظیمات بازار (اسپات/فیوچرز) و جهت' },
   { command: 'support', description: 'پشتیبانی هوشمند ۲۴/۷ و گفتگو با مدیران' },
+  { command: 'about', description: 'معرفی دلارینو و سازنده پروژه (آوید کیا)' },
   { command: 'help', description: 'راهنمای کامل و امنیت حساب' },
 ];
 

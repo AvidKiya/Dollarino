@@ -920,16 +920,31 @@ export function LandingPage({
         </section>
       </main>
 
-      <footer className="border-t hairline py-8 px-4 text-center text-xs text-dim space-y-2">
+      <footer className="border-t hairline py-10 px-4 text-center text-xs text-dim space-y-3">
         <div className="flex items-center justify-center gap-2">
-          <DollarinoBrandMark size={24} />
+          <DollarinoBrandMark size={26} />
           <span className="font-bold text-main">Dollarino AI Trading Platform</span>
         </div>
-        <p className="opacity-75">
+        <p className="opacity-85">
           {isFa
-            ? 'هر سطحی که دارید، هوشمند معامله کنید · ربات تلگرام @Dollarino_bot'
-            : 'Autonomous AI · Trainable My AI · Verified Copy Trade · @Dollarino_bot'}
+            ? 'چت هوش مصنوعی اختصاصی + تحلیل عکس چارت + ترید هوشمند ۲۴/۷ · ربات تلگرام @Dollarino_bot'
+            : 'Dedicated Vision AI · Autonomous Trading · Verified Copy Trade · @Dollarino_bot'}
         </p>
+        <div className="inline-flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 rounded-2xl surface-soft border hairline text-[11px]">
+          <span className="font-black text-main">
+            {isFa ? '👨‍💻 طراحی و توسعه توسط: آوید کیا (Avid Kiya)' : '👨‍💻 Created & Engineered by Avid Kiya'}
+          </span>
+          <span className="opacity-40">|</span>
+          <a href="https://t.me/avidkiya" target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-[var(--gold)] hover:underline">
+            Telegram: @avidkiya
+          </a>
+          <a href="https://instagram.com/avid_kiya" target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-jade hover:underline">
+            Instagram: @avid_kiya
+          </a>
+          <a href="https://x.com/avid_kiya" target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-brand hover:underline">
+            X (Twitter): @avid_kiya
+          </a>
+        </div>
       </footer>
 
       {pwaOpen && <PwaInstallModal lang={lang} onClose={() => setPwaOpen(false)} />}

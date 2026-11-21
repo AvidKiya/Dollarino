@@ -2,6 +2,7 @@ import type { SignalMixerResult, Timeframe } from '@dollarino/core';
 
 export type NavTab =
   | 'overview'
+  | 'aichat'
   | 'myai'
   | 'terminal'
   | 'markets'
@@ -14,6 +15,64 @@ export type NavTab =
   | 'pricing'
   | 'faq'
   | 'admin';
+
+export interface SelectableAIModel {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  source: 'PLATFORM' | 'USER';
+  supportsVision: boolean;
+  isDefault: boolean;
+}
+
+export interface ExtractedChartSetup {
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  timeframe?: string;
+  entry: string;
+  stopLoss: string;
+  tp1: string;
+  tp2?: string;
+  tp3?: string;
+  leverage?: number;
+  rrRatio?: string;
+  confidence?: number;
+  note?: string;
+}
+
+export interface AiChatMessageItem {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  hasImage?: boolean;
+  previewImageUrl?: string;
+  modelId?: string | null;
+  modelLabel?: string | null;
+  usedVision?: boolean;
+  visionFallbackNotice?: string;
+  setup?: ExtractedChartSetup | null;
+  createdAt?: string;
+}
+
+export interface AiChatSessionItem {
+  id: string;
+  title: string;
+  model_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatorInfo {
+  nameFa: string;
+  nameEn: string;
+  telegram: string;
+  telegramUrl: string;
+  instagram: string;
+  instagramUrl: string;
+  twitter: string;
+  twitterUrl: string;
+}
 
 export interface AuthUserInfo {
   id: string;

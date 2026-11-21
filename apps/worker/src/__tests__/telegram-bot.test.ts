@@ -5,6 +5,7 @@ import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../index.js';
 import type { Env } from '../env.js';
+import { encryptVaultJson } from '../crypto.js';
 import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/renderer.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-intel.js';
@@ -144,6 +145,25 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      if (url.includes('api.telegram.org/file/bot')) {
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        });
+      }
+
+      if (url.includes('api.openai.com')) {
+        const bodyTxt = typeof init?.body === 'string' ? init.body : '';
+        const hasVisionImg = bodyTxt.includes('image_url');
+        const reply = hasVisionImg
+          ? `📊 تحلیل تصویر چارت توسط هوش مصنوعی:\nروند صعودی تایم ۱۵ دقیقه با کف بالاتر تایید شده است.\n\n<<<SETUP_JSON>>>{"symbol":"BTCUSDT","direction":"LONG","timeframe":"15m","entry":"92500","stopLoss":"90800","tp1":"94500","tp2":"96000","tp3":"98000","leverage":8,"rrRatio":"1:2.4","confidence":86}<<<END_SETUP_JSON>>>`
+          : `سلام! من هوش مصنوعی اختصاصی دلارینو هستم؛ سازنده این پروژه آوید کیا (@avidkiya / @avid_kiya) است و هر سوال یا عکس چارتی داشته باشید با افتخار کمک می‌کنم.`;
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: reply } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
       }
 
       if (url.includes('api.dexscreener.com')) {
@@ -1487,5 +1507,139 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
 
     const storedRows = await db.prepare(`SELECT COUNT(*) as cnt FROM channel_news WHERE created_by = 'ai_intel_daemon'`).first<{ cnt: number }>();
     expect((storedRows?.cnt ?? 0) >= 4).toBe(true);
+  });
+
+  it('v9.9: supports Dedicated Multi-Model AI Chat, Chart Image Vision & Setup Extraction in Web API and Telegram Bot + Creator Avid Kiya attribution', async () => {
+    const env = makeEnv();
+
+    // Seed an extra Vision-capable platform model (GPT-4o) alongside default model
+    const encGpt = await encryptVaultJson({ apiKey: 'sk-test-gpt4o' }, env.MASTER_ENCRYPTION_KEY);
+    await db.prepare(
+      `INSERT OR REPLACE INTO platform_ai_engines (id, slot_order, provider, label, model, base_url, weight, api_key_masked, encrypted_api_key, is_active)
+       VALUES ('plat_gpt4o', 1, 'openai', 'OpenAI GPT-4o Vision', 'gpt-4o', 'https://api.openai.com/v1', 100, 'sk-t****t4o', ?, 1)`
+    ).bind(encGpt).run();
+
+    // Login user 1001001 via magic token
+    const uRow = await db.prepare(`SELECT id, web_magic_token FROM users WHERE telegram_id = '1001001'`).first<{ id: string; web_magic_token: string }>();
+    expect(uRow?.web_magic_token).toBeTruthy();
+
+    const loginRes = await worker.fetch(
+      new Request('https://dollarino.local/api/auth/telegram-magic-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: uRow!.web_magic_token }),
+      }),
+      env
+    );
+    const loginJson = (await loginRes.json()) as { token: string };
+    expect(loginJson.token).toBeTruthy();
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${loginJson.token}`,
+    };
+
+    // 1. Check /api/ai-assistant/models & creator metadata
+    const modelsRes = await worker.fetch(
+      new Request('https://dollarino.local/api/ai-assistant/models', { headers: authHeaders }),
+      env
+    );
+    expect(modelsRes.status).toBe(200);
+    const modelsJson = (await modelsRes.json()) as {
+      models: Array<{ id: string; supportsVision: boolean }>;
+      creator: { nameFa: string; telegram: string; instagram: string; twitter: string };
+    };
+    expect(modelsJson.models.some((m) => m.id === 'plat_gpt4o' && m.supportsVision)).toBe(true);
+    expect(modelsJson.creator.nameFa).toBe('آوید کیا');
+    expect(modelsJson.creator.telegram).toBe('@avidkiya');
+    expect(modelsJson.creator.instagram).toBe('@avid_kiya');
+
+    // 2. Select model & send chart image to /api/ai-assistant/chat
+    const selectRes = await worker.fetch(
+      new Request('https://dollarino.local/api/ai-assistant/select-model', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ modelId: 'plat_gpt4o' }),
+      }),
+      env
+    );
+    expect(selectRes.status).toBe(200);
+
+    const chatRes = await worker.fetch(
+      new Request('https://dollarino.local/api/ai-assistant/chat', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          modelId: 'plat_gpt4o',
+          message: 'این چارت بیت کوین رو تحلیل کن و ستاپ بده',
+          imageDataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+        }),
+      }),
+      env
+    );
+    expect(chatRes.status).toBe(200);
+    const chatJson = (await chatRes.json()) as {
+      sessionId: string;
+      usedVision: boolean;
+      reply: string;
+      setup: { symbol: string; direction: string; entry: string; stopLoss: string; tp1: string } | null;
+    };
+    expect(chatJson.usedVision).toBe(true);
+    expect(chatJson.setup?.symbol).toBe('BTCUSDT');
+    expect(chatJson.setup?.direction).toBe('LONG');
+    expect(chatJson.reply).not.toContain('<<<SETUP_JSON>>>');
+
+    // Verify history saved in D1
+    const sessRes = await worker.fetch(
+      new Request(`https://dollarino.local/api/ai-assistant/sessions/${chatJson.sessionId}`, { headers: authHeaders }),
+      env
+    );
+    const sessJson = (await sessRes.json()) as { messages: Array<{ role: string; hasImage: boolean }> };
+    expect(sessJson.messages.length).toBe(2);
+    expect(sessJson.messages[0]?.hasImage).toBe(true);
+
+    // 3. Telegram Bot: /ai, model selection callback, direct chart photo analysis & setup execution, and /about
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 9901,
+      message: { message_id: 9901, from: { id: 1001001, first_name: 'علی' }, chat: { id: 1001001, type: 'private' }, text: '/ai' },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('آوید کیا') && String(c.body.text).includes('@avidkiya'))).toBe(true);
+
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 9902,
+      message: {
+        message_id: 9902,
+        from: { id: 1001001, first_name: 'علی' },
+        chat: { id: 1001001, type: 'private' },
+        photo: [{ file_id: 'tg_photo_file_123' }],
+        caption: 'چارت رو بررسی کن و ستاپ بده',
+      },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('BTCUSDT') && String(c.body.text).includes('92500'))).toBe(true);
+
+    // Execute extracted setup from Telegram inline button
+    const setupMsg = tgCalls.find((c) => String(c.body.text).includes('ستاپ معاملاتی'));
+    const execCb = JSON.stringify(setupMsg?.body.reply_markup || '').match(/tg_ai_exec_setup:([A-Za-z0-9_-]+)/)?.[1];
+    expect(execCb).toBeTruthy();
+
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 9903,
+      callback_query: {
+        id: 'cq_ai_setup_1',
+        from: { id: 1001001, first_name: 'علی' },
+        message: { chat: { id: 1001001 }, message_id: 9902 },
+        data: `tg_ai_exec_setup:${execCb}`,
+      },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('دلارینو') && String(c.body.text).includes('Buy signal'))).toBe(true);
+
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 9904,
+      message: { message_id: 9904, from: { id: 1001001, first_name: 'علی' }, chat: { id: 1001001, type: 'private' }, text: '/about' },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('آوید کیا') && String(c.body.text).includes('@avid_kiya'))).toBe(true);
   });
 });

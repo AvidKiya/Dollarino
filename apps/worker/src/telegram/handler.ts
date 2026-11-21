@@ -1,4 +1,10 @@
 import { formatDollarinoSignal, parseDollarinoSignal, resolveEngineDisplayLabel, selectClosedCandles, type Direction, type MarketType, type Timeframe } from '@dollarino/core';
+import {
+  DOLLARINO_CREATOR_INFO,
+  listSelectableAIModels,
+  runDedicatedAIChat,
+  type ExtractedChartSetup,
+} from '../ai/assistant.js';
 import { generateSupportAIReply, getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
 import { ensureUserDefaults, syncTelegramAvatarForUser } from '../auth.js';
 import { encryptVaultJson, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
@@ -33,6 +39,7 @@ import {
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import {
   ANTI_SCAM_WARNING_FA,
+  CREATOR_ATTRIBUTION_FA,
   channelSignalInlineButtons,
   type CollapsibleMenuSection,
   contactVerificationKeyboard,
@@ -63,6 +70,7 @@ interface TelegramUpdate {
     text?: string;
     caption?: string;
     photo?: Array<{ file_id: string }>;
+    document?: { file_id: string; mime_type?: string; file_name?: string };
     contact?: {
       phone_number: string;
       first_name?: string;
@@ -96,6 +104,156 @@ interface TelegramStepState extends Partial<AdminStepState> {
   wizMarginPct?: number;
   wizLev?: number;
   wizEngine?: string;
+  activeAiSessionId?: string;
+}
+
+function splitTelegramChunks(text: string, maxLen = 3800): string[] {
+  const clean = text.trim();
+  if (clean.length <= maxLen) return [clean];
+  const chunks: string[] = [];
+  let remaining = clean;
+  while (remaining.length > maxLen) {
+    let idx = remaining.lastIndexOf('\n', maxLen);
+    if (idx < maxLen * 0.4) idx = maxLen;
+    chunks.push(remaining.slice(0, idx).trim());
+    remaining = remaining.slice(idx).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+async function openDedicatedAIChatMenu(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: number | string,
+  user: ProvisionedUserRow,
+  webAppUrl: string,
+  opts?: { createNewSession?: boolean; editMsgId?: number }
+): Promise<void> {
+  const { models, selectedModelId } = await listSelectableAIModels(env, user.id);
+  const currentModel = models.find((m) => m.id === selectedModelId) || models[0];
+  let sessionId = '';
+  if (opts?.createNewSession) {
+    sessionId = randomId('aichat');
+    await env.DB.prepare(`INSERT INTO ai_chat_sessions (id, user_id, title, model_id) VALUES (?, ?, ?, ?)`)
+      .bind(sessionId, user.id, 'چت تلگرام دلارینو', currentModel?.id || null)
+      .run()
+      .catch(() => {});
+  } else {
+    const existing = await env.DB.prepare(
+      `SELECT id FROM ai_chat_sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{ id: string }>()
+      .catch(() => null);
+    sessionId = existing?.id || '';
+  }
+
+  await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+    .bind(JSON.stringify({ step: 'AWAIT_AI_CHAT', activeAiSessionId: sessionId || undefined }), user.id)
+    .run();
+
+  const visionBadge = currentModel?.supportsVision ? '👁️ پشتیبانی کامل از عکس چارت' : '💬 مدل متنی';
+  const hasHttps = webAppUrl.startsWith('https://');
+  const text =
+    `🧠 **هوش مصنوعی اختصاصی دلارینو (نسخه هوشمند + تحلیل چارت)**\n\n` +
+    `🔹 مدل فعال فعلی: **${currentModel?.label || 'هوش مصنوعی مرکزی دلارینو'}** (${visionBadge})\n` +
+    `🔹 مدل‌های آماده انتخاب: **${models.length} مدل متصل**\n\n` +
+    `✨ **هر کاری می‌خواهی همین‌جا انجام بده:**\n` +
+    `• **عکس چارت / اسکرین‌شات بفرست** تا روند، سطوح و ستاپ کامل (Entry / SL / TP1-3) بدهم 📸\n` +
+    `• **هر سوالی داری بپرس** (تحلیل بازار، کدنویسی Pine/Python، استراتژی، سوالات عمومی و راهنمای دلارینو) 💬\n` +
+    `• از دکمه‌های زیر مدل را عوض کن یا گفتگوی جدید بساز:\n\n` +
+    `${CREATOR_ATTRIBUTION_FA}`;
+
+  const kb: InlineKeyboardButton[][] = [
+    [
+      { text: `🤖 تغییر مدل (${models.length})`, callback_data: 'tg_ai_models', style: 'primary' },
+      { text: '🆕 گفتگوی جدید', callback_data: 'tg_ai_new', style: 'success' },
+    ],
+    ...(hasHttps
+      ? [[{ text: '💬 باز کردن صفحه چت کامل در مینی‌اپ', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/?tab=aichat` }, style: 'primary' as const }]]
+      : []),
+    [{ text: '🏠 خروج به منوی اصلی', callback_data: 'tg_ai_exit' }],
+  ];
+
+  if (opts?.editMsgId) {
+    await bot.editMessageText(chatId, opts.editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
+async function handleTelegramAIChatTurn(params: {
+  env: Env;
+  bot: TelegramBotClient;
+  chatId: number | string;
+  user: ProvisionedUserRow;
+  webAppUrl: string;
+  text: string;
+  imageFileId?: string;
+  sessionId?: string;
+}): Promise<void> {
+  const { env, bot, chatId, user, webAppUrl, text, imageFileId } = params;
+  let imageDataUrl: string | null = null;
+  if (imageFileId) {
+    try {
+      const dl = await bot.downloadFileAsDataUrl(imageFileId);
+      imageDataUrl = dl.dataUrl;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'خطا در دریافت عکس از تلگرام';
+      await bot.sendMessage(chatId, `⚠️ ${msg}`);
+      if (!text) return;
+    }
+  }
+
+  const res = await runDedicatedAIChat(env, {
+    userId: user.id,
+    sessionId: params.sessionId || null,
+    message: text,
+    imageDataUrl,
+  });
+
+  await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+    .bind(JSON.stringify({ step: 'AWAIT_AI_CHAT', activeAiSessionId: res.sessionId }), user.id)
+    .run();
+
+  const header = `🧠 **${res.modelLabel}**${res.usedVision ? ' (👁️ تحلیل تصویر چارت)' : ''}\n${
+    res.visionFallbackNotice ? `ℹ️ ${res.visionFallbackNotice}\n` : ''
+  }\n`;
+  let setupBanner = '';
+  if (res.setup) {
+    setupBanner =
+      `\n\n━━━━━━━━━━━━━━\n` +
+      `🎯 **ستاپ معاملاتی استخراج‌شده:**\n` +
+      `• نماد: **${res.setup.symbol}** | جهت: **${res.setup.direction}**${res.setup.timeframe ? ` (${res.setup.timeframe})` : ''}\n` +
+      `• ورود: \`${res.setup.entry}\` | حد ضرر: \`${res.setup.stopLoss}\`\n` +
+      `• تارگت‌ها: \`${res.setup.tp1}\`${res.setup.tp2 ? ` / \`${res.setup.tp2}\`` : ''}${res.setup.tp3 ? ` / \`${res.setup.tp3}\`` : ''}` +
+      (res.setup.rrRatio ? ` | R:R ${res.setup.rrRatio}` : '');
+  }
+
+  const fullOut = `${header}${res.reply}${setupBanner}`;
+  const chunks = splitTelegramChunks(fullOut);
+  const hasHttps = webAppUrl.startsWith('https://');
+  const kb: InlineKeyboardButton[][] = [
+    ...(res.setup
+      ? [[{ text: '⚡️ ثبت ستاپ و اجرای معامله در دلارینو', callback_data: `tg_ai_exec_setup:${res.sessionId}`, style: 'success' as const }]]
+      : []),
+    [
+      { text: '🤖 انتخاب مدل AI', callback_data: 'tg_ai_models', style: 'primary' },
+      { text: '🆕 گفتگوی جدید', callback_data: 'tg_ai_new' },
+    ],
+    [
+      ...(hasHttps
+        ? [{ text: '💬 ادامه در صفحه چت وب/مینی‌اپ', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/?tab=aichat` } }]
+        : []),
+      { text: '🏠 منوی اصلی', callback_data: 'tg_ai_exit' },
+    ],
+  ];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    await bot.sendMessage(chatId, chunks[i]!, isLast ? { inlineKeyboard: kb } : undefined);
+  }
 }
 
 interface ProvisionedUserRow {
@@ -2341,6 +2499,137 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data === 'tg_ai_chat' || data === 'tg_ai_new') {
+      await bot.answerCallbackQuery(cq.id);
+      await openDedicatedAIChatMenu(env, bot, chatId, user, webAppUrl, {
+        createNewSession: data === 'tg_ai_new',
+        editMsgId: data === 'tg_ai_chat' ? msgId : undefined,
+      });
+      return { ok: true };
+    }
+
+    if (data === 'tg_ai_models') {
+      await bot.answerCallbackQuery(cq.id);
+      const { models, selectedModelId } = await listSelectableAIModels(env, user.id);
+      const kb: InlineKeyboardButton[][] = models.map((m) => [
+        {
+          text: `${m.id === selectedModelId ? '✅ ' : ''}${m.label}${m.supportsVision ? ' 👁️' : ''}`,
+          callback_data: `tg_ai_set_model:${m.id}`,
+          style: m.id === selectedModelId ? 'success' : 'primary',
+        },
+      ]);
+      kb.push([{ text: '🔙 بازگشت به چت هوش مصنوعی', callback_data: 'tg_ai_chat' }]);
+      const modelTxt =
+        `🤖 **انتخاب مدل هوش مصنوعی دلارینو**\n\n` +
+        `مدل‌هایی که علامت 👁️ دارند از **تحلیل مستقیم عکس چارت** پشتیبانی می‌کنند.\n` +
+        `مدل‌های بیشتر را می‌توانید از پنل مدیریت یا بخش اتصالات وب اضافه کنید:`;
+      if (msgId) await bot.editMessageText(chatId, msgId, modelTxt, kb).catch(() => bot.sendMessage(chatId, modelTxt, { inlineKeyboard: kb }));
+      else await bot.sendMessage(chatId, modelTxt, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_ai_set_model:')) {
+      const targetId = data.slice('tg_ai_set_model:'.length);
+      const { models } = await listSelectableAIModels(env, user.id);
+      const chosen = models.find((m) => m.id === targetId);
+      if (!chosen) {
+        await bot.answerCallbackQuery(cq.id, 'مدل یافت نشد یا غیرفعال شده است.', true);
+        return { ok: true };
+      }
+      await env.DB.prepare(`UPDATE users SET preferred_ai_model_id = ? WHERE id = ?`).bind(chosen.id, user.id).run();
+      await bot.answerCallbackQuery(cq.id, `مدل فعال: ${chosen.label}`);
+      await openDedicatedAIChatMenu(env, bot, chatId, user, webAppUrl, { editMsgId: msgId });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_ai_exec_setup:')) {
+      const sid = data.slice('tg_ai_exec_setup:'.length);
+      const row = await env.DB.prepare(
+        `SELECT setup_json FROM ai_chat_messages WHERE session_id = ? AND user_id = ? AND setup_json IS NOT NULL ORDER BY created_at DESC LIMIT 1`
+      )
+        .bind(sid, user.id)
+        .first<{ setup_json: string }>()
+        .catch(() => null);
+      if (!row?.setup_json) {
+        await bot.answerCallbackQuery(cq.id, 'ستاپ قابل اجرا پیدا نشد.', true);
+        return { ok: true };
+      }
+      let setup: ExtractedChartSetup | null = null;
+      try {
+        setup = JSON.parse(row.setup_json) as ExtractedChartSetup;
+      } catch {
+        setup = null;
+      }
+      if (!setup) {
+        await bot.answerCallbackQuery(cq.id, 'خطا در خواندن اطلاعات ستاپ.', true);
+        return { ok: true };
+      }
+      const cleanSymbol = setup.symbol.endsWith('USDT') ? setup.symbol : `${setup.symbol.replace(/[^A-Z0-9]/gi, '')}USDT`;
+      const sigId = randomId('sig');
+      const sigObj = {
+        symbol: cleanSymbol,
+        direction: setup.direction,
+        timeframe: (setup.timeframe as Timeframe) || '15m',
+        price: setup.entry,
+        stopLoss: setup.stopLoss,
+        leverage: Math.min(25, Math.max(1, Number(setup.leverage || 5))),
+        tp1: setup.tp1,
+        tp2: setup.tp2,
+        tp3: setup.tp3,
+        channelHandle: '@Dollarino_official',
+        engineKey: 'ai_autonomous_agent',
+        engineLabel: 'تحلیل چارت AI اختصاصی دلارینو',
+      };
+      const formatted = formatDollarinoSignal(sigObj);
+      await env.DB.prepare(
+        `INSERT INTO signals (id, user_id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, raw_text, status)
+         VALUES (?, ?, 'ai_chart_vision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW')`
+      )
+        .bind(
+          sigId,
+          user.id,
+          sigObj.symbol,
+          sigObj.direction,
+          sigObj.timeframe,
+          sigObj.price,
+          sigObj.stopLoss,
+          sigObj.leverage,
+          sigObj.tp1,
+          sigObj.tp2 ?? null,
+          sigObj.tp3 ?? null,
+          formatted
+        )
+        .run();
+      await bot.answerCallbackQuery(cq.id, 'ستاپ آماده اجرا شد ⚡');
+      await bot.sendMessage(chatId, `🎯 ستاپ چارت به سیگنال استاندارد دلارینو تبدیل شد:\n\n${formatted}`, {
+        inlineKeyboard: [[{ text: '👈 دلارینو ترید کن برام 👉', callback_data: `manual_trade:${sigId}`, style: 'success' }]],
+      });
+      return { ok: true };
+    }
+
+    if (data === 'tg_ai_exit') {
+      await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(user.id).run();
+      await bot.answerCallbackQuery(cq.id, 'بازگشت به منوی اصلی');
+      await bot.sendMessage(chatId, '🏠 از حالت چت مستقیم خارج شدید. منوی کامل در اختیار شماست:', {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, getUserUiMode(user), isUserAdmin(tgId, user.role, env)),
+      });
+      return { ok: true };
+    }
+
+    if (data === 'tg_about') {
+      await bot.answerCallbackQuery(cq.id);
+      await bot.sendMessage(
+        chatId,
+        `🚀 **درباره پلتفرم دلارینو (Dollarino v9.9)**\n\n` +
+          `${CREATOR_ATTRIBUTION_FA}\n\n` +
+          `• تلگرام سازنده: ${DOLLARINO_CREATOR_INFO.telegramUrl}\n` +
+          `• اینستاگرام: ${DOLLARINO_CREATOR_INFO.instagramUrl}\n` +
+          `• توییتر (X): ${DOLLARINO_CREATOR_INFO.twitterUrl}\n\n` +
+          `💎 پلتفرم جامع ترید هوشمند AI، تحلیلگر تصویر چارت، استراتژی دُرنا V1، کپی‌ترید تاییدشده و کیف‌پول چندزنجیره‌ای Trust Wallet DEX.`
+      );
+      return { ok: true };
+    }
+
     await bot.answerCallbackQuery(cq.id);
     return { ok: true };
   }
@@ -2348,7 +2637,9 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   // 3. Handle Normal Messages & Menu Navigation
   const msg = update.message;
   const msgBodyText = (msg?.text ?? msg?.caption ?? '').trim();
-  if (!msg?.from || (!msgBodyText && !msg.photo?.length && !msg.contact)) return { ok: true };
+  const docImgFileId = msg?.document?.mime_type?.startsWith('image/') ? msg.document.file_id : undefined;
+  const incomingImageFileId = msg?.photo?.[msg.photo.length - 1]?.file_id || docImgFileId;
+  if (!msg?.from || (!msgBodyText && !incomingImageFileId && !msg.contact)) return { ok: true };
 
   const text = msgBodyText;
   const chatId = msg.chat.id;
@@ -2553,7 +2844,55 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  const SLASH_OVERRIDE = new Set(['/card', '/copy', '/support', '/positions', '/balance', '/settings', '/help', '/menu', '/dex', '/wallet', '/wizard', '/myai', '/weblogin']);
+  const SLASH_OVERRIDE = new Set([
+    '/card',
+    '/copy',
+    '/support',
+    '/positions',
+    '/balance',
+    '/settings',
+    '/help',
+    '/menu',
+    '/dex',
+    '/wallet',
+    '/wizard',
+    '/myai',
+    '/weblogin',
+    '/ai',
+    '/chat',
+    '/about',
+  ]);
+  const MAIN_MENU_PREFIXES = [
+    '🧠 چت هوش مصنوعی',
+    '🟢 شروع خودکار ربات',
+    '⚡️ شکار فوری AI',
+    '🚀 راه‌اندازی ۴ مرحله‌ای ربات',
+    '🦊 کیف‌پول Trust Wallet',
+    '🦊 Trust Wallet و DEX',
+    'ربات و هوش مصنوعی من',
+    '🏆 کپی‌ترید',
+    'حساب کاربری 👤',
+    'خرید اشتراک 💎',
+    'اتصال به صرافی 🔗',
+    '⚡ رفتن به حالت حرفه‌ای',
+    '🌱 رفتن به حالت ساده',
+    '🔍 رادار DexScreener',
+    '🔍 اسکنر DEX',
+    'تنظیمات ⚙️',
+    '📈 معاملات باز',
+    '🎯 استراتژی شکار',
+    '🧩 اکستنشن و ویجت موبایل',
+    '💬 پشتیبانی',
+    'راهنما 📚',
+    '👨‍💻 درباره سازنده',
+    'بازگشت به صفحه قبل 🔙',
+    'پنل مدیریت 💼',
+  ];
+  const isMenuButtonTap =
+    SLASH_OVERRIDE.has(text) ||
+    text.startsWith('/') ||
+    MAIN_MENU_PREFIXES.some((btn) => text.startsWith(btn.slice(0, 8)));
+
   if (SLASH_OVERRIDE.has(text) && user.telegram_state) {
     await clearState();
     user.telegram_state = null;
@@ -2571,9 +2910,27 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         chatId,
         state as AdminStepState,
         text,
-        msg.photo?.[msg.photo.length - 1]?.file_id
+        incomingImageFileId
       );
       if (handled) return { ok: true };
+    }
+
+    if (state.step === 'AWAIT_AI_CHAT') {
+      if (isMenuButtonTap) {
+        await clearState();
+      } else {
+        await handleTelegramAIChatTurn({
+          env,
+          bot,
+          chatId,
+          user,
+          webAppUrl,
+          text,
+          imageFileId: incomingImageFileId,
+          sessionId: state.activeAiSessionId,
+        });
+        return { ok: true };
+      }
     }
 
     if (state.step === 'AWAIT_API_KEY' && state.provider) {
@@ -2773,33 +3130,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (state.step === 'AWAIT_SUPPORT_MSG') {
-      const isMainMenuCommand =
-        text.startsWith('/') ||
-        [
-          '🟢 شروع خودکار ربات',
-          '⚡️ شکار فوری AI',
-          '🚀 راه‌اندازی ۴ مرحله‌ای ربات',
-          '🦊 کیف‌پول Trust Wallet',
-          '🦊 Trust Wallet و DEX',
-          'ربات و هوش مصنوعی من',
-          '🏆 کپی‌ترید',
-          'حساب کاربری 👤',
-          'خرید اشتراک 💎',
-          'اتصال به صرافی 🔗',
-          '⚡ رفتن به حالت حرفه‌ای',
-          '🌱 رفتن به حالت ساده',
-          '🔍 رادار DexScreener',
-          '🔍 اسکنر DEX',
-          'تنظیمات ⚙️',
-          '📈 معاملات باز',
-          '🎯 استراتژی شکار',
-          '🧩 اکستنشن و ویجت موبایل',
-          '💬 پشتیبانی',
-          'راهنما 📚',
-          'بازگشت به صفحه قبل 🔙',
-          'پنل مدیریت 💼',
-        ].some((btn) => text.startsWith(btn.slice(0, 7)));
-      if (isMainMenuCommand) {
+      if (isMenuButtonTap) {
         await clearState();
       } else {
         let tkt = await env.DB.prepare(
@@ -3439,6 +3770,40 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  // Direct photo / chart screenshot sent anytime outside specialized admin/support flows -> Instant AI Chart Vision Analysis!
+  if (incomingImageFileId) {
+    await handleTelegramAIChatTurn({
+      env,
+      bot,
+      chatId,
+      user,
+      webAppUrl,
+      text,
+      imageFileId: incomingImageFileId,
+    });
+    return { ok: true };
+  }
+
+  if (text === '🧠 چت هوش مصنوعی (عکس چارت)' || text === '/ai' || text === '/chat') {
+    await openDedicatedAIChatMenu(env, bot, chatId, user, webAppUrl);
+    return { ok: true };
+  }
+
+  if (text === '👨‍💻 درباره سازنده' || text === '/about') {
+    await bot.sendMessage(
+      chatId,
+      `🚀 **پلتفرم معاملاتی هوشمند دلارینو (Dollarino)**\n\n` +
+        `${CREATOR_ATTRIBUTION_FA}\n\n` +
+        `🔗 **صفحات رسمی سازنده:**\n` +
+        `• تلگرام: ${DOLLARINO_CREATOR_INFO.telegramUrl}\n` +
+        `• اینستاگرام: ${DOLLARINO_CREATOR_INFO.instagramUrl}\n` +
+        `• توییتر (X): ${DOLLARINO_CREATOR_INFO.twitterUrl}\n\n` +
+        `🧠 این ربات مجهز به هوش مصنوعی اختصاصی دلارینو، تحلیلگر تصویر چارت، استراتژی دُرنا V1، کپی‌ترید تاییدشده و کیف‌پول Trust Wallet DEX است.`,
+      { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin) }
+    );
+    return { ok: true };
+  }
+
   if (text === 'راهنما 📚' || text === '/help') {
     const [helpText, helpMedia, supportId] = await Promise.all([
       getSystemSetting(env.DB, 'bot_help_text', ''),
@@ -3447,7 +3812,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     ]);
     const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
     const rawHelp = (helpText || (await getSystemSetting(env.DB, 'help_text', '📚 راهنمای دلارینو در پنل وب در دسترس است.'))).replace(/\\n/g, '\n');
-    const caption = `${rawHelp}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
+    const caption = `${rawHelp}\n\n${CREATOR_ATTRIBUTION_FA}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
     const faqKb: InlineKeyboardButton[][] | undefined = webAppUrl.startsWith('https://')
       ? [[{ text: '🚀 راهنمای کامل در مینی‌اپ دلارینو', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/faq` }, style: 'primary' }]]
       : undefined;
@@ -3468,7 +3833,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  // Fallback: if user pasted a raw Dollarino Signal straight into the bot chat!
+  // Fallback 1: if user pasted a raw Dollarino Signal straight into the bot chat!
   const directSignal = parseDollarinoSignal(text);
   if (directSignal) {
     const sigId = randomId('sig');
@@ -3496,8 +3861,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  await bot.sendMessage(chatId, 'لطفاً یکی از گزینه‌های منو را انتخاب کنید یا سیگنال را برای بررسی ارسال کنید:', {
-    replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
+  // Fallback 2: Free-form message -> respond naturally as Dollarino Dedicated AI (like ChatGPT/Claude)!
+  await handleTelegramAIChatTurn({
+    env,
+    bot,
+    chatId,
+    user,
+    webAppUrl,
+    text,
   });
   return { ok: true };
 }

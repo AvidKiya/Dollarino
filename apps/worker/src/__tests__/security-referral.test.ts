@@ -276,9 +276,17 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     expect(healthRes.status).toBe(200);
     expect(healthRes.headers.get('X-Content-Type-Options')).toBe('nosniff');
     const health = (await healthRes.json()) as { version: string; capabilities: Record<string, boolean> };
-    expect(health.version).toBe('9.8.1');
+    expect(health.version).toBe('9.9.0');
     expect(health.capabilities.alwaysOnSignalsAndAiIntel).toBe(true);
+    expect(health.capabilities.dedicatedFloatingVisionAI).toBe(true);
     expect(health.capabilities.antiAbuseReferralSystem).toBe(true);
+
+    const creatorRes = await worker.fetch(new Request('https://dollarino.local/api/public/creator'), env);
+    expect(creatorRes.status).toBe(200);
+    const creatorJson = (await creatorRes.json()) as { creator: { nameFa: string; telegram: string; instagram: string } };
+    expect(creatorJson.creator.nameFa).toBe('آوید کیا');
+    expect(creatorJson.creator.telegram).toBe('@avidkiya');
+    expect(creatorJson.creator.instagram).toBe('@avid_kiya');
     expect(health.capabilities.telegramFirstRegistration).toBe(true);
 
     const dexRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/dex/trending'), env);

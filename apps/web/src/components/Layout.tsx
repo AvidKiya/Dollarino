@@ -55,6 +55,7 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'ترید هوشمند اتومات AI', labelEn: 'Automated AI Trading', icon: Home },
+  { id: 'aichat', labelFa: 'چت هوش مصنوعی AI (چارت)', labelEn: 'AI Chat & Vision', icon: Sparkles },
   { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'copy', labelFa: 'کپی‌ترید تاییدشده', labelEn: 'Copy Trade', icon: Users },
@@ -66,6 +67,7 @@ const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: 
 
 const MAIN_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', labelFa: 'نمای کلی', labelEn: 'Overview', icon: LayoutDashboard },
+  { id: 'aichat', labelFa: 'چت هوش مصنوعی AI (چارت)', labelEn: 'AI Chat & Vision', icon: Sparkles },
   { id: 'dex', labelFa: 'Trust Wallet و رادار DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'terminal', labelFa: 'پایانه و چارت AI', labelEn: 'Terminal & Chart AI', icon: CandlestickChart },
@@ -83,6 +85,7 @@ const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon:
 
 export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
+  if (id === 'aichat') return isFa ? 'چت هوش مصنوعی AI' : 'AI Chat & Vision';
   if (id === 'dex') return isFa ? 'Trust Wallet و DEX' : 'Trust Wallet & DEX';
   if (id === 'myai') return isFa ? 'هوش مصنوعی من' : 'My AI Agent';
   if (id === 'services') return isFa ? 'خدمات' : 'Services';
@@ -905,6 +908,20 @@ export function Layout({
           </button>
         )}
 
+        <div className="surface-soft rounded-xl px-3 py-2 text-[10px] text-dim space-y-1 border hairline">
+          <p className="font-bold text-main">
+            {isFa ? '👨‍💻 سازنده: آوید کیا' : '👨‍💻 Creator: Avid Kiya'}
+          </p>
+          <div className="flex flex-wrap gap-2" dir="ltr">
+            <a href="https://t.me/avidkiya" target="_blank" rel="noreferrer" className="hover:text-main underline">
+              TG: @avidkiya
+            </a>
+            <a href="https://instagram.com/avid_kiya" target="_blank" rel="noreferrer" className="hover:text-main underline">
+              IG/X: @avid_kiya
+            </a>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between text-[11px] font-semibold text-dim px-1">
           {onOpenSupport ? (
             <button type="button" onClick={onOpenSupport} className="inline-flex items-center gap-1 hover:text-main transition">
@@ -1003,6 +1020,21 @@ export function Layout({
 
               <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 {renderModeSwitcher(true)}
+
+                <button
+                  type="button"
+                  onClick={() => selectTab('aichat')}
+                  aria-label={isFa ? 'چت هوش مصنوعی AI' : 'AI Chat'}
+                  title={isFa ? 'چت هوش مصنوعی + تحلیل عکس چارت' : 'AI Chat & Chart Vision'}
+                  className={`h-7 px-2 sm:h-8 sm:px-2.5 inline-flex items-center gap-1 rounded-xl border transition text-[11px] font-bold ${
+                    activeTab === 'aichat'
+                      ? 'bg-[var(--cobalt)] text-white border-[var(--cobalt)]'
+                      : 'bg-[var(--soft)] border-[var(--glass-border)] text-main hover:brightness-95'
+                  }`}
+                >
+                  <Sparkles className="w-[14px] h-[14px] text-[var(--gold)] shrink-0" />
+                  <span className="hidden sm:inline">{isFa ? 'چت AI' : 'AI Chat'}</span>
+                </button>
 
                 <button
                   type="button"

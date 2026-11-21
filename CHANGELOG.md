@@ -1,5 +1,18 @@
 # Changelog
 
+## [9.9.0] - 2026-11-22
+### Added
+- **Floating AI Assistant & Dedicated Multi-Model Chat Page (`apps/web/src/components/FloatingAiChat.tsx`, `AiChatPage.tsx`, `apps/worker/src/ai/assistant.ts`, `routes/ai-assistant.ts`)**:
+  - Added an always-accessible **Floating AI Chat Widget** across landing, auth, and workspace pages, plus a full-screen **Dedicated AI Chat & Vision Page** (`?tab=aichat`) with saved conversation sessions.
+  - Added live **AI Model Selector** listing all connected platform engines (admin-configured OpenAI, Anthropic, Gemini, DeepSeek, Hilinkup) and user BYOAI keys, persisting per-user preference across Web and Telegram.
+  - Added **Chart Image Upload / Drag & Drop / Clipboard Paste (`Ctrl+V`)** with client-side JPEG compression and full **Multimodal Vision Analysis** (OpenAI/GPT-4o, Claude, Gemini, OpenAI-compatible Vision gateways) that automatically extracts structured **Entry / Stop Loss / TP1–TP3 / R:R Trading Setups**.
+- **Full Telegram Bot AI Chat, Model Switcher & Chart Image Analysis (`apps/worker/src/telegram/handler.ts`, `client.ts`, `formatter.ts`)**:
+  - Added `/ai`, `/chat`, and `🧠 چت هوش مصنوعی (عکس چارت)` button, inline model switcher (`tg_ai_models`), new session control, direct Telegram photo/document image download & chart Vision analysis, 1-click conversion of extracted chart setups into Dollarino signals (`tg_ai_exec_setup`), and conversational AI fallback.
+- **Project Creator Attribution (`Avid Kiya / آوید کیا`)**:
+  - Credited creator **آوید کیا (Avid Kiya)** with official handles (**Telegram: `@avidkiya`**, **Instagram & X: `@avid_kiya`**) in Dedicated AI system memory, Web Landing/Dashboard/FAQ footers, `/api/public/creator`, and Telegram `/start`, `/help`, and `/about`.
+- **Database Migration (`migrations/0024_v99_ai_chat_vision_creator.sql`)**:
+  - Added `users.preferred_ai_model_id`, `ai_chat_sessions`, and `ai_chat_messages`.
+
 ## [9.8.1] - 2026-11-22
 ### Added & Improved
 - **Rich Telegram & Social Link Preview (`apps/web/index.html`, `og-preview.jpg`)**:

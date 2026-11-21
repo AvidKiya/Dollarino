@@ -9,6 +9,14 @@ export function FaqPage({ lang }: { lang: Lang }) {
   const items = isFa
     ? [
         [
+          'چت هوش مصنوعی اختصاصی دلارینو و تحلیل عکس چارت چطور کار می‌کند؟',
+          'از دکمه شناور پایین صفحه یا صفحه اختصاصی «چت هوش مصنوعی AI» می‌توانید دقیقاً مثل یک هوش مصنوعی کامل گفتگو کنید، از لیست بالا مدل دلخواهتان را انتخاب کنید (مدل‌های متصل سیستم یا کلیدهای شخصی خودتان)، و حتی عکس چارت بفرستید یا Paste کنید تا هوش مصنوعی ساختار چارت را تحلیل کرده و ستاپ دقیق (ورود، حد ضرر و ۳ تارگت) ارائه دهد. همین قابلیت مستقیماً داخل ربات تلگرام @Dollarino_bot با دستور /ai یا ارسال مستقیم عکس چارت نیز فعال است.',
+        ],
+        [
+          'طراح، توسعه‌دهنده و سازنده پلتفرم دلارینو کیست؟',
+          'پلتفرم معاملاتی هوشمند دلارینو توسط آوید کیا (Avid Kiya) طراحی و ساخته شده است. صفحات رسمی سازنده: تلگرام @avidkiya · اینستاگرام و توییتر (X): @avid_kiya',
+        ],
+        [
           '۴ موتور معاملاتی دلارینو کدام‌ها هستند و چطور کار می‌کنند؟',
           '۱) هوش مصنوعی دلارینو (تحلیل چارت، ورود و مدیریت پوزیشن اتومات)، ۲) هوش مصنوعی من (تربیت AI شخصی خودتان با گفتگوی فارسی)، ۳) استراتژی شکار / دُرنا V1 (الگوریتم اختصاصی شکار اسپایک با ۳ تارگت و تریلینگ SL)، و ۴) کپی‌ترید تاییدشده (آینه‌سازی معاملات تریدرهای تاییدشده روی حساب شما). در سراسر وب‌اپ و ربات تلگرام می‌توانید موتور فعال خود را با یک کلیک جابه‌جا کنید.',
         ],
@@ -82,13 +90,24 @@ export function FaqPage({ lang }: { lang: Lang }) {
         })}
       </div>
 
-      <div className="panel rounded-2xl p-4 flex items-center gap-3 text-xs text-dim">
-        <ShieldCheck className="w-5 h-5 text-jade shrink-0" />
-        <span>
-          {isFa
-            ? 'همیشه تنظیمات ریسک و اهرم را متناسب با سرمایه خود انتخاب کنید و برای هر سوال با پشتیبانی آنلاین در تماس باشید.'
-            : 'Always size leverage conservatively according to your risk tolerance and contact Online Support anytime.'}
-        </span>
+      <div className="panel rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-dim">
+        <div className="flex items-center gap-3">
+          <ShieldCheck className="w-5 h-5 text-jade shrink-0" />
+          <span>
+            {isFa
+              ? 'همیشه تنظیمات ریسک و اهرم را متناسب با سرمایه خود انتخاب کنید و برای هر سوال با پشتیبانی آنلاین در تماس باشید.'
+              : 'Always size leverage conservatively according to your risk tolerance and contact Online Support anytime.'}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold">
+          <span className="text-main">{isFa ? 'سازنده: آوید کیا' : 'Creator: Avid Kiya'}</span>
+          <a href="https://t.me/avidkiya" target="_blank" rel="noreferrer" dir="ltr" className="text-[var(--gold)] hover:underline">
+            TG @avidkiya
+          </a>
+          <a href="https://instagram.com/avid_kiya" target="_blank" rel="noreferrer" dir="ltr" className="text-jade hover:underline">
+            IG / X @avid_kiya
+          </a>
+        </div>
       </div>
     </div>
   );

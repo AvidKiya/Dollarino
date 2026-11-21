@@ -7,7 +7,9 @@ import { reconcileOpenPositionsForUser } from './engine/executor.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
+import { DOLLARINO_CREATOR_INFO } from './ai/assistant.js';
 import { adminRoutes } from './routes/admin.js';
+import { aiAssistantRoutes } from './routes/ai-assistant.js';
 import { buildProfitCardSvg, renderProfitCardPng } from './cards/renderer.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
 import { connectionRoutes } from './routes/connections.js';
@@ -52,12 +54,14 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '9.8.1',
+    version: '9.9.0',
     openSource: false,
     paidSubscriptions: true,
     centralMultiAI: true,
     multiCoinAutonomous: true,
     alwaysOnSignalsAndAiIntel: true,
+    dedicatedFloatingVisionAI: true,
+    creator: DOLLARINO_CREATOR_INFO,
     primaryStrategy: 'dollarino_v01',
     brandNames: {
       ai: 'هوش مصنوعی دلارینو',
@@ -86,10 +90,13 @@ app.get('/api/health', (c) => {
       profileEditorWithLockedPhone: true,
       telegramLoginWidget: true,
       alwaysOnSignalsAndAiIntel: true,
+      dedicatedFloatingVisionAI: true,
     },
     timestamp: new Date().toISOString(),
   });
 });
+
+app.get('/api/public/creator', (c) => c.json({ creator: DOLLARINO_CREATOR_INFO }));
 
 app.get('/api/public/verify-card/:cardId', async (c) => {
   const cardId = (c.req.param('cardId') || '').trim();
@@ -296,6 +303,7 @@ app.route('/api/auth', authRoutes);
 app.route('/api/connections', connectionRoutes);
 app.route('/api/subscriptions', subscriptionRoutes);
 app.route('/api/trading', tradingRoutes);
+app.route('/api/ai-assistant', aiAssistantRoutes);
 app.route('/api/chart-ai', chartAiRoutes);
 app.route('/api/my-ai', myAiRoutes);
 app.route('/api/copy-trade', copyTradeRoutes);
@@ -359,7 +367,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // 1-minute watchdog across running bots, open trades, always-on signal radar & AI market intel
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '9.8.1').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '9.9.0').catch(() => {});
 
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);

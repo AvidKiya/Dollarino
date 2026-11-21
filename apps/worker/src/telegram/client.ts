@@ -123,6 +123,48 @@ export class TelegramBotClient {
     });
   }
 
+  async downloadFileAsDataUrl(fileId: string, maxBytes = 4_500_000): Promise<{ dataUrl: string; mimeType: string }> {
+    const file = await this.getFile(fileId);
+    if (!file.file_path) {
+      throw new Error('Telegram file_path unavailable');
+    }
+    if (file.file_size && file.file_size > maxBytes) {
+      throw new Error('حجم تصویر ارسالی بیش از ۴.۵ مگابایت است. لطفاً عکس سبک‌تری بفرستید.');
+    }
+    const url = `https://api.telegram.org/file/bot${this.token}/${file.file_path}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+      throw new Error(`Telegram file download failed: HTTP ${res.status}`);
+    }
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > maxBytes) {
+      throw new Error('حجم تصویر بیش از حد مجاز است.');
+    }
+    const bytes = new Uint8Array(buf);
+    const lowerPath = file.file_path.toLowerCase();
+    const mimeType = lowerPath.endsWith('.png')
+      ? 'image/png'
+      : lowerPath.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const slice = bytes.subarray(i, i + chunkSize);
+      let chunkStr = '';
+      for (let j = 0; j < slice.length; j++) {
+        chunkStr += String.fromCharCode(slice[j]!);
+      }
+      binary += chunkStr;
+    }
+    const b64 = btoa(binary);
+    return {
+      dataUrl: `data:${mimeType};base64,${b64}`,
+      mimeType,
+    };
+  }
+
   getChat(chatId: string | number) {
     return this.call<{ id: number; title?: string; username?: string; type: string }>('getChat', {
       chat_id: chatId,

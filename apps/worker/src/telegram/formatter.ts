@@ -4,6 +4,10 @@ import type { InlineKeyboardButton, ReplyKeyboardButton } from './client.js';
 
 export const OFFICIAL_CHANNEL_HANDLE = '@Dollarino_official';
 export const OFFICIAL_BOT_HANDLE = '@Dollarino_bot';
+export const CREATOR_ATTRIBUTION_FA =
+  '👨‍💻 طراح و سازنده پروژه دلارینو: **آوید کیا (Avid Kiya)**\n' +
+  '• تلگرام: @avidkiya (https://t.me/avidkiya)\n' +
+  '• اینستاگرام و توییتر (X): @avid_kiya (https://instagram.com/avid_kiya)';
 export const ANTI_SCAM_WARNING_FA =
   '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای پشتیبانی یا دریافت وجه ندارد. ثبت‌نام، ورود و پشتیبانی رسمی فقط از طریق ربات @Dollarino_bot و پشتیبانی آنلاین داخل سایت انجام می‌شود.';
 
@@ -64,17 +68,16 @@ export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'si
     `🚀 به **دلارینو** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
     `به دنیای ابزارهای هوشمند معاملاتی خوش آمدید.\n\n` +
     `در دلارینو می‌توانید به مجموعه‌ای از امکانات معاملاتی دسترسی داشته باشید:\n\n` +
-    `🤖 **هوش مصنوعی دلارینو**\n` +
-    `ابزار هوشمند تحلیل و بررسی بازار\n\n` +
-    `📊 **استراتژی‌های منتخب دلارینو**\n` +
-    `دسترسی به استراتژی‌های معاملاتی منتخب\n\n` +
-    `🔄 **کپی ترید دلارینو**\n` +
-    `امکان کپی معاملات و دنبال‌کردن عملکرد معامله‌گران\n\n` +
+    `🧠 **هوش مصنوعی اختصاصی دلارینو (چت + تحلیل عکس چارت)**\n` +
+    `چت آزاد مثل پیشرفته‌ترین AIها، انتخاب مدل و ارسال عکس چارت برای دریافت ستاپ\n\n` +
+    `🤖 **ترید هوشمند اتومات و استراتژی دُرنا V1**\n` +
+    `رصد ۲۴ ساعته بازار، مدیریت ریسک ۳ تارگت و کپی‌ترید تاییدشده\n\n` +
     `━━━━━━━━━━━━━━\n\n` +
-    `برای شروع، سرویس موردنظر خود را از منوی پایین انتخاب کنید (${uiMode === 'pro' ? 'حالت حرفه‌ای ⚡' : 'حالت ساده 🌱'}).\n\n` +
-    `🌐 وب‌سایت رسمی دلارینو:\n` +
-    `${cleanWeb}\n\n` +
-    `⚠️ فعالیت در بازارهای مالی با ریسک همراه است. هیچ بازدهی تضمین‌شده‌ای وجود ندارد.\n\n` +
+    `برای شروع، سرویس موردنظر خود را از منوی پایین انتخاب کنید (${uiMode === 'pro' ? 'حالت حرفه‌ای ⚡' : 'حالت ساده 🌱'}).\n` +
+    `📸 همچنین می‌توانید همین‌جا **سوال بپرسید یا عکس چارت بفرستید** تا هوش مصنوعی دلارینو فوراً تحلیل و ستاپ بدهد!\n\n` +
+    `🌐 وب‌سایت رسمی دلارینو: ${cleanWeb}\n` +
+    `${CREATOR_ATTRIBUTION_FA}\n\n` +
+    `⚠️ فعالیت در بازارهای مالی با ریسک همراه است. هیچ بازدهی تضمین‌شده‌ای وجود ندارد.\n` +
     `**دلارینو؛ هوشمندانه‌تر معامله کنید.**`
   );
 }
@@ -82,16 +85,13 @@ export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'si
 export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 'simple', isAdmin = false): ReplyKeyboardButton[][] {
   const safeUrl = webAppUrl?.startsWith('https://') ? webAppUrl : undefined;
   const rows: ReplyKeyboardButton[][] = [
-    [{ text: '🟢 شروع خودکار ربات' }, { text: '⚡️ شکار فوری AI' }],
-    [{ text: '📈 معاملات باز' }, { text: 'حساب کاربری 👤' }],
-    [{ text: 'اتصال به صرافی 🔗' }, { text: '🦊 Trust Wallet و DEX' }],
+    [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '⚡️ شکار فوری AI' }],
+    [{ text: '🟢 شروع خودکار ربات' }, { text: '📈 معاملات باز' }],
+    [{ text: 'حساب کاربری 👤' }, { text: 'اتصال به صرافی 🔗' }],
+    [{ text: '🦊 Trust Wallet و DEX' }, { text: uiMode === 'pro' ? '🔍 اسکنر DEX' : '🏆 کپی‌ترید' }],
   ];
-  if (uiMode === 'pro') {
-    rows.push([{ text: '🔍 اسکنر DEX' }, { text: 'تنظیمات ⚙️' }]);
-  } else {
-    rows.push([{ text: 'تنظیمات ⚙️' }, { text: '🏆 کپی‌ترید' }]);
-  }
-  rows.push([{ text: 'خرید اشتراک 💎' }, { text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }]);
+  rows.push([{ text: 'تنظیمات ⚙️' }, { text: 'خرید اشتراک 💎' }]);
+  rows.push([{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '👨‍💻 درباره سازنده' }]);
   if (isAdmin && safeUrl) {
     rows.push([{ text: 'پنل مدیریت 💼' }, { text: '🚀 باز کردن مینی‌اپ', web_app: { url: safeUrl } }]);
   } else if (isAdmin) {
@@ -131,11 +131,15 @@ export function miniAppInlineKeyboard(
 
   if (openSection === 'none') {
     rows.push([
-      ...(hasHttps
-        ? [{ text: '🚀 باز کردن مینی‌اپ', web_app: { url: fullUrl }, style: 'success' as const }]
-        : []),
-      { text: '🎛 انتخاب روش ترید', callback_data: 'tg_acc:ai', style: 'primary' },
+      { text: '🧠 چت AI و عکس چارت', callback_data: 'tg_ai_chat', style: 'primary' },
+      { text: '🎛 انتخاب روش ترید', callback_data: 'tg_acc:ai' },
     ]);
+    if (hasHttps) {
+      rows.push([
+        { text: '🚀 باز کردن مینی‌اپ', web_app: { url: fullUrl }, style: 'success' },
+        { text: '💬 صفحه چت کامل AI', web_app: { url: `${base}/?tab=aichat` }, style: 'primary' },
+      ]);
+    }
     return rows;
   }
 

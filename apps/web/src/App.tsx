@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
+import { FloatingAiChat } from './components/FloatingAiChat';
 import { Layout, type UiMode } from './components/Layout';
 import { PwaInstallModal } from './components/PwaInstallModal';
 import { QuickLauncherModal } from './components/QuickWidgetsBar';
@@ -11,6 +12,7 @@ import type { Lang } from './lib/i18n';
 import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
 import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
 import { AdminPage } from './pages/AdminPage';
+import { AiChatPage } from './pages/AiChatPage';
 import { AuthPage } from './pages/AuthPage';
 import { CopyConnectPage } from './pages/CopyConnectPage';
 import { DexTrustPage } from './pages/DexTrustPage';
@@ -70,7 +72,7 @@ export function App() {
     const quick = qp.get('quick');
     if (quick === 'dex' || tab === 'dex') return 'dex';
     if (quick === 'report') return 'portfolio';
-    if (tab && ['overview', 'myai', 'terminal', 'markets', 'dex', 'radar', 'copy', 'portfolio', 'services', 'card', 'pricing', 'faq', 'admin'].includes(tab)) {
+    if (tab && ['overview', 'aichat', 'myai', 'terminal', 'markets', 'dex', 'radar', 'copy', 'portfolio', 'services', 'card', 'pricing', 'faq', 'admin'].includes(tab)) {
       return tab;
     }
     return 'overview';
@@ -324,6 +326,14 @@ export function App() {
             setPublicScreen('auth');
           }}
         />
+        <FloatingAiChat
+          lang={lang}
+          authenticated={false}
+          onGoAuth={() => {
+            setAuthMode('login');
+            setPublicScreen('auth');
+          }}
+        />
       </>
     );
   }
@@ -410,6 +420,13 @@ export function App() {
           onSelectTerminalSymbol={openTerminalWithSymbol}
           onRefresh={loadSessionAndDashboard}
           onUpgradeUser={(u) => setUser(u)}
+        />
+      )}
+      {activeTab === 'aichat' && (
+        <AiChatPage
+          lang={lang}
+          onNavigate={setActiveTab}
+          onSelectSymbolForTerminal={(sym) => openTerminalWithSymbol(sym)}
         />
       )}
       {activeTab === 'myai' && (
@@ -512,6 +529,13 @@ export function App() {
       lang={lang}
       authenticated
       onClose={() => setSupportOpen(false)}
+    />
+    <FloatingAiChat
+      lang={lang}
+      authenticated
+      activeTab={activeTab}
+      onNavigate={setActiveTab}
+      onSelectSymbolForTerminal={(sym) => openTerminalWithSymbol(sym)}
     />
     {installOpen && (
       <PwaInstallModal
