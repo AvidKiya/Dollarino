@@ -910,8 +910,14 @@ async function executeAIWithFailover(
         }
       }
 
-      const resolved = await resolveModelRecordById(env, params.userId, candId).catch(() => null);
-      if (!resolved) continue;
+      const resolved = await resolveModelRecordById(env, params.userId, candId).catch((err) => {
+        console.warn('[AI resolve error]', candId, err instanceof Error ? err.message : String(err));
+        return null;
+      });
+      if (!resolved) {
+        console.warn('[AI resolve null]', candId);
+        continue;
+      }
 
       // Avoid calling non-vision external APIs with image payload if a vision model might still be tested
       if (params.hasImage && !resolved.meta.supportsVision) {
@@ -940,8 +946,9 @@ async function executeAIWithFailover(
             visionFallbackNotice,
           };
         }
-      } catch {
-        // Auto-failover to next connected model seamlessly
+        console.warn('[AI empty reply]', candId, resolved.record.model);
+      } catch (err) {
+        console.warn('[AI gateway failover]', candId, resolved.record.model, err instanceof Error ? err.message : String(err));
       }
     }
 
