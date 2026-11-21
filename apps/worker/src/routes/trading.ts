@@ -11,6 +11,7 @@ import {
   formatDollarinoSignal,
   mergeKbosParams,
   parseDollarinoSignal,
+  resolveEngineDisplayLabel,
   rsi,
   runBacktest,
   SAMPLE_CUSTOM_STRATEGIES,
@@ -27,6 +28,7 @@ import {
 } from '@dollarino/core';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
+import { buildProfitCardSvg, renderProfitCardPng } from '../cards/renderer.js';
 import { decryptVaultJson, hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
 import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
 import {
@@ -38,6 +40,7 @@ import {
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS, normalizeCanonicalSymbol } from '../exchanges/markets.js';
+import { publishProfitCardToTelegram, publishSignalClosedCard } from '../telegram/publisher.js';
 import type { ExchangeProviderId } from '@dollarino/core';
 
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -632,7 +635,7 @@ tradingRoutes.post('/bot/stop', async (c) => {
   let stopPnl = 0;
   if (body.settleOpen) {
     const openTrades = await c.env.DB.prepare(
-      `SELECT id, mode, market_type, symbol, direction, entry_price, initial_quantity, remaining_quantity, margin_used, realized_pnl FROM trades WHERE user_id = ? AND status = 'OPEN'`
+      `SELECT id, mode, market_type, symbol, direction, entry_price, initial_quantity, remaining_quantity, margin_used, realized_pnl, leverage, signal_id, strategy_key, current_stop_loss, tp1, tp1_hit, tp2_hit, tp3_hit, risk_free_active, opened_at FROM trades WHERE user_id = ? AND status = 'OPEN'`
     ).bind(user.id).all<{
       id: string;
       mode: string;
@@ -644,6 +647,16 @@ tradingRoutes.post('/bot/stop', async (c) => {
       remaining_quantity: string;
       margin_used: string;
       realized_pnl: string;
+      leverage?: number;
+      signal_id?: string | null;
+      strategy_key?: string | null;
+      current_stop_loss?: string;
+      tp1?: string;
+      tp1_hit?: number;
+      tp2_hit?: number;
+      tp3_hit?: number;
+      risk_free_active?: number;
+      opened_at?: string;
     }>();
 
     for (const t of openTrades.results) {
@@ -667,6 +680,31 @@ tradingRoutes.post('/bot/stop', async (c) => {
       await c.env.DB.prepare(
         `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'BOT_STOP_SETTLE', closed_at = datetime('now') WHERE id = ?`
       ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+      if (t.signal_id) {
+        const roePct = (totalRealized / Math.max(0.01, Number(t.margin_used || 1))) * 100;
+        await publishSignalClosedCard(c.env, {
+          tradeId: t.id,
+          userId: user.id,
+          signalId: t.signal_id,
+          symbol: t.symbol,
+          direction: t.direction,
+          leverage: Number(t.leverage || 10),
+          mode: t.mode === 'LIVE' ? 'LIVE' : 'PAPER',
+          strategyKey: t.strategy_key,
+          entryPrice: t.entry_price,
+          exitPrice: cls.filledPrice,
+          stopLoss: t.current_stop_loss || '0',
+          tp1: t.tp1 || '0',
+          tp1Hit: Boolean(t.tp1_hit),
+          tp2Hit: Boolean(t.tp2_hit),
+          tp3Hit: Boolean(t.tp3_hit),
+          trailingActive: Boolean(t.risk_free_active),
+          pnlUsd: totalRealized,
+          pnlPct: roePct,
+          reason: 'BOT_STOP_SETTLE',
+          openedAt: t.opened_at,
+        }).catch(() => {});
+      }
       closedOnStop++;
     }
   }
@@ -731,6 +769,16 @@ tradingRoutes.post('/bot/kill-switch', async (c) => {
     remaining_quantity: string;
     margin_used: string;
     realized_pnl: string;
+    leverage?: number;
+    signal_id?: string | null;
+    strategy_key?: string | null;
+    current_stop_loss?: string;
+    tp1?: string;
+    tp1_hit?: number;
+    tp2_hit?: number;
+    tp3_hit?: number;
+    risk_free_active?: number;
+    opened_at?: string;
   }>();
 
   let closedCount = 0;
@@ -754,6 +802,31 @@ tradingRoutes.post('/bot/kill-switch', async (c) => {
     await c.env.DB.prepare(
       `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'KILL_SWITCH', closed_at = datetime('now') WHERE id = ?`
     ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+    if (t.signal_id) {
+      const roePct = (totalRealized / Math.max(0.01, Number(t.margin_used || 1))) * 100;
+      await publishSignalClosedCard(c.env, {
+        tradeId: t.id,
+        userId: user.id,
+        signalId: t.signal_id,
+        symbol: t.symbol,
+        direction: t.direction,
+        leverage: Number(t.leverage || 10),
+        mode: t.mode === 'LIVE' ? 'LIVE' : 'PAPER',
+        strategyKey: t.strategy_key,
+        entryPrice: t.entry_price,
+        exitPrice: cls.filledPrice,
+        stopLoss: t.current_stop_loss || '0',
+        tp1: t.tp1 || '0',
+        tp1Hit: Boolean(t.tp1_hit),
+        tp2Hit: Boolean(t.tp2_hit),
+        tp3Hit: Boolean(t.tp3_hit),
+        trailingActive: Boolean(t.risk_free_active),
+        pnlUsd: totalRealized,
+        pnlPct: roePct,
+        reason: 'KILL_SWITCH',
+        openedAt: t.opened_at,
+      }).catch(() => {});
+    }
     closedCount++;
   }
 
@@ -797,14 +870,26 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
   const t = await c.env.DB.prepare(`SELECT * FROM trades WHERE id = ? AND user_id = ? AND status = 'OPEN'`)
     .bind(id, user.id).first<{
       id: string;
+      signal_id?: string | null;
+      strategy_key?: string | null;
       mode: string;
       market_type?: MarketType;
       symbol: string;
       direction: Direction;
+      leverage: number;
       entry_price: string;
       initial_quantity: string;
       remaining_quantity: string;
       margin_used: string;
+      current_stop_loss: string;
+      initial_stop_loss?: string;
+      tp1: string;
+      tp1_hit?: number;
+      tp2_hit?: number;
+      tp3_hit?: number;
+      trailing_active?: number;
+      risk_free_active?: number;
+      opened_at?: string;
       realized_pnl: string;
     }>();
   if (!t) return c.json({ error: 'Open position not found' }, 404);
@@ -829,6 +914,32 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
   await c.env.DB.prepare(
     `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'MANUAL', closed_at = datetime('now') WHERE id = ?`
   ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+
+  const pnlPct = Number(t.margin_used) > 0 ? (totalRealized / Number(t.margin_used)) * 100 : 0;
+  await publishSignalClosedCard(c.env, {
+    tradeId: t.id,
+    userId: user.id,
+    signalId: t.signal_id,
+    symbol: t.symbol,
+    direction: t.direction,
+    leverage: t.leverage ?? 1,
+    mode: t.mode === 'LIVE' ? 'LIVE' : 'PAPER',
+    strategyKey: t.strategy_key,
+    entryPrice: t.entry_price,
+    exitPrice: cls.filledPrice,
+    stopLoss: t.initial_stop_loss ?? t.current_stop_loss,
+    tp1: t.tp1,
+    tp1Hit: Boolean(t.tp1_hit || totalRealized > 0),
+    tp2Hit: Boolean(t.tp2_hit),
+    tp3Hit: Boolean(t.tp3_hit),
+    trailingActive: Boolean(t.trailing_active || t.risk_free_active),
+    trailingSl: t.current_stop_loss,
+    pnlUsd: totalRealized,
+    pnlPct,
+    reason: 'MANUAL',
+    openedAt: t.opened_at,
+    closedAt: new Date().toISOString(),
+  }).catch(() => {});
 
   await logAudit(c.env.DB, user.id, 'ORDER', 'INFO', `Manual close ${t.symbol} @ ${cls.filledPrice} (PnL ${totalRealized.toFixed(2)})`, t.symbol);
   return c.json({ ok: true, exitPrice: cls.filledPrice, realizedPnl: totalRealized });
@@ -1571,13 +1682,13 @@ tradingRoutes.post('/cards/issue', async (c) => {
   if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     mode?: 'LIVE' | 'PAPER';
-    period?: '24H' | '7D' | '30D' | 'ALL' | 'TRADE';
+    period?: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
     tradeId?: string;
     cardStyle?: 'dark' | 'gold' | 'emerald';
-  }>().catch(() => ({} as { mode?: 'LIVE' | 'PAPER'; period?: '24H' | '7D' | '30D' | 'ALL' | 'TRADE'; tradeId?: string; cardStyle?: 'dark' | 'gold' | 'emerald' }));
+  }>().catch(() => ({} as { mode?: 'LIVE' | 'PAPER'; period?: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE'; tradeId?: string; cardStyle?: 'dark' | 'gold' | 'emerald' }));
 
   const requestedMode = body.mode === 'PAPER' ? 'PAPER' : 'LIVE';
-  const period = body.period && ['24H', '7D', '30D', 'ALL', 'TRADE'].includes(body.period) ? body.period : '7D';
+  const period = body.period && ['24H', '7D', '30D', '1Y', 'ALL', 'TRADE'].includes(body.period) ? body.period : '7D';
 
   const whereClause = [`user_id = ?`, `status = 'CLOSED'`, `mode = ?`];
   const binds: unknown[] = [user.id, requestedMode];
@@ -1594,6 +1705,8 @@ tradingRoutes.post('/cards/issue', async (c) => {
     whereClause.push(`closed_at >= datetime('now', '-7 days')`);
   } else if (period === '30D') {
     whereClause.push(`closed_at >= datetime('now', '-30 days')`);
+  } else if (period === '1Y') {
+    whereClause.push(`closed_at >= datetime('now', '-365 days')`);
   }
 
   const tradesRes = await c.env.DB.prepare(
@@ -1663,7 +1776,8 @@ tradingRoutes.post('/cards/issue', async (c) => {
   const roiPct = baseCapital > 0 ? Number(((netPnlUsd / baseCapital) * 100).toFixed(2)) : 0;
 
   const topProvider = Array.from(providerCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'TOOBIT';
-  const topStrategy = Array.from(strategyCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'dollarino_v01';
+  const topStrategyRaw = Array.from(strategyCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'dollarino_v01';
+  const topStrategy = resolveEngineDisplayLabel(topStrategyRaw);
   const startDate = trades[0]!.closed_at;
   const endDate = trades[trades.length - 1]!.closed_at;
 
@@ -1754,6 +1868,119 @@ tradingRoutes.post('/cards/issue', async (c) => {
       issuedAt,
     },
   });
+});
+
+tradingRoutes.get('/cards/:id/image', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const layout = c.req.query('layout') === 'vertical' ? 'vertical' : 'horizontal';
+  const format = c.req.query('format') === 'svg' ? 'svg' : 'png';
+
+  const row = await c.env.DB.prepare(
+    `SELECT vpc.*, u.username FROM verified_profit_cards vpc JOIN users u ON u.id = vpc.user_id WHERE vpc.id = ? AND vpc.user_id = ? LIMIT 1`
+  ).bind(id, user.id).first<{
+    id: string;
+    username: string;
+    mode: 'LIVE' | 'PAPER';
+    period: string;
+    trades_count: number;
+    win_rate: number;
+    net_pnl_usd: number;
+    roi_pct: number;
+    profit_factor: number;
+    exchange_provider: string;
+    strategy_name: string;
+    issued_at: string;
+  }>();
+
+  if (!row) return c.json({ error: 'Profit card not found' }, 404);
+
+  const renderInput = {
+    cardId: row.id,
+    displayName: row.username || 'Dollarino Trader',
+    mode: row.mode,
+    period: row.period,
+    tradesCount: row.trades_count,
+    winRate: row.win_rate,
+    netPnlUsd: row.net_pnl_usd,
+    roiPct: row.roi_pct,
+    profitFactor: row.profit_factor,
+    exchangeProvider: row.exchange_provider,
+    strategyName: row.strategy_name,
+    issuedAt: row.issued_at,
+    layout,
+  } as const;
+
+  if (format === 'png') {
+    const png = await renderProfitCardPng(renderInput);
+    if (png) {
+      return new Response(png as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          'Content-Type': 'image/png',
+          'Content-Disposition': `inline; filename="dollarino-profit-${row.id}-${layout}.png"`,
+          'Cache-Control': 'private, max-age=300',
+        },
+      });
+    }
+  }
+
+  const svg = buildProfitCardSvg(renderInput);
+  return new Response(svg, {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'private, max-age=300',
+    },
+  });
+});
+
+tradingRoutes.post('/cards/:id/send-telegram', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json<{ layout?: 'horizontal' | 'vertical' }>().catch(() => ({ layout: 'horizontal' as const }));
+  if (!user.telegramId) {
+    return c.json({ error: 'حساب شما هنوز به تلگرام متصل نیست.' }, 400);
+  }
+
+  const row = await c.env.DB.prepare(
+    `SELECT vpc.*, u.username FROM verified_profit_cards vpc JOIN users u ON u.id = vpc.user_id WHERE vpc.id = ? AND vpc.user_id = ? LIMIT 1`
+  ).bind(id, user.id).first<{
+    id: string;
+    username: string;
+    mode: 'LIVE' | 'PAPER';
+    period: string;
+    trades_count: number;
+    win_rate: number;
+    net_pnl_usd: number;
+    roi_pct: number;
+    profit_factor: number;
+    exchange_provider: string;
+    strategy_name: string;
+    issued_at: string;
+  }>();
+
+  if (!row) return c.json({ error: 'Card not found' }, 404);
+  const ok = await publishProfitCardToTelegram(
+    c.env,
+    user.telegramId,
+    {
+      id: row.id,
+      displayName: row.username || 'Dollarino Trader',
+      mode: row.mode,
+      period: row.period,
+      tradesCount: row.trades_count,
+      winRate: row.win_rate,
+      netPnlUsd: row.net_pnl_usd,
+      roiPct: row.roi_pct,
+      profitFactor: row.profit_factor,
+      exchangeProvider: row.exchange_provider,
+      strategyName: row.strategy_name,
+      issuedAt: row.issued_at,
+    },
+    body.layout === 'vertical' ? 'vertical' : 'horizontal'
+  );
+  return c.json({ ok });
 });
 
 // =========================================================================

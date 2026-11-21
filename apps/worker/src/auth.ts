@@ -102,20 +102,21 @@ authRoutes.post('/register', async (c) => {
   const role = (countRow?.cnt ?? 0) === 0 ? 'owner' : 'user';
 
   const id = randomId('usr');
+  const myReferralCode = `DLR-${id.slice(-6).toUpperCase()}`;
   const passwordHash = await hashPassword(password);
   await c.env.DB.prepare(
-    `INSERT INTO users (id, email, username, password_hash, role) VALUES (?, ?, ?, ?, ?)`
-  ).bind(id, email, username, passwordHash, role).run();
+    `INSERT INTO users (id, email, username, password_hash, role, referral_code, referred_by) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, email, username, passwordHash, role, myReferralCode, referralCode || null).run();
 
   await ensureUserDefaults(c.env.DB, id);
 
   if (referralCode) {
     const referrerId = await c.env.DB.prepare(
-      `SELECT id FROM users WHERE ('DLR-' || UPPER(SUBSTR(id, -6))) = ? OR UPPER(SUBSTR(id, 1, 10)) = ? LIMIT 1`
+      `SELECT id FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
     ).bind(referralCode, referralCode).first<{ id: string }>().catch(() => null);
     if (referrerId?.id && referrerId.id !== id) {
       await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REWARDED')`
+        `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REGISTERED')`
       ).bind(randomId('ref'), referrerId.id, id, referralCode).run();
     }
   }

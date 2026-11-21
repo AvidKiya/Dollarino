@@ -107,6 +107,9 @@ export function CopyConnectPage({
   const [msg, setMsg] = useState<{ err?: boolean; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [traders, setTraders] = useState<VerifiedCopyTrader[]>([]);
+  const [pendingConfirmTrades, setPendingConfirmTrades] = useState<
+    Array<{ id: string; trader_id: string; trader_name?: string; symbol: string; direction: string; entry_price: string; leverage: number }>
+  >([]);
   const [loadingTraders, setLoadingTraders] = useState(true);
   const [allocMap, setAllocMap] = useState<Record<string, number>>({});
   const [copyingTradeId, setCopyingTradeId] = useState<string | null>(null);
@@ -174,12 +177,24 @@ export function CopyConnectPage({
       apiFetch<{ connections: ExchangeConn[] }>('/api/connections/exchanges').catch(() => ({ connections: [] })),
       apiFetch<{ platformAI: PlatformAISummary }>('/api/connections/platform-ai').catch(() => ({ platformAI: null })),
       apiFetch<{ bots: TgBot[] }>('/api/connections/telegram-bots').catch(() => ({ bots: [] })),
-      apiFetch<{ traders: VerifiedCopyTrader[] }>('/api/copy-trade/traders').catch(() => ({ traders: [] })),
+      apiFetch<{
+        traders: VerifiedCopyTrader[];
+        pendingConfirmTrades?: Array<{
+          id: string;
+          trader_id: string;
+          trader_name?: string;
+          symbol: string;
+          direction: string;
+          entry_price: string;
+          leverage: number;
+        }>;
+      }>('/api/copy-trade/traders').catch(() => ({ traders: [], pendingConfirmTrades: [] })),
     ]);
     setExchanges(ex.connections.filter((c) => c.provider === 'toobit' || c.provider === 'kcex' || c.provider === 'paper'));
     setPlatformAI(ai.platformAI);
     setTgBots(tg.bots);
     setTraders(ct.traders || []);
+    setPendingConfirmTrades(ct.pendingConfirmTrades || []);
     setAllocMap((prev) => {
       const next = { ...prev };
       for (const tr of ct.traders || []) {
@@ -396,6 +411,69 @@ export function CopyConnectPage({
 
       {tab === 'copy' && (
         <div className="space-y-5">
+          {pendingConfirmTrades.length > 0 && (
+            <div className="panel rounded-[26px] p-5 border border-amber-400/45 bg-amber-500/10 space-y-3">
+              <div className="flex items-center gap-2 text-amber-400 font-black text-sm">
+                <Sparkles className="w-4 h-4" />
+                <span>
+                  {isFa
+                    ? 'درخواست تایید انتشار معامله کپی‌ترید شما برای دنبال‌کننده‌ها'
+                    : 'Confirm Copy-Trade Publication to Followers'}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {pendingConfirmTrades.map((pt) => (
+                  <div key={pt.id} className="surface-soft rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div>
+                      <p className="font-black text-main">
+                        <span dir="ltr">{pt.symbol}</span> · {pt.direction} ({pt.leverage}×) @ ${pt.entry_price}
+                      </p>
+                      <p className="text-[11px] text-dim mt-0.5">
+                        {isFa
+                          ? 'آیا مایلید این معامله برای همه دنبال‌کننده‌های کپی‌ترید شما هم باز و منتشر شود؟'
+                          : 'Do you want to publish and mirror this trade to all your followers?'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const r = await apiFetch<{ ok?: boolean; mirroredCount?: number }>(`/api/copy-trade/confirm-publish/${pt.id}`, {
+                            method: 'POST',
+                            body: JSON.stringify({ publish: true }),
+                          });
+                          flash(
+                            isFa
+                              ? `منتشر و برای ${r.mirroredCount ?? 0} دنبال‌کننده کپی شد ✅`
+                              : `Published & mirrored to ${r.mirroredCount ?? 0} followers ✅`
+                          );
+                          await loadConnections();
+                        }}
+                        className="btn-emerald px-3.5 py-2 rounded-xl font-black text-[11px]"
+                      >
+                        {isFa ? '✅ بله، منتشر و کپی شود' : '✅ Yes, Publish & Copy'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await apiFetch(`/api/copy-trade/confirm-publish/${pt.id}`, {
+                            method: 'POST',
+                            body: JSON.stringify({ publish: false }),
+                          });
+                          flash(isFa ? 'این معامله فقط شخصی باقی ماند.' : 'Kept private.');
+                          await loadConnections();
+                        }}
+                        className="btn-ghost px-3.5 py-2 rounded-xl font-bold text-[11px] text-loss"
+                      >
+                        {isFa ? '❌ خیر، فقط شخصی' : '❌ Private Only'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Verified Copy Traders Marketplace */}
           <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -587,7 +665,7 @@ export function CopyConnectPage({
                     {isFa ? 'کپی‌ترید مستقیم از کانال و ربات تلگرام' : 'Telegram Channel & Bot Link'}
                   </h4>
                   <div className="flex gap-2 text-xs">
-                    <input value={tgChannel} onChange={(e) => setTgChannel(e.target.value)} dir="ltr" placeholder="@Dollarinoofficial" className="field font-mono" />
+                    <input value={tgChannel} onChange={(e) => setTgChannel(e.target.value)} dir="ltr" placeholder="@Dollarino_official" className="field font-mono" />
                     <button type="button" onClick={() => void saveChannelHandle()} className="btn-ghost px-4 rounded-xl font-bold shrink-0">
                       {isFa ? 'ذخیره کانال' : 'Save'}
                     </button>

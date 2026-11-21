@@ -2,8 +2,8 @@ import {
   computeStrategySignals,
   DEFAULT_MIXER_WEIGHTS,
   evaluateCustomStrategy,
-  formatDollarinoSignal,
   mergeKbosParams,
+  resolveEngineDisplayLabel,
   selectClosedCandles,
   strategyOutputToDollarinoSignal,
   type CustomStrategyLanguage,
@@ -19,10 +19,10 @@ import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS } from '../exchanges/markets.js';
 import { compileTrainedRulesToVisualDef, DEFAULT_TRAINED_RULES, type TrainedAIRules } from '../routes/my-ai.js';
+import { publishSignalBroadcast, publishSignalClosedCard } from '../telegram/publisher.js';
 import {
   executeSignalForUser,
   logAudit,
-  notifyUserTelegram,
   reconcileOpenPositionsForUser,
   type UserBotConfigRow,
 } from './executor.js';
@@ -261,6 +261,12 @@ export class TradingBotCoordinator implements DurableObject {
       realized_pnl: string;
       mode: string;
       market_type?: MarketType;
+      signal_id?: string | null;
+      strategy_key?: string | null;
+      leverage?: number;
+      tp1?: string;
+      current_stop_loss?: string;
+      opened_at?: string | null;
     },
     reason: 'AI_EXIT' | 'STRATEGY_FLIP'
   ) {
@@ -297,11 +303,31 @@ export class TradingBotCoordinator implements DurableObject {
       `Closed ${openPos.direction} ${openPos.symbol} (${reason}) @ ${cls.filledPrice} | PnL: ${totalRealized >= 0 ? '+' : ''}${totalRealized.toFixed(2)}`,
       openPos.symbol
     );
-    await notifyUserTelegram(
-      this.env,
+    const pnlPct = Number(openPos.margin_used) > 0 ? (totalRealized / Number(openPos.margin_used)) * 100 : 0;
+    await publishSignalClosedCard(this.env, {
+      tradeId: openPos.id,
       userId,
-      `🔄 معامله ${openPos.symbol} (${reason === 'AI_EXIT' ? 'خروج هوشمند دلارینو' : 'چرخش روند'}) بسته شد | سود/زیان: ${totalRealized >= 0 ? '+' : ''}$${totalRealized.toFixed(2)}`
-    );
+      signalId: openPos.signal_id,
+      symbol: openPos.symbol,
+      direction: openPos.direction,
+      leverage: openPos.leverage ?? cfg.max_leverage ?? 1,
+      mode: (openPos.mode === 'LIVE' ? 'LIVE' : 'PAPER'),
+      strategyKey: openPos.strategy_key ?? cfg.strategy_key,
+      entryPrice: openPos.entry_price,
+      exitPrice: cls.filledPrice,
+      stopLoss: openPos.current_stop_loss || openPos.entry_price,
+      tp1: openPos.tp1 || cls.filledPrice,
+      tp1Hit: totalRealized > 0,
+      tp2Hit: false,
+      tp3Hit: false,
+      trailingActive: false,
+      trailingSl: openPos.current_stop_loss,
+      pnlUsd: totalRealized,
+      pnlPct,
+      reason: reason === 'AI_EXIT' ? 'خروج هوشمند دلارینو (AI_EXIT)' : 'چرخش روند (STRATEGY_FLIP)',
+      openedAt: openPos.opened_at,
+      closedAt: new Date().toISOString(),
+    }).catch(() => {});
   }
 
   private async evaluateSymbolForUser(
@@ -500,27 +526,30 @@ export class TradingBotCoordinator implements DurableObject {
           tp1: String(decision.tp1),
           tp2: String(decision.tp2),
           tp3: String(decision.tp3),
-          channelHandle: cfg.signal_channel_handle,
+          channelHandle: cfg.signal_channel_handle || '@Dollarino_official',
+          engineKey: 'ai_autonomous_agent',
+          engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
           reason: decision.thesis,
         };
-        const sigId = randomId('sig');
-        await this.env.DB.prepare(
-          `INSERT INTO signals (id, user_id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, raw_text, status)
-           VALUES (?, ?, 'ai_agent', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW')`
-        ).bind(
-          sigId,
-          userId,
-          sig.symbol,
-          sig.direction,
-          sig.timeframe,
-          sig.price,
-          sig.stopLoss,
-          sig.leverage,
-          sig.tp1,
-          sig.tp2,
-          sig.tp3,
-          formatDollarinoSignal(sig)
-        ).run();
+        const recentChan = await this.env.DB.prepare(
+          `SELECT id FROM signals
+           WHERE symbol = ? AND direction = ? AND engine_source = 'ai_autonomous_agent'
+             AND channel_message_id IS NOT NULL AND created_at >= datetime('now', '-20 minutes')
+           ORDER BY created_at DESC LIMIT 1`
+        ).bind(sig.symbol, sig.direction).first<{ id: string }>().catch(() => null);
+
+        let sigId = recentChan?.id;
+        if (!sigId) {
+          sigId = randomId('sig');
+          await publishSignalBroadcast(this.env, {
+            signalId: sigId,
+            signal: sig,
+            source: 'ai_agent',
+            engineKey: 'ai_autonomous_agent',
+            publishToChannel: true,
+            notifySubscribers: false,
+          }).catch(() => {});
+        }
 
         const execRes = await executeSignalForUser(this.env, userId, sig, {
           signalId: sigId,
@@ -653,12 +682,42 @@ export class TradingBotCoordinator implements DurableObject {
       cfg.entry_timeframe,
       marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
       latest,
-      cfg.signal_channel_handle
+      cfg.signal_channel_handle || '@Dollarino_official',
+      cfg.strategy_key
     );
     if (!sig) return false;
 
+    const isPersonalCustom =
+      cfg.strategy_key === 'my_custom_ai' ||
+      cfg.strategy_key === 'custom_pine' ||
+      cfg.strategy_key === 'custom_python' ||
+      cfg.strategy_key === 'custom_visual';
+
+    let sigId: string | undefined;
+    if (!isPersonalCustom) {
+      const recentChan = await this.env.DB.prepare(
+        `SELECT id FROM signals
+         WHERE symbol = ? AND direction = ? AND engine_source = ?
+           AND channel_message_id IS NOT NULL AND created_at >= datetime('now', '-20 minutes')
+         ORDER BY created_at DESC LIMIT 1`
+      ).bind(sig.symbol, sig.direction, cfg.strategy_key).first<{ id: string }>().catch(() => null);
+
+      sigId = recentChan?.id;
+      if (!sigId) {
+        sigId = randomId('sig');
+        await publishSignalBroadcast(this.env, {
+          signalId: sigId,
+          signal: sig,
+          source: cfg.strategy_key,
+          engineKey: cfg.strategy_key,
+          publishToChannel: true,
+          notifySubscribers: false,
+        }).catch(() => {});
+      }
+    }
+
     await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `سیگنال ${sig.direction} روی ${sig.symbol} شناسایی شد (${cfg.strategy_key} · ${marketType})`, sig.symbol);
-    const exec = await executeSignalForUser(this.env, userId, sig, { strategyKey: cfg.strategy_key, marketType });
+    const exec = await executeSignalForUser(this.env, userId, sig, { signalId: sigId, strategyKey: cfg.strategy_key, marketType });
     return exec.ok;
   }
 }

@@ -98,13 +98,14 @@ const RISK_PRESETS = [
 ];
 
 const ALL_STRATEGIES = [
-  { key: 'dollarino_v01', labelFa: 'دُرنا V1 (منتخب دلارینو)', labelEn: 'Dorna V1 Select' },
-  { key: 'ai_autonomous_agent', labelFa: 'هوش مصنوعی دُرّبین (Multi-AI)', labelEn: 'Dorrbin Multi-AI' },
-  { key: 'my_custom_ai', labelFa: 'هوش مصنوعی من (قابل آموزش)', labelEn: 'My Trainable AI' },
-  { key: 'kbos_v11', labelFa: 'KBOS Super v11', labelEn: 'KBOS Super v11' },
-  { key: 'sp2l', labelFa: 'شکار نقدینگی (SP2L)', labelEn: 'Liquidity Sweep (SP2L)' },
-  { key: 'ema_trend_pullback', labelFa: 'مومنتوم روند EMA', labelEn: 'EMA Momentum Pullback' },
-  { key: 'signal_mixer', labelFa: 'میکسر ۸ کاناله (Quant + AI)', labelEn: '8-Ch Signal Mixer' },
+  { key: 'ai_autonomous_agent', labelFa: '🧠 هوش مصنوعی دلارینو (Multi-AI)', labelEn: 'Dollarino Multi-AI' },
+  { key: 'my_custom_ai', labelFa: '🤖 هوش مصنوعی خام (شخصی و قابل آموزش)', labelEn: 'Raw Personal AI (Trainable)' },
+  { key: 'dollarino_v01', labelFa: '🎯 استراتژی شکار · دُرنا V1 (آماده ما)', labelEn: 'Hunting · Dorna V1 (Preset)' },
+  { key: 'kbos_v11', labelFa: '🎯 استراتژی شکار · KBOS Super v11 (آماده ما)', labelEn: 'Hunting · KBOS Super v11 (Preset)' },
+  { key: 'sp2l', labelFa: '🎯 استراتژی شکار · شکار نقدینگی SP2L (آماده ما)', labelEn: 'Hunting · SP2L (Preset)' },
+  { key: 'ema_trend_pullback', labelFa: '🎯 استراتژی شکار · مومنتوم روند EMA', labelEn: 'Hunting · EMA Momentum' },
+  { key: 'signal_mixer', labelFa: '🎯 استراتژی شکار · میکسر ۸ کاناله', labelEn: 'Hunting · 8-Ch Mixer' },
+  { key: 'copy_trade', labelFa: '🏆 کپی‌ترید تاییدشده دلارینو', labelEn: 'Verified Copy Trade' },
 ] as const;
 
 export function OverviewPage({
@@ -534,10 +535,10 @@ export function OverviewPage({
             </span>
           </button>
 
-          {/* Select AI Brain: Platform Auto AI vs My Trained AI */}
+          {/* Select 4 Core Dollarino Engines */}
           <div className="space-y-2">
             <p className="text-[11px] font-black text-dim">
-              {isFa ? '۱. انتخاب مغز هوش مصنوعی:' : '1. Choose AI Engine:'}
+              {isFa ? '۱. انتخاب از ۴ موتور اصلی دلارینو:' : '1. Choose Dollarino Engine:'}
             </p>
             <div className="grid sm:grid-cols-2 gap-2.5">
               <button
@@ -546,19 +547,19 @@ export function OverviewPage({
                 onClick={() =>
                   void patchConfig(
                     { strategy_key: 'ai_autonomous_agent', ai_gate_enabled: 1 },
-                    isFa ? 'هوش مصنوعی اتومات دلارینو انتخاب شد' : 'Dollarino Auto AI selected'
+                    isFa ? '🧠 هوش مصنوعی دلارینو انتخاب شد' : 'Dollarino AI selected'
                   )
                 }
                 className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
-                  !useMyAi ? 'border-[#1652F0] bg-[#1652F0]/10' : 'surface-soft border-transparent'
+                  activeStrategy === 'ai_autonomous_agent' ? 'border-[#1652F0] bg-[#1652F0]/10' : 'surface-soft border-transparent'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-main">{isFa ? 'هوش مصنوعی اتومات دلارینو' : 'Dollarino Auto AI'}</span>
-                  {!useMyAi && <CheckCircle2 className="w-4 h-4 text-jade" />}
+                  <span className="text-xs font-black text-main">{isFa ? '🧠 هوش مصنوعی دلارینو' : 'Dollarino AI'}</span>
+                  {activeStrategy === 'ai_autonomous_agent' && <CheckCircle2 className="w-4 h-4 text-jade" />}
                 </div>
                 <p className="text-[11px] text-dim">
-                  {isFa ? 'تحلیل چندمدله خودکار و پیدا کردن بهترین فرصت‌های کل بازار.' : 'Multi-LLM market consensus across all coins.'}
+                  {isFa ? 'تحلیل چندمدله خودکار و شکار بهترین فرصت‌های کل بازار.' : 'Multi-LLM market consensus across all coins.'}
                 </p>
               </button>
 
@@ -568,7 +569,7 @@ export function OverviewPage({
                 onClick={() =>
                   void patchConfig(
                     { strategy_key: 'my_custom_ai', ai_gate_enabled: 1 },
-                    isFa ? 'هوش مصنوعی شخصی شما فعال شد' : 'My Custom AI selected'
+                    isFa ? '🤖 هوش مصنوعی خام (شخصی) فعال شد' : 'Raw Personal AI selected'
                   )
                 }
                 className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
@@ -576,11 +577,53 @@ export function OverviewPage({
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-main">{isFa ? 'هوش مصنوعی من (آموزش‌داده‌شده)' : 'My Trainable AI'}</span>
+                  <span className="text-xs font-black text-main">{isFa ? '🤖 هوش مصنوعی خام (شخصی)' : 'Raw Personal AI'}</span>
                   {useMyAi && <CheckCircle2 className="w-4 h-4 text-jade" />}
                 </div>
                 <p className="text-[11px] text-dim">
-                  {isFa ? 'معامله دقیقاً بر اساس قوانینی که در چت «هوش مصنوعی من» یاد داده‌اید.' : 'Trades strictly using your taught rules.'}
+                  {isFa ? 'معامله دقیقاً طبق قوانینی که در چت «هوش مصنوعی من» یاد داده‌اید.' : 'Trades strictly using your taught rules.'}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void patchConfig(
+                    { strategy_key: 'dollarino_v01', ai_gate_enabled: 0 },
+                    isFa ? '🎯 استراتژی شکار (دُرنا V1) فعال شد' : 'Hunting Strategy (Dorna V1) selected'
+                  )
+                }
+                className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
+                  activeStrategy !== 'ai_autonomous_agent' && !useMyAi && activeStrategy !== 'copy_trade'
+                    ? 'border-[#10d9a3] bg-[#10d9a3]/10'
+                    : 'surface-soft border-transparent'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-main">{isFa ? '🎯 استراتژی شکار (آماده / شخصی)' : 'Hunting Strategy (Preset / Custom)'}</span>
+                  {activeStrategy !== 'ai_autonomous_agent' && !useMyAi && activeStrategy !== 'copy_trade' && (
+                    <CheckCircle2 className="w-4 h-4 text-jade" />
+                  )}
+                </div>
+                <p className="text-[11px] text-dim">
+                  {isFa ? 'شامل استراتژی‌های آماده ما (دُرنا، KBOS، SP2L) و استراتژی شخصی شما.' : 'Our preset hunters (Dorna, KBOS, SP2L) or your own custom code.'}
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onNavigate('copy')}
+                className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
+                  activeStrategy === 'copy_trade' ? 'border-[#f59e0b] bg-[#f59e0b]/10' : 'surface-soft border-transparent'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-main">{isFa ? '🏆 کپی‌ترید تاییدشده دلارینو' : 'Verified Copy Trade'}</span>
+                  {activeStrategy === 'copy_trade' && <CheckCircle2 className="w-4 h-4 text-jade" />}
+                </div>
+                <p className="text-[11px] text-dim">
+                  {isFa ? 'کپی خودکار معاملات تریدرهای احرازشده و تاییدشده توسط دلارینو.' : 'Mirror admin-verified copy traders automatically.'}
                 </p>
               </button>
             </div>
@@ -1075,23 +1118,23 @@ export function OverviewPage({
               id: 'ai' as const,
               active: activeStrategy === 'ai_autonomous_agent',
               art: <ModeGraphicAI />,
-              code: 'DORR-BIN',
-              title: isFa ? 'هوش مصنوعی دُرّبین' : 'Dorrbin Multi-AI',
+              code: 'DOLLARINO AI',
+              title: isFa ? '🧠 هوش مصنوعی دلارینو' : 'Dollarino AI',
               desc: isFa ? 'اجماع چند مدل هوش مصنوعی روی ساختار بازار بدون نیاز به کلید API شخصی.' : 'Consensus Multi-LLM engine managed centrally by Dollarino.',
               win: 74,
               color: '#e8c15a',
               onClick: () =>
                 void patchConfig(
                   { strategy_key: 'ai_autonomous_agent', ai_gate_enabled: 1 },
-                  isFa ? 'هوش مصنوعی دُرّبین فعال شد' : 'Dorrbin AI activated'
+                  isFa ? '🧠 هوش مصنوعی دلارینو فعال شد' : 'Dollarino AI activated'
                 ),
             },
             {
               id: 'myai' as const,
               active: activeStrategy === 'my_custom_ai',
               art: <ModeGraphicAI />,
-              code: 'MY AI',
-              title: isFa ? 'هوش مصنوعی من (شخصی)' : 'My Trainable AI',
+              code: 'RAW PERSONAL AI',
+              title: isFa ? '🤖 هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
               desc: isFa ? 'به زبان فارسی به ربات یاد بده چطور معامله کند و مستقیم روی چارت اجرا شود.' : 'Teach your personal AI rules in chat and execute 24/7.',
               win: 76,
               color: '#a855f7',
@@ -1099,26 +1142,28 @@ export function OverviewPage({
             },
             {
               id: 'dorna' as const,
-              active: activeStrategy !== 'ai_autonomous_agent' && activeStrategy !== 'my_custom_ai',
+              active: activeStrategy !== 'ai_autonomous_agent' && activeStrategy !== 'my_custom_ai' && activeStrategy !== 'copy_trade',
               art: <ModeGraphicCodex />,
-              code: 'DORNA V1 / KBOS',
-              title: isFa ? 'استراتژی دُرنا V1 و KBOS' : 'Dorna V1 & KBOS',
-              desc: isFa ? 'شکار نقدینگی، روند و ریبون غیرریپینت با مدیریت ریسک و ۳ تارگت خودکار.' : 'Non-repaint trend & liquidity sweep strategy with automated 3-TP protection.',
+              code: 'HUNTING · ۲ بخش',
+              title: isFa ? '🎯 استراتژی شکار' : 'Hunting Strategy',
+              desc: isFa
+                ? 'دارای ۲ بخش: ۱) استراتژی‌های آماده ما (دُرنا V1، KBOS، SP2L) و ۲) استراتژی شخصی خودتان در آزمایشگاه کد.'
+                : '2 sub-modes: Our preset hunters (Dorna V1, KBOS, SP2L) OR your own custom Pine/Python strategy.',
               win: 68,
               color: '#10d9a3',
               onClick: () =>
                 void patchConfig(
                   { strategy_key: 'dollarino_v01', ai_gate_enabled: 0 },
-                  isFa ? 'استراتژی دُرنا V1 فعال شد' : 'Dorna V1 activated'
+                  isFa ? '🎯 استراتژی شکار (دُرنا V1) فعال شد' : 'Hunting Strategy activated'
                 ),
             },
             {
               id: 'copy' as const,
-              active: false,
+              active: activeStrategy === 'copy_trade',
               art: <ModeGraphicTelegram />,
-              code: 'MIRROR',
-              title: isFa ? 'کپی‌ترید تاییدشده' : 'Verified Copy-Trade',
-              desc: isFa ? 'کپی خودکار معاملات تریدرهای تاییدشده و سیگنال‌های تلگرام یا TradingView.' : 'Instant sub-second mirroring of verified traders & TradingView.',
+              code: 'COPY TRADE',
+              title: isFa ? '🏆 کپی‌ترید تاییدشده دلارینو' : 'Verified Copy-Trade',
+              desc: isFa ? 'کپی خودکار معاملات تریدرهای تاییدشده و سیگنال‌های کانال رسمی @Dollarino_official.' : 'Instant sub-second mirroring of verified traders & @Dollarino_official.',
               win: 79,
               color: '#38e1ff',
               onClick: () => onNavigate('copy'),
@@ -1139,6 +1184,24 @@ export function OverviewPage({
                 </span>
               </div>
               <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
+              {e.id === 'dorna' && (
+                <div className="flex flex-wrap gap-1.5 pt-1" onClick={(ev) => ev.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => void patchConfig({ strategy_key: 'dollarino_v01', ai_gate_enabled: 0 }, isFa ? '🎯 استراتژی آماده دُرنا V1 انتخاب شد' : 'Dorna V1 selected')}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-jade text-[10px] font-black hover:bg-emerald-500/25"
+                  >
+                    {isFa ? 'استراتژی‌های آماده ما' : 'Our Presets'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('radar')}
+                    className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand text-[10px] font-black hover:opacity-85"
+                  >
+                    {isFa ? 'استراتژی شخصی شما ←' : 'Your Custom Code →'}
+                  </button>
+                </div>
+              )}
               <div className="flex items-center justify-between text-xs font-black pt-1" style={{ color: e.color }}>
                 <span className="inline-flex items-center gap-1">
                   {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
@@ -1449,7 +1512,7 @@ export function OverviewPage({
             className="btn-ghost w-full py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-2"
           >
             <Layers className="w-4 h-4" style={{ color: 'var(--gold)' }} />
-            <span>{isFa ? 'ساخت کارت هفتگی (PNG)' : 'Weekly Card Studio'}</span>
+            <span>{isFa ? 'ساخت کارت سود دلارینو (PNG)' : 'Dollarino Profit Card (PNG)'}</span>
           </button>
         </div>
       </section>

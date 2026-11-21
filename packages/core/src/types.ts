@@ -33,6 +33,8 @@ export interface DollarinoSignal {
   tp2Pct?: string;
   tp3Pct?: string;
   channelHandle?: string;
+  engineKey?: string;
+  engineLabel?: string;
   reason?: string;
 }
 
@@ -40,6 +42,7 @@ export type StrategyKey =
   | 'dollarino_v01'
   | 'ai_autonomous_agent'
   | 'my_custom_ai'
+  | 'copy_trade'
   | 'kbos_v11'
   | 'sp2l'
   | 'grid_strategy'

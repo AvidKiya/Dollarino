@@ -27,6 +27,9 @@ export function AuthPage({
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [referralCode, setReferralCode] = useState(() =>
+    typeof window !== 'undefined' ? (new URLSearchParams(window.location.search).get('ref') || '').trim().toUpperCase() : ''
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
@@ -54,14 +57,14 @@ export function AuthPage({
         throw new Error(lang === 'fa' ? 'رمز عبور باید حداقل ۶ رقم یا حرف باشد' : 'Password must be at least 6 characters');
       }
       const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const refParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('ref') : null;
+      const cleanRef = referralCode.trim().toUpperCase();
       const res = await apiFetch<{ token: string }>(endpoint, {
         method: 'POST',
         body: JSON.stringify({
           email: cleanEmail,
           username: username.trim(),
           password,
-          referralCode: mode === 'register' && refParam ? refParam : undefined,
+          referralCode: mode === 'register' && cleanRef ? cleanRef : undefined,
         }),
       });
       setStoredToken(res.token);
@@ -164,15 +167,34 @@ export function AuthPage({
 
           <form onSubmit={submit} className="space-y-3">
             {mode === 'register' && (
-              <div className="relative">
-                <User className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder={isFa ? 'نام نمایشی (اختیاری)' : 'Display Name (optional)'}
-                  className="field ps-10 text-xs"
-                />
-              </div>
+              <>
+                <div className="relative">
+                  <User className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder={isFa ? 'نام نمایشی (اختیاری)' : 'Display Name (optional)'}
+                    className="field ps-10 text-xs"
+                  />
+                </div>
+                <div className="relative">
+                  <ShieldCheck className="w-4 h-4 text-jade absolute start-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    dir="ltr"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                    placeholder={isFa ? 'کد معرف / دعوت (اختیاری - مثلا DLR-XXXX)' : 'Referral Code (optional)'}
+                    className="field ps-10 text-xs font-mono-num"
+                  />
+                </div>
+                {referralCode.trim() && (
+                  <div className="px-3 py-2 rounded-xl bg-emerald-500/12 border border-emerald-500/30 text-[11px] font-bold text-jade">
+                    {isFa
+                      ? `🎁 کد معرف ${referralCode.trim()} روی حساب شما ثبت می‌شود.`
+                      : `🎁 Referral code ${referralCode.trim()} will be applied.`}
+                  </div>
+                )}
+              </>
             )}
 
             <div className="relative">

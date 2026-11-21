@@ -152,7 +152,7 @@ export function SubscriptionPage({
     setSubmitting(true);
     setMsg(null);
     try {
-      await apiFetch('/api/subscriptions/checkout', {
+      const res = await apiFetch<{ ok?: boolean; autoVerified?: boolean; message?: string }>('/api/subscriptions/checkout', {
         method: 'POST',
         body: JSON.stringify({
           planCode: selectedPlan.code,
@@ -164,9 +164,14 @@ export function SubscriptionPage({
       setPaymentRef('');
       setPayerNote('');
       setMsg(
-        isFa
-          ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر، اشتراک شما فوراً فعال می‌شود.'
-          : 'Subscription order submitted! Once verified by admin, your Pro/VIP license activates immediately.'
+        res.autoVerified
+          ? isFa
+            ? '✅ تراکنش تتر (TRC20) روی شبکه بلاک‌چین تایید خودکار شد و اشتراک شما هم‌اکنون فعال گردید!'
+            : '✅ USDT TRC20 transaction auto-verified on-chain! Your subscription is now ACTIVE.'
+          : res.message ||
+            (isFa
+              ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر، اشتراک شما فوراً فعال می‌شود.'
+              : 'Subscription order submitted! Once verified by admin, your Pro/VIP license activates immediately.')
       );
       await loadData();
       await onRefreshDashboard();
@@ -414,8 +419,16 @@ export function SubscriptionPage({
               </span>
             </h2>
             <span className="text-xs text-sub font-semibold">
-              {isFa ? `پشتیبانی: ${payCfg.telegram_support || '@Dollarino_admin'}` : `Support: ${payCfg.telegram_support || '@Dollarino_admin'}`}
+              {isFa
+                ? `ربات رسمی پشتیبانی: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`
+                : `Official Support Bot: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`}
             </span>
+          </div>
+
+          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-main">
+            {isFa
+              ? '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای دریافت وجه یا پشتیبانی ندارد. پرداخت را فقط به آدرس‌های داخل همین صفحه انجام دهید و در صورت نیاز فقط با پشتیبانی آنلاین سایت یا ربات @Dollarino_bot در ارتباط باشید.'
+              : '⚠️ Security Notice: Dollarino has NO personal DM support account. Only pay to addresses shown here and contact us via Online Support or @Dollarino_bot.'}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">

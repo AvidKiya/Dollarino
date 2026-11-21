@@ -662,7 +662,8 @@ export function strategyOutputToDollarinoSignal(
   timeframe: string,
   leverage: number,
   output: StrategySignalOutput,
-  channelHandle = '@Dollarinoofficial'
+  channelHandle = '@Dollarino_official',
+  engineKey?: string
 ): DollarinoSignal | null {
   if (output.signal === 'NONE' || !output.stopLoss || !output.tp1) return null;
   const decimals = output.price >= 1000 ? 2 : output.price >= 1 ? 4 : 6;
@@ -677,6 +678,7 @@ export function strategyOutputToDollarinoSignal(
     tp2: output.tp2 ? output.tp2.toFixed(decimals) : undefined,
     tp3: output.tp3 ? output.tp3.toFixed(decimals) : undefined,
     channelHandle,
+    engineKey,
     reason: output.reason,
   };
 }

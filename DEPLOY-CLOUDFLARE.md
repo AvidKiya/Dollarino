@@ -6,7 +6,7 @@
 
 ## روش پیشنهادی: استقرار یکپارچه (Worker + Frontend روی یک دامنه)
 
-### ۱. ساخت یا بررسی دیتابیس D1 و اعمال مایگریشن‌ها (`0001` تا `0014`)
+### ۱. ساخت یا بررسی دیتابیس D1 و اعمال مایگریشن‌ها (`0001` تا `0015`)
 ```bash
 npm ci
 npx wrangler login
@@ -17,9 +17,11 @@ npx wrangler d1 migrations apply dollarino-db --remote
 ```bash
 openssl rand -base64 32 | npx wrangler secret put MASTER_ENCRYPTION_KEY
 openssl rand -hex 32 | npx wrangler secret put SESSION_JWT_SECRET
-npx wrangler secret put PUBLIC_WEB_URL   # مثال: https://dollarino-worker.<subdomain>.workers.dev
+npx wrangler secret put PUBLIC_WEB_URL   # مثال: https://dollarino.pages.dev
 npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put HILINKUP_API_KEY # درگاه هوشمند Hilinkup (OpenAI-compatible)
 ```
+> نکته: مقادیر پیش‌فرض `HILINKUP_BASE_URL` (`https://api.hilinkup.com/v1/chat/completions`)، `HILINKUP_MODEL` (`baidu/deepseek-v4.1-flash-1017`) و `DEFAULT_SIGNAL_CHANNEL` (`@Dollarino_official`) در `wrangler.toml` تنظیم شده‌اند و از تب «مدیریت -> موتور AI» هم قابل تغییر هستند.
 
 ### ۳. بیلد و استقرار یکپارچه
 ```bash
@@ -28,7 +30,7 @@ npx wrangler deploy
 ```
 با همین یک دستور، هم **فرانت‌اند (`apps/web/dist`)** و هم **بک‌اند (`/api/*`) + ربات ۲۴ ساعته (Durable Object)** روی یک آدرس واحد بالا می‌آیند و تمام دکمه‌ها و درخواست‌های API بلافاصله بدون خطای `404` کار می‌کنند.
 
-سپس یک‌بار اندپوینت `POST /api/webhook/telegram/setup` را با حساب مدیر صدا بزنید تا Webhook و دکمه‌های مینی‌اپ ربات تلگرام ثبت شوند.
+سپس یک‌بار اندپوینت `POST /api/webhook/telegram/setup` را با حساب مدیر صدا بزنید تا Webhook و منوی ربات تلگرام (`@Dollarino_bot`) ثبت شوند، و مطمئن شوید `@Dollarino_bot` به عنوان ادمین با دسترسی ارسال پیام در کانال `@Dollarino_official` اضافه شده باشد.
 
 ---
 
@@ -41,9 +43,8 @@ npx wrangler deploy
 
 ---
 
-## امکانات پلتفرم اشتراکی دلارینو
-- **پلتفرم تمام‌اشتراکی:** هیچ حساب دمو رایگان وجود ندارد و دسترسی به موتورهای ترید مستلزم فعال‌سازی اشتراک است.
-- **حالت ساده:** منحصراً ترید هوشمند اتومات با هوش مصنوعی (تک‌کلیکی و بی‌نیاز از دانش فنی).
-- **هوش مصنوعی من (My AI):** هوش مصنوعی خام اختصاصی که با چت به کاربر استراتژی یاد می‌گیرد، تست زنده می‌گیرد و معامله می‌کند.
-- **کپی‌ترید تاییدشده:** لیست تریدرهای تاییدشده ادمین + معاملاتشان + کپی با یک لمس (در سایت و ربات تلگرام).
-- **پشتیبانی آنلاین زنده:** گفتگوی مستقیم داخل وب‌سایت همگام‌سازی‌شده با صندوق تیکت ادمین و تلگرام.
+## امکانات پلتفرم اشتراکی دلارینو (نسخه v8.5)
+- **پلتفرم تمام‌اشتراکی + تایید اتومات TRC20:** بررسی خودکار هش/لینک TXID تتر روی شبکه TRON + پشتیبانی از کد هدیه و سیستم دعوت دوستان (`?ref=` / `REF_`).
+- **۴ موتور معاملاتی همگام (وب + `@Dollarino_bot`):** ۱) هوش مصنوعی دلارینو، ۲) هوش مصنوعی من (My AI)، ۳) استراتژی شکار (دُرنا V1)، ۴) کپی‌ترید تاییدشده با تایید انتشار ۲مرحله‌ای.
+- **کارت سود و نتیجه بسته شدن سیگنال (Server PNG):** تولید خودکار تصویر رسمی (`@resvg/resvg-wasm` + فونت وزیر + واترمارک دلارینو + مهر حساب واقعی/دمو) در فرمت‌های ۱۶:۹ و ۳:۴ همراه با ارسال مستقیم به کانال `@Dollarino_official` و پیوی کاربر.
+- **پشتیبانی آنلاین زنده و ضدکلاهبرداری:** تنها ربات رسمی `@Dollarino_bot` و کانال رسمی `@Dollarino_official` + چت تیکت داخل سایت همگام با پنل ادمین.

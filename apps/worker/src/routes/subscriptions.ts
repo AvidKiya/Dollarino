@@ -4,6 +4,10 @@ import { randomId } from '../crypto.js';
 import { logAudit } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter.js';
+import { notifyAllAdmins } from '../telegram/publisher.js';
+
+const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 
 export interface SubscriptionPlanRow {
   code: string;
@@ -163,6 +167,76 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
   };
 }
 
+export async function rewardReferrerIfEligible(env: Env, referredUserId: string): Promise<void> {
+  const ref = await env.DB.prepare(
+    `SELECT id, referrer_user_id, reward_days, status FROM referrals WHERE referred_user_id = ? LIMIT 1`
+  ).bind(referredUserId).first<{ id: string; referrer_user_id: string; reward_days: number; status: string }>().catch(() => null);
+
+  if (!ref || ref.status === 'REWARDED') return;
+  const days = Math.max(1, ref.reward_days || 7);
+
+  await env.DB.prepare(`UPDATE referrals SET status = 'REWARDED' WHERE id = ?`).bind(ref.id).run();
+  await env.DB.prepare(
+    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
+     VALUES (?, ?, 'pro_monthly', 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'پاداش دعوت دوست (رفرال)')`
+  ).bind(randomId('sub'), ref.referrer_user_id, `REFERRAL:${referredUserId}`, days).run();
+
+  await logAudit(env.DB, ref.referrer_user_id, 'SYSTEM', 'INFO', `Referral bonus credited: +${days} days for inviting ${referredUserId}`);
+  const referrerTg = await env.DB.prepare(`SELECT telegram_id FROM users WHERE id = ?`).bind(ref.referrer_user_id).first<{ telegram_id: string | null }>().catch(() => null);
+  if (referrerTg?.telegram_id && env.TELEGRAM_BOT_TOKEN) {
+    const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+    await tg.sendMessage(
+      referrerTg.telegram_id,
+      `🎁 تبریک! دوست دعوت‌شده شما اشتراک دلارینو را فعال کرد و ${days} روز اشتراک هدیه به حساب شما اضافه شد!`
+    ).catch(() => {});
+  }
+}
+
+async function verifyTronscanUsdtTrc20(
+  txid: string,
+  expectedWallet: string,
+  minAmountUsd: number
+): Promise<{ verified: boolean; amountUsd?: number; note: string }> {
+  const cleanHash = txid.trim();
+  if (!/^[a-fA-F0-9]{64}$/.test(cleanHash) || !expectedWallet || expectedWallet.startsWith('T-PLACEHOLDER')) {
+    return { verified: false, note: 'Pending manual review (non-64-hex hash or wallet not finalized)' };
+  }
+  try {
+    const res = await fetch(`https://apilist.tronscanapi.com/api/transaction-info?hash=${encodeURIComponent(cleanHash)}`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return { verified: false, note: `Tronscan HTTP ${res.status}` };
+    const data = await res.json() as {
+      confirmed?: boolean;
+      contractRet?: string;
+      trc20TransferInfo?: Array<{
+        contract_address?: string;
+        to_address?: string;
+        amount_str?: string;
+        decimals?: number;
+      }>;
+    };
+    if (!data.confirmed || data.contractRet !== 'SUCCESS') {
+      return { verified: false, note: 'Transaction not yet confirmed on TRON' };
+    }
+    const transfers = Array.isArray(data.trc20TransferInfo) ? data.trc20TransferInfo : [];
+    const match = transfers.find((t) => {
+      const sameContract = (t.contract_address || '').toLowerCase() === USDT_TRC20_CONTRACT.toLowerCase();
+      const sameWallet = (t.to_address || '').toLowerCase() === expectedWallet.toLowerCase();
+      const dec = Number(t.decimals ?? 6);
+      const amt = Number(t.amount_str || 0) / Math.pow(10, dec);
+      return sameContract && sameWallet && amt >= Math.max(0.5, minAmountUsd - 0.5);
+    });
+    if (!match) {
+      return { verified: false, note: 'Wallet or USDT amount did not match automatically' };
+    }
+    const amt = Number(match.amount_str || 0) / Math.pow(10, Number(match.decimals ?? 6));
+    return { verified: true, amountUsd: amt, note: `Auto-verified $${amt.toFixed(2)} USDT TRC20 via Tronscan` };
+  } catch (err) {
+    return { verified: false, note: err instanceof Error ? err.message : 'Tronscan verification unavailable' };
+  }
+}
+
 export const subscriptionRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 subscriptionRoutes.use('*', requireAuth);
 
@@ -180,12 +254,18 @@ subscriptionRoutes.get('/me', async (c) => {
     ).bind(user.id).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(
       `SELECT key, value FROM system_settings
-       WHERE key IN ('subscription_required', 'usdt_trc20_wallet', 'iran_card_number', 'iran_card_holder', 'telegram_support')`
+       WHERE key IN ('subscription_required', 'usdt_trc20_wallet', 'iran_card_number', 'iran_card_holder', 'telegram_support', 'anti_scam_notice_fa')`
     ).all<{ key: string; value: string }>().catch(() => ({ results: [] })),
   ]);
 
   const paymentConfig: Record<string, string> = {};
   for (const s of settings.results) paymentConfig[s.key] = s.value;
+  if (!paymentConfig.telegram_support || /Dollarino_admin/i.test(paymentConfig.telegram_support)) {
+    paymentConfig.telegram_support = OFFICIAL_BOT_HANDLE;
+  }
+  if (!paymentConfig.anti_scam_notice_fa) {
+    paymentConfig.anti_scam_notice_fa = ANTI_SCAM_WARNING_FA;
+  }
 
   return c.json({
     entitlement,
@@ -218,8 +298,57 @@ subscriptionRoutes.post('/checkout', async (c) => {
     return c.json({ error: 'Please enter a valid TXID or payment tracking reference (min 5 chars)' }, 400);
   }
 
+  // Prevent reusing the exact same payment reference / TXID
+  const duplicateRef = await c.env.DB.prepare(
+    `SELECT id FROM user_subscriptions WHERE payment_reference = ? AND status IN ('ACTIVE', 'PENDING_REVIEW') LIMIT 1`
+  ).bind(ref.slice(0, 140)).first<{ id: string }>().catch(() => null);
+  if (duplicateRef) {
+    return c.json({ error: 'این کد پیگیری یا TXID قبلاً ثبت شده است.' }, 409);
+  }
+
   const method = body.paymentMethod === 'CARD_TO_CARD' ? 'CARD_TO_CARD' : 'USDT_TRC20';
   const id = randomId('sub');
+
+  // Auto-verify USDT TRC20 TXID via Tronscan when applicable
+  let autoActivated = false;
+  let autoNote = '';
+  if (method === 'USDT_TRC20') {
+    const walletSetting = await c.env.DB.prepare(
+      `SELECT value FROM system_settings WHERE key = 'usdt_trc20_wallet'`
+    ).first<{ value: string }>().catch(() => null);
+    const check = await verifyTronscanUsdtTrc20(ref, walletSetting?.value || '', plan.price_usd);
+    if (check.verified) {
+      autoActivated = true;
+      autoNote = check.note;
+    }
+  }
+
+  if (autoActivated) {
+    const days = Math.max(1, plan.duration_days || 30);
+    await c.env.DB.prepare(
+      `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, payer_note, started_at, expires_at, reviewed_at, admin_note)
+       VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' days'), datetime('now'), ?)`
+    ).bind(
+      id,
+      user.id,
+      plan.code,
+      method,
+      ref.slice(0, 140),
+      plan.price_usd,
+      (body.payerNote || '').trim().slice(0, 240),
+      days,
+      autoNote
+    ).run();
+
+    await rewardReferrerIfEligible(c.env, user.id).catch(() => {});
+    await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Subscription ${id} AUTO-ACTIVATED via Tronscan (${plan.name_en})`);
+    await notifyAllAdmins(
+      c.env,
+      `✅ اشتراک کاربر ${user.username} (${user.email}) برای پلن ${plan.name_fa} به صورت خودکار از طریق شبکه TRC20 تایید و فعال شد!\nTXID: ${ref}`
+    ).catch(() => {});
+
+    return c.json({ ok: true, orderId: id, status: 'ACTIVE', autoVerified: true }, 201);
+  }
 
   await c.env.DB.prepare(
     `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, payer_note)
@@ -242,21 +371,17 @@ subscriptionRoutes.post('/checkout', async (c) => {
     `Subscription order ${id} submitted for ${plan.name_en} (${method}: ${ref.slice(0, 32)})`
   );
 
-  // Best-effort owner Telegram notification if configured
-  if (c.env.TELEGRAM_BOT_TOKEN && c.env.OWNER_TELEGRAM_ID) {
-    const tg = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
-    const note = [
-      `💳 درخواست اشتراک جدید در دلارینو`,
-      `کاربر: ${user.email} (${user.username})`,
-      `پلن: ${plan.name_fa} ($${plan.price_usd})`,
-      `روش: ${method}`,
-      `کد پیگیری / TXID: ${ref}`,
-      `شناسه سفارش: ${id}`,
-    ].join('\n');
-    await tg.sendMessage(c.env.OWNER_TELEGRAM_ID, note).catch(() => {});
-  }
+  const note = [
+    `💳 درخواست اشتراک جدید در دلارینو`,
+    `کاربر: ${user.email} (${user.username})`,
+    `پلن: ${plan.name_fa} ($${plan.price_usd})`,
+    `روش: ${method}`,
+    `کد پیگیری / TXID: ${ref}`,
+    `شناسه سفارش: ${id}`,
+  ].join('\n');
+  await notifyAllAdmins(c.env, note).catch(() => {});
 
-  return c.json({ ok: true, orderId: id, status: 'PENDING_REVIEW' }, 201);
+  return c.json({ ok: true, orderId: id, status: 'PENDING_REVIEW', autoVerified: false }, 201);
 });
 
 // Admin subscription management routes
@@ -305,6 +430,7 @@ subscriptionRoutes.post('/admin/orders/:id/review', async (c) => {
            admin_note = ?
        WHERE id = ?`
     ).bind(days, actor.id, body.adminNote || 'Approved', id).run();
+    await rewardReferrerIfEligible(c.env, order.user_id).catch(() => {});
     await logAudit(c.env.DB, order.user_id, 'SYSTEM', 'INFO', `Subscription ${order.plan_code} approved for ${days} days`);
   } else {
     await c.env.DB.prepare(
@@ -353,12 +479,15 @@ subscriptionRoutes.patch('/admin/config', async (c) => {
     vipPriceToman?: number;
   }>();
 
+  const cleanSupport = body.telegramSupport?.trim();
+  const safeSupport = cleanSupport && /Dollarino_admin/i.test(cleanSupport) ? OFFICIAL_BOT_HANDLE : cleanSupport;
+
   const kvPairs: Array<[string, string | undefined]> = [
     ['subscription_required', body.subscriptionRequired !== undefined ? String(body.subscriptionRequired) : undefined],
     ['usdt_trc20_wallet', body.usdtTrc20Wallet?.trim()],
     ['iran_card_number', body.iranCardNumber?.trim()],
     ['iran_card_holder', body.iranCardHolder?.trim()],
-    ['telegram_support', body.telegramSupport?.trim()],
+    ['telegram_support', safeSupport],
   ];
 
   for (const [k, v] of kvPairs) {
@@ -393,7 +522,7 @@ subscriptionRoutes.get('/referrals', async (c) => {
      WHERE r.referrer_user_id = ? ORDER BY r.created_at DESC LIMIT 50`
   ).bind(user.id).all<{ id: string; reward_days: number; status: string; created_at: string; username: string }>().catch(() => ({ results: [] }));
   const totalReferred = refs.results.length;
-  const rewardDaysEarned = refs.results.reduce((acc, r) => acc + Number(r.reward_days || 0), 0);
+  const rewardDaysEarned = refs.results.filter((r) => r.status === 'REWARDED').reduce((acc, r) => acc + Number(r.reward_days || 0), 0);
   return c.json({ referralCode: code, totalReferred, rewardDaysEarned, referrals: refs.results });
 });
 
@@ -434,6 +563,7 @@ subscriptionRoutes.post('/redeem-gift', async (c) => {
      VALUES (?, ?, ?, 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'Gift code redeemed')`
   ).bind(subId, user.id, gift.plan_code, `GIFT:${code}`, gift.duration_days).run();
 
+  await rewardReferrerIfEligible(c.env, user.id).catch(() => {});
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Redeemed gift code ${code} (${gift.duration_days}d)`);
   return c.json({ ok: true, durationDays: gift.duration_days, planCode: gift.plan_code });
 });

@@ -517,8 +517,8 @@ export function ServicesPage({
     },
     {
       tab: 'card',
-      title: isFa ? 'کارت سود هفتگی تاییدشده' : 'Verified Profit Card',
-      subtitle: isFa ? 'ساخت کارت عملکرد تاییدشده با امضای دیجیتال سرور' : 'Generate HMAC signed profit share card',
+      title: isFa ? 'کارت سود تاییدشده (Live / Demo)' : 'Verified Profit Card',
+      subtitle: isFa ? 'صدور تصویر PNG رسمی عملکرد با مهر حساب واقعی/دمو و امضای سرور' : 'Generate official Live/Demo PNG Profit Card with HMAC verification',
       icon: Image,
       tileBg: 'bg-[#10B981]/15',
       tileColor: 'text-[#0D9455]',
@@ -761,6 +761,24 @@ export function ServicesPage({
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>
+
+          <a
+            href="https://t.me/Dollarino_official"
+            target="_blank"
+            rel="noreferrer"
+            className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
+          >
+            <span className="w-10 h-10 rounded-2xl bg-[#0EA5E9]/15 text-[#0284C7] grid place-items-center shrink-0">
+              <Send className="w-5 h-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="text-xs sm:text-sm font-extrabold text-main block">
+                {isFa ? 'کانال رسمی سیگنال و اخبار دلارینو' : 'Official Dollarino Signals Channel'}
+              </span>
+              <span dir="ltr" className="text-[11px] text-[#0284C7] font-mono-num font-bold block">@Dollarino_official</span>
+            </div>
+            <ExternalLink className="w-4 h-4 text-dim shrink-0" />
+          </a>
 
           {isAdmin && (
             <button

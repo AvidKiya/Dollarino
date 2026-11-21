@@ -4,8 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env.js';
+import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/renderer.js';
+import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { formatTradeClosedCard } from '../telegram/formatter.js';
 import { handleTelegramUpdate } from '../telegram/handler.js';
+import { publishSignalBroadcast } from '../telegram/publisher.js';
 
 interface RecordedTgCall {
   method: string;
@@ -114,6 +117,21 @@ describe('Dollarino Telegram Bot Full Spec & Admin Suite', () => {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+      if (url.includes('bitunix.com') || url.includes('toobit.com') || url.includes('binance.com') || url.includes('kcex.com')) {
+        if (url.includes('market/tickers')) {
+          return new Response(
+            JSON.stringify({ code: 0, data: [{ symbol: 'BTCUSDT', lastPrice: '92000', last: '92000' }] }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (url.includes('ticker/price') || url.includes('ticker/24hr') || url.includes('quote/v1/ticker')) {
+          return new Response(
+            JSON.stringify({ symbol: 'BTCUSDT', price: '92000', c: '92000', lastPrice: '92000', p: '92000' }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ code: 0, data: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       return realFetch(input, init);
     });
@@ -437,5 +455,158 @@ describe('Dollarino Telegram Bot Full Spec & Admin Suite', () => {
       message: { message_id: 71, from: { id: 944021185 }, chat: { id: 944021185, type: 'private' }, text: 'از منوی خرید اشتراک پلن را انتخاب کنید.' },
     });
     expect(tgCalls.some((c) => String(c.body.chat_id) === '2002002' && String(c.body.text).includes('پاسخ پشتیبانی آنلاین'))).toBe(true);
+  });
+
+  it('renders RTL watermarked Profit & Signal Closed PNG cards, handles channel signals, copy-trader confirmation & anti-scam policy', async () => {
+    const env = makeEnv();
+
+    // 1. Server-side PNG rendering (Horizontal & Vertical)
+    const profitH = await renderProfitCardPng({
+      cardId: 'card_test_h1',
+      displayName: 'کیارش',
+      mode: 'LIVE',
+      period: '1Y',
+      netPnlUsd: 2450.75,
+      roiPct: 148.5,
+      tradesCount: 42,
+      winRate: 78.6,
+      profitFactor: 2.85,
+      exchangeProvider: 'TOOBIT',
+      strategyName: 'dollarino_v01',
+      issuedAt: '2026-11-21T12:00:00Z',
+      layout: 'horizontal',
+    });
+    expect(profitH).toBeTruthy();
+    expect(profitH!.length).toBeGreaterThan(20_000);
+    expect(profitH![0]).toBe(0x89);
+    expect(profitH![1]).toBe(0x50); // PNG signature
+
+    const closedV = await renderSignalClosedCardPng({
+      cardId: 'SIG-TESTV1',
+      symbol: 'ETHUSDT',
+      direction: 'LONG',
+      leverage: 15,
+      engineLabel: '🎯 استراتژی شکار (دُرنا V1)',
+      mode: 'LIVE',
+      entryPrice: '3100',
+      exitPrice: '3286',
+      pnlUsd: 450,
+      pnlPct: 90.0,
+      tp1Hit: true,
+      tp2Hit: true,
+      tp3Hit: false,
+      trailingActive: true,
+      trailingSlPrice: '3220',
+      closeReason: 'TP2',
+      openedAt: '2026-11-21T08:00:00Z',
+      closedAt: '2026-11-21T12:00:00Z',
+      layout: 'vertical',
+    });
+    expect(closedV).toBeTruthy();
+    expect(closedV!.length).toBeGreaterThan(20_000);
+
+    // 2. Channel signal publish with inline buttons & /card command without @Dollarino_admin
+    tgCalls = [];
+    const pubSig = await publishSignalBroadcast(env, {
+      source: 'admin_channel',
+      engineKey: 'dollarino_v01',
+      publishToChannel: true,
+      signal: {
+        symbol: 'SOLUSDT',
+        direction: 'LONG',
+        timeframe: '15m',
+        price: '240',
+        stopLoss: '232',
+        tp1: '248',
+        tp2: '256',
+        tp3: '264',
+        leverage: 10,
+        engineKey: 'dollarino_v01',
+        reason: 'Breakout confirmed',
+      },
+    });
+    expect(pubSig.signalId).toBeTruthy();
+    expect(pubSig.channelMessageId).toBeTruthy();
+    const chanPost = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.chat_id) === '@Dollarino_official');
+    expect(chanPost).toBeTruthy();
+    expect(JSON.stringify(chanPost?.body.reply_markup)).toContain(`sig_${pubSig.signalId}`);
+
+    // /support never exposes @Dollarino_admin and includes anti-scam warning
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 50,
+      message: { message_id: 80, from: { id: 2002002 }, chat: { id: 2002002, type: 'private' }, text: '/support' },
+    });
+    const supMsg = String(tgCalls[0]?.body.text || '');
+    expect(supMsg).not.toContain('Dollarino_admin');
+    expect(supMsg).toContain('@Dollarino_bot');
+    expect(supMsg).toContain('هیچ اکانت پیوی شخصی');
+
+    // /card shows Profit Card menu including 1Y and vertical
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 51,
+      message: { message_id: 81, from: { id: 2002002 }, chat: { id: 2002002, type: 'private' }, text: '/card' },
+    });
+    expect(JSON.stringify(tgCalls[0]?.body.reply_markup)).toContain('tg_profit_issue:1Y:horizontal');
+
+    // 3. Copy-trader trade confirmation & follower mirroring
+    const followerRow = await db.prepare(`SELECT id FROM users WHERE telegram_id = '2002002'`).first<{ id: string }>();
+    await db.prepare(
+      `INSERT INTO user_subscriptions (id, user_id, plan_code, status, expires_at) VALUES ('sub_f1', ?, 'pro_monthly', 'ACTIVE', datetime('now', '+30 days'))`
+    ).bind(followerRow!.id).run();
+    await db.prepare(
+      `INSERT INTO copy_traders (id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level, is_verified, is_active, auto_ask_publish)
+       VALUES ('ct_test1', 'استاد آریا', '@arya_pro', 'BTC/ETH', 82, 45, 4.5, 1, 'LOW', 1, 1, 1)`
+    ).run();
+    await db.prepare(
+      `INSERT INTO copy_subscriptions (id, user_id, trader_id, allocation_usd, is_active) VALUES ('cs_1', ?, 'ct_test1', 150, 1)`
+    ).bind(followerRow!.id).run();
+    await db.prepare(
+      `INSERT INTO copy_trader_trades (id, trader_id, symbol, direction, leverage, entry_price, stop_loss, tp1, status, publish_status)
+       VALUES ('ctt_phase2_1', 'ct_test1', 'BTCUSDT', 'LONG', 10, '92000', '90000', '96000', 'OPEN', 'PENDING_CONFIRM')`
+    ).run();
+
+    const mirrorRes = await confirmAndMirrorCopyTrade(env, 'ctt_phase2_1', true);
+    expect(mirrorRes.ok).toBe(true);
+    expect(mirrorRes.published).toBe(true);
+    expect(mirrorRes.mirroredCount).toBe(1);
+
+    // 4. Super Admin can manage @Dollarino_official channel and publish news directly via Telegram admin panel
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 52,
+      callback_query: {
+        id: 'cq_adm_chan',
+        from: { id: 944021185, username: 'owner' },
+        message: { chat: { id: 944021185 }, message_id: 90 },
+        data: 'adm:channel',
+      },
+    });
+    const chanMenu = tgCalls.find((c) => c.method === 'editMessageText');
+    expect(String(chanMenu?.body.text || '')).toContain('@Dollarino_official');
+
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 53,
+      callback_query: {
+        id: 'cq_adm_news',
+        from: { id: 944021185, username: 'owner' },
+        message: { chat: { id: 944021185 }, message_id: 90 },
+        data: 'adm:chan_news:NEWS',
+      },
+    });
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 54,
+      message: {
+        message_id: 91,
+        from: { id: 944021185, username: 'owner' },
+        chat: { id: 944021185, type: 'private' },
+        text: 'گزارش هفتگی بازار\nبیت‌کوین سقف کلیدی را شکست و موتور دُرنا V1 فعال است.',
+      },
+    });
+    const newsPost = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.chat_id) === '@Dollarino_official');
+    expect(newsPost).toBeTruthy();
+    expect(String(newsPost?.body.text || '')).toContain('گزارش هفتگی بازار');
   });
 });

@@ -30,15 +30,21 @@ export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; l
 
   return (
     <div className="min-h-screen app-shell flex items-center justify-center p-4">
-      <div className="panel rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl">
-        <div className="flex items-center justify-between">
+      <div className="panel rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl relative overflow-hidden">
+        <img
+          src="/logo.png"
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-60 h-60 object-contain opacity-[0.06]"
+        />
+        <div className="relative flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <DollarinoBrandMark size={36} glow />
             <div>
               <h1 className="text-sm font-black text-main">
-                {isFa ? 'استعلام اصالت کارت سود دلارینو' : 'Dollarino Card Verification'}
+                {isFa ? 'استعلام اصالت کارت سود دلارینو' : 'Dollarino Profit Card Verification'}
               </h1>
-              <p dir="ltr" className="text-[11px] font-mono-num text-dim">{cardId}</p>
+              <p dir="ltr" className="text-[11px] font-mono-num text-dim">{cardId} · @Dollarino_official</p>
             </div>
           </div>
           <button type="button" onClick={onBackHome} className="btn-ghost px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1">
@@ -107,7 +113,7 @@ export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; l
               <div className="surface-soft rounded-2xl p-3">
                 <span className="text-dim block">{isFa ? 'سود/زیان خالص' : 'Net PnL'}</span>
                 <span dir="ltr" className={`font-display font-bold text-lg ${card.netPnlUsd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                  {card.netPnlUsd >= 0 ? '+' : '-'}${Math.abs(card.netPnlUsd).toFixed(2)}
+                  {card.netPnlUsd >= 0 ? '+' : '-'}${Math.abs(card.netPnlUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="surface-soft rounded-2xl p-3">

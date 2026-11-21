@@ -580,7 +580,7 @@ export function RadarLabPage({
             <div>
               <label className="text-dim block mb-1">{isFa ? 'استراتژی اصلی' : 'Primary Strategy'}</label>
               <select value={btStrategy} onChange={(e) => setBtStrategy(e.target.value as StrategyKey)} className="field text-xs py-2.5">
-                <option value="dollarino_v01">{isFa ? 'دُرنا V1' : 'Dorna V1'}</option>
+                <option value="dollarino_v01">{isFa ? 'استراتژی شکار (دُرنا V1)' : 'Hunting Engine (Dorna V1)'}</option>
                 <option value="kbos_v11">KBOS Super v11</option>
                 <option value="sp2l">SP2L Spike-2Leg</option>
                 <option value="ema_trend_pullback">EMA Pullback</option>

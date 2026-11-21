@@ -2,6 +2,7 @@ import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { formatIranDateTime, formatToman, mainMenuKeyboard, settingsKeyboard } from './formatter.js';
+import { publishChannelNews, resolveChannelAndBotConfig } from './publisher.js';
 
 export interface AdminPerms {
   users?: boolean;
@@ -92,17 +93,18 @@ export function adminMainKeyboard(actor: AdminActor): InlineKeyboardButton[][] {
       { text: '🏆 مدیریت کپی‌تریدرها', callback_data: 'adm:copy', style: 'success' },
     ],
     [
+      { text: '📡 مدیریت کانال و اخبار', callback_data: 'adm:channel', style: 'primary' },
       { text: '📨 پیام همگانی', callback_data: 'adm:broadcast' },
+    ],
+    [
       { text: '💰 مدیریت تراکنش‌ها', callback_data: 'adm:tx:ALL:0', style: 'primary' },
-    ],
-    [
       { text: '🎁 کدهای هدیه', callback_data: 'adm:gifts' },
-      { text: '⚙️ تنظیمات سیستم', callback_data: 'adm:settings' },
     ],
     [
+      { text: '⚙️ تنظیمات سیستم', callback_data: 'adm:settings' },
       { text: '📈 گزارش‌گیری پیشرفته', callback_data: 'adm:reports' },
-      ...(actor.isSuperAdmin ? [{ text: '👤 مدیریت ادمین‌ها', callback_data: 'adm:admins' }] : []),
     ],
+    ...(actor.isSuperAdmin ? [[{ text: '👤 مدیریت ادمین‌ها', callback_data: 'adm:admins' }]] : []),
     [{ text: '🔙 خروج از پنل مدیریت', callback_data: 'adm:exit', style: 'danger' }],
   ];
   return rows;
@@ -676,8 +678,8 @@ export async function handleAdminCallback(
       env.DB.prepare(`SELECT code, price_usd FROM subscription_plans WHERE price_usd > 0`).all<{ code: string; price_usd: number }>(),
       getSystemSetting(env.DB, 'default_margin_pct', '10'),
       getSystemSetting(env.DB, 'default_max_leverage', '20'),
-      getSystemSetting(env.DB, 'signal_channel_handle', '@Dollarino_official'),
-      getSystemSetting(env.DB, 'telegram_support', '@Dollarino_admin'),
+      getSystemSetting(env.DB, 'official_channel', '@Dollarino_official'),
+      getSystemSetting(env.DB, 'telegram_support', '@Dollarino_bot'),
       getSystemSetting(env.DB, 'usdt_trc20_wallet', 'تنظیم نشده'),
       getSystemSetting(env.DB, 'usdt_to_toman_rate', '70000'),
       getSystemSetting(env.DB, 'bot_private_admin_only', 'false'),
@@ -708,7 +710,7 @@ export async function handleAdminCallback(
         { text: '🔘 حداکثر لوریج', callback_data: 'adm:set:key:default_max_leverage' },
       ],
       [
-        { text: '📡 کانال سیگنال', callback_data: 'adm:set:key:signal_channel_handle' },
+        { text: '📡 کانال سیگنال', callback_data: 'adm:set:key:official_channel' },
         { text: '🆘 آیدی پشتیبانی', callback_data: 'adm:set:key:telegram_support' },
       ],
       [
@@ -1028,6 +1030,91 @@ export async function handleAdminCallback(
     return true;
   }
 
+  // Channel @Dollarino_official Status & News Publishing inside Admin Bot
+  if (data === 'adm:channel') {
+    if (!hasPerm(actor, 'broadcast') && !hasPerm(actor, 'settings')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی به مدیریت کانال', true);
+      return true;
+    }
+    const cfg = await resolveChannelAndBotConfig(env);
+    const [sigCnt, newsCnt, autoBroadcast, privOnly] = await Promise.all([
+      env.DB.prepare(`SELECT COUNT(*) as cnt FROM signals WHERE channel_message_id IS NOT NULL`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+      env.DB.prepare(`SELECT COUNT(*) as cnt FROM channel_news WHERE channel_message_id IS NOT NULL`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+      getSystemSetting(env.DB, 'auto_publish_signals_to_channel', 'true'),
+      getSystemSetting(env.DB, 'bot_private_admin_only', 'false'),
+    ]);
+
+    const text =
+      `📡 مرکز فرماندهی کانال و انتشار دلارینو\n\n` +
+      `• کانال رسمی: ${cfg.channelHandle}\n` +
+      `• ربات رسمی: @${cfg.botUsername}\n` +
+      `• انتشار خودکار سیگنال‌ها به کانال: ${autoBroadcast === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
+      `• وضعیت دسترسی ربات: ${privOnly === 'true' ? '🔒 فقط مدیران' : '🌐 عمومی'}\n` +
+      `• سیگنال‌های منتشرشده در کانال: ${sigCnt?.cnt ?? 0}\n` +
+      `• اخبار و تحلیل‌های ارسالی: ${newsCnt?.cnt ?? 0}`;
+
+    await render(text, [
+      [
+        { text: '📰 ارسال خبر بازار', callback_data: 'adm:chan_news:NEWS', style: 'primary' },
+        { text: '📊 ارسال تحلیل اختصاصی', callback_data: 'adm:chan_news:ANALYSIS', style: 'primary' },
+      ],
+      [
+        { text: '📣 اطلاعیه رسمی', callback_data: 'adm:chan_news:ANNOUNCEMENT', style: 'success' },
+        { text: '⚡️ آپدیت سیگنال', callback_data: 'adm:chan_news:SIGNAL_UPDATE', style: 'success' },
+      ],
+      [
+        { text: autoBroadcast === 'true' ? '🔴 توقف خودکار سیگنال کانال' : '🟢 روشن‌کردن خودکار سیگنال کانال', callback_data: 'adm:chan_toggle_auto' },
+        { text: '🧪 تست اتصال کانال', callback_data: 'adm:chan_ping' },
+      ],
+      [{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }],
+    ]);
+    await bot.answerCallbackQuery(cqId);
+    return true;
+  }
+
+  if (data === 'adm:chan_toggle_auto') {
+    if (!hasPerm(actor, 'settings') && !hasPerm(actor, 'broadcast')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی', true);
+      return true;
+    }
+    const cur = await getSystemSetting(env.DB, 'auto_publish_signals_to_channel', 'true');
+    const next = cur === 'true' ? 'false' : 'true';
+    await setSystemSetting(env.DB, 'auto_publish_signals_to_channel', next);
+    await auditAdmin(env.DB, actor.id, `Toggled auto_publish_signals_to_channel=${next}`);
+    await bot.answerCallbackQuery(cqId, next === 'true' ? 'انتشار خودکار سیگنال‌ها در کانال فعال شد 🟢' : 'انتشار خودکار متوقف شد 🔴');
+    return handleAdminCallback(env, bot, actor, cqId, chatId, msgId, 'adm:channel');
+  }
+
+  if (data === 'adm:chan_ping') {
+    const cfg = await resolveChannelAndBotConfig(env);
+    try {
+      const me = await bot.getMe();
+      await bot.answerCallbackQuery(cqId, `✅ ربات @${me.username} آماده ارسال به ${cfg.channelHandle} است`, true);
+    } catch (err) {
+      await bot.answerCallbackQuery(cqId, `❌ خطای اتصال: ${err instanceof Error ? err.message : String(err)}`, true);
+    }
+    return true;
+  }
+
+  if (data.startsWith('adm:chan_news:')) {
+    if (!hasPerm(actor, 'broadcast')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی به انتشار کانال', true);
+      return true;
+    }
+    const category = data.slice('adm:chan_news:'.length) || 'NEWS';
+    await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+      .bind(JSON.stringify({ step: 'ADM_CHAN_NEWS', targetKey: category } satisfies AdminStepState), actor.id).run();
+    await bot.answerCallbackQuery(cqId);
+    await bot.sendMessage(
+      chatId,
+      `📡 ارسال محتوا به کانال رسمی دلارینو (دسته: ${category}):\n\n` +
+      `خط اول پیام به عنوان «تیتر» و بقیه خطوط به عنوان «متن کامل خبر/تحلیل» با دکمه‌های شیشه‌ای در کانال منتشر می‌شوند.\n` +
+      `(حتی می‌توانید عکس + کپشن بفرستید!)`,
+      { inlineKeyboard: [[{ text: '🔙 انصراف', callback_data: 'adm:channel' }]] }
+    );
+    return true;
+  }
+
   await bot.answerCallbackQuery(cqId);
   return true;
 }
@@ -1278,6 +1365,31 @@ export async function handleAdminStepInput(
     await bot.sendMessage(chatId, `✅ پاسخ شما برای تیکت #${ticketId} ثبت و برای کاربر ارسال شد!`, {
       inlineKeyboard: [[{ text: '💬 بازگشت به تیکت‌ها', callback_data: 'adm:support', style: 'primary' }]],
     });
+    return true;
+  }
+
+  if (state.step === 'ADM_CHAN_NEWS') {
+    const category = (['NEWS', 'ANALYSIS', 'SIGNAL_UPDATE', 'ANNOUNCEMENT'].includes(state.targetKey || '')
+      ? state.targetKey
+      : 'NEWS') as 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT';
+    await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(actor.id).run();
+    const lines = text.trim().split('\n');
+    const title = (lines[0] || 'اطلاعیه دلارینو').slice(0, 120);
+    const body = lines.slice(1).join('\n').trim() || lines[0] || text.trim();
+    const res = await publishChannelNews(env, {
+      category,
+      title,
+      body,
+      createdBy: actor.id,
+    });
+    await auditAdmin(env.DB, actor.id, `Published channel ${category} news ${res.id}`);
+    await bot.sendMessage(
+      chatId,
+      res.error
+        ? `⚠️ در دیتابیس ذخیره شد ولی ارسال تلگرامی خطا خورد:\n${res.error}`
+        : `✅ پیام شما با موفقیت در کانال رسمی دلارینو منتشر شد!\n🆔 شناسه پیام: ${res.channelMessageId ?? res.id}`,
+      { inlineKeyboard: [[{ text: '📡 بازگشت به مدیریت کانال', callback_data: 'adm:channel', style: 'primary' }]] }
+    );
     return true;
   }
 

@@ -6,12 +6,16 @@ import {
   Gift,
   Headphones,
   KeyRound,
+  Megaphone,
   MessageCircle,
+  Newspaper,
   Play,
   Plus,
+  Radio,
   Send,
   Settings,
   Shield,
+  ShieldCheck,
   Trash2,
   Trophy,
   UserCheck,
@@ -54,7 +58,7 @@ const ADMIN_AI_MODELS: Record<string, string[]> = {
   anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-7-sonnet-20250219'],
   openai: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'],
   gemini: ['gemini-2.0-flash', 'gemini-2.5-pro'],
-  openai_compatible: ['deepseek/deepseek-chat', 'qwen/qwen-2.5-72b-instruct'],
+  openai_compatible: ['baidu/deepseek-v4.1-flash-1017', 'deepseek/deepseek-chat', 'qwen/qwen-2.5-72b-instruct'],
 };
 
 interface AdminOverview {
@@ -176,12 +180,44 @@ export function AdminPage({
     usdtTrc20Wallet: '',
     iranCardNumber: '',
     iranCardHolder: '',
-    telegramSupport: '@Dollarinoofficial',
+    telegramSupport: '@Dollarino_bot',
     proPriceUsd: 29,
     proPriceToman: 1950000,
     vipPriceUsd: 59,
     vipPriceToman: 3950000,
   });
+
+  // Channel (@Dollarino_official) Management State
+  const [channelCheck, setChannelCheck] = useState<{
+    ok?: boolean;
+    channelHandle?: string;
+    botStatus?: string;
+    canPostMessages?: boolean;
+    message?: string;
+  } | null>(null);
+  const [checkingChannel, setCheckingChannel] = useState(false);
+  const [channelSignalForm, setChannelSignalForm] = useState({
+    symbol: 'BTCUSDT',
+    direction: 'LONG' as 'LONG' | 'SHORT',
+    timeframe: '15m',
+    entryPrice: '',
+    stopLoss: '',
+    tp1: '',
+    tp2: '',
+    tp3: '',
+    leverage: 10,
+    engineKey: 'dollarino_v01',
+    note: '',
+  });
+  const [channelNewsForm, setChannelNewsForm] = useState({
+    title: '',
+    category: 'MARKET_NEWS',
+    impact: 'HIGH',
+    summary: '',
+    analysis: '',
+    symbolsText: 'BTCUSDT, ETHUSDT',
+  });
+  const [channelNewsList, setChannelNewsList] = useState<Array<{ id: string; title: string; category: string; impact: string; created_at: string }>>([]);
 
   const [aiEngines, setAiEngines] = useState<PlatformAIEngine[]>([]);
   const [aiSignals, setAiSignals] = useState<PlatformAISignal[]>([]);
@@ -206,6 +242,9 @@ export function AdminPage({
     handle: '@',
     specialty: 'BTC/ETH Momentum',
     bioFa: '',
+    userEmailOrId: '',
+    telegramId: '',
+    askBeforePublish: true,
     winRate: 76,
     roi30dPct: 38,
     maxDrawdownPct: 5.5,
@@ -218,9 +257,13 @@ export function AdminPage({
     entryPrice: 92000,
     stopLoss: 90200,
     tp1: 95200,
+    tp2: 96800,
+    tp3: 98500,
     leverage: 10,
     pnlPct: 12.4,
     status: 'OPEN' as 'OPEN' | 'CLOSED',
+    askConfirm: false,
+    mirrorNow: true,
     note: '',
   });
 
@@ -244,7 +287,7 @@ export function AdminPage({
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -257,10 +300,12 @@ export function AdminPage({
       apiFetch<{ traders: AdminCopyTrader[]; trades: Array<{ id: string; trader_id: string; symbol: string; direction: string; entry_price: string; leverage: number; pnl_pct: number; status: string }> }>('/api/admin/copy-traders').catch(() => ({ traders: [], trades: [] })),
       apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
       apiFetch<{ plans: PlanRow[] }>('/api/admin/plans').catch(() => ({ plans: [] })),
+      apiFetch<{ news: Array<{ id: string; title: string; category: string; impact: string; created_at: string }> }>('/api/admin/channel/news').catch(() => ({ news: [] })),
     ]);
     setData(ov);
     setOrders(ordRes.orders);
     setAdminPlans(plansRes.plans || []);
+    setChannelNewsList(newsRes.news || []);
     const tradesMap = new Map<string, AdminCopyTrader['trades']>();
     for (const td of ctRes.trades || []) {
       const arr = tradesMap.get(td.trader_id) ?? [];
@@ -298,7 +343,10 @@ export function AdminPage({
         usdtTrc20Wallet: subMe.paymentConfig.usdt_trc20_wallet || '',
         iranCardNumber: subMe.paymentConfig.iran_card_number || '',
         iranCardHolder: subMe.paymentConfig.iran_card_holder || '',
-        telegramSupport: subMe.paymentConfig.telegram_support || '@Dollarinoofficial',
+        telegramSupport:
+          subMe.paymentConfig.telegram_support && !/Dollarino_admin|Dollarinoofficial/i.test(subMe.paymentConfig.telegram_support)
+            ? subMe.paymentConfig.telegram_support
+            : '@Dollarino_bot',
         proPriceUsd: pro?.price_usd ?? 20,
         proPriceToman: pro?.price_toman ?? 1400000,
         vipPriceUsd: vip?.price_usd ?? 50,
@@ -655,6 +703,11 @@ export function AdminPage({
                           <span>Key: <span className="font-mono-num text-main">{eng.api_key_masked}</span></span>
                           <span>Weight: <span className="font-mono-num text-main">{eng.weight}%</span></span>
                         </div>
+                        {eng.base_url && (
+                          <div dir="ltr" className="text-[10px] font-mono text-dim truncate">
+                            Base: {eng.base_url}
+                          </div>
+                        )}
                         <div className="flex items-center justify-between">
                           <span className="text-dim">{eng.last_test_status || 'SAVED'}</span>
                           <div className="flex gap-1.5">
@@ -711,91 +764,127 @@ export function AdminPage({
             </div>
 
             {/* Add / Update Slot Form */}
-            <form onSubmit={savePlatformAiEngine} className="pt-3 border-t grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 text-xs items-end">
-              <div>
-                <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'شماره اسلات (۱ تا ۳)' : 'Slot (1-3)'}</label>
-                <select
-                  value={aiForm.slotOrder}
-                  onChange={(e) => setAiForm({ ...aiForm, slotOrder: Number(e.target.value) })}
-                  className="w-full surface-input rounded-xl px-2.5 py-2"
-                >
-                  <option value={1}>Slot 1</option>
-                  <option value={2}>Slot 2</option>
-                  <option value={3}>Slot 3</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'سرویس‌دهنده' : 'Provider'}</label>
-                <select
-                  value={aiForm.provider}
-                  onChange={(e) => {
-                    const p = e.target.value as PlatformAIEngine['provider'];
-                    const models = ADMIN_AI_MODELS[p] || [];
-                    const defaultBase =
-                      p === 'deepseek'
-                        ? 'https://api.deepseek.com'
-                        : p === 'openai'
-                          ? 'https://api.openai.com/v1'
-                          : '';
+            <form onSubmit={savePlatformAiEngine} className="pt-3 border-t space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-sub">
+                  {isFa ? 'افزودن یا ویرایش موتور هوش مصنوعی (پشتیبانی کامل از Base URL سفارشی / گیت‌وی Hilinkup):' : 'Add / Edit AI Engine Slot (Supports custom Base URL / Gateway):'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
                     setAiForm({
                       ...aiForm,
-                      provider: p,
-                      model: models[0] || aiForm.model,
-                      baseUrl: defaultBase,
-                      label: `مدل ${aiForm.slotOrder} (${p.toUpperCase()})`,
-                    });
-                  }}
-                  className="w-full surface-input rounded-xl px-2.5 py-2"
+                      provider: 'openai_compatible',
+                      baseUrl: 'https://api.hilinkup.com/v1',
+                      model: 'baidu/deepseek-v4.1-flash-1017',
+                      label: `مدل ${aiForm.slotOrder} (Hilinkup DeepSeek v4.1)`,
+                    })
+                  }
+                  className="px-3 py-1 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px]"
                 >
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="anthropic">Claude (Anthropic)</option>
-                  <option value="openai">OpenAI GPT</option>
-                  <option value="gemini">Google Gemini</option>
-                  <option value="openai_compatible">OpenRouter / Custom</option>
-                </select>
+                  {isFa ? '⚡️ پرکردن سریع Hilinkup Gateway' : '⚡️ Fill Hilinkup Gateway'}
+                </button>
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5 items-end">
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'اسلات (۱-۳)' : 'Slot (1-3)'}</label>
+                  <select
+                    value={aiForm.slotOrder}
+                    onChange={(e) => setAiForm({ ...aiForm, slotOrder: Number(e.target.value) })}
+                    className="w-full surface-input rounded-xl px-2.5 py-2"
+                  >
+                    <option value={1}>Slot 1</option>
+                    <option value={2}>Slot 2</option>
+                    <option value={3}>Slot 3</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'نام مدل' : 'Model'}</label>
-                <input
-                  list="admin-ai-models"
-                  value={aiForm.model}
-                  onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
-                  className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
-                />
-                <datalist id="admin-ai-models">
-                  {(ADMIN_AI_MODELS[aiForm.provider] || []).map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'سرویس‌دهنده' : 'Provider'}</label>
+                  <select
+                    value={aiForm.provider}
+                    onChange={(e) => {
+                      const p = e.target.value as PlatformAIEngine['provider'];
+                      const models = ADMIN_AI_MODELS[p] || [];
+                      const defaultBase =
+                        p === 'deepseek'
+                          ? 'https://api.deepseek.com'
+                          : p === 'openai'
+                            ? 'https://api.openai.com/v1'
+                            : p === 'openai_compatible'
+                              ? 'https://api.hilinkup.com/v1'
+                              : '';
+                      setAiForm({
+                        ...aiForm,
+                        provider: p,
+                        model: models[0] || aiForm.model,
+                        baseUrl: defaultBase,
+                        label: `مدل ${aiForm.slotOrder} (${p.toUpperCase()})`,
+                      });
+                    }}
+                    className="w-full surface-input rounded-xl px-2.5 py-2"
+                  >
+                    <option value="openai_compatible">Hilinkup / OpenAI-Compatible</option>
+                    <option value="deepseek">DeepSeek Direct</option>
+                    <option value="anthropic">Claude (Anthropic)</option>
+                    <option value="openai">OpenAI GPT</option>
+                    <option value="gemini">Google Gemini</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">Base URL</label>
+                  <input
+                    dir="ltr"
+                    placeholder="https://api.hilinkup.com/v1"
+                    value={aiForm.baseUrl}
+                    onChange={(e) => setAiForm({ ...aiForm, baseUrl: e.target.value })}
+                    className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'نام مدل' : 'Model'}</label>
+                  <input
+                    list="admin-ai-models"
+                    dir="ltr"
+                    value={aiForm.model}
+                    onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
+                    className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
+                  />
+                  <datalist id="admin-ai-models">
+                    {(ADMIN_AI_MODELS[aiForm.provider] || []).map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'عنوان نمایشی' : 'Label'}</label>
+                  <input
+                    value={aiForm.label}
+                    onChange={(e) => setAiForm({ ...aiForm, label: e.target.value })}
+                    className="w-full surface-input rounded-xl px-2.5 py-2"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'کلید API (اختیاری)' : 'API Key'}</label>
+                  <input
+                    type="password"
+                    dir="ltr"
+                    placeholder="sk-..."
+                    value={aiForm.apiKey}
+                    onChange={(e) => setAiForm({ ...aiForm, apiKey: e.target.value })}
+                    className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
+                  />
+                </div>
+
+                <button type="submit" className="py-2.5 px-3 rounded-xl btn-cobalt font-black inline-flex items-center justify-center gap-1">
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'ثبت اسلات' : 'Save Slot'}</span>
+                </button>
               </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'عنوان نمایشی' : 'Label'}</label>
-                <input
-                  value={aiForm.label}
-                  onChange={(e) => setAiForm({ ...aiForm, label: e.target.value })}
-                  className="w-full surface-input rounded-xl px-2.5 py-2"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'کلید API (اختیاری در ویرایش)' : 'API Key'}</label>
-                <input
-                  type="password"
-                  dir="ltr"
-                  placeholder="sk-..."
-                  value={aiForm.apiKey}
-                  onChange={(e) => setAiForm({ ...aiForm, apiKey: e.target.value })}
-                  className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
-                />
-              </div>
-
-              <button type="submit" className="py-2.5 px-3 rounded-xl btn-cobalt font-black inline-flex items-center justify-center gap-1">
-                <Plus className="w-3.5 h-3.5" />
-                <span>{isFa ? 'ثبت / آپدیت اسلات' : 'Save Slot'}</span>
-              </button>
             </form>
 
             {aiSignals.length > 0 && (
@@ -1219,6 +1308,7 @@ export function AdminPage({
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  const val = newTrader.userEmailOrId.trim();
                   await apiFetch('/api/admin/copy-traders', {
                     method: 'POST',
                     body: JSON.stringify({
@@ -1226,6 +1316,10 @@ export function AdminPage({
                       handle: newTrader.handle,
                       specialty: newTrader.specialty,
                       bio_fa: newTrader.bioFa,
+                      user_email: val.includes('@') ? val : undefined,
+                      user_id: val && !val.includes('@') ? val : undefined,
+                      telegram_id: newTrader.telegramId || undefined,
+                      auto_ask_publish: newTrader.askBeforePublish,
                       win_rate: newTrader.winRate,
                       roi_30d_pct: newTrader.roi30dPct,
                       max_drawdown_pct: newTrader.maxDrawdownPct,
@@ -1233,7 +1327,14 @@ export function AdminPage({
                       is_verified: true,
                     }),
                   });
-                  setNewTrader({ ...newTrader, displayName: '', handle: '@', bioFa: '' });
+                  setNewTrader({
+                    ...newTrader,
+                    displayName: '',
+                    handle: '@',
+                    bioFa: '',
+                    userEmailOrId: '',
+                    telegramId: '',
+                  });
                   setMsg(isFa ? 'کپی‌تریدر تاییدشده جدید اضافه شد!' : 'Verified Copy Trader added!');
                   void load();
                 }}
@@ -1244,11 +1345,23 @@ export function AdminPage({
                   <input required value={newTrader.displayName} onChange={(e) => setNewTrader({ ...newTrader, displayName: e.target.value })} placeholder={isFa ? 'نام تریدر' : 'Display Name'} className="surface-input rounded-xl px-3 py-2" />
                   <input required dir="ltr" value={newTrader.handle} onChange={(e) => setNewTrader({ ...newTrader, handle: e.target.value })} placeholder="@handle" className="surface-input rounded-xl px-3 py-2 font-mono" />
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input dir="ltr" value={newTrader.userEmailOrId} onChange={(e) => setNewTrader({ ...newTrader, userEmailOrId: e.target.value })} placeholder={isFa ? 'ایمیل یا ID کاربر سایت (اختیاری)' : 'Linked User Email/ID (opt)'} className="surface-input rounded-xl px-3 py-2" />
+                  <input dir="ltr" value={newTrader.telegramId} onChange={(e) => setNewTrader({ ...newTrader, telegramId: e.target.value })} placeholder={isFa ? 'آیدی عددی تلگرام تریدر (اختیاری)' : 'Trader Telegram ID (opt)'} className="surface-input rounded-xl px-3 py-2 font-mono-num" />
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <input value={newTrader.specialty} onChange={(e) => setNewTrader({ ...newTrader, specialty: e.target.value })} placeholder="Specialty" className="surface-input rounded-xl px-3 py-2" />
                   <input type="number" step="0.1" value={newTrader.roi30dPct} onChange={(e) => setNewTrader({ ...newTrader, roi30dPct: Number(e.target.value) })} placeholder="30d ROI %" className="surface-input rounded-xl px-3 py-2 font-mono-num" />
                   <input type="number" step="0.1" value={newTrader.winRate} onChange={(e) => setNewTrader({ ...newTrader, winRate: Number(e.target.value) })} placeholder="Win Rate %" className="surface-input rounded-xl px-3 py-2 font-mono-num" />
                 </div>
+                <label className="flex items-center gap-2 text-[11px] font-bold text-sub">
+                  <input
+                    type="checkbox"
+                    checked={newTrader.askBeforePublish}
+                    onChange={(e) => setNewTrader({ ...newTrader, askBeforePublish: e.target.checked })}
+                  />
+                  <span>{isFa ? 'قبل از انتشار هر معامله برای دنبال‌کننده‌ها، از خود تریدر تایید بگیر' : 'Ask trader confirmation before publishing to followers'}</span>
+                </label>
                 <button type="submit" className="w-full py-2 rounded-xl btn-gold font-black inline-flex items-center justify-center gap-1">
                   <Plus className="w-3.5 h-3.5" />
                   <span>{isFa ? 'ثبت تریدر تاییدشده' : 'Publish Verified Trader'}</span>
@@ -1269,12 +1382,24 @@ export function AdminPage({
                         entry_price: String(newTraderTrade.entryPrice),
                         stop_loss: String(newTraderTrade.stopLoss),
                         tp1: String(newTraderTrade.tp1),
+                        tp2: newTraderTrade.tp2 ? String(newTraderTrade.tp2) : undefined,
+                        tp3: newTraderTrade.tp3 ? String(newTraderTrade.tp3) : undefined,
                         status: newTraderTrade.status,
                         pnl_pct: newTraderTrade.pnlPct,
+                        ask_confirm: newTraderTrade.askConfirm,
+                        mirror_now: newTraderTrade.mirrorNow,
                         note: newTraderTrade.note,
                       }),
                     });
-                    setMsg(isFa ? 'معامله جدید برای کپی‌تریدر ثبت شد!' : 'Trader signal/trade published!');
+                    setMsg(
+                      newTraderTrade.askConfirm
+                        ? isFa
+                          ? 'درخواست تایید انتشار برای تریدر ارسال شد!'
+                          : 'Confirmation prompt sent to trader!'
+                        : isFa
+                          ? 'معامله ثبت و برای دنبال‌کننده‌ها همگام شد!'
+                          : 'Copy trade published & mirrored!'
+                    );
                     void load();
                   }}
                   className="space-y-2 pt-3 border-t hairline"
@@ -1292,11 +1417,23 @@ export function AdminPage({
                       <option value="SHORT">SHORT</option>
                     </select>
                   </div>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                     <input type="number" step="any" value={newTraderTrade.entryPrice} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, entryPrice: Number(e.target.value) })} placeholder="Entry" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
                     <input type="number" step="any" value={newTraderTrade.stopLoss} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, stopLoss: Number(e.target.value) })} placeholder="SL" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
                     <input type="number" step="any" value={newTraderTrade.tp1} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp1: Number(e.target.value) })} placeholder="TP1" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    <input type="number" step="any" value={newTraderTrade.tp2} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp2: Number(e.target.value) })} placeholder="TP2" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    <input type="number" step="any" value={newTraderTrade.tp3} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp3: Number(e.target.value) })} placeholder="TP3" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
                     <input type="number" step="0.1" value={newTraderTrade.pnlPct} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, pnlPct: Number(e.target.value) })} placeholder="PnL%" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-[11px] font-bold text-sub">
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={newTraderTrade.askConfirm} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, askConfirm: e.target.checked })} />
+                      <span>{isFa ? 'ابتدا از تریدر سوال تایید بپرس' : 'Ask trader first'}</span>
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={newTraderTrade.mirrorNow} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, mirrorNow: e.target.checked })} />
+                      <span>{isFa ? 'آینه‌سازی فوری به فالوئرها' : 'Mirror immediately'}</span>
+                    </label>
                   </div>
                   <button type="submit" className="w-full py-2 rounded-xl btn-emerald font-black">
                     {isFa ? 'ثبت معامله در لیست کپی‌ترید' : 'Publish Copy Trade'}
@@ -1397,6 +1534,163 @@ export function AdminPage({
                   )}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Official Telegram Channel @Dollarino_official Studio */}
+          <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-5 border-emerald-500/30">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+                  <Radio className="w-5 h-5 text-jade" />
+                  <span>{isFa ? 'مدیریت کانال رسمی دلارینو (@Dollarino_official)' : 'Official Channel Studio (@Dollarino_official)'}</span>
+                </h3>
+                <p className="text-xs text-sub mt-1">
+                  {isFa
+                    ? 'بررسی وضعیت ادمین بودن ربات @Dollarino_bot در کانال، انتشار سیگنال با دکمه‌های شیشه‌ای، و انتشار اخبار و تحلیل فاندامنتال.'
+                    : 'Verify channel admin status, broadcast signals with inline execution buttons, and post breaking fundamental news.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={checkingChannel}
+                onClick={async () => {
+                  setCheckingChannel(true);
+                  try {
+                    const res = await apiFetch<typeof channelCheck>('/api/admin/telegram/channel-status');
+                    setChannelCheck(res);
+                  } catch (e) {
+                    setChannelCheck({ ok: false, message: e instanceof Error ? e.message : 'Check failed' });
+                  } finally {
+                    setCheckingChannel(false);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl btn-emerald text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>{checkingChannel ? '...' : isFa ? 'بررسی ادمین ربات در کانال' : 'Check Bot Admin Status'}</span>
+              </button>
+            </div>
+
+            {channelCheck && (
+              <div className={`rounded-2xl p-3 text-xs font-bold border ${channelCheck.canPostMessages ? 'badge-signal' : 'bg-rose-500/10 border-rose-500/35 text-loss'}`}>
+                {channelCheck.message || `Status: ${channelCheck.botStatus || 'unknown'} (${channelCheck.channelHandle || '@Dollarino_official'})`}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  try {
+                    await apiFetch('/api/admin/channel/publish-signal', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        symbol: channelSignalForm.symbol,
+                        direction: channelSignalForm.direction,
+                        timeframe: channelSignalForm.timeframe,
+                        entryPrice: channelSignalForm.entryPrice || undefined,
+                        stopLoss: channelSignalForm.stopLoss,
+                        tp1: channelSignalForm.tp1,
+                        tp2: channelSignalForm.tp2 || undefined,
+                        tp3: channelSignalForm.tp3 || undefined,
+                        leverage: channelSignalForm.leverage,
+                        engineKey: channelSignalForm.engineKey,
+                        note: channelSignalForm.note || undefined,
+                      }),
+                    });
+                    setMsg(isFa ? 'سیگنال با دکمه‌های شیشه‌ای در کانال @Dollarino_official منتشر شد ✅' : 'Signal published to channel ✅');
+                  } catch (err) {
+                    setMsg(err instanceof Error ? err.message : 'Publish signal failed');
+                  }
+                }}
+                className="surface-soft rounded-2xl p-4 space-y-2.5 border hairline"
+              >
+                <h4 className="font-black text-main flex items-center gap-1.5">
+                  <Megaphone className="w-4 h-4 text-brand" />
+                  <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های شیشه‌ای' : 'Publish Signal to @Dollarino_official'}</span>
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <input dir="ltr" required value={channelSignalForm.symbol} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, symbol: e.target.value.toUpperCase() })} placeholder="BTCUSDT" className="surface-input rounded-xl px-2.5 py-2 font-mono" />
+                  <select value={channelSignalForm.direction} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, direction: e.target.value as 'LONG' | 'SHORT' })} className="surface-input rounded-xl px-2.5 py-2">
+                    <option value="LONG">LONG</option>
+                    <option value="SHORT">SHORT</option>
+                  </select>
+                  <select value={channelSignalForm.engineKey} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, engineKey: e.target.value })} className="surface-input rounded-xl px-2.5 py-2">
+                    <option value="dollarino_v01">🎯 استراتژی شکار (دُرنا)</option>
+                    <option value="ai_autonomous_agent">🧠 هوش مصنوعی دلارینو</option>
+                    <option value="my_custom_ai">🤖 هوش مصنوعی خام</option>
+                    <option value="copy_trade">🏆 کپی‌ترید تاییدشده</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  <input dir="ltr" value={channelSignalForm.entryPrice} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, entryPrice: e.target.value })} placeholder="Entry (auto)" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  <input dir="ltr" required value={channelSignalForm.stopLoss} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, stopLoss: e.target.value })} placeholder="SL *" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  <input dir="ltr" required value={channelSignalForm.tp1} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp1: e.target.value })} placeholder="TP1 *" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  <input dir="ltr" value={channelSignalForm.tp2} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp2: e.target.value })} placeholder="TP2" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  <input dir="ltr" value={channelSignalForm.tp3} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp3: e.target.value })} placeholder="TP3" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  <input type="number" min={1} max={100} value={channelSignalForm.leverage} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, leverage: Number(e.target.value) })} placeholder="Lev" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                </div>
+                <input value={channelSignalForm.note} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, note: e.target.value })} placeholder={isFa ? 'توضیح تحلیلی کوتاه زیر سیگنال (اختیاری)' : 'Short note (optional)'} className="w-full surface-input rounded-xl px-2.5 py-2" />
+                <button type="submit" className="w-full py-2.5 rounded-xl btn-cobalt font-black">
+                  {isFa ? 'انتشار سیگنال در کانال @Dollarino_official' : 'Publish Signal to Channel'}
+                </button>
+              </form>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const bodyParts = [
+                      channelNewsForm.summary.trim(),
+                      channelNewsForm.analysis.trim() ? `\n📊 تحلیل اثر: ${channelNewsForm.analysis.trim()}` : '',
+                      channelNewsForm.symbolsText.trim() ? `\n🪙 نمادها: ${channelNewsForm.symbolsText.trim()}` : '',
+                    ].filter(Boolean);
+                    await apiFetch('/api/admin/channel/publish-news', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        title: `${channelNewsForm.impact === 'HIGH' ? '🔴 ' : channelNewsForm.impact === 'MEDIUM' ? '🟡 ' : ''}${channelNewsForm.title.trim()}`,
+                        category: channelNewsForm.category === 'ANALYSIS' ? 'ANALYSIS' : 'NEWS',
+                        body: bodyParts.join(''),
+                      }),
+                    });
+                    setChannelNewsForm({ ...channelNewsForm, title: '', summary: '', analysis: '' });
+                    setMsg(isFa ? 'خبر و تحلیل فاندامنتال در کانال @Dollarino_official منتشر شد ✅' : 'News published to channel ✅');
+                    void load();
+                  } catch (err) {
+                    setMsg(err instanceof Error ? err.message : 'Publish news failed');
+                  }
+                }}
+                className="surface-soft rounded-2xl p-4 space-y-2.5 border hairline"
+              >
+                <h4 className="font-black text-main flex items-center gap-1.5">
+                  <Newspaper className="w-4 h-4 text-amber-400" />
+                  <span>{isFa ? 'انتشار اخبار فوری و تحلیل فاندامنتال در کانال' : 'Publish Breaking News & Fundamental Analysis'}</span>
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  <input required value={channelNewsForm.title} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, title: e.target.value })} placeholder={isFa ? 'تیتر خبر یا تحلیل...' : 'Headline...'} className="col-span-2 surface-input rounded-xl px-2.5 py-2" />
+                  <select value={channelNewsForm.impact} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, impact: e.target.value })} className="surface-input rounded-xl px-2 py-2">
+                    <option value="HIGH">🔴 HIGH IMPACT</option>
+                    <option value="MEDIUM">🟡 MEDIUM</option>
+                    <option value="LOW">🟢 INFO</option>
+                  </select>
+                </div>
+                <textarea required rows={2} value={channelNewsForm.summary} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, summary: e.target.value })} placeholder={isFa ? 'متن خبر یا داده‌های فاندامنتال...' : 'News summary...'} className="w-full surface-input rounded-xl p-2.5" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={channelNewsForm.analysis} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, analysis: e.target.value })} placeholder={isFa ? 'تحلیل اثر روی بازار (اختیاری)' : 'Market impact analysis'} className="surface-input rounded-xl px-2.5 py-2" />
+                  <input dir="ltr" value={channelNewsForm.symbolsText} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, symbolsText: e.target.value })} placeholder="BTCUSDT, ETHUSDT" className="surface-input rounded-xl px-2.5 py-2 font-mono" />
+                </div>
+                <button type="submit" className="w-full py-2.5 rounded-xl btn-gold font-black">
+                  {isFa ? 'انتشار خبر فوری در کانال @Dollarino_official' : 'Broadcast News to Channel'}
+                </button>
+                {channelNewsList.length > 0 && (
+                  <div className="text-[11px] text-dim pt-1 space-y-1 max-h-24 overflow-y-auto">
+                    {channelNewsList.slice(0, 4).map((n) => (
+                      <div key={n.id} className="truncate">• [{n.category}] {n.title}</div>
+                    ))}
+                  </div>
+                )}
+              </form>
             </div>
           </div>
 

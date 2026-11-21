@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
-import { TelegramBotClient } from '../telegram/client.js';
+import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE, OFFICIAL_CHANNEL_HANDLE } from '../telegram/formatter.js';
+import { notifyAllAdmins } from '../telegram/publisher.js';
 
 export const supportRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 supportRoutes.use('*', requireAuth);
@@ -10,7 +11,7 @@ supportRoutes.use('*', requireAuth);
 supportRoutes.get('/tickets', async (c) => {
   const user = c.get('user');
 
-  const [ticketsRes, msgsRes, tgSetting] = await Promise.all([
+  const [ticketsRes, msgsRes, tgSetting, antiScamSetting] = await Promise.all([
     c.env.DB.prepare(
       `SELECT * FROM support_tickets WHERE user_id = ? ORDER BY last_message_at DESC LIMIT 20`
     ).bind(user.id).all<{
@@ -31,13 +32,19 @@ supportRoutes.get('/tickets', async (c) => {
     ).bind(user.id).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'telegram_support'`)
       .first<{ value: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'anti_scam_notice_fa'`)
+      .first<{ value: string }>().catch(() => null),
   ]);
 
-  const telegramSupport = tgSetting?.value || '@Dollarino_admin';
+  const rawSupport = tgSetting?.value || OFFICIAL_BOT_HANDLE;
+  const telegramSupport = /Dollarino_admin/i.test(rawSupport) ? OFFICIAL_BOT_HANDLE : rawSupport;
+
   return c.json({
     tickets: ticketsRes.results,
     messages: msgsRes.results,
     telegramSupport,
+    officialChannel: OFFICIAL_CHANNEL_HANDLE,
+    antiScamNotice: antiScamSetting?.value || ANTI_SCAM_WARNING_FA,
   });
 });
 
@@ -84,22 +91,20 @@ supportRoutes.post('/message', async (c) => {
     `UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`
   ).bind(ticketId).run();
 
-  // Notify Owner/Admin on Telegram
-  if (c.env.TELEGRAM_BOT_TOKEN && c.env.OWNER_TELEGRAM_ID) {
-    const tg = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
-    const alert = [
-      `💬 <b>پیام پشتیبانی آنلاین جدید (وب)</b>`,
-      `کاربر: ${user.username} (<code>${user.email}</code>)`,
-      `تیکت: <code>${ticketId}</code>`,
-      ``,
-      text.slice(0, 800),
-    ].join('\n');
-    await tg.sendMessage(c.env.OWNER_TELEGRAM_ID, alert, {
-      inlineKeyboard: [
-        [{ text: '✍️ پاسخ به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }],
-      ],
-    }).catch(() => {});
-  }
+  // Notify ALL admins/owners via Telegram Bot (never personal DMs)
+  const alert = [
+    `💬 پیام پشتیبانی آنلاین جدید (وب)`,
+    `کاربر: ${user.username} (${user.email})`,
+    `تیکت: ${ticketId}`,
+    ``,
+    text.slice(0, 800),
+  ].join('\n');
+
+  await notifyAllAdmins(c.env, alert, {
+    inlineKeyboard: [
+      [{ text: '✍️ پاسخ آنلاین به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }],
+    ],
+  }).catch(() => {});
 
   return c.json({ ok: true, ticketId, messageId: msgId }, 201);
 });

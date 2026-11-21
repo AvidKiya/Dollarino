@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { DollarinoSignal } from '@dollarino/core';
 import {
   getPlatformAISummary,
   testAllPlatformAIEngines,
@@ -6,7 +7,15 @@ import {
 import { requireAuth, type AppVariables } from '../auth.js';
 import { encryptVaultJson, maskSecret, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import { fetchPublicMarket24h } from '../exchanges/paper.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import {
+  promptCopyTraderPublish,
+  publishChannelNews,
+  publishSignalBroadcast,
+  resolveChannelAndBotConfig,
+} from '../telegram/publisher.js';
+import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 adminRoutes.use('*', requireAuth);
@@ -457,6 +466,10 @@ adminRoutes.post('/copy-traders', async (c) => {
   const body = await c.req.json<{
     display_name: string;
     handle?: string;
+    user_id?: string;
+    user_email?: string;
+    telegram_id?: string;
+    auto_ask_publish?: boolean;
     bio_fa?: string;
     bio_en?: string;
     specialty?: string;
@@ -470,13 +483,27 @@ adminRoutes.post('/copy-traders', async (c) => {
   const displayName = (body.display_name || '').trim();
   if (!displayName) return c.json({ error: 'نام نمایشی تریدر الزامی است.' }, 400);
 
+  let resolvedUserId = body.user_id?.trim() || null;
+  let resolvedTgId = body.telegram_id?.trim() || null;
+  if (!resolvedUserId && body.user_email?.trim()) {
+    const uRow = await c.env.DB.prepare(`SELECT id, telegram_id FROM users WHERE lower(email) = lower(?) LIMIT 1`)
+      .bind(body.user_email.trim()).first<{ id: string; telegram_id: string | null }>().catch(() => null);
+    if (uRow) {
+      resolvedUserId = uRow.id;
+      if (!resolvedTgId && uRow.telegram_id) resolvedTgId = uRow.telegram_id;
+    }
+  }
+
   const id = randomId('ct');
   await c.env.DB.prepare(
     `INSERT INTO copy_traders
-     (id, display_name, handle, bio_fa, bio_en, specialty, win_rate, roi_30d_pct, max_drawdown_pct, min_allocation_usd, risk_level, is_verified, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+     (id, user_id, telegram_id, auto_ask_publish, display_name, handle, bio_fa, bio_en, specialty, win_rate, roi_30d_pct, max_drawdown_pct, min_allocation_usd, risk_level, is_verified, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
   ).bind(
     id,
+    resolvedUserId,
+    resolvedTgId,
+    body.auto_ask_publish !== false ? 1 : 0,
     displayName,
     (body.handle || `@${displayName.replace(/\s+/g, '_').toLowerCase()}`).slice(0, 40),
     (body.bio_fa || '').trim(),
@@ -497,6 +524,9 @@ adminRoutes.patch('/copy-traders/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json<{
     display_name?: string;
+    user_id?: string | null;
+    telegram_id?: string | null;
+    auto_ask_publish?: boolean;
     win_rate?: number;
     roi_30d_pct?: number;
     max_drawdown_pct?: number;
@@ -508,6 +538,9 @@ adminRoutes.patch('/copy-traders/:id', async (c) => {
   await c.env.DB.prepare(
     `UPDATE copy_traders
      SET display_name = COALESCE(?, display_name),
+         user_id = COALESCE(?, user_id),
+         telegram_id = COALESCE(?, telegram_id),
+         auto_ask_publish = COALESCE(?, auto_ask_publish),
          win_rate = COALESCE(?, win_rate),
          roi_30d_pct = COALESCE(?, roi_30d_pct),
          max_drawdown_pct = COALESCE(?, max_drawdown_pct),
@@ -518,6 +551,9 @@ adminRoutes.patch('/copy-traders/:id', async (c) => {
      WHERE id = ?`
   ).bind(
     body.display_name ?? null,
+    body.user_id !== undefined ? body.user_id : null,
+    body.telegram_id !== undefined ? body.telegram_id : null,
+    body.auto_ask_publish !== undefined ? (body.auto_ask_publish ? 1 : 0) : null,
     typeof body.win_rate === 'number' ? body.win_rate : null,
     typeof body.roi_30d_pct === 'number' ? body.roi_30d_pct : null,
     typeof body.max_drawdown_pct === 'number' ? body.max_drawdown_pct : null,
@@ -545,30 +581,67 @@ adminRoutes.post('/copy-traders/:id/trades', async (c) => {
     entry_price: string;
     stop_loss?: string;
     tp1?: string;
+    tp2?: string;
+    tp3?: string;
     status?: 'OPEN' | 'CLOSED';
     pnl_pct?: number;
     note?: string;
+    askConfirm?: boolean;
+    mirrorNow?: boolean;
   }>();
   const sym = (body.symbol || 'BTCUSDT').toUpperCase().trim();
+  const dir = body.direction === 'SHORT' ? 'SHORT' : 'LONG';
+  const lev = Math.max(1, Number(body.leverage ?? 5));
   const id = randomId('ctt');
+  const publishStatus = body.askConfirm ? 'PENDING_CONFIRM' : 'PUBLISHED';
+
   await c.env.DB.prepare(
     `INSERT INTO copy_trader_trades
-     (id, trader_id, symbol, direction, leverage, entry_price, stop_loss, tp1, status, pnl_pct, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (id, trader_id, symbol, direction, leverage, entry_price, stop_loss, tp1, tp2, tp3, status, publish_status, pnl_pct, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     id,
     traderId,
     sym,
-    body.direction === 'SHORT' ? 'SHORT' : 'LONG',
-    Math.max(1, Number(body.leverage ?? 5)),
+    dir,
+    lev,
     String(body.entry_price || '0'),
     body.stop_loss ? String(body.stop_loss) : null,
     body.tp1 ? String(body.tp1) : null,
+    body.tp2 ? String(body.tp2) : null,
+    body.tp3 ? String(body.tp3) : null,
     body.status === 'CLOSED' ? 'CLOSED' : 'OPEN',
+    publishStatus,
     Number(body.pnl_pct ?? 0),
     (body.note || '').trim() || null
   ).run();
-  return c.json({ ok: true, id }, 201);
+
+  const trader = await c.env.DB.prepare(
+    `SELECT ct.display_name, ct.telegram_id, u.telegram_id AS linked_tg_id
+     FROM copy_traders ct LEFT JOIN users u ON u.id = ct.user_id WHERE ct.id = ? LIMIT 1`
+  ).bind(traderId).first<{ display_name: string; telegram_id: string | null; linked_tg_id: string | null }>().catch(() => null);
+
+  let mirrorResult = null;
+  if (body.askConfirm && trader) {
+    await promptCopyTraderPublish(c.env, {
+      traderId,
+      traderName: trader.display_name,
+      traderTelegramId: trader.telegram_id || trader.linked_tg_id,
+      copyTradeId: id,
+      symbol: sym,
+      direction: dir,
+      leverage: lev,
+      entryPrice: String(body.entry_price || '0'),
+      stopLoss: body.stop_loss,
+      tp1: body.tp1,
+      tp2: body.tp2,
+      tp3: body.tp3,
+    });
+  } else if (body.mirrorNow && body.status !== 'CLOSED') {
+    mirrorResult = await confirmAndMirrorCopyTrade(c.env, id, true);
+  }
+
+  return c.json({ ok: true, id, publishStatus, mirrorResult }, 201);
 });
 
 adminRoutes.patch('/copy-traders/trades/:tradeId', async (c) => {
@@ -643,4 +716,113 @@ adminRoutes.patch('/support/:ticketId/status', async (c) => {
   const body = await c.req.json<{ status: 'OPEN' | 'ANSWERED' | 'CLOSED' }>();
   await c.env.DB.prepare(`UPDATE support_tickets SET status = ? WHERE id = ?`).bind(body.status, ticketId).run();
   return c.json({ ok: true });
+});
+
+// =========================================================================
+// Official @Dollarino_official Channel Signal & News Desk + Bot Admin Check
+// =========================================================================
+
+adminRoutes.get('/telegram/channel-status', async (c) => {
+  const cfg = await resolveChannelAndBotConfig(c.env);
+  if (!c.env.TELEGRAM_BOT_TOKEN) {
+    return c.json({ ok: false, channelHandle: cfg.channelHandle, error: 'TELEGRAM_BOT_TOKEN تنظیم نشده است.' });
+  }
+  const tg = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
+  const status = await tg.checkChannelAdminReadiness(cfg.channelHandle);
+  return c.json({
+    ...status,
+    channelHandle: cfg.channelHandle,
+    botUsername: status.botUsername || cfg.botUsername,
+  });
+});
+
+adminRoutes.post('/channel/publish-signal', async (c) => {
+  const body = await c.req.json<{
+    symbol: string;
+    direction: 'LONG' | 'SHORT';
+    timeframe?: string;
+    price?: string;
+    entryPrice?: string;
+    stopLoss: string;
+    leverage?: number;
+    tp1: string;
+    tp2?: string;
+    tp3?: string;
+    engineKey?: string;
+    engineLabel?: string;
+    note?: string;
+    notifySubscribers?: boolean;
+  }>();
+
+  const sym = (body.symbol || '').trim().toUpperCase();
+  let priceVal = String(body.price || body.entryPrice || '').trim();
+  if (!priceVal && sym) {
+    const mkt = await fetchPublicMarket24h(sym).catch(() => null);
+    if (mkt?.lastPrice) priceVal = String(mkt.lastPrice);
+  }
+
+  if (!sym || !priceVal || !body.stopLoss || !body.tp1) {
+    return c.json({ error: 'نماد، قیمت ورود، حد ضرر و TP1 الزامی هستند.' }, 400);
+  }
+
+  const sig: DollarinoSignal = {
+    symbol: sym,
+    direction: body.direction === 'SHORT' ? 'SHORT' : 'LONG',
+    timeframe: (body.timeframe || '15m').trim(),
+    price: priceVal,
+    stopLoss: String(body.stopLoss).trim(),
+    leverage: Math.max(1, Number(body.leverage ?? 10)),
+    tp1: String(body.tp1).trim(),
+    tp2: body.tp2 ? String(body.tp2).trim() : undefined,
+    tp3: body.tp3 ? String(body.tp3).trim() : undefined,
+    engineKey: body.engineKey || 'ai_autonomous_agent',
+    engineLabel: body.engineLabel,
+    reason: body.note?.trim(),
+  };
+
+  const res = await publishSignalBroadcast(c.env, {
+    signal: sig,
+    source: 'ADMIN_CHANNEL',
+    engineKey: sig.engineKey,
+    engineLabel: sig.engineLabel,
+    publishToChannel: true,
+    notifySubscribers: body.notifySubscribers !== false,
+  });
+
+  return c.json({ ok: true, ...res });
+});
+
+adminRoutes.get('/channel/news', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM channel_news ORDER BY created_at DESC LIMIT 40`
+  ).all().catch(() => ({ results: [] }));
+  return c.json({ news: rows.results });
+});
+
+adminRoutes.post('/channel/publish-news', async (c) => {
+  const actor = c.get('user');
+  const body = await c.req.json<{
+    category?: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT';
+    title: string;
+    body: string;
+    mediaUrl?: string;
+    buttonLabel?: string;
+    buttonUrl?: string;
+  }>();
+
+  if (!body.title?.trim() || !body.body?.trim()) {
+    return c.json({ error: 'عنوان و متن خبر الزامی است.' }, 400);
+  }
+
+  const res = await publishChannelNews(c.env, {
+    category: body.category || 'NEWS',
+    title: body.title,
+    body: body.body,
+    mediaUrl: body.mediaUrl?.trim(),
+    buttonLabel: body.buttonLabel?.trim(),
+    buttonUrl: body.buttonUrl?.trim(),
+    createdBy: actor.id,
+  });
+
+  return c.json({ ok: !res.error, ...res });
 });

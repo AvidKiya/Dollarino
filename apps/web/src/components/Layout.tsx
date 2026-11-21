@@ -82,7 +82,7 @@ export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
   if (id === 'myai') return isFa ? 'هوش مصنوعی من' : 'My AI Agent';
   if (id === 'services') return isFa ? 'خدمات' : 'Services';
-  if (id === 'card') return isFa ? 'کارت هفتگی' : 'Weekly Card';
+  if (id === 'card') return isFa ? 'کارت سود' : 'Profit Card';
   if (id === 'admin') return isFa ? 'مدیریت' : 'Admin';
   const found = [...MAIN_VIEWS, ...ACCOUNT_VIEWS].find((x) => x.id === id);
   return found ? (isFa ? found.labelFa : found.labelEn) : id;
@@ -791,7 +791,7 @@ export function Layout({
               }`}
             >
               <Image className="w-[18px] h-[18px] shrink-0" />
-              <span className="truncate">{isFa ? 'کارت هفتگی' : 'Weekly Card'}</span>
+              <span className="truncate">{isFa ? 'کارت سود' : 'Profit Card'}</span>
             </button>
 
             <button

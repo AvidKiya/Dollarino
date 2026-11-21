@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@dollarino/core": "*",
+    "@resvg/resvg-wasm": "^2.6.2",
     "hono": "^4.6.14"
   },
   "devDependencies": {

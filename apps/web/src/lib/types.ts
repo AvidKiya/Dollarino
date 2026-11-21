@@ -75,7 +75,7 @@ export interface VerifiedProfitCard {
   displayName?: string;
   mode: 'LIVE' | 'PAPER';
   isVerifiedReal: boolean;
-  period: '24H' | '7D' | '30D' | 'ALL' | 'TRADE';
+  period: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
   startDate: string;
   endDate: string;
   tradesCount: number;

@@ -144,9 +144,9 @@ export function LandingPage({
   const pillars = [
     {
       id: 'simple' as const,
-      badge: '۰۱ · AUTOMATED AI',
-      title: isFa ? 'حالت ساده: ترید هوشمند اتومات با هوش مصنوعی' : 'Simple Mode: 100% Automated AI Trading',
-      shortTitle: isFa ? 'حالت ساده (اتومات AI)' : 'Simple Auto AI',
+      badge: '۰۱ · DOLLARINO AI',
+      title: isFa ? 'هوش مصنوعی دلارینو: ترید هوشمند اتومات با اجماع چندمدله' : 'Dollarino AI: 100% Automated Multi-LLM Trading',
+      shortTitle: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
       icon: Bot,
       color: '#10b981',
       desc: isFa
@@ -158,9 +158,9 @@ export function LandingPage({
     },
     {
       id: 'myai' as const,
-      badge: '۰۲ · TRAINABLE MY AI',
-      title: isFa ? 'هوش مصنوعی من: هوش مصنوعی خام خودت را آموزش بده' : 'My AI: Train Your Own Personal AI Trader',
-      shortTitle: isFa ? 'هوش مصنوعی من' : 'My Trainable AI',
+      badge: '۰۲ · RAW PERSONAL AI',
+      title: isFa ? 'هوش مصنوعی خام (شخصی): هوش مصنوعی خودت را آموزش بده' : 'Raw Personal AI: Train Your Own AI Trader',
+      shortTitle: isFa ? 'هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
       icon: Brain,
       color: '#1652f0',
       desc: isFa
@@ -173,7 +173,7 @@ export function LandingPage({
     {
       id: 'copy' as const,
       badge: '۰۳ · VERIFIED COPY TRADE',
-      title: isFa ? 'کپی‌ترید تاییدشده: کپی از تریدرهای حرفه‌ای دلارینو' : 'Verified Copy Trade: Mirror Admin-Vetted Leaders',
+      title: isFa ? 'کپی‌ترید تاییدشده دلارینو: کپی از تریدرهای احرازشده' : 'Verified Copy Trade: Mirror Admin-Vetted Leaders',
       shortTitle: isFa ? 'کپی‌ترید تاییدشده' : 'Copy Trade',
       icon: Trophy,
       color: '#f59e0b',
@@ -186,17 +186,17 @@ export function LandingPage({
     },
     {
       id: 'ide' as const,
-      badge: '۰۴ · CUSTOM STRATEGY IDE',
-      title: isFa ? 'استراتژی شخصی: ساخت و اجرای Pine Script و Python' : 'Custom Strategy: Build & Run Pine Script / Python',
-      shortTitle: isFa ? 'استراتژی شخصی' : 'Custom Strategy',
+      badge: '۰۴ · HUNTING STRATEGY (2 MODES)',
+      title: isFa ? 'استراتژی شکار: استراتژی‌های آماده ما + استراتژی شخصی شما' : 'Hunting Strategy: Our Presets + Your Custom Code',
+      shortTitle: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
       icon: Code2,
       color: '#8b5cf6',
       desc: isFa
-        ? 'اگر استراتژی کدنویسی شده در TradingView (Pine Script) یا Python دارید، آن را مستقیم داخل استودیوی دلارینو وارد کنید، روی کندل‌های واقعی بک‌تست ۹۰۰ کندلی بگیرید و به‌صورت خودکار به صرافی متصل کنید.'
-        : 'Write or paste TradingView Pine Script or Python strategies directly inside Dollarino Studio, evaluate on live market candles, and run 24/7.',
+        ? 'دو راه در یک موتور: می‌توانید از استراتژی‌های آماده و تست‌شده دلارینو (دُرنا V1، KBOS و شکار نقدینگی SP2L) استفاده کنید، یا استراتژی Pine Script / Python شخصی خودتان را در آزمایشگاه بسازید و با بک‌تست ۹۰۰ کندلی ۲۴/۷ اجرا کنید.'
+        : 'Two modes in one engine: trade Dollarino preset hunters (Dorna V1, KBOS, SP2L) OR write/paste your own Pine Script or Python strategy.',
       bullets: isFa
-        ? ['پشتیبانی مستقیم از Pine Script و Python + سازنده بصری', 'رسم سیگنال‌ها و نمودار سود روی چارت زنده', 'اجرای ۲۴/۷ مستقیم روی Toobit و KCEX']
-        : ['Pine Script, Python & no-code Visual Builder', 'Real-time chart markers & equity curve', '24/7 live exchange execution'],
+        ? ['بخش ۱: استراتژی‌های آماده و غیرریپینت دُرنا V1، KBOS و SP2L', 'بخش ۲: ورود Pine Script، Python یا سازنده بصری شخصی', 'بک‌تست زنده ۹۰۰ کندلی و اجرای ۲۴/۷ روی Toobit و KCEX']
+        : ['Mode 1: Preset Dorna V1, KBOS & SP2L hunters', 'Mode 2: Your own Pine Script, Python & Visual Builder', '24/7 live exchange execution'],
     },
   ];
 

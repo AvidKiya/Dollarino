@@ -1,11 +1,13 @@
-import { formatDollarinoSignal, parseDollarinoSignal } from '@dollarino/core';
+import { formatDollarinoSignal, parseDollarinoSignal, resolveEngineDisplayLabel } from '@dollarino/core';
 import { getPlatformAISummary } from '../ai/providers.js';
 import { ensureUserDefaults } from '../auth.js';
-import { encryptVaultJson, hashPassword, maskSecret, randomId } from '../crypto.js';
+import { encryptVaultJson, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
+import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { DEFAULT_TRAINED_RULES, extractRulesFromConversation, type TrainedAIRules } from '../routes/my-ai.js';
+import { buildVerifiedCardCanonicalPayload } from '../routes/trading.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import {
   getSystemSetting,
@@ -18,6 +20,8 @@ import {
 } from './admin-menu.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import {
+  ANTI_SCAM_WARNING_FA,
+  channelSignalInlineButtons,
   type CollapsibleMenuSection,
   exchangeSelectionKeyboard,
   formatAccountCard,
@@ -25,9 +29,16 @@ import {
   formatToman,
   mainMenuKeyboard,
   miniAppInlineKeyboard,
+  OFFICIAL_BOT_HANDLE,
   settingsKeyboard,
   welcomeMessage,
 } from './formatter.js';
+import {
+  notifyAllAdmins,
+  publishProfitCardToTelegram,
+  publishSignalClosedCard,
+  resolveChannelAndBotConfig,
+} from './publisher.js';
 
 interface TelegramUpdate {
   update_id: number;
@@ -360,9 +371,10 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     if (!signal) return { ok: true, ignored: 'not a signal' };
 
     const sigId = randomId('sig');
+    const engineLabel = signal.engineLabel || resolveEngineDisplayLabel(signal.engineKey, '📡 کانال رسمی دلارینو');
     await env.DB.prepare(
-      `INSERT INTO signals (id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, sl_pct, tp1_pct, tp2_pct, tp3_pct, raw_text, status)
-       VALUES (?, 'telegram_channel', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW')`
+      `INSERT INTO signals (id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, sl_pct, tp1_pct, tp2_pct, tp3_pct, raw_text, status, engine_source, engine_label, channel_message_id, channel_chat_id)
+       VALUES (?, 'telegram_channel', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?)`
     ).bind(
       sigId,
       signal.symbol,
@@ -378,9 +390,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       signal.tp1Pct ?? null,
       signal.tp2Pct ?? null,
       signal.tp3Pct ?? null,
-      formatDollarinoSignal(signal)
+      formatDollarinoSignal({ ...signal, engineLabel }),
+      signal.engineKey || 'telegram_channel',
+      engineLabel,
+      post.message_id,
+      chatIdStr
     ).run();
 
+    const cfg = await resolveChannelAndBotConfig(env);
     const users = await env.DB.prepare(
       `SELECT u.id, u.email, u.username, u.role, u.telegram_id, bc.trade_execution_mode, bc.bot_state
        FROM users u JOIN bot_configs bc ON u.id = bc.user_id
@@ -409,8 +426,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       if (u.trade_execution_mode === 'AUTO' && (u.bot_state === 'RUNNING_PAPER' || u.bot_state === 'RUNNING_LIVE')) {
         await executeSignalForUser(env, u.id, signal, { signalId: sigId }).catch(() => {});
       } else {
-        await bot.sendMessage(u.telegram_id, formatDollarinoSignal(signal), {
-          inlineKeyboard: [[{ text: '👈 دلارینو ترید کن برام 👉', callback_data: `manual_trade:${sigId}` }]],
+        await bot.sendMessage(u.telegram_id, formatDollarinoSignal({ ...signal, engineLabel }), {
+          inlineKeyboard: channelSignalInlineButtons({
+            signalId: sigId,
+            botUsername: cfg.botUsername,
+            webAppUrl: cfg.webAppUrl,
+            forChannel: false,
+          }),
         }).catch(() => {});
       }
     }
@@ -926,11 +948,251 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data.startsWith('copy_pub_yes:') || data.startsWith('copy_pub_no:')) {
+      const approve = data.startsWith('copy_pub_yes:');
+      const copyTradeId = data.split(':')[1]!;
+      const res = await confirmAndMirrorCopyTrade(env, copyTradeId, approve);
+      await bot.answerCallbackQuery(
+        cq.id,
+        approve ? `منتشر شد ✅ (${res.mirroredCount} آینه‌سازی)` : 'فقط شخصی باقی ماند ❌'
+      );
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          approve
+            ? `✅ معامله کپی‌ترید شما منتشر شد و برای ${res.mirroredCount} دنبال‌کننده فعال آینه‌سازی گردید!`
+            : `❌ معامله منتشر نشد و فقط در تاریخچه شخصی شما باقی ماند.`
+        );
+      }
+      return { ok: true };
+    }
+
+    if (data.startsWith('manual_confirm:')) {
+      const sigId = data.split(':')[1]!;
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: tgId,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        await bot.answerCallbackQuery(cq.id, '💎 برای اجرای معامله، اشتراک فعال لازم است.', true);
+        await showSubscriptionMenu(env, bot, chatId, user, tgId);
+        return { ok: true };
+      }
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          `⚡️ تایید نهایی اجرای این سیگنال روی حساب متصل شما:`,
+          [
+            [
+              { text: 'تایید میکنم و اجرا کن ✅', callback_data: `confirm_trade:${sigId}`, style: 'success' },
+              { text: 'انصراف ❌', callback_data: `cancel_trade:${sigId}`, style: 'danger' },
+            ],
+          ]
+        );
+      }
+      await bot.answerCallbackQuery(cq.id);
+      return { ok: true };
+    }
+
+    if (data === 'tg_hunt_ready' || data === 'tg_hunt_personal') {
+      await bot.answerCallbackQuery(cq.id);
+      if (data === 'tg_hunt_ready') {
+        const kb: InlineKeyboardButton[][] = [
+          [
+            { text: '🦅 استراتژی دُرنا V1 (مخلوط ۸گانه)', callback_data: 'tg_set_strat:dollarino_v01', style: 'success' },
+            { text: '⚡️ KBOS Super v11', callback_data: 'tg_set_strat:kbos_v11', style: 'primary' },
+          ],
+          [
+            { text: '🌊 شکار نقدینگی SP2L', callback_data: 'tg_set_strat:sp2l' },
+            { text: '📈 روند EMA Pullback', callback_data: 'tg_set_strat:ema_trend_pullback' },
+          ],
+          [{ text: '🔙 بازگشت به منوی شیشه‌ای', callback_data: 'tg_acc:hunt' }],
+        ];
+        await bot.sendMessage(
+          chatId,
+          `🎯 استراتژی‌های شکار آماده دلارینو:\nیکی از موتورهای آماده و بهینه‌شده زیر را برای شکار فرصت‌ها انتخاب کنید:`,
+          { inlineKeyboard: kb }
+        );
+      } else {
+        const hasHttps = webAppUrl.startsWith('https://');
+        await bot.sendMessage(
+          chatId,
+          `🛠 استراتژی شخصی خودتان (Pine Script / Python / Visual Builder):\nدر محیط آزمایشگاه کد دلارینو می‌توانید استراتژی اختصاصی خود را بنویسید، بک‌تست ۹۰۰ کندلی بگیرید و روی ربات فعال کنید.`,
+          {
+            inlineKeyboard: hasHttps
+              ? [
+                  [{ text: '🚀 باز کردن آزمایشگاه کدنویسی (IDE)', web_app: { url: `${webAppUrl}/?tab=radar` }, style: 'primary' }],
+                  [{ text: '🔙 بازگشت', callback_data: 'tg_acc:hunt' }],
+                ]
+              : [[{ text: '🔙 بازگشت', callback_data: 'tg_acc:hunt' }]],
+          }
+        );
+      }
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_set_strat:')) {
+      const stratKey = data.slice('tg_set_strat:'.length);
+      await env.DB.prepare(`UPDATE bot_configs SET strategy_key = ?, updated_at = datetime('now') WHERE user_id = ?`)
+        .bind(stratKey, user.id).run();
+      await bot.answerCallbackQuery(cq.id, `استراتژی ${resolveEngineDisplayLabel(stratKey)} فعال شد ✅`);
+      await bot.sendMessage(chatId, `🎯 موتور ربات روی «${resolveEngineDisplayLabel(stratKey)}» تنظیم شد!`);
+      return { ok: true };
+    }
+
+    if (data === 'tg_profit_card') {
+      await bot.answerCallbackQuery(cq.id);
+      await bot.sendMessage(chatId, `🏆 صدور کارت سود رسمی دلارینو (با لوگو و مهر حساب واقعی / دمو):\nبازه زمانی و قالب دلخواه خود را انتخاب کنید:`, {
+        inlineKeyboard: [
+          [
+            { text: '⏱ ۲۴ ساعته (افقی)', callback_data: 'tg_profit_issue:24H:horizontal', style: 'primary' },
+            { text: '📅 هفتگی (افقی)', callback_data: 'tg_profit_issue:7D:horizontal', style: 'success' },
+          ],
+          [
+            { text: '🗓 ماهانه (افقی)', callback_data: 'tg_profit_issue:30D:horizontal' },
+            { text: '📆 سالانه (عمودی)', callback_data: 'tg_profit_issue:1Y:vertical', style: 'primary' },
+          ],
+          [{ text: '📱 کارت سود عمودی (استوری)', callback_data: 'tg_profit_issue:7D:vertical', style: 'success' }],
+        ],
+      });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_profit_issue:')) {
+      const [, rawPeriod, rawLayout] = data.split(':');
+      const period = (['24H', '7D', '30D', '1Y', 'ALL'].includes(rawPeriod || '') ? rawPeriod : '7D') as '24H' | '7D' | '30D' | '1Y' | 'ALL';
+      const layout = rawLayout === 'vertical' ? 'vertical' : 'horizontal';
+      const cfgRow = await env.DB.prepare('SELECT trading_mode, paper_balance FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ trading_mode: 'LIVE' | 'PAPER'; paper_balance: string }>();
+      const mode = cfgRow?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+      const whereParts = [`user_id = ?`, `status = 'CLOSED'`, `mode = ?`];
+      if (period === '24H') whereParts.push(`closed_at >= datetime('now', '-24 hours')`);
+      else if (period === '7D') whereParts.push(`closed_at >= datetime('now', '-7 days')`);
+      else if (period === '30D') whereParts.push(`closed_at >= datetime('now', '-30 days')`);
+      else if (period === '1Y') whereParts.push(`closed_at >= datetime('now', '-365 days')`);
+
+      const trRows = await env.DB.prepare(
+        `SELECT id, exchange_provider, strategy_key, realized_pnl, margin_used, closed_at
+         FROM trades WHERE ${whereParts.join(' AND ')} ORDER BY closed_at ASC`
+      ).bind(user.id, mode).all<{
+        id: string;
+        exchange_provider: string;
+        strategy_key: string | null;
+        realized_pnl: string;
+        margin_used: string;
+        closed_at: string;
+      }>();
+
+      if (!trRows.results.length) {
+        await bot.answerCallbackQuery(cq.id, `معامله بسته‌شده‌ای در بازه ${period} یافت نشد.`, true);
+        return { ok: true };
+      }
+
+      let netPnl = 0;
+      let wins = 0;
+      let grossWin = 0;
+      let grossLoss = 0;
+      let totalMargin = 0;
+      for (const r of trRows.results) {
+        const pnl = Number(r.realized_pnl || 0);
+        netPnl += pnl;
+        totalMargin += Math.max(0, Number(r.margin_used || 0));
+        if (pnl > 0) {
+          wins++;
+          grossWin += pnl;
+        } else if (pnl < 0) {
+          grossLoss += Math.abs(pnl);
+        }
+      }
+      const winRate = Number(((wins / trRows.results.length) * 100).toFixed(2));
+      const pf = grossLoss > 0 ? Number((grossWin / grossLoss).toFixed(2)) : grossWin > 0 ? 99 : 0;
+      const baseCap = mode === 'PAPER' ? Math.max(totalMargin, Math.max(100, Number(cfgRow?.paper_balance || 10000) - netPnl)) : Math.max(10, totalMargin);
+      const roiPct = Number(((netPnl / baseCap) * 100).toFixed(2));
+      const cardId = `DLR-${randomId('').slice(0, 10).toUpperCase()}`;
+      const issuedAt = new Date().toISOString();
+      const topStrategy = resolveEngineDisplayLabel(trRows.results[0]?.strategy_key);
+      const topProv = (trRows.results[0]?.exchange_provider || 'TOOBIT').toUpperCase();
+      const tradesHash = await sha256Hex(trRows.results.map((t) => `${t.id}:${t.realized_pnl}:${t.closed_at}`).join(';'));
+      const canonical = buildVerifiedCardCanonicalPayload({
+        id: cardId,
+        userId: user.id,
+        mode,
+        period,
+        startDate: trRows.results[0]!.closed_at,
+        endDate: trRows.results[trRows.results.length - 1]!.closed_at,
+        tradesCount: trRows.results.length,
+        winRate,
+        netPnlUsd: Number(netPnl.toFixed(2)),
+        roiPct,
+        profitFactor: pf,
+        exchangeProvider: topProv,
+        strategyName: topStrategy,
+        tradesHash,
+        issuedAt,
+      });
+      const sig = await hmacSha256Hex(canonical, env.SESSION_JWT_SECRET || env.MASTER_ENCRYPTION_KEY || 'dollarino-card-hmac-secret');
+
+      await env.DB.prepare(
+        `INSERT INTO verified_profit_cards (id, user_id, mode, period, start_date, end_date, trades_count, win_rate, net_pnl_usd, roi_pct, profit_factor, exchange_provider, strategy_name, payload_json, hmac_signature, issued_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        cardId,
+        user.id,
+        mode,
+        period,
+        trRows.results[0]!.closed_at,
+        trRows.results[trRows.results.length - 1]!.closed_at,
+        trRows.results.length,
+        winRate,
+        Number(netPnl.toFixed(2)),
+        roiPct,
+        pf,
+        topProv,
+        topStrategy,
+        JSON.stringify({ isVerifiedReal: mode === 'LIVE', tradesHash }),
+        sig,
+        issuedAt
+      ).run();
+
+      await bot.answerCallbackQuery(cq.id, 'در حال صدور کارت سود... 🎨');
+      await publishProfitCardToTelegram(
+        env,
+        chatId,
+        {
+          id: cardId,
+          displayName: user.username,
+          mode,
+          period,
+          tradesCount: trRows.results.length,
+          winRate,
+          netPnlUsd: Number(netPnl.toFixed(2)),
+          roiPct,
+          profitFactor: pf,
+          exchangeProvider: topProv,
+          strategyName: topStrategy,
+          issuedAt,
+        },
+        layout
+      );
+      return { ok: true };
+    }
+
     if (data === 'tg_support_open') {
       await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }), user.id).run();
       await bot.answerCallbackQuery(cq.id);
-      const supportId = await getSystemSetting(env.DB, 'telegram_support', '@Dollarino_admin');
-      await bot.sendMessage(chatId, `💬 پشتیبانی آنلاین دلارینو\n\nسوال، مشکل یا پیام خود را همین‌جا بنویسید تا مستقیماً برای تیم پشتیبانی ارسال شود و پاسخ در همین ربات و پنل وب برایتان نمایش داده شود.\n(پشتیبانی مستقیم تلگرام: ${supportId})`);
+      const supportId = await getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE);
+      const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
+      await bot.sendMessage(
+        chatId,
+        `💬 پشتیبانی آنلاین دلارینو\n\n` +
+        `سوال، مشکل یا پیام خود را همین‌جا بنویسید تا مستقیماً برای تیم پشتیبانی ارسال شود و پاسخ در همین ربات (${safeSup}) و پنل وب برایتان نمایش داده شود.\n\n` +
+        `${ANTI_SCAM_WARNING_FA}`
+      );
       return { ok: true };
     }
 
@@ -1015,14 +1277,26 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         `SELECT * FROM trades WHERE id = ? AND user_id = ? AND status = 'OPEN'`
       ).bind(tradeId, user.id).first<{
         id: string;
+        signal_id?: string | null;
+        strategy_key?: string | null;
         mode: string;
         market_type?: 'SPOT' | 'FUTURES';
         symbol: string;
         direction: 'LONG' | 'SHORT';
+        leverage: number;
         entry_price: string;
         initial_quantity: string;
         remaining_quantity: string;
         margin_used: string;
+        current_stop_loss: string;
+        initial_stop_loss?: string;
+        tp1: string;
+        tp1_hit?: number;
+        tp2_hit?: number;
+        tp3_hit?: number;
+        trailing_active?: number;
+        risk_free_active?: number;
+        opened_at?: string;
         realized_pnl: string;
       }>();
       if (!t) {
@@ -1048,6 +1322,32 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await env.DB.prepare(
         `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'TELEGRAM_MANUAL', closed_at = datetime('now') WHERE id = ?`
       ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+
+      const pnlPct = Number(t.margin_used) > 0 ? (totalRealized / Number(t.margin_used)) * 100 : 0;
+      await publishSignalClosedCard(env, {
+        tradeId: t.id,
+        userId: user.id,
+        signalId: t.signal_id,
+        symbol: t.symbol,
+        direction: t.direction,
+        leverage: t.leverage ?? 1,
+        mode: t.mode === 'LIVE' ? 'LIVE' : 'PAPER',
+        strategyKey: t.strategy_key,
+        entryPrice: t.entry_price,
+        exitPrice: cls.filledPrice,
+        stopLoss: t.initial_stop_loss ?? t.current_stop_loss,
+        tp1: t.tp1,
+        tp1Hit: Boolean(t.tp1_hit || totalRealized > 0),
+        tp2Hit: Boolean(t.tp2_hit),
+        tp3Hit: Boolean(t.tp3_hit),
+        trailingActive: Boolean(t.trailing_active || t.risk_free_active),
+        trailingSl: t.current_stop_loss,
+        pnlUsd: totalRealized,
+        pnlPct,
+        reason: 'TELEGRAM_MANUAL',
+        openedAt: t.opened_at,
+        closedAt: new Date().toISOString(),
+      }).catch(() => {});
 
       await bot.answerCallbackQuery(cq.id, 'معامله بسته شد ✅');
       if (msgId) {
@@ -1145,13 +1445,82 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   const setState = (s: TelegramStepState) =>
     env.DB.prepare('UPDATE users SET telegram_state = ? WHERE id = ?').bind(JSON.stringify(s), user.id).run();
 
-  // Deep-link `/start PAYLOAD` (e.g. `/start LINK-XXXXXX` or `/start web_auth`)
+  // Deep-link `/start PAYLOAD` (e.g. `/start LINK-XXXXXX`, `/start sig_<id>`, `/start exec_<id>`, `/start web_auth`)
   if (text.startsWith('/start ')) {
     await clearState();
     const payload = text.slice(7).trim();
     if (payload.toUpperCase().startsWith('LINK-')) {
       const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, payload);
       await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl) });
+      return { ok: true };
+    }
+    if (payload.startsWith('sig_') || payload.startsWith('exec_') || payload.startsWith('open_')) {
+      const sigId = payload.replace(/^(sig_|exec_|open_)/, '').trim();
+      const sigRow = await env.DB.prepare(`SELECT * FROM signals WHERE id = ? LIMIT 1`).bind(sigId).first<{
+        id: string;
+        symbol: string;
+        direction: 'LONG' | 'SHORT';
+        timeframe: string;
+        price: string;
+        stop_loss: string;
+        leverage: number;
+        tp1: string;
+        tp2: string | null;
+        tp3: string | null;
+        engine_label: string | null;
+        raw_text: string;
+      }>();
+      if (!sigRow) {
+        await bot.sendMessage(chatId, '⚠️ سیگنال درخواستی یافت نشد یا منقضی شده است.', {
+          replyKeyboard: mainMenuKeyboard(webAppUrl),
+        });
+        return { ok: true };
+      }
+      const formatted = sigRow.raw_text || formatDollarinoSignal({
+        symbol: sigRow.symbol,
+        direction: sigRow.direction,
+        timeframe: sigRow.timeframe,
+        price: sigRow.price,
+        stopLoss: sigRow.stop_loss,
+        leverage: sigRow.leverage,
+        tp1: sigRow.tp1,
+        tp2: sigRow.tp2 ?? undefined,
+        tp3: sigRow.tp3 ?? undefined,
+        engineLabel: sigRow.engine_label ?? undefined,
+      });
+      await bot.sendMessage(chatId, formatted, {
+        inlineKeyboard: payload.startsWith('exec_')
+          ? [
+              [
+                { text: 'تایید میکنم و معامله کن ✅', callback_data: `confirm_trade:${sigRow.id}`, style: 'success' },
+                { text: 'انصراف ❌', callback_data: `cancel_trade:${sigRow.id}`, style: 'danger' },
+              ],
+            ]
+          : [
+              [
+                { text: 'دلارینو ترید کن برام 🤖', callback_data: `manual_trade:${sigRow.id}`, style: 'success' },
+                { text: 'تایید و اجرای فوری ✅', callback_data: `manual_confirm:${sigRow.id}`, style: 'primary' },
+              ],
+            ],
+      });
+      return { ok: true };
+    }
+    if (payload.toUpperCase().startsWith('REF_') || payload.toUpperCase().startsWith('DLR-')) {
+      const refCode = payload.replace(/^ref_/i, '').trim().toUpperCase();
+      const referrerId = await env.DB.prepare(
+        `SELECT id FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
+      ).bind(refCode, refCode).first<{ id: string }>().catch(() => null);
+      if (referrerId?.id && referrerId.id !== user.id) {
+        await env.DB.prepare(
+          `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REGISTERED')`
+        ).bind(randomId('ref'), referrerId.id, user.id, refCode).run().catch(() => {});
+      }
+      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username), {
+        replyKeyboard: mainMenuKeyboard(webAppUrl),
+      });
+      await bot.sendMessage(chatId, '🎁 شما از طریق لینک دعوت دوستتان وارد شدید! با فعال‌سازی اشتراک، ۷ روز هدیه برای دعوت‌کننده ثبت می‌شود.', {
+        inlineKeyboard: miniAppInlineKeyboard(webAppUrl),
+      });
       return { ok: true };
     }
     if (payload === 'web_auth') {
@@ -1190,6 +1559,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, text.slice(6));
     await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl) });
     return { ok: true };
+  }
+
+  const SLASH_OVERRIDE = new Set(['/card', '/copy', '/support', '/positions', '/balance', '/settings', '/help', '/menu']);
+  if (SLASH_OVERRIDE.has(text) && user.telegram_state) {
+    await clearState();
+    user.telegram_state = null;
   }
 
   // Handle Multi-Step Flows
@@ -1416,13 +1791,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         .bind(randomId('smsg'), ticketId, user.id, user.username, text.slice(0, 2000)).run();
       await env.DB.prepare(`UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`).bind(ticketId).run();
 
-      const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
-      await bot.sendMessage(ownerId, `💬 پیام پشتیبانی جدید از ربات:\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${text}`, {
+      await notifyAllAdmins(env, `💬 پیام پشتیبانی جدید از ربات:\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${text}`, {
         inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }]],
       }).catch(() => {});
-      await bot.sendMessage(chatId, `✅ پیام شما به تیکت #${ticketId} ارسال شد. پاسخ تیم پشتیبانی در همین‌جا برایتان پیام می‌شود.`, {
-        replyKeyboard: mainMenuKeyboard(webAppUrl),
-      });
+      await bot.sendMessage(
+        chatId,
+        `✅ پیام شما به تیکت #${ticketId} ارسال شد. پاسخ تیم پشتیبانی در همین‌جا برایتان پیام می‌شود.\n\n${ANTI_SCAM_WARNING_FA}`,
+        { replyKeyboard: mainMenuKeyboard(webAppUrl) }
+      );
       return { ok: true };
     }
 
@@ -1505,6 +1881,30 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  if (text === '/card' || text === 'کارت سود دلارینو 📊') {
+    await bot.sendMessage(
+      chatId,
+      `📊 صدور کارت سود تاییدشده دلارینو:\n\nبازه زمانی و قالب دلخواه خود را انتخاب کنید تا تصویر رسمی با لوگوی دلارینو، مهر حساب واقعی/دمو و QR اصالت‌سنجی صادر شود:`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '۲۴ ساعته (24H)', callback_data: 'tg_profit_issue:24H:horizontal', style: 'primary' },
+            { text: 'هفتگی (7D)', callback_data: 'tg_profit_issue:7D:horizontal', style: 'success' },
+          ],
+          [
+            { text: 'ماهانه (30D)', callback_data: 'tg_profit_issue:30D:horizontal', style: 'primary' },
+            { text: 'سالانه (1Y)', callback_data: 'tg_profit_issue:1Y:horizontal', style: 'primary' },
+          ],
+          [
+            { text: 'کل دوره (ALL · افقی)', callback_data: 'tg_profit_issue:ALL:horizontal', style: 'success' },
+            { text: '📱 استوری عمودی (7D)', callback_data: 'tg_profit_issue:7D:vertical', style: 'primary' },
+          ],
+        ],
+      }
+    );
+    return { ok: true };
+  }
+
   if (text === '🏆 کپی‌ترید تاییدشده' || text === '/copy') {
     const traders = await env.DB.prepare(
       `SELECT id, display_name, specialty, win_rate, roi_30d_pct, followers_count FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
@@ -1519,10 +1919,35 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  if (text === '🎯 استراتژی شکار') {
+    const hasHttps = webAppUrl.startsWith('https://');
+    await bot.sendMessage(
+      chatId,
+      `🎯 موتور ۳: استراتژی شکار دلارینو\n\nشاخه مورد نظر خود را انتخاب کنید:`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '⚡️ استراتژی‌های آماده ما', callback_data: 'tg_hunt_ready', style: 'success' },
+            ...(hasHttps
+              ? [{ text: '🛠 استراتژی شخصی خودتان (IDE)', web_app: { url: `${webAppUrl}/?tab=radar` }, style: 'primary' as const }]
+              : [{ text: '🛠 استراتژی شخصی', callback_data: 'tg_hunt_personal', style: 'primary' as const }]),
+          ],
+        ],
+      }
+    );
+    return { ok: true };
+  }
+
   if (text === '💬 پشتیبانی آنلاین' || text === '/support') {
     await setState({ step: 'AWAIT_SUPPORT_MSG' });
-    const supportId = await getSystemSetting(env.DB, 'telegram_support', '@Dollarino_admin');
-    await bot.sendMessage(chatId, `💬 پشتیبانی آنلاین دلارینو\n\nپیام خود را همین‌جا بنویسید تا مستقیماً به پنل ادمین ارسال شود.\n(پشتیبانی مستقیم تلگرام: ${supportId})`);
+    const supportId = await getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE);
+    const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
+    await bot.sendMessage(
+      chatId,
+      `💬 پشتیبانی آنلاین دلارینو (${safeSup})\n\n` +
+      `پیام خود را همین‌جا بنویسید تا مستقیماً به پنل آنلاین تمام مدیران ارسال شود.\n\n` +
+      `${ANTI_SCAM_WARNING_FA}`
+    );
     return { ok: true };
   }
 
@@ -1758,10 +2183,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const [helpText, helpMedia, supportId] = await Promise.all([
       getSystemSetting(env.DB, 'bot_help_text', ''),
       getSystemSetting(env.DB, 'bot_help_media_url', ''),
-      getSystemSetting(env.DB, 'telegram_support', '@Dollarino_admin'),
+      getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE),
     ]);
+    const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
     const fallbackText = await getSystemSetting(env.DB, 'help_text', '📚 راهنمای دلارینو در پنل وب در دسترس است.');
-    const caption = `${helpText || fallbackText}\n\n🆘 پشتیبانی رسمی: ${supportId}`;
+    const caption = `${helpText || fallbackText}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
     if (helpMedia && helpMedia.startsWith('https://')) {
       if (/\.(mp4|mov|webm)(\?|$)/i.test(helpMedia)) {
         await bot.sendVideo(chatId, helpMedia, caption).catch(() => bot.sendMessage(chatId, caption));

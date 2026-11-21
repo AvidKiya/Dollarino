@@ -16,7 +16,8 @@ import { decryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { TelegramBotClient } from '../telegram/client.js';
-import { formatTradeClosedCard, formatTradeOpenedCard } from '../telegram/formatter.js';
+import { formatTradeOpenedCard } from '../telegram/formatter.js';
+import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard } from '../telegram/publisher.js';
 
 export interface UserBotConfigRow {
   user_id: string;
@@ -138,7 +139,9 @@ export async function notifyUserTelegram(
   env: Env,
   userId: string,
   text: string,
-  inlineKeyboard?: Array<Array<{ text: string; callback_data?: string; url?: string; web_app?: { url: string } }>>
+  inlineKeyboard?: Array<
+    Array<{ text: string; callback_data?: string; url?: string; web_app?: { url: string }; style?: 'primary' | 'success' | 'danger' }>
+  >
 ) {
   try {
     const user = await env.DB.prepare('SELECT telegram_id FROM users WHERE id = ?')
@@ -382,8 +385,25 @@ export async function executeSignalForUser(
       tp1Pct: cfgRow.tp1_close_pct,
       tp2Pct: cfgRow.tp2_close_pct,
       tp3Pct: cfgRow.tp3_close_pct,
+      engineKey: options?.strategyKey ?? cfgRow.strategy_key,
+      engineLabel: effectiveSignal.engineLabel,
     })
   );
+
+  // If this user is a verified Copy Trader, ask for publish confirmation (unless already mirroring a copy trade)
+  if (options?.strategyKey !== 'copy_trade') {
+    await maybePromptCopyTraderOnNewTrade(env, userId, {
+      sourceTradeId: tradeId,
+      symbol: effectiveSignal.symbol,
+      direction: effectiveSignal.direction,
+      leverage: decision.effectiveLeverage,
+      entryPrice: order.filledPrice,
+      stopLoss: effectiveSignal.stopLoss,
+      tp1: effectiveSignal.tp1,
+      tp2: effectiveSignal.tp2,
+      tp3: effectiveSignal.tp3,
+    }).catch(() => {});
+  }
 
   return { ok: true, tradeId };
 }
@@ -391,6 +411,8 @@ export async function executeSignalForUser(
 interface OpenTradeRow {
   id: string;
   user_id: string;
+  signal_id?: string | null;
+  strategy_key?: string | null;
   mode: TradingMode;
   market_type?: MarketType;
   exchange_provider: string;
@@ -529,24 +551,30 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
           `${newRealized >= 0 ? 'WIN' : 'LOSS'} · ${t.symbol} Closed (${reason})`,
           `PnL: ${newRealized >= 0 ? '+' : ''}$${newRealized.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`
         );
-        await notifyUserTelegram(
-          env,
+        await publishSignalClosedCard(env, {
+          tradeId: t.id,
           userId,
-          formatTradeClosedCard({
-            symbol: t.symbol,
-            direction: t.direction,
-            entryPrice: t.entry_price,
-            exitPrice: cls.filledPrice,
-            pnlUsd: newRealized,
-            pnlPct,
-            reason,
-            openedAt: t.opened_at,
-            closedAt: new Date().toISOString(),
-            stopLoss: t.initial_stop_loss ?? t.current_stop_loss,
-            tp1: t.tp1,
-            leverage: t.leverage,
-          })
-        );
+          signalId: t.signal_id,
+          symbol: t.symbol,
+          direction: t.direction,
+          leverage: t.leverage,
+          mode: t.mode,
+          strategyKey: t.strategy_key,
+          entryPrice: t.entry_price,
+          exitPrice: cls.filledPrice,
+          stopLoss: t.initial_stop_loss ?? t.current_stop_loss,
+          tp1: t.tp1,
+          tp1Hit: Boolean(t.tp1_hit || reason.includes('TP1') || reason.includes('TP2') || reason.includes('TP3')),
+          tp2Hit: Boolean(t.tp2_hit || reason.includes('TP2') || reason.includes('TP3')),
+          tp3Hit: Boolean(t.tp3_hit || reason === 'TP3'),
+          trailingActive: Boolean(t.trailing_active || t.risk_free_active),
+          trailingSl: t.current_stop_loss,
+          pnlUsd: newRealized,
+          pnlPct,
+          reason,
+          openedAt: t.opened_at,
+          closedAt: new Date().toISOString(),
+        }).catch(() => {});
       } else {
         await env.DB.prepare(
           `UPDATE trades SET remaining_quantity = ?, realized_pnl = ?, fees_paid = ? WHERE id = ?`

@@ -115,6 +115,7 @@ export interface PlatformAISummary {
     provider: AIProviderId;
     label: string;
     model: string;
+    base_url?: string | null;
     weight: number;
     is_active: number;
     last_test_status: string;
@@ -172,7 +173,7 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
     getSetting(env.DB, 'ai_consensus_mode', 'ENSEMBLE_AUTO'),
     getSetting(env.DB, 'ai_cache_ttl_sec', '180'),
     env.DB.prepare(
-      `SELECT id, slot_order, provider, label, model, weight, is_active, last_test_status
+      `SELECT id, slot_order, provider, label, model, base_url, weight, is_active, last_test_status
        FROM platform_ai_engines ORDER BY slot_order ASC, created_at ASC LIMIT 3`
     )
       .all<{
@@ -181,6 +182,7 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
         provider: AIProviderId;
         label: string;
         model: string;
+        base_url: string | null;
         weight: number;
         is_active: number;
         last_test_status: string;
@@ -328,6 +330,22 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
     });
   }
 
+  // Fallback to Cloudflare Worker secret Hilinkup AI Gateway if no D1 platform engine is active yet
+  if (engines.length === 0 && env.HILINKUP_API_KEY?.trim()) {
+    engines.push({
+      id: 'env-hilinkup-default',
+      slotOrder: 1,
+      label: 'Hilinkup DeepSeek v4.1 Flash',
+      weight: 100,
+      provider: 'openai_compatible',
+      model: env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017',
+      baseUrl: env.HILINKUP_BASE_URL?.trim() || 'https://api.hilinkup.com/v1',
+      apiKey: env.HILINKUP_API_KEY.trim(),
+      temperature: 0.2,
+      maxTokens: 2048,
+    });
+  }
+
   return { engines, consensusMode, cacheTtlSec };
 }
 
@@ -457,12 +475,17 @@ export async function callBYOAI(
   }
 
   if (ai.provider === 'deepseek') {
-    const baseUrl = (ai.baseUrl || 'https://api.deepseek.com').replace(/\/$/, '');
+    const rawBase = (ai.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
+    const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
     const model = ai.model || 'deepseek-chat';
-    const isReasoningModel = model.includes('reasoner') || model.includes('v4-pro');
+    const isReasoningModel =
+      model.includes('reasoner') ||
+      model.includes('v4') ||
+      model.includes('r1') ||
+      model.includes('flash-1017');
     const bodyPayload: Record<string, unknown> = {
       model,
-      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2048, 2048) : (ai.maxTokens || 1536),
+      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2400, 2400) : (ai.maxTokens || 1536),
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -475,7 +498,6 @@ export async function callBYOAI(
       bodyPayload.thinking = { type: 'disabled' };
     }
 
-    const endpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/chat/completions`;
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -483,7 +505,7 @@ export async function callBYOAI(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(bodyPayload),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(35_000),
     });
     const json = await res.json() as {
       choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
@@ -494,29 +516,37 @@ export async function callBYOAI(
     return msg?.content || msg?.reasoning_content || '';
   }
 
-  const baseUrl = (ai.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const rawBase = (ai.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
+  const model = ai.model || 'gpt-4o-mini';
+  const isReasoningModel =
+    model.includes('deepseek-v4') ||
+    model.includes('reasoner') ||
+    model.includes('flash-1017') ||
+    /\bo1\b|\bo3\b|\br1\b/i.test(model);
+
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${ai.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: ai.model || 'gpt-4o-mini',
-      temperature: ai.temperature,
-      max_tokens: ai.maxTokens || 1536,
+      model,
+      ...(isReasoningModel ? {} : { temperature: ai.temperature }),
+      max_tokens: isReasoningModel ? Math.max(ai.maxTokens || 2400, 2400) : (ai.maxTokens || 1536),
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
     }),
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(35_000),
   });
   const json = await res.json() as {
     choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
     error?: { message?: string };
   };
-  if (!res.ok) throw new Error(json.error?.message ?? `OpenAI HTTP ${res.status}`);
+  if (!res.ok) throw new Error(json.error?.message ?? `OpenAI/Gateway HTTP ${res.status}`);
   return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
 }
 

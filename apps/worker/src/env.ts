@@ -12,6 +12,9 @@ export interface Env {
   ALLOW_LIVE_TRADING?: string;
   TOOBIT_PROXY_URL?: string;
   EXCHANGE_PROXY_SECRET?: string;
+  HILINKUP_API_KEY?: string;
+  HILINKUP_BASE_URL?: string;
+  HILINKUP_MODEL?: string;
 }
 
 export interface AuthUser {

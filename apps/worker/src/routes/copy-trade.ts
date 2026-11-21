@@ -2,12 +2,16 @@ import type { DollarinoSignal } from '@dollarino/core';
 import { Hono } from 'hono';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
+import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { executeSignalForUser, logAudit } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { requirePaidEntitlement } from './subscriptions.js';
 
 export interface CopyTraderRow {
   id: string;
+  user_id?: string | null;
+  telegram_id?: string | null;
+  auto_ask_publish?: number;
   display_name: string;
   handle: string | null;
   avatar_url: string | null;
@@ -35,7 +39,10 @@ export interface CopyTraderTradeRow {
   exit_price: string | null;
   stop_loss: string | null;
   tp1: string | null;
+  tp2?: string | null;
+  tp3?: string | null;
   status: 'OPEN' | 'CLOSED';
+  publish_status?: string;
   pnl_pct: number;
   note: string | null;
   opened_at: string;
@@ -48,12 +55,12 @@ copyTradeRoutes.use('*', requireAuth);
 copyTradeRoutes.get('/traders', async (c) => {
   const user = c.get('user');
 
-  const [tradersRes, tradesRes, mySubsRes] = await Promise.all([
+  const [tradersRes, tradesRes, mySubsRes, pendingOwnRes] = await Promise.all([
     c.env.DB.prepare(
       `SELECT * FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC, followers_count DESC`
     ).all<CopyTraderRow>().catch(() => ({ results: [] as CopyTraderRow[] })),
     c.env.DB.prepare(
-      `SELECT * FROM copy_trader_trades ORDER BY opened_at DESC LIMIT 80`
+      `SELECT * FROM copy_trader_trades WHERE COALESCE(publish_status, 'PUBLISHED') = 'PUBLISHED' ORDER BY opened_at DESC LIMIT 80`
     ).all<CopyTraderTradeRow>().catch(() => ({ results: [] as CopyTraderTradeRow[] })),
     c.env.DB.prepare(
       `SELECT * FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`
@@ -65,6 +72,13 @@ copyTradeRoutes.get('/traders', async (c) => {
       auto_mirror: number;
       is_active: number;
     }>().catch(() => ({ results: [] })),
+    c.env.DB.prepare(
+      `SELECT ctt.*, ct.display_name AS trader_name
+       FROM copy_trader_trades ctt
+       JOIN copy_traders ct ON ct.id = ctt.trader_id
+       WHERE ct.user_id = ? AND ctt.publish_status = 'PENDING_CONFIRM'
+       ORDER BY ctt.opened_at DESC LIMIT 10`
+    ).bind(user.id).all<CopyTraderTradeRow & { trader_name: string }>().catch(() => ({ results: [] })),
   ]);
 
   const tradesByTrader = new Map<string, CopyTraderTradeRow[]>();
@@ -83,10 +97,14 @@ copyTradeRoutes.get('/traders', async (c) => {
       trades: tradesByTrader.get(t.id) ?? [],
       following: Boolean(mySub),
       mySubscription: mySub,
+      isMe: t.user_id === user.id,
     };
   });
 
-  return c.json({ traders });
+  return c.json({
+    traders,
+    pendingConfirmations: pendingOwnRes.results,
+  });
 });
 
 copyTradeRoutes.post('/follow', async (c) => {
@@ -154,6 +172,28 @@ copyTradeRoutes.post('/follow', async (c) => {
   }
 });
 
+copyTradeRoutes.post('/trades/:tradeId/confirm-publish', async (c) => {
+  const user = c.get('user');
+  const tradeId = c.req.param('tradeId');
+  const body = await c.req.json<{ approve?: boolean }>().catch(() => ({ approve: true }));
+
+  const row = await c.env.DB.prepare(
+    `SELECT ctt.id, ct.user_id AS trader_user_id
+     FROM copy_trader_trades ctt
+     JOIN copy_traders ct ON ct.id = ctt.trader_id
+     WHERE ctt.id = ? LIMIT 1`
+  ).bind(tradeId).first<{ id: string; trader_user_id: string | null }>();
+
+  if (!row) return c.json({ error: 'معامله یافت نشد.' }, 404);
+  const isAdmin = user.role === 'owner' || user.role === 'admin';
+  if (!isAdmin && row.trader_user_id !== user.id) {
+    return c.json({ error: 'شما مجاز به تایید انتشار این معامله نیستید.' }, 403);
+  }
+
+  const res = await confirmAndMirrorCopyTrade(c.env, tradeId, body.approve !== false);
+  return c.json(res);
+});
+
 copyTradeRoutes.post('/copy-now/:tradeId', async (c) => {
   const user = c.get('user');
   const gate = await requirePaidEntitlement(c.env.DB, user);
@@ -176,28 +216,43 @@ copyTradeRoutes.post('/copy-now/:tradeId', async (c) => {
   const sl = Number(trade.stop_loss || (trade.direction === 'LONG' ? entry * 0.975 : entry * 1.025));
   const tp1 = Number(trade.tp1 || (trade.direction === 'LONG' ? entry * 1.03 : entry * 0.97));
   const dist = Math.max(entry * 0.015, Math.abs(tp1 - entry));
-  const tp2 = trade.direction === 'LONG' ? entry + dist * 1.7 : entry - dist * 1.7;
-  const tp3 = trade.direction === 'LONG' ? entry + dist * 2.5 : entry - dist * 2.5;
+  const tp2 = trade.tp2 ? Number(trade.tp2) : (trade.direction === 'LONG' ? entry + dist * 1.7 : entry - dist * 1.7);
+  const tp3 = trade.tp3 ? Number(trade.tp3) : (trade.direction === 'LONG' ? entry + dist * 2.5 : entry - dist * 2.5);
 
   const sig: DollarinoSignal = {
     symbol: trade.symbol,
     direction: trade.direction,
-    timeframe: '15m',
+    timeframe: 'Copy',
     price: trade.entry_price,
     stopLoss: String(sl),
     leverage: Math.max(1, trade.leverage || 5),
     tp1: String(tp1),
     tp2: String(Number(tp2.toFixed(4))),
     tp3: String(Number(tp3.toFixed(4))),
-    channelHandle: trade.display_name,
+    channelHandle: '@Dollarino_official',
+    engineKey: 'copy_trade',
+    engineLabel: `🏆 کپی‌ترید تاییدشده · ${trade.display_name}`,
     reason: `کپی معامله از تریدر تاییدشده ${trade.display_name}`,
   };
 
   const sigId = randomId('sig');
   await c.env.DB.prepare(
-    `INSERT INTO signals (id, user_id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, raw_text, status)
-     VALUES (?, ?, 'copy_trader', ?, ?, '15m', ?, ?, ?, ?, ?, ?, ?, 'NEW')`
-  ).bind(sigId, user.id, sig.symbol, sig.direction, sig.price, sig.stopLoss, sig.leverage, sig.tp1, sig.tp2, sig.tp3, trade.note || sig.reason).run();
+    `INSERT INTO signals (id, user_id, source, symbol, direction, timeframe, price, stop_loss, leverage, tp1, tp2, tp3, raw_text, status, engine_source, engine_label)
+     VALUES (?, ?, 'copy_trader', ?, ?, 'Copy', ?, ?, ?, ?, ?, ?, ?, 'NEW', 'copy_trade', ?)`
+  ).bind(
+    sigId,
+    user.id,
+    sig.symbol,
+    sig.direction,
+    sig.price,
+    sig.stopLoss,
+    sig.leverage,
+    sig.tp1,
+    sig.tp2,
+    sig.tp3,
+    trade.note || sig.reason,
+    sig.engineLabel
+  ).run();
 
   const execRes = await executeSignalForUser(c.env, user.id, sig, {
     signalId: sigId,

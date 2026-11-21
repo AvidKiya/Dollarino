@@ -15,7 +15,10 @@ const DEFAULT_TG_COMMANDS = [
   { command: 'app', description: 'باز کردن مینی‌اپ معاملاتی دلارینو' },
   { command: 'positions', description: 'مشاهده و مدیریت معاملات باز' },
   { command: 'balance', description: 'نمایش موجودی لحظه‌ای حساب' },
+  { command: 'card', description: 'صدور و دریافت تصویر کارت سود دلارینو' },
+  { command: 'copy', description: 'کپی‌ترید تاییدشده دلارینو' },
   { command: 'settings', description: 'تنظیمات بازار (اسپات/فیوچرز) و جهت' },
+  { command: 'support', description: 'پشتیبانی آنلاین و قوانین ضد کلاهبرداری' },
   { command: 'help', description: 'راهنمای اتصال صرافی و ربات' },
 ];
 
@@ -106,7 +109,12 @@ webhookRoutes.post('/tv/:secret', async (c) => {
     c.env,
     cfg.user_id,
     `📡 سیگنال جدید TradingView:\n\n${formatted}`,
-    [[{ text: '👈 دلارینو ترید کن برام 👉', callback_data: `manual_trade:${sigId}` }]]
+    [
+      [
+        { text: 'دلارینو ترید کن برام 🤖', callback_data: `manual_trade:${sigId}`, style: 'success' },
+        { text: 'تایید و اجرای فوری ✅', callback_data: `manual_confirm:${sigId}`, style: 'primary' },
+      ],
+    ]
   );
   return c.json({ ok: true, mode: 'MANUAL_CONFIRM', signalId: sigId, formatted });
 });

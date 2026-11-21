@@ -8,24 +8,55 @@ import {
   ExternalLink,
   Layers,
   Lock,
+  Monitor,
   QrCode,
+  Send,
   ShieldAlert,
   ShieldCheck,
+  Smartphone,
   Target,
   TrendingUp,
 } from 'lucide-react';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
-import { apiFetch } from '../lib/api';
+import { apiFetch, getStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { DashboardPayload, VerifiedProfitCard } from '../lib/types';
 
 const THEMES = [
-  { id: 'dark', labelFa: 'کبالت رسمی', labelEn: 'Cobalt Official', from: '#102a73', to: '#07112e', accent: '#38e1ff', text: '#eef2ff' },
-  { id: 'gold', labelFa: 'طلایی لوکس', labelEn: 'Obsidian Gold', from: '#3b2a08', to: '#11130a', accent: '#e8c15a', text: '#f5e8bd' },
-  { id: 'emerald', labelFa: 'سبز سیگنال', labelEn: 'Emerald Mint', from: '#052e22', to: '#071d16', accent: '#10d9a3', text: '#d9fff0' },
+  { id: 'dark', labelFa: 'کبالت رسمی', labelEn: 'Cobalt Official', from: '#0b183d', to: '#040917', accent: '#38e1ff', text: '#eef2ff' },
+  { id: 'gold', labelFa: 'طلایی لوکس', labelEn: 'Obsidian Gold', from: '#2d2007', to: '#0c0d07', accent: '#f0b90b', text: '#f5e8bd' },
+  { id: 'emerald', labelFa: 'سبز سیگنال', labelEn: 'Emerald Mint', from: '#05281e', to: '#04120e', accent: '#10d9a3', text: '#d9fff0' },
 ] as const;
 
 type StyleId = (typeof THEMES)[number]['id'];
+type CardLayout = 'horizontal' | 'vertical';
+
+function fmtUsdSigned(val: number): string {
+  const abs = Math.abs(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return val >= 0 ? `+$${abs}` : `-$${abs}`;
+}
+
+function fmtPctSigned(val: number): string {
+  const abs = Math.abs(val).toFixed(2);
+  return val >= 0 ? `+${abs}%` : `-${abs}%`;
+}
+
+function periodTitle(p: VerifiedProfitCard['period'], isFa: boolean): string {
+  switch (p) {
+    case '24H':
+      return isFa ? '۲۴ ساعته' : '24 Hours';
+    case '7D':
+      return isFa ? 'هفتگی' : 'Weekly (7D)';
+    case '30D':
+      return isFa ? 'ماهانه' : 'Monthly (30D)';
+    case '1Y':
+      return isFa ? 'سالانه' : 'Yearly (1Y)';
+    case 'ALL':
+      return isFa ? 'کل دوره' : 'All Time';
+    case 'TRADE':
+      return isFa ? 'تک‌معامله' : 'Single Trade';
+  }
+}
 
 export function WeeklyCardPage({
   lang,
@@ -38,7 +69,8 @@ export function WeeklyCardPage({
 }) {
   const isFa = lang === 'fa';
   const [mode, setMode] = useState<'LIVE' | 'PAPER'>(data.config.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER');
-  const [period, setPeriod] = useState<'24H' | '7D' | '30D' | 'ALL' | 'TRADE'>('7D');
+  const [period, setPeriod] = useState<'24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE'>('7D');
+  const [layout, setLayout] = useState<CardLayout>('horizontal');
   const [selectedTradeId, setSelectedTradeId] = useState<string>('');
   const [cardStyle, setCardStyle] = useState<StyleId>('dark');
   const [issuedCard, setIssuedCard] = useState<VerifiedProfitCard | null>(null);
@@ -46,6 +78,7 @@ export function WeeklyCardPage({
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [sendingTg, setSendingTg] = useState(false);
   const [notice, setNotice] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -129,11 +162,11 @@ export function WeeklyCardPage({
       setNotice(
         res.card.isVerifiedReal
           ? isFa
-            ? `کارت سود واقعی تاییدشده با امضای سرور صادر شد (${res.card.id})`
+            ? `کارت سود واقعی تاییدشده دلارینو صادر شد (${res.card.id})`
             : `Verified Real Profit Card issued (${res.card.id})`
           : isFa
-            ? `کارت شبیه‌سازی آزمایشی صادر شد (${res.card.id})`
-            : `Simulation Card issued (${res.card.id})`
+            ? `کارت سود آزمایشی (دمو) صادر شد (${res.card.id})`
+            : `Demo Profit Card issued (${res.card.id})`
       );
       await loadArchive();
     } catch (err) {
@@ -143,213 +176,209 @@ export function WeeklyCardPage({
     }
   };
 
-  const downloadPng = async () => {
+  const downloadServerPng = async () => {
     if (!issuedCard) return;
     setExporting(true);
+    setErrorMsg('');
     try {
-      await document.fonts.ready;
-      const W = 1080;
-      const H = 1350;
-      const cv = document.createElement('canvas');
-      cv.width = W;
-      cv.height = H;
-      const ctx = cv.getContext('2d')!;
-
-      const cardTheme = THEMES.find((x) => x.id === (issuedCard.cardStyle || cardStyle)) ?? theme;
-      const g = ctx.createLinearGradient(0, 0, W, H);
-      g.addColorStop(0, cardTheme.from);
-      g.addColorStop(1, cardTheme.to);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-
-      const rg = ctx.createRadialGradient(W * 0.85, H * 0.1, 0, W * 0.85, H * 0.1, 600);
-      rg.addColorStop(0, cardTheme.accent + '44');
-      rg.addColorStop(1, 'transparent');
-      ctx.fillStyle = rg;
-      ctx.fillRect(0, 0, W, H);
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-      ctx.lineWidth = 1;
-      for (let x = 0; x < W; x += 60) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, H);
-        ctx.stroke();
-      }
-      for (let y = 0; y < H; y += 60) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(W, y);
-        ctx.stroke();
-      }
-
-      if (!issuedCard.isVerifiedReal) {
-        ctx.save();
-        ctx.translate(W / 2, H / 2);
-        ctx.rotate(-0.42);
-        ctx.textAlign = 'center';
-        ctx.font = '900 84px Manrope, sans-serif';
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.12)';
-        ctx.fillText('PAPER DEMO · SIMULATION', 0, 0);
-        ctx.restore();
-      }
-
-      ctx.strokeStyle = cardTheme.accent + '88';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.roundRect(30, 30, W - 60, H - 60, 36);
-      ctx.stroke();
-
-      try {
-        const logoImg = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const im = new Image();
-          im.crossOrigin = 'anonymous';
-          im.onload = () => resolve(im);
-          im.onerror = reject;
-          im.src = '/logo.png';
-        });
-        ctx.drawImage(logoImg, W - 180, 72, 100, 100);
-      } catch {
-        /* ignore */
-      }
-
-      ctx.textAlign = 'left';
-      ctx.fillStyle = cardTheme.accent;
-      ctx.font = '800 24px Manrope, sans-serif';
-      ctx.fillText(
-        issuedCard.isVerifiedReal
-          ? `DOLLARINO · VERIFIED LIVE PERFORMANCE (${issuedCard.exchangeProvider})`
-          : `DOLLARINO · PAPER DEMO SIMULATION`,
-        82,
-        118
-      );
-
-      // Verification pill
-      ctx.fillStyle = issuedCard.isVerifiedReal ? 'rgba(16, 217, 163, 0.18)' : 'rgba(245, 158, 11, 0.2)';
-      ctx.strokeStyle = issuedCard.isVerifiedReal ? '#10d9a3' : '#f59e0b';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(82, 148, 390, 44, 22);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = issuedCard.isVerifiedReal ? '#10d9a3' : '#fbbf24';
-      ctx.font = '800 18px Manrope, sans-serif';
-      ctx.fillText(
-        issuedCard.isVerifiedReal ? 'SERVER HMAC-SHA256 VERIFIED' : 'SIMULATION ONLY · NOT LIVE',
-        104,
-        177
-      );
-
-      ctx.fillStyle = '#f5f2e8';
-      ctx.font = "700 62px 'Fraunces', Georgia, serif";
-      ctx.fillText(issuedCard.displayName || username || 'Trader', 82, 278);
-
-      ctx.fillStyle = 'rgba(245,242,232,0.65)';
-      ctx.font = '600 24px Manrope, sans-serif';
-      ctx.fillText(
-        `Period: ${issuedCard.period} · ${issuedCard.symbol ? `${issuedCard.symbol} (${issuedCard.direction})` : issuedCard.strategyName}`,
-        82,
-        326
-      );
-
-      ctx.fillStyle = 'rgba(245,242,232,0.6)';
-      ctx.font = '600 28px Manrope, sans-serif';
-      ctx.fillText('Settled Net PnL / ROI', 82, 465);
-
-      ctx.fillStyle = issuedCard.netPnlUsd >= 0 ? '#10d9a3' : '#ff4d6d';
-      ctx.font = "700 144px 'Fraunces', Georgia, serif";
-      ctx.fillText(`${issuedCard.roiPct >= 0 ? '+' : ''}${issuedCard.roiPct.toFixed(2)}%`, 78, 615);
-
-      ctx.fillStyle = issuedCard.netPnlUsd >= 0 ? '#a7f3d0' : '#fecdd3';
-      ctx.font = '700 44px Manrope, sans-serif';
-      ctx.fillText(
-        `${issuedCard.netPnlUsd >= 0 ? '+' : '-'}$${Math.abs(issuedCard.netPnlUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`,
-        82,
-        686
-      );
-
-      [
-        { label: 'SETTLED TRADES', value: String(issuedCard.tradesCount) },
-        { label: 'WIN RATE', value: `${issuedCard.winRate.toFixed(1)}%` },
-        { label: 'PROFIT FACTOR', value: issuedCard.profitFactor.toFixed(2) },
-      ].forEach((s, i) => {
-        const x = 82 + i * 312;
-        const y = 780;
-        ctx.fillStyle = 'rgba(255,255,255,0.06)';
-        ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(x, y, 284, 195, 24);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#f5f2e8';
-        ctx.font = "700 56px 'Fraunces', Georgia, serif";
-        ctx.fillText(s.value, x + 28, y + 104);
-        ctx.fillStyle = 'rgba(245,242,232,0.6)';
-        ctx.font = '700 18px Manrope, sans-serif';
-        ctx.fillText(s.label, x + 28, y + 158);
+      const token = getStoredToken();
+      const url = `/api/trading/cards/${encodeURIComponent(issuedCard.id)}/image?layout=${layout}`;
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-
-      // QR verification block
-      if (qrDataUrl) {
-        const qrImg = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const im = new Image();
-          im.onload = () => resolve(im);
-          im.onerror = reject;
-          im.src = qrDataUrl;
-        });
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.roundRect(82, 1035, 190, 190, 20);
-        ctx.fill();
-        ctx.drawImage(qrImg, 94, 1047, 166, 166);
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('image/png')) {
+        throw new Error('Server PNG fallback');
       }
-
-      ctx.fillStyle = '#f5f2e8';
-      ctx.font = '800 24px Manrope, sans-serif';
-      ctx.fillText(`Card ID: ${issuedCard.id}`, 300, 1090);
-      ctx.fillStyle = 'rgba(245,242,232,0.7)';
-      ctx.font = '600 20px Manrope, sans-serif';
-      ctx.fillText(`HMAC-SHA256: ${(issuedCard.hmacSignature || issuedCard.signaturePrefix || '').slice(0, 24)}...`, 300, 1134);
-      ctx.fillText(`Issued: ${new Date(issuedCard.issuedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`, 300, 1172);
-      ctx.fillStyle = cardTheme.accent;
-      ctx.fillText(`Scan QR to verify at ${window.location.host}/verify-card/${issuedCard.id}`, 300, 1212);
-
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.download = `dollarino-verified-${issuedCard.id}.png`;
-      a.href = cv.toDataURL('image/png');
+      a.download = `dollarino-profit-card-${issuedCard.id}-${layout}.png`;
+      a.href = objUrl;
       a.click();
-      setNotice(isFa ? 'تصویر کارت سود با QR کد تایید دانلود شد' : 'Verified 1080×1350 PNG downloaded');
+      setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+      setNotice(
+        isFa
+          ? `تصویر کارت سود دلارینو (${layout === 'horizontal' ? 'افقی 16:9' : 'عمودی 3:4'}) دانلود شد`
+          : `Downloaded ${layout} Profit Card PNG`
+      );
+    } catch {
+      // Fallback high-res client Canvas render with watermark + fixed LTR signs
+      await downloadCanvasFallbackPng();
     } finally {
       setExporting(false);
     }
   };
+
+  const downloadCanvasFallbackPng = async () => {
+    if (!issuedCard) return;
+    await document.fonts.ready;
+    const isHoriz = layout === 'horizontal';
+    const W = isHoriz ? 1200 : 1080;
+    const H = isHoriz ? 675 : 1440;
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const ctx = cv.getContext('2d')!;
+
+    const cardTheme = THEMES.find((x) => x.id === (issuedCard.cardStyle || cardStyle)) ?? theme;
+    const g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, cardTheme.from);
+    g.addColorStop(1, cardTheme.to);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // Center faint Dollarino watermark logo
+    try {
+      const logoImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const im = new Image();
+        im.crossOrigin = 'anonymous';
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = '/logo.png';
+      });
+      ctx.save();
+      ctx.globalAlpha = 0.12;
+      const wmSize = isHoriz ? 340 : 420;
+      ctx.drawImage(logoImg, (W - wmSize) / 2, (H - wmSize) / 2, wmSize, wmSize);
+      ctx.restore();
+      ctx.drawImage(logoImg, W - 128, 44, 72, 72);
+    } catch {
+      /* ignore */
+    }
+
+    // Tilted Account Stamp
+    ctx.save();
+    ctx.translate(W * 0.62, H * 0.44);
+    ctx.rotate(-0.24);
+    ctx.textAlign = 'center';
+    ctx.font = '900 42px Manrope, sans-serif';
+    ctx.fillStyle = issuedCard.isVerifiedReal ? 'rgba(16, 217, 163, 0.22)' : 'rgba(245, 158, 11, 0.25)';
+    ctx.strokeStyle = issuedCard.isVerifiedReal ? 'rgba(16, 217, 163, 0.4)' : 'rgba(245, 158, 11, 0.45)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(-230, -38, 460, 68);
+    ctx.fillText(issuedCard.isVerifiedReal ? 'LIVE REAL VERIFIED' : 'DEMO / PAPER ACCOUNT', 0, 8);
+    ctx.restore();
+
+    ctx.strokeStyle = cardTheme.accent + '88';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(24, 24, W - 48, H - 48, 32);
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = cardTheme.accent;
+    ctx.font = '800 22px Manrope, sans-serif';
+    ctx.fillText(`DOLLARINO PROFIT CARD · ${issuedCard.period} (${issuedCard.exchangeProvider})`, 64, 86);
+
+    ctx.fillStyle = '#f5f2e8';
+    ctx.font = '800 46px Manrope, sans-serif';
+    ctx.fillText(issuedCard.displayName || username || 'Trader', 64, 150);
+
+    ctx.fillStyle = issuedCard.netPnlUsd >= 0 ? '#10d9a3' : '#ff4d6d';
+    ctx.font = '900 108px Manrope, sans-serif';
+    ctx.fillText(fmtPctSigned(issuedCard.roiPct), 64, isHoriz ? 305 : 420);
+
+    ctx.font = '800 38px Manrope, sans-serif';
+    ctx.fillText(`${fmtUsdSigned(issuedCard.netPnlUsd)} USDT`, 64, isHoriz ? 365 : 490);
+
+    const statsY = isHoriz ? 430 : 620;
+    const boxW = isHoriz ? 260 : 290;
+    [
+      { label: 'TRADES', val: String(issuedCard.tradesCount) },
+      { label: 'WIN RATE', val: `${issuedCard.winRate.toFixed(1)}%` },
+      { label: 'PROFIT FACTOR', val: issuedCard.profitFactor.toFixed(2) },
+    ].forEach((s, i) => {
+      const bx = 64 + i * (boxW + 24);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.beginPath();
+      ctx.roundRect(bx, statsY, boxW, 130, 20);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#f5f2e8';
+      ctx.font = '800 42px Manrope, sans-serif';
+      ctx.fillText(s.val, bx + 22, statsY + 68);
+      ctx.fillStyle = 'rgba(245,242,232,0.6)';
+      ctx.font = '700 15px Manrope, sans-serif';
+      ctx.fillText(s.label, bx + 22, statsY + 106);
+    });
+
+    if (qrDataUrl) {
+      const qrImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = qrDataUrl;
+      });
+      const qSize = 110;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.roundRect(W - 170, H - 170, qSize + 12, qSize + 12, 16);
+      ctx.fill();
+      ctx.drawImage(qrImg, W - 164, H - 164, qSize, qSize);
+    }
+
+    ctx.fillStyle = 'rgba(245,242,232,0.72)';
+    ctx.font = '700 18px Manrope, sans-serif';
+    ctx.fillText(`@Dollarino_official · @Dollarino_bot · ID: ${issuedCard.id}`, 64, H - 56);
+
+    const a = document.createElement('a');
+    a.download = `dollarino-profit-card-${issuedCard.id}-${layout}.png`;
+    a.href = cv.toDataURL('image/png');
+    a.click();
+    setNotice(isFa ? 'تصویر کارت سود با مهر اصالت دانلود شد' : 'Profit Card PNG downloaded');
+  };
+
+  const sendCardToTelegram = async () => {
+    if (!issuedCard) return;
+    setSendingTg(true);
+    setErrorMsg('');
+    try {
+      await apiFetch(`/api/trading/cards/${encodeURIComponent(issuedCard.id)}/send-telegram`, {
+        method: 'POST',
+        body: JSON.stringify({ layout }),
+      });
+      setNotice(
+        isFa
+          ? `تصویر ${layout === 'horizontal' ? 'افقی' : 'عمودی'} کارت سود مستقیم به تلگرام شما (@Dollarino_bot) ارسال شد ✅`
+          : `Profit Card PNG sent to your Telegram (@Dollarino_bot) ✅`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Telegram dispatch failed');
+    } finally {
+      setSendingTg(false);
+    }
+  };
+
+  const activeTheme = THEMES.find((t) => t.id === (issuedCard?.cardStyle || cardStyle)) ?? theme;
 
   return (
     <div className="space-y-8">
       <div className="text-center max-w-2xl mx-auto">
         <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center justify-center gap-2" style={{ color: 'var(--gold)' }}>
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>TAMPER-PROOF VERIFIED PROFIT CARDS</span>
+          <span>DOLLARINO VERIFIED PROFIT CARD</span>
         </p>
         <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-          {isFa ? 'کارت سود واقعی و غیرقابل‌جعل دلارینو' : 'Server-Signed Verified Profit Cards'}
+          {isFa ? 'کارت سود دلارینو' : 'Dollarino Profit Card'}
         </h2>
         <p className="text-xs sm:text-sm text-dim mt-2">
           {isFa
-            ? 'تمام اعداد مستقیماً از معاملات واقعی تسویه‌شده روی سرور محاسبه شده و با امضای رمزنگاری HMAC-SHA256 و QR کد استعلام عمومی قفل می‌شوند. هیچ عددی قابل ویرایش دستی نیست.'
-            : 'All numbers are computed strictly on the server from settled D1 trades and locked with an HMAC-SHA256 signature and scannable QR verification code.'}
+            ? 'تمام آمارها مستقیماً از دفتر کل سرور محاسبه شده و با امضای رمزنگاری HMAC-SHA256، لوگوی کم‌رنگ دلارینو و مهر حساب واقعی یا دمو صادر می‌شوند.'
+            : 'Tamper-proof Profit Cards computed on the server with HMAC-SHA256 verification, watermarked logo, and Real vs Demo seal.'}
         </p>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-10 items-start">
-        <div className="panel rounded-[26px] p-6 space-y-5">
+      <div className="grid lg:grid-cols-12 gap-8 items-start">
+        {/* Controls Column */}
+        <div className="lg:col-span-5 panel rounded-[26px] p-6 space-y-5">
           <div className="rounded-2xl border p-3.5 banner-cobalt-soft flex items-start gap-2.5 text-xs">
             <Lock className="w-4 h-4 text-brand shrink-0 mt-0.5" />
             <div className="text-sub leading-relaxed">
               {isFa
-                ? 'امکان وارد کردن سود یا درصد ساختگی وجود ندارد. برای صدور کارت سود واقعی، حداقل یک معامله بسته شده در حساب واقعی (Live) باید ثبت شده باشد.'
-                : 'Manual PnL editing is permanently disabled. Real Verified Cards require settled LIVE closed trades.'}
+                ? 'اعداد این کارت غیرقابل دستکاری هستند؛ حساب واقعی و حساب دمو با مهر مشخص و متمایز درج می‌شوند.'
+                : 'Stats are cryptographically signed and stamped clearly as LIVE VERIFIED or DEMO ACCOUNT.'}
             </div>
           </div>
 
@@ -367,11 +396,9 @@ export function WeeklyCardPage({
               >
                 <div className="flex items-center gap-1.5 text-xs font-black text-main">
                   <ShieldCheck className="w-4 h-4 text-jade" />
-                  <span>{isFa ? 'حساب واقعی (Live)' : 'Real Live Trading'}</span>
+                  <span>{isFa ? 'حساب واقعی (Live)' : 'Live Real Account'}</span>
                 </div>
-                <p className="text-[10px] text-dim mt-1">
-                  {isFa ? 'نشان تاییدشده رسمی بدون واترمارک شبیه‌ساز' : 'Official Verified Seal'}
-                </p>
+                <p className="text-[10px] text-dim mt-1">{isFa ? 'مهر تاییدشده LIVE VERIFIED' : 'Official Verified Stamp'}</p>
               </button>
               <button
                 type="button"
@@ -382,11 +409,9 @@ export function WeeklyCardPage({
               >
                 <div className="flex items-center gap-1.5 text-xs font-black text-main">
                   <AlertTriangle className="w-4 h-4 text-goldsoft" />
-                  <span>{isFa ? 'حساب شبیه‌ساز (Sim)' : 'Simulation Account'}</span>
+                  <span>{isFa ? 'حساب دمو (شبیه‌ساز)' : 'Demo / Paper Account'}</span>
                 </div>
-                <p className="text-[10px] text-dim mt-1">
-                  {isFa ? 'دارای برچسب شفاف SIMULATION' : 'Marked as Simulation Only'}
-                </p>
+                <p className="text-[10px] text-dim mt-1">{isFa ? 'مهر شفاف DEMO / PAPER' : 'Demo Stamp Included'}</p>
               </button>
             </div>
           </div>
@@ -395,17 +420,24 @@ export function WeeklyCardPage({
             <label className="text-[10px] font-black text-dim uppercase block mb-2">
               {isFa ? '۲. بازه زمانی محاسبه' : '2. SETTLED PERIOD'}
             </label>
-            <div className="grid grid-cols-5 gap-1.5">
-              {(['24H', '7D', '30D', 'ALL', 'TRADE'] as const).map((p) => (
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              {([
+                ['24H', isFa ? '۲۴ ساعت' : '24H'],
+                ['7D', isFa ? 'هفتگی' : '7D'],
+                ['30D', isFa ? 'ماهانه' : '30D'],
+                ['1Y', isFa ? 'سالانه' : '1Y'],
+                ['ALL', isFa ? 'کل دوره' : 'ALL'],
+                ['TRADE', isFa ? 'تک‌معامله' : '1 Trade'],
+              ] as const).map(([p, lbl]) => (
                 <button
                   key={p}
                   type="button"
                   onClick={() => setPeriod(p)}
-                  className={`py-2 rounded-xl text-xs font-extrabold transition ${
+                  className={`py-2 rounded-xl text-[11px] font-extrabold transition ${
                     period === p ? 'btn-gold' : 'surface-soft text-sub hover:text-main'
                   }`}
                 >
-                  {p === 'TRADE' ? (isFa ? 'تک‌معامله' : '1 Trade') : p}
+                  {lbl}
                 </button>
               ))}
             </div>
@@ -416,39 +448,64 @@ export function WeeklyCardPage({
               <label className="text-[10px] font-black text-dim uppercase block mb-2">
                 {isFa ? 'انتخاب معامله تسویه‌شده' : 'SELECT SETTLED TRADE'}
               </label>
-              <select
-                value={selectedTradeId}
-                onChange={(e) => setSelectedTradeId(e.target.value)}
-                className="field text-xs"
-              >
+              <select value={selectedTradeId} onChange={(e) => setSelectedTradeId(e.target.value)} className="field text-xs">
                 <option value="">{isFa ? 'یک معامله بسته شده انتخاب کنید...' : 'Select closed trade...'}</option>
                 {closedList
                   .filter((t) => ((t as { mode?: string }).mode || 'PAPER') === mode)
                   .map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.symbol} ({t.direction}) · {Number(t.realized_pnl) >= 0 ? '+' : ''}${Number(t.realized_pnl).toFixed(2)}
+                      {t.symbol} ({t.direction}) · {fmtUsdSigned(Number(t.realized_pnl))}
                     </option>
                   ))}
               </select>
             </div>
           )}
 
-          <div>
-            <label className="text-[10px] font-black text-dim uppercase block mb-2">{isFa ? '۳. تم کارت' : '3. CARD STYLE'}</label>
-            <div className="flex items-center gap-2.5 flex-wrap">
-              {THEMES.map((th) => (
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-black text-dim uppercase block mb-2">
+                {isFa ? '۳. قالب خروجی کارت' : '3. CARD LAYOUT'}
+              </label>
+              <div className="grid grid-cols-2 gap-2">
                 <button
-                  key={th.id}
                   type="button"
-                  onClick={() => setCardStyle(th.id)}
-                  title={isFa ? th.labelFa : th.labelEn}
-                  className={`h-10 w-10 rounded-full transition ${
-                    cardStyle === th.id ? 'ring-2 ring-[var(--gold)] ring-offset-2 ring-offset-[var(--bg)] scale-110' : 'opacity-75 hover:opacity-100'
+                  onClick={() => setLayout('horizontal')}
+                  className={`py-2 px-2.5 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 border ${
+                    layout === 'horizontal' ? 'border-[#1652f0] bg-[#1652f0]/15 text-main' : 'surface-soft text-dim'
                   }`}
-                  style={{ background: `linear-gradient(135deg,${th.from},${th.to})`, border: `1px solid ${th.accent}77` }}
-                />
-              ))}
-              <span className="text-xs text-dim ms-1">{isFa ? theme.labelFa : theme.labelEn}</span>
+                >
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'افقی (۱۶:۹)' : 'Horizontal'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLayout('vertical')}
+                  className={`py-2 px-2.5 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 border ${
+                    layout === 'vertical' ? 'border-[#1652f0] bg-[#1652f0]/15 text-main' : 'surface-soft text-dim'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'عمودی (استوری)' : 'Vertical'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-black text-dim uppercase block mb-2">{isFa ? '۴. تم رنگی' : '4. THEME'}</label>
+              <div className="flex items-center gap-2.5">
+                {THEMES.map((th) => (
+                  <button
+                    key={th.id}
+                    type="button"
+                    onClick={() => setCardStyle(th.id)}
+                    title={isFa ? th.labelFa : th.labelEn}
+                    className={`h-9 w-9 rounded-full transition ${
+                      cardStyle === th.id ? 'ring-2 ring-[var(--gold)] ring-offset-2 ring-offset-[var(--bg)] scale-110' : 'opacity-75 hover:opacity-100'
+                    }`}
+                    style={{ background: `linear-gradient(135deg,${th.from},${th.to})`, border: `1px solid ${th.accent}77` }}
+                  />
+                ))}
+              </div>
             </div>
           </div>
 
@@ -465,104 +522,161 @@ export function WeeklyCardPage({
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="space-y-2.5">
             <button
               type="button"
               onClick={() => void handleIssueCard()}
               disabled={busy}
-              className="btn-gold flex-1 py-3.5 rounded-2xl text-xs sm:text-sm inline-flex items-center justify-center gap-2"
+              className="btn-gold w-full py-3.5 rounded-2xl text-xs sm:text-sm inline-flex items-center justify-center gap-2"
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>{busy ? '...' : isFa ? 'صدور کارت تاییدشده از سرور' : 'Issue Server-Signed Card'}</span>
+              <span>{busy ? '...' : isFa ? 'صدور کارت سود تاییدشده دلارینو' : 'Issue Verified Profit Card'}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => void downloadPng()}
-              disabled={!issuedCard || exporting}
-              className="btn-ghost px-5 py-3.5 rounded-2xl text-xs font-bold inline-flex items-center justify-center gap-2 disabled:opacity-40"
-            >
-              <Download className="w-4 h-4" />
-              <span>{exporting ? '...' : isFa ? 'دانلود PNG' : 'Download PNG'}</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => void downloadServerPng()}
+                disabled={!issuedCard || exporting}
+                className="btn-ghost py-3 rounded-2xl text-xs font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-40"
+              >
+                <Download className="w-4 h-4" />
+                <span>{exporting ? '...' : isFa ? 'دانلود PNG اصلی' : 'Download PNG'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void sendCardToTelegram()}
+                disabled={!issuedCard || sendingTg}
+                className="btn-cobalt py-3 rounded-2xl text-xs font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-40"
+              >
+                <Send className="w-4 h-4" />
+                <span>{sendingTg ? '...' : isFa ? 'ارسال به تلگرام من' : 'Send to Telegram'}</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Live Card Preview */}
-        <div className="flex flex-col items-center gap-4">
+        {/* Live Card Preview (Horizontal 16:9 or Vertical 3:4) */}
+        <div className="lg:col-span-7 flex flex-col items-center gap-4">
           {issuedCard ? (
             <>
               <div
-                className="w-[320px] sm:w-[360px] aspect-[4/5] rounded-[26px] overflow-hidden border p-7 flex flex-col shadow-2xl relative"
+                className={`w-full rounded-[28px] overflow-hidden border p-6 sm:p-7 flex flex-col justify-between shadow-2xl relative transition-all ${
+                  layout === 'horizontal' ? 'max-w-[660px] aspect-[16/9]' : 'max-w-[390px] aspect-[3/4]'
+                }`}
                 style={{
-                  background: `linear-gradient(150deg,${(THEMES.find((t) => t.id === (issuedCard.cardStyle || cardStyle)) ?? theme).from},${(THEMES.find((t) => t.id === (issuedCard.cardStyle || cardStyle)) ?? theme).to})`,
-                  borderColor: `${theme.accent}66`,
-                  color: theme.text,
+                  background: `linear-gradient(145deg,${activeTheme.from},${activeTheme.to})`,
+                  borderColor: `${activeTheme.accent}66`,
+                  color: activeTheme.text,
                 }}
               >
-                {!issuedCard.isVerifiedReal && (
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center -rotate-24">
-                    <span className="text-amber-300/20 font-black text-2xl tracking-[0.2em] border-2 border-amber-300/25 px-4 py-1.5 rounded-xl">
-                      PAPER DEMO · SIMULATION
-                    </span>
+                {/* Faint Center Dollarino Logo Watermark */}
+                <img
+                  src="/logo.png"
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 sm:w-64 sm:h-64 object-contain opacity-[0.11]"
+                />
+
+                {/* Tilted Real / Demo Account Stamp */}
+                <div className="pointer-events-none select-none absolute inset-0 flex items-center justify-center -rotate-12">
+                  <div
+                    className={`px-5 py-2 rounded-2xl border-2 font-black tracking-[0.16em] text-sm sm:text-base ${
+                      issuedCard.isVerifiedReal
+                        ? 'border-emerald-400/35 text-emerald-300/25 bg-emerald-500/5'
+                        : 'border-amber-400/40 text-amber-300/30 bg-amber-500/5'
+                    }`}
+                  >
+                    {issuedCard.isVerifiedReal
+                      ? isFa
+                        ? 'حساب واقعی · LIVE VERIFIED'
+                        : 'LIVE VERIFIED REAL'
+                      : isFa
+                        ? 'حساب دمو · DEMO / PAPER'
+                        : 'DEMO / PAPER SIMULATION'}
                   </div>
-                )}
-                <div className="relative flex items-center justify-between">
+                </div>
+
+                {/* Top Header */}
+                <div className="relative flex items-start justify-between gap-3">
                   <div>
-                    <span className="text-[9px] font-black tracking-[0.18em] block" style={{ color: theme.accent }}>
-                      {issuedCard.isVerifiedReal ? `VERIFIED LIVE · ${issuedCard.exchangeProvider}` : `DEMO SIMULATION · ${issuedCard.period}`}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-black tracking-[0.14em]" style={{ color: activeTheme.accent }}>
+                        {isFa ? 'کارت سود دلارینو' : 'DOLLARINO PROFIT CARD'} · {periodTitle(issuedCard.period, isFa)}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                          issuedCard.isVerifiedReal
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
+                            : 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                        }`}
+                      >
+                        {issuedCard.isVerifiedReal ? <ShieldCheck className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                        <span>{issuedCard.isVerifiedReal ? (isFa ? 'حساب واقعی' : 'LIVE') : isFa ? 'حساب دمو' : 'DEMO'}</span>
+                      </span>
+                    </div>
+                    <p className="text-xs opacity-75 font-semibold mt-1">
+                      {issuedCard.displayName || username} · {issuedCard.exchangeProvider}
+                      {issuedCard.symbol ? ` · ${issuedCard.symbol} (${issuedCard.direction})` : ''}
+                    </p>
+                  </div>
+                  <DollarinoBrandMark size={40} glow />
+                </div>
+
+                {/* Center Profit & ROI Numbers (Strict LTR sign placement) */}
+                <div className="relative my-auto py-3">
+                  <p className="text-[11px] opacity-70 font-bold mb-1">
+                    {isFa ? 'بازده واقعی و سود/زیان خالص تسویه‌شده' : 'Settled ROI & Net PnL'}
+                  </p>
+                  <div className={`flex flex-wrap items-baseline gap-x-4 gap-y-1 ${layout === 'vertical' ? 'flex-col' : ''}`}>
+                    <span
+                      dir="ltr"
+                      className={`font-display font-bold tabular leading-none ${
+                        layout === 'horizontal' ? 'text-4xl sm:text-5xl' : 'text-5xl'
+                      } ${issuedCard.netPnlUsd >= 0 ? 'text-jade' : 'text-loss'}`}
+                    >
+                      {fmtPctSigned(issuedCard.roiPct)}
                     </span>
                     <span
-                      className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[9px] font-black ${
-                        issuedCard.isVerifiedReal
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
-                          : 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                      dir="ltr"
+                      className={`text-base sm:text-lg font-mono-num font-black ${
+                        issuedCard.netPnlUsd >= 0 ? 'text-emerald-300' : 'text-rose-300'
                       }`}
                     >
-                      {issuedCard.isVerifiedReal ? <ShieldCheck className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                      <span>{issuedCard.isVerifiedReal ? 'HMAC VERIFIED' : 'NOT REAL PROFIT'}</span>
+                      {fmtUsdSigned(issuedCard.netPnlUsd)} USDT
                     </span>
                   </div>
-                  <DollarinoBrandMark size={38} glow />
                 </div>
 
-                <div className="relative mt-5">
-                  <p className="text-xs opacity-70 font-semibold">{issuedCard.displayName || username}</p>
-                  <p className="font-display font-bold text-xl">
-                    {issuedCard.symbol ? `${issuedCard.symbol} · ${issuedCard.direction}` : `Performance (${issuedCard.period})`}
-                  </p>
-                </div>
-
-                <div className="relative mt-auto">
-                  <p className="text-[11px] opacity-65 font-semibold mb-0.5">{isFa ? 'بازده واقعی تسویه‌شده' : 'Settled ROI / Net PnL'}</p>
-                  <p dir="ltr" className={`font-display font-bold text-4xl tabular ${issuedCard.netPnlUsd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                    {issuedCard.roiPct >= 0 ? '+' : ''}{issuedCard.roiPct.toFixed(2)}%
-                  </p>
-                  <p dir="ltr" className={`text-sm font-mono-num font-bold mt-0.5 ${issuedCard.netPnlUsd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                    {issuedCard.netPnlUsd >= 0 ? '+' : '-'}${Math.abs(issuedCard.netPnlUsd).toFixed(2)} USDT
-                  </p>
-
-                  <div className="grid grid-cols-3 gap-2 mt-4">
+                {/* Bottom Metrics + Verification QR */}
+                <div className="relative space-y-3">
+                  <div className="grid grid-cols-3 gap-2.5">
                     {[
-                      { icon: Layers, label: isFa ? 'معاملات' : 'TRADES', val: issuedCard.tradesCount },
-                      { icon: Target, label: isFa ? 'وین‌ریت' : 'WIN RATE', val: `${issuedCard.winRate.toFixed(1)}%` },
-                      { icon: TrendingUp, label: 'PF', val: issuedCard.profitFactor.toFixed(2) },
+                      { icon: Layers, label: isFa ? 'تعداد معاملات' : 'TRADES', val: String(issuedCard.tradesCount) },
+                      { icon: Target, label: isFa ? 'نرخ برد' : 'WIN RATE', val: `${issuedCard.winRate.toFixed(1)}%` },
+                      { icon: TrendingUp, label: 'PROFIT FACTOR', val: issuedCard.profitFactor.toFixed(2) },
                     ].map((s) => {
                       const Icon = s.icon;
                       return (
                         <div key={s.label} className="rounded-2xl p-2.5 border bg-white/5 border-white/15">
-                          <Icon className="w-3.5 h-3.5 mb-1 opacity-70" />
-                          <p dir="ltr" className="font-display font-bold text-sm tabular">{s.val}</p>
-                          <p className="text-[8px] opacity-60 font-bold mt-0.5">{s.label}</p>
+                          <div className="flex items-center justify-between opacity-75">
+                            <span className="text-[9px] font-bold">{s.label}</span>
+                            <Icon className="w-3 h-3" />
+                          </div>
+                          <p dir="ltr" className="font-display font-bold text-sm sm:text-base tabular mt-1">
+                            {s.val}
+                          </p>
                         </div>
                       );
                     })}
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-white/15 flex items-center justify-between gap-2">
+                  <div className="pt-2.5 border-t border-white/15 flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <p dir="ltr" className="text-[10px] font-mono-num font-bold truncate">{issuedCard.id}</p>
+                      <p dir="ltr" className="text-[10px] font-mono-num font-bold truncate">
+                        {issuedCard.id} · @Dollarino_official · @Dollarino_bot
+                      </p>
                       <p dir="ltr" className="text-[9px] font-mono-num opacity-65 truncate">
-                        SIG: {(issuedCard.hmacSignature || issuedCard.signaturePrefix || '').slice(0, 14)}...
+                        HMAC-SHA256: {(issuedCard.hmacSignature || issuedCard.signaturePrefix || '').slice(0, 16)}...
                       </p>
                     </div>
                     {qrDataUrl && (
@@ -572,7 +686,7 @@ export function WeeklyCardPage({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
                 <a
                   href={`/verify-card/${issuedCard.id}`}
                   target="_blank"
@@ -596,15 +710,15 @@ export function WeeklyCardPage({
               </div>
             </>
           ) : (
-            <div className="w-[320px] sm:w-[360px] aspect-[4/5] rounded-[26px] border border-dashed border-white/20 p-7 flex flex-col items-center justify-center text-center gap-3 surface-soft">
+            <div className="w-full max-w-[520px] aspect-[16/10] rounded-[26px] border border-dashed border-white/20 p-7 flex flex-col items-center justify-center text-center gap-3 surface-soft">
               <QrCode className="w-10 h-10 text-dim" />
               <p className="text-sm font-black text-main">
-                {isFa ? 'هنوز کارتی صادر نشده است' : 'No Verified Card Issued Yet'}
+                {isFa ? 'هنوز کارت سودی صادر نشده است' : 'No Profit Card Issued Yet'}
               </p>
               <p className="text-xs text-dim leading-relaxed">
                 {isFa
-                  ? 'حساب (واقعی یا شبیه‌ساز) و بازه زمانی را انتخاب کرده و روی «صدور کارت تاییدشده از سرور» کلیک کنید.'
-                  : 'Select account mode and period on the left, then click Issue Server-Signed Card.'}
+                  ? 'حساب (واقعی یا دمو) و بازه زمانی (۲۴ساعته، هفتگی، ماهانه، سالانه یا کل دوره) را انتخاب کرده و روی دکمه صدور کلیک کنید.'
+                  : 'Choose account mode and period, then click Issue Verified Profit Card.'}
               </p>
             </div>
           )}
@@ -615,7 +729,7 @@ export function WeeklyCardPage({
         <div className="panel rounded-3xl p-5 space-y-3">
           <h3 className="text-sm font-black text-main flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-jade" />
-            <span>{isFa ? 'آرشیو کارت‌های صادرشده و امضا‌شده شما' : 'Your Issued Verified Cards'}</span>
+            <span>{isFa ? 'آرشیو کارت‌های سود صادرشده شما' : 'Your Issued Profit Cards'}</span>
           </h3>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {archive.map((c) => (
@@ -630,15 +744,15 @@ export function WeeklyCardPage({
                 <div className="flex items-center justify-between gap-2">
                   <span dir="ltr" className="text-xs font-mono-num font-black text-main">{c.id}</span>
                   <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${c.isVerifiedReal ? 'badge-signal' : 'badge-warn'}`}>
-                    {c.isVerifiedReal ? 'LIVE VERIFIED' : 'PAPER DEMO'}
+                    {c.isVerifiedReal ? (isFa ? 'حساب واقعی' : 'LIVE') : isFa ? 'حساب دمو' : 'DEMO'} · {c.period}
                   </span>
                 </div>
                 <div className="mt-2 flex items-baseline justify-between">
                   <span dir="ltr" className={`font-display font-bold text-lg ${c.netPnlUsd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                    {c.roiPct >= 0 ? '+' : ''}{c.roiPct.toFixed(2)}%
+                    {fmtPctSigned(c.roiPct)}
                   </span>
-                  <span className="text-[11px] text-dim font-mono-num">
-                    {c.tradesCount} trades · {c.winRate.toFixed(0)}% WR
+                  <span dir="ltr" className="text-[11px] text-dim font-mono-num">
+                    {fmtUsdSigned(c.netPnlUsd)} · {c.winRate.toFixed(0)}% WR
                   </span>
                 </div>
               </button>

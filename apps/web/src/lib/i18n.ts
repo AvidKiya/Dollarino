@@ -3,11 +3,11 @@ export type Lang = 'fa' | 'en';
 export const dict = {
   fa: {
     brand: 'دلارینو',
-    brandSub: 'هوش مصنوعی دلارینو · هوش مصنوعی من · کپی ترید تاییدشده',
+    brandSub: 'هوش مصنوعی دلارینو · هوش مصنوعی من · استراتژی شکار · کپی ترید تاییدشده',
     freeBadge: 'پلتفرم اشتراکی ترید هوشمند',
     nav: {
       dashboard: 'خانه و شروع ترید',
-      flow: 'استراتژی منتخب دلارینو',
+      flow: 'استراتژی شکار (دُرنا V1)',
       copytrade: 'کپی ترید دلارینو',
       subscription: 'اشتراک و تعرفه‌ها',
       risk: 'تنظیمات ریسک و اهرم',
@@ -23,7 +23,7 @@ export const dict = {
     startBot: 'شروع خودکار ربات',
     stopBot: 'توقف ربات',
     addBalance: 'مدیریت موجودی',
-    showTradingCard: 'کارت نتایج هفتگی',
+    showTradingCard: 'کارت سود تاییدشده',
     logout: 'خروج از حساب',
     paperMode: 'حساب شبیه‌ساز',
     liveMode: 'حساب واقعی (صرافی)',
@@ -45,11 +45,11 @@ export const dict = {
   },
   en: {
     brand: 'Dollarino',
-    brandSub: 'Dollarino AI · My AI · Verified Copy-Trade',
+    brandSub: 'Dollarino AI · My AI · Dorna Hunting Engine · Verified Copy-Trade',
     freeBadge: 'Subscription AI Trading Platform',
     nav: {
       dashboard: 'Home & Auto-Trade',
-      flow: 'Dollarino Select (Dorna V1)',
+      flow: 'Hunting Engine (Dorna V1)',
       copytrade: 'Dollarino Copy-Trade',
       subscription: 'Subscription & Plans',
       risk: 'Risk & Leverage',
@@ -65,7 +65,7 @@ export const dict = {
     startBot: 'Start Auto-Trade',
     stopBot: 'Stop Bot',
     addBalance: 'Balance Manager',
-    showTradingCard: 'Weekly Results Card',
+    showTradingCard: 'Verified Profit Card',
     logout: 'Sign Out',
     paperMode: 'Simulated Mode',
     liveMode: 'Live Exchange',

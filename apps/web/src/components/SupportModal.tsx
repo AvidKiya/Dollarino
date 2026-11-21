@@ -44,35 +44,45 @@ export function SupportModal({
   const isFa = lang === 'fa';
   const [tickets, setTickets] = useState<SupportTicketRow[]>([]);
   const [messages, setMessages] = useState<SupportMessageRow[]>([]);
-  const [telegramSupport, setTelegramSupport] = useState('@Dollarino_admin');
+  const [telegramSupport, setTelegramSupport] = useState('@Dollarino_bot');
+  const [antiScamWarning, setAntiScamWarning] = useState(
+    '⚠️ هشدار امنیتی مهم: دلارینو هیچ‌گونه اکانت پیوی شخصی برای پشتیبانی یا دریافت وجه ندارد. تمام ارتباطات رسمی فقط از طریق پشتیبانی آنلاین همین سایت و ربات رسمی @Dollarino_bot انجام می‌شود.'
+  );
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const loadTickets = async () => {
+  const loadTickets = async (quiet = false) => {
     if (!authenticated) return;
-    setBusy(true);
+    if (!quiet) setBusy(true);
     try {
       const res = await apiFetch<{
         tickets: SupportTicketRow[];
         messages: SupportMessageRow[];
         telegramSupport: string;
+        antiScamWarning?: string;
       }>('/api/support/tickets');
       setTickets(res.tickets);
       setMessages(res.messages);
-      if (res.telegramSupport) setTelegramSupport(res.telegramSupport);
+      if (res.telegramSupport) {
+        setTelegramSupport(/Dollarino_admin/i.test(res.telegramSupport) ? '@Dollarino_bot' : res.telegramSupport);
+      }
+      if (res.antiScamWarning) setAntiScamWarning(res.antiScamWarning);
     } catch {
       // ignore initial error
     } finally {
-      setBusy(false);
+      if (!quiet) setBusy(false);
     }
   };
 
   useEffect(() => {
-    if (open && authenticated) {
-      void loadTickets();
-    }
+    if (!open || !authenticated) return;
+    void loadTickets();
+    const timer = window.setInterval(() => {
+      void loadTickets(true);
+    }, 5000);
+    return () => window.clearInterval(timer);
   }, [open, authenticated]);
 
   useEffect(() => {
@@ -104,7 +114,7 @@ export function SupportModal({
     }
   };
 
-  const tgHandleClean = telegramSupport.replace(/^@/, '').trim() || 'Dollarino_admin';
+  const tgHandleClean = telegramSupport.replace(/^@/, '').trim() || 'Dollarino_bot';
   const activeTicket = tickets[0];
 
   return (
@@ -157,6 +167,14 @@ export function SupportModal({
         </div>
 
         <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3">
+          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-main">
+            <strong className="text-amber-400 block mb-0.5">{isFa ? 'هشدار مهم امنیتی:' : 'Official Security Notice:'}</strong>
+            <span>
+              {isFa
+                ? antiScamWarning
+                : 'Dollarino has NO personal/private Telegram DM admin account for payments or support. Only use Online Support here and our official bot @Dollarino_bot.'}
+            </span>
+          </div>
           {!authenticated ? (
             <div className="surface-soft rounded-2xl p-5 text-center space-y-3">
               <MessageCircle className="w-10 h-10 mx-auto text-brand" />

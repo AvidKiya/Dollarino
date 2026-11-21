@@ -7,6 +7,7 @@ import { reconcileOpenPositionsForUser } from './engine/executor.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
 import { adminRoutes } from './routes/admin.js';
+import { buildProfitCardSvg, renderProfitCardPng } from './cards/renderer.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
 import { connectionRoutes } from './routes/connections.js';
 import { copyTradeRoutes } from './routes/copy-trade.js';
@@ -32,7 +33,7 @@ app.get('/', (c) => {
   }
   return c.json({
     ok: true,
-    service: 'Dollarino API Worker v8.0',
+    service: 'Dollarino API Worker v8.5',
     health: '/api/health',
     note: 'Open the Website preview (port 5173) or unified Worker URL to use the full Dollarino UI.',
   });
@@ -154,6 +155,72 @@ app.get('/api/public/verify-card/:cardId', async (c) => {
       direction: parsedPayload.direction,
       signaturePrefix: row.hmac_signature.slice(0, 16),
       issuedAt: row.issued_at,
+    },
+  });
+});
+
+app.get('/api/public/card-image/:cardId', async (c) => {
+  const rawId = c.req.param('cardId').replace(/\.png$/i, '');
+  const layout = c.req.query('layout') === 'vertical' ? 'vertical' : 'horizontal';
+  const row = await c.env.DB.prepare(
+    `SELECT vc.*, u.username, u.telegram_username
+     FROM verified_profit_cards vc LEFT JOIN users u ON vc.user_id = u.id
+     WHERE vc.id = ?`
+  ).bind(rawId).first<{
+    id: string;
+    user_id: string;
+    mode: 'LIVE' | 'PAPER';
+    period: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
+    trades_count: number;
+    win_rate: number;
+    net_pnl_usd: number;
+    roi_pct: number;
+    profit_factor: number;
+    exchange_provider: string;
+    strategy_name: string;
+    payload_json: string;
+    issued_at: string;
+    username: string | null;
+    telegram_username: string | null;
+  }>();
+  if (!row) return c.json({ error: 'Card not found' }, 404);
+
+  let parsedPayload: { symbol?: string; direction?: string } = {};
+  try {
+    parsedPayload = JSON.parse(row.payload_json || '{}');
+  } catch {
+    parsedPayload = {};
+  }
+
+  const renderInput = {
+    cardId: row.id,
+    displayName: row.username || (row.telegram_username ? `@${row.telegram_username}` : 'Dollarino Trader'),
+    mode: row.mode,
+    period: row.period,
+    netPnlUsd: Number(row.net_pnl_usd || 0),
+    roiPct: Number(row.roi_pct || 0),
+    tradesCount: Number(row.trades_count || 0),
+    winRate: Number(row.win_rate || 0),
+    profitFactor: Number(row.profit_factor || 0),
+    exchangeProvider: row.exchange_provider,
+    strategyName: row.strategy_name,
+    issuedAt: row.issued_at,
+    layout: layout as 'horizontal' | 'vertical',
+  };
+  const png = await renderProfitCardPng(renderInput);
+
+  if (png) {
+    return new Response(new Uint8Array(png), {
+      headers: {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=3600',
+      },
+    });
+  }
+  return new Response(buildProfitCardSvg(renderInput), {
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
     },
   });
 });

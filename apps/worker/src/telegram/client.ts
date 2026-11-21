@@ -7,7 +7,7 @@ export type InlineKeyboardButton = {
   style?: 'primary' | 'success' | 'danger';
 };
 
-function stripButtonStyles(markup: unknown): unknown {
+export function stripButtonStyles(markup: unknown): unknown {
   if (!markup || typeof markup !== 'object') return markup;
   const obj = markup as Record<string, unknown>;
   if (!Array.isArray(obj.inline_keyboard)) return markup;
@@ -59,6 +59,57 @@ export class TelegramBotClient {
     return this.call<{ id: number; username: string; first_name: string }>('getMe', {});
   }
 
+  getChat(chatId: string | number) {
+    return this.call<{ id: number; title?: string; username?: string; type: string }>('getChat', {
+      chat_id: chatId,
+    });
+  }
+
+  getChatMember(chatId: string | number, userId: number) {
+    return this.call<{
+      status: 'creator' | 'administrator' | 'member' | 'restricted' | 'left' | 'kicked';
+      can_post_messages?: boolean;
+      can_edit_messages?: boolean;
+    }>('getChatMember', {
+      chat_id: chatId,
+      user_id: userId,
+    });
+  }
+
+  async checkChannelAdminReadiness(channelHandle: string): Promise<{
+    ok: boolean;
+    botUsername?: string;
+    channelTitle?: string;
+    status?: string;
+    canPostMessages?: boolean;
+    error?: string;
+  }> {
+    try {
+      const me = await this.getMe();
+      const chat = await this.getChat(channelHandle);
+      const member = await this.getChatMember(channelHandle, me.id);
+      const isAdmin = member.status === 'creator' || member.status === 'administrator';
+      const canPost = member.status === 'creator' || member.can_post_messages !== false;
+      return {
+        ok: isAdmin && canPost,
+        botUsername: me.username,
+        channelTitle: chat.title || channelHandle,
+        status: member.status,
+        canPostMessages: canPost,
+        error: isAdmin
+          ? canPost
+            ? undefined
+            : 'ربات ادمین کانال هست ولی دسترسی ارسال پیام (Post Messages) ندارد.'
+          : `ربات @${me.username} هنوز در کانال ${channelHandle} ادمین نشده است (وضعیت: ${member.status}).`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   setWebhook(url: string, secretToken?: string) {
     return this.call('setWebhook', {
       url,
@@ -106,12 +157,14 @@ export class TelegramBotClient {
       replyKeyboard?: ReplyKeyboardButton[][];
       inlineKeyboard?: InlineKeyboardButton[][];
       removeKeyboard?: boolean;
+      replyToMessageId?: number;
     }
   ) {
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text,
       reply_markup: this.buildMarkup(options),
+      reply_to_message_id: options?.replyToMessageId,
       disable_web_page_preview: true,
     });
   }
@@ -123,6 +176,7 @@ export class TelegramBotClient {
     options?: {
       replyKeyboard?: ReplyKeyboardButton[][];
       inlineKeyboard?: InlineKeyboardButton[][];
+      replyToMessageId?: number;
     }
   ) {
     return this.call<{ message_id: number }>('sendPhoto', {
@@ -130,7 +184,53 @@ export class TelegramBotClient {
       photo: photoUrl,
       caption,
       reply_markup: this.buildMarkup(options),
+      reply_to_message_id: options?.replyToMessageId,
     });
+  }
+
+  async sendPhotoBuffer(
+    chatId: string | number,
+    pngBytes: Uint8Array,
+    filename: string,
+    caption?: string,
+    options?: {
+      replyKeyboard?: ReplyKeyboardButton[][];
+      inlineKeyboard?: InlineKeyboardButton[][];
+      replyToMessageId?: number;
+    }
+  ): Promise<{ message_id: number }> {
+    const sendAttempt = async (withStyles: boolean) => {
+      const fd = new FormData();
+      fd.append('chat_id', String(chatId));
+      if (caption) fd.append('caption', caption.slice(0, 1020));
+      if (options?.replyToMessageId) fd.append('reply_to_message_id', String(options.replyToMessageId));
+      const markup = this.buildMarkup(options);
+      if (markup) {
+        fd.append('reply_markup', JSON.stringify(withStyles ? markup : stripButtonStyles(markup)));
+      }
+      fd.append('photo', new Blob([pngBytes as unknown as BlobPart], { type: 'image/png' }), filename);
+
+      const res = await fetch(`https://api.telegram.org/bot${this.token}/sendPhoto`, {
+        method: 'POST',
+        body: fd,
+        signal: AbortSignal.timeout(18_000),
+      });
+      const json = await res.json() as { ok: boolean; result?: { message_id: number }; description?: string };
+      return { res, json };
+    };
+
+    const first = await sendAttempt(true);
+    if (!first.json.ok && options?.inlineKeyboard && /style|button|markup|field/i.test(first.json.description ?? '')) {
+      const second = await sendAttempt(false);
+      if (!second.json.ok) {
+        throw new Error(`Telegram sendPhotoBuffer failed: ${second.json.description ?? second.res.status}`);
+      }
+      return second.json.result!;
+    }
+    if (!first.json.ok) {
+      throw new Error(`Telegram sendPhotoBuffer failed: ${first.json.description ?? first.res.status}`);
+    }
+    return first.json.result!;
   }
 
   sendVideo(
