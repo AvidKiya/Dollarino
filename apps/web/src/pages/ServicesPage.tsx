@@ -1016,9 +1016,9 @@ export function ServicesPage({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (v9.7 ZIP)'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0]">v9.7</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0]">v9.7 گرافیکی</span>
               </div>
-              <span className="text-[11px] text-dim block">{isFa ? 'کنترل ربات، بازار زنده، رادار DEX و لینک رفرال' : 'Quick bot control, live markets & DEX radar'}</span>
+              <span className="text-[11px] text-dim block">{isFa ? 'طراحی Liquid Glass هم‌شکل سایت · کنترل ربات، بازارها و رادار DEX' : 'Liquid Glass UI matching web app · Bot, Markets & DEX radar'}</span>
             </div>
             <ExternalLink className="w-4 h-4 text-dim shrink-0" />
           </a>

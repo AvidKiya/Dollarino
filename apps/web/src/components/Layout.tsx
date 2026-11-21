@@ -624,15 +624,28 @@ export function Layout({
 
   const renderModeSwitcher = (compact?: boolean) =>
     onToggleUiMode ? (
-      <div className="ios-segmented p-0.5 shrink-0" role="group" aria-label={isFa ? 'انتخاب سطح تجربه کاربری' : 'Interface Mode'}>
+      <div
+        className="relative grid grid-cols-2 p-0.5 rounded-full border hairline bg-[var(--soft)] shrink-0"
+        role="group"
+        aria-label={isFa ? 'انتخاب سطح تجربه کاربری' : 'Interface Mode'}
+      >
+        <span
+          aria-hidden
+          className="absolute top-0.5 bottom-0.5 rounded-full pointer-events-none ios-pill-active"
+          style={{
+            width: 'calc(50% - 2px)',
+            insetInlineStart: uiMode === 'pro' ? '50%' : '2px',
+            transition: 'inset-inline-start 380ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+          }}
+        />
         <button
           type="button"
           onClick={() => {
             tgHaptic('light');
             onToggleUiMode('simple');
           }}
-          className={`${compact ? 'px-2.5 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'} rounded-full transition font-bold inline-flex items-center gap-1 whitespace-nowrap ${
-            uiMode === 'simple' ? 'ios-pill-active' : 'text-dim hover:text-main'
+          className={`relative z-10 ${compact ? 'px-2.5 py-1 text-[10px]' : 'px-3.5 py-1.5 text-xs'} rounded-full font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors duration-300 active:scale-95 ${
+            uiMode === 'simple' ? 'text-white' : 'text-dim hover:text-main'
           }`}
         >
           <Sprout className={`${compact ? 'hidden sm:inline ' : ''}w-3 h-3 shrink-0`} />
@@ -644,8 +657,8 @@ export function Layout({
             tgHaptic('light');
             onToggleUiMode('pro');
           }}
-          className={`${compact ? 'px-2.5 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'} rounded-full transition font-bold inline-flex items-center gap-1 whitespace-nowrap ${
-            uiMode === 'pro' ? 'ios-pill-active' : 'text-dim hover:text-main'
+          className={`relative z-10 ${compact ? 'px-2.5 py-1 text-[10px]' : 'px-3.5 py-1.5 text-xs'} rounded-full font-bold inline-flex items-center justify-center gap-1 whitespace-nowrap transition-colors duration-300 active:scale-95 ${
+            uiMode === 'pro' ? 'text-white' : 'text-dim hover:text-main'
           }`}
         >
           <Zap className={`${compact ? 'hidden sm:inline ' : ''}w-3 h-3 shrink-0`} />

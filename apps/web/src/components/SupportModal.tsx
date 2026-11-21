@@ -44,7 +44,11 @@ function renderFormattedSupportText(raw: string) {
     }
     if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
       return (
-        <code key={idx} dir="ltr" className="px-1.5 py-0.5 rounded bg-black/25 font-mono text-[11px] text-amber-300">
+        <code
+          key={idx}
+          dir="ltr"
+          className="px-1.5 py-0.5 rounded-md bg-[var(--soft)] border hairline font-mono text-[11px] text-[var(--gold)]"
+        >
           {part.slice(1, -1)}
         </code>
       );
@@ -185,12 +189,13 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
   };
 
   const switchToAi = async () => {
+    if (escalating || !authenticated) return;
+    setSupportMode('AI_ASSISTANT');
     try {
       await apiFetch('/api/support/switch-ai', {
         method: 'POST',
         body: JSON.stringify({ ticketId: activeTicket?.id }),
       });
-      setSupportMode('AI_ASSISTANT');
       setStatusMsg(isFa ? 'دستیار هوشمند پشتیبانی فعال شد.' : 'Switched back to AI assistant.');
     } catch {
       setSupportMode('AI_ASSISTANT');
@@ -211,106 +216,139 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 transition-opacity duration-300"
       onClick={onClose}
     >
       <div
-        className="pop-in panel !bg-[var(--panel)] rounded-[28px] w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden border hairline shadow-2xl"
+        className="pop-in panel !bg-[var(--panel)] rounded-[28px] w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden border hairline shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b hairline flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div
-              className="h-10 w-10 rounded-2xl grid place-items-center text-white shadow-md"
-              style={{
-                background:
-                  supportMode === 'HUMAN_ADMIN'
-                    ? 'linear-gradient(135deg,#059669,#10B981)'
-                    : 'linear-gradient(135deg,#0A4DFF,#2563EB)',
-              }}
-            >
-              {supportMode === 'HUMAN_ADMIN' ? (
-                <UserCheck className="w-5 h-5" />
-              ) : (
-                <Headphones className="w-5 h-5" />
-              )}
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
-                <span>{isFa ? 'پشتیبانی هوشمند و مستقیم دلارینو' : 'Dollarino Smart + Human Support'}</span>
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+        <div className="px-5 py-4 border-b hairline space-y-3 bg-[var(--panel-translucent)] backdrop-blur-xl">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div
+                className="h-10 w-10 rounded-2xl grid place-items-center text-white shadow-md shrink-0 transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]"
+                style={{
+                  background:
                     supportMode === 'HUMAN_ADMIN'
-                      ? 'bg-emerald-500/15 text-emerald-400'
-                      : 'bg-blue-500/15 text-blue-400'
-                  }`}
-                >
+                      ? 'linear-gradient(135deg,#059669,#10B981)'
+                      : 'linear-gradient(135deg, var(--gold-a), var(--gold-b) 55%, var(--gold-c))',
+                }}
+              >
+                {supportMode === 'HUMAN_ADMIN' ? (
+                  <UserCheck className="w-5 h-5" />
+                ) : (
+                  <Headphones className="w-5 h-5" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-display font-bold text-sm sm:text-base text-main truncate">
+                  {isFa ? 'پشتیبانی دلارینو' : 'Dollarino Support'}
+                </h3>
+                <p className="text-[11px] text-dim truncate transition-all duration-300">
                   {supportMode === 'HUMAN_ADMIN'
                     ? isFa
-                      ? 'اتصال مستقیم مدیران'
-                      : 'Human Managers'
+                      ? 'گفتگوی مستقیم با مدیران انسانی'
+                      : 'Direct conversation with human managers'
                     : isFa
-                      ? 'دستیار AI فعال'
-                      : 'AI Assistant'}
-                </span>
-              </h3>
-              <p className="text-[11px] text-dim">
-                {supportMode === 'HUMAN_ADMIN'
-                  ? isFa
-                    ? 'پیام‌های شما مستقیماً به پنل مدیران ارسال و پاسخ داده می‌شود'
-                    : 'Direct conversation with Dollarino human support managers'
-                  : isFa
-                    ? 'پاسخگویی ۲۴ ساعته هوش مصنوعی + امکان ارجاع فوری به مدیران انسانی'
-                    : 'Instant AI assistance with one-click escalation to human managers'}
-              </p>
+                      ? 'پاسخگویی ۲۴ ساعته دستیار هوشمند'
+                      : '24/7 instant AI assistant'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={`https://t.me/${tgHandleClean}`}
+                target="_blank"
+                rel="noreferrer"
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--solid)] border hairline text-[11px] font-bold text-main transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:border-[var(--line-strong)] active:scale-95"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-[var(--gold)]" />
+                <span dir="ltr">{telegramSupport}</span>
+              </a>
+              <button
+                type="button"
+                onClick={onClose}
+                className="h-9 w-9 rounded-full bg-[var(--solid)] border hairline text-dim hover:text-main grid place-items-center transition-all duration-200 hover:scale-105 active:scale-90"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {supportMode === 'AI_ASSISTANT' ? (
-              <button
-                type="button"
-                onClick={() => void escalateToHumans()}
-                disabled={escalating}
-                className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-[11px] font-black inline-flex items-center gap-1.5 transition"
+          {/* Apple-style Smooth Sliding Segmented Switch (AI <-> Human Managers) */}
+          {authenticated && (
+            <div className="flex items-center justify-between gap-3">
+              <div
+                className="relative grid grid-cols-2 p-1 rounded-full border hairline bg-[var(--solid)] shadow-inner w-full"
+                role="tablist"
+                aria-label={isFa ? 'انتخاب نوع پشتیبانی' : 'Support Mode'}
               >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>{isFa ? 'ارتباط با مدیران' : 'Talk to Admins'}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void switchToAi()}
-                className="px-3 py-1.5 rounded-xl bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 text-[11px] font-black inline-flex items-center gap-1.5 transition"
-              >
-                <Bot className="w-3.5 h-3.5" />
-                <span>{isFa ? 'پاسخ سریع AI' : 'Switch to AI'}</span>
-              </button>
-            )}
-            <a
-              href={`https://t.me/${tgHandleClean}`}
-              target="_blank"
-              rel="noreferrer"
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--soft)] hover:brightness-95 text-[11px] font-bold text-main transition"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-[var(--gold)]" />
-              <span dir="ltr">{telegramSupport}</span>
-            </a>
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-9 w-9 rounded-full btn-ghost grid place-items-center"
-              aria-label="Close"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+                <span
+                  aria-hidden
+                  className="absolute top-1 bottom-1 rounded-full pointer-events-none"
+                  style={{
+                    width: 'calc(50% - 4px)',
+                    insetInlineStart: supportMode === 'HUMAN_ADMIN' ? '50%' : '4px',
+                    background:
+                      supportMode === 'HUMAN_ADMIN'
+                        ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)'
+                        : 'linear-gradient(135deg, var(--gold-a), var(--gold-b) 55%, var(--gold-c))',
+                    boxShadow:
+                      supportMode === 'HUMAN_ADMIN'
+                        ? '0 6px 18px -5px rgba(16, 185, 129, 0.55)'
+                        : '0 6px 18px -5px rgba(22, 82, 240, 0.52)',
+                    transition:
+                      'inset-inline-start 420ms cubic-bezier(0.34, 1.56, 0.64, 1), background 320ms ease, box-shadow 320ms ease',
+                  }}
+                />
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={supportMode === 'AI_ASSISTANT'}
+                  onClick={() => void switchToAi()}
+                  className={`relative z-10 py-2 px-3 rounded-full text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors duration-300 active:scale-[0.97] ${
+                    supportMode === 'AI_ASSISTANT' ? 'text-white' : 'text-dim hover:text-main'
+                  }`}
+                >
+                  <Bot className="w-3.5 h-3.5 shrink-0" />
+                  <span>{isFa ? 'دستیار هوشمند AI' : 'AI Assistant'}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={supportMode === 'HUMAN_ADMIN'}
+                  onClick={() => void escalateToHumans()}
+                  disabled={escalating}
+                  className={`relative z-10 py-2 px-3 rounded-full text-xs font-extrabold inline-flex items-center justify-center gap-1.5 whitespace-nowrap transition-colors duration-300 active:scale-[0.97] disabled:opacity-70 ${
+                    supportMode === 'HUMAN_ADMIN' ? 'text-white' : 'text-dim hover:text-main'
+                  }`}
+                >
+                  {escalating ? (
+                    <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
+                  ) : (
+                    <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>{isFa ? 'ارتباط با مدیران' : 'Human Managers'}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Anti-scam warning */}
-        <div className="mx-6 mt-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 px-4 py-2.5 flex items-start gap-2.5 text-[11px] text-amber-300 leading-relaxed">
-          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+        <div
+          className="mx-5 mt-3.5 rounded-2xl px-4 py-2.5 flex items-start gap-2.5 text-[11px] leading-relaxed border"
+          style={{
+            background: 'color-mix(in srgb, var(--amber) 11%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--amber) 28%, transparent)',
+            color: 'var(--text)',
+          }}
+        >
+          <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--amber)' }} />
           <span>
             {antiScam ||
               (isFa
@@ -404,7 +442,14 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
               if (isSystem) {
                 return (
                   <div key={m.id} className="flex justify-center">
-                    <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-3.5 py-2 text-[11px] text-emerald-300 max-w-[90%] text-center">
+                    <div
+                      className="rounded-full px-4 py-1.5 text-[11px] font-medium max-w-[90%] text-center border"
+                      style={{
+                        background: 'color-mix(in srgb, var(--jade) 10%, transparent)',
+                        borderColor: 'color-mix(in srgb, var(--jade) 28%, transparent)',
+                        color: 'var(--text)',
+                      }}
+                    >
                       {m.message}
                     </div>
                   </div>
@@ -414,17 +459,22 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
               return (
                 <div key={m.id} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
+                    className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-sm transition-all duration-300 ${
                       isUser
                         ? 'bg-gradient-to-br from-[#0A4DFF] to-[#2563EB] text-white'
                         : isAi
-                          ? 'bg-[var(--soft)] border border-blue-500/25 text-main'
-                          : 'bg-[var(--soft)] border border-emerald-500/30 text-main'
+                          ? 'bg-[var(--solid)] border hairline text-main'
+                          : 'bg-[var(--solid)] border text-main'
                     }`}
+                    style={
+                      !isUser && !isAi
+                        ? { borderColor: 'color-mix(in srgb, var(--jade) 35%, transparent)' }
+                        : undefined
+                    }
                   >
-                    <div className="text-[10px] opacity-80 font-bold mb-1 flex items-center gap-1.5">
-                      {isAi && <Bot className="w-3.5 h-3.5 text-blue-400" />}
-                      {!isUser && !isAi && <UserCheck className="w-3.5 h-3.5 text-emerald-400" />}
+                    <div className="text-[10px] opacity-85 font-bold mb-1 flex items-center gap-1.5">
+                      {isAi && <Bot className="w-3.5 h-3.5 text-[var(--gold)]" />}
+                      {!isUser && !isAi && <UserCheck className="w-3.5 h-3.5" style={{ color: 'var(--jade)' }} />}
                       <span>
                         {isUser
                           ? isFa
@@ -442,10 +492,10 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
                     <button
                       type="button"
                       onClick={() => void escalateToHumans()}
-                      className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-bold transition"
+                      className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold border hairline bg-[var(--solid)] text-main transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:border-emerald-500/40 active:scale-95"
                     >
-                      <UserCheck className="w-3 h-3" />
-                      <span>{isFa ? 'سوال من حل نشد · گفتگو مستقیم با مدیران انسانی' : 'Escalate to Human Managers'}</span>
+                      <UserCheck className="w-3 h-3" style={{ color: 'var(--jade)' }} />
+                      <span>{isFa ? 'سوال من حل نشد · گفتگو با مدیران' : 'Escalate to Human Managers'}</span>
                     </button>
                   )}
                 </div>
@@ -457,7 +507,7 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
 
         {/* Input */}
         {authenticated && (
-        <form onSubmit={sendMessage} className="p-4 border-t hairline space-y-2.5 bg-black/15">
+        <form onSubmit={sendMessage} className="p-4 border-t hairline space-y-2.5 bg-[var(--panel-translucent)] backdrop-blur-xl">
           {statusMsg && (
             <div className="text-[11px] font-bold text-jade inline-flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -482,31 +532,11 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
             <button
               type="submit"
               disabled={sending || !text.trim()}
-              className="btn-gold px-5 rounded-xl text-xs font-black flex items-center gap-1.5 disabled:opacity-50"
+              className="btn-gold px-5 rounded-full text-xs font-black flex items-center gap-1.5 disabled:opacity-50 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 active:scale-95"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               <span>{isFa ? 'ارسال' : 'Send'}</span>
             </button>
-          </div>
-          <div className="flex items-center justify-between text-[10px] text-dim px-1">
-            <span>
-              {supportMode === 'AI_ASSISTANT'
-                ? isFa
-                  ? 'حالت فعلی: پاسخگویی فوری هوش مصنوعی'
-                  : 'Mode: Instant AI Support'
-                : isFa
-                  ? 'حالت فعلی: گفتگوی مستقیم با مدیران پشتیبانی'
-                  : 'Mode: Direct Human Managers'}
-            </span>
-            {supportMode === 'AI_ASSISTANT' && (
-              <button
-                type="button"
-                onClick={() => void escalateToHumans()}
-                className="text-emerald-400 hover:underline font-bold"
-              >
-                {isFa ? 'اتصال مستقیم به مدیران انسانی' : 'Connect to Human Admins'}
-              </button>
-            )}
           </div>
         </form>
         )}

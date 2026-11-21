@@ -291,23 +291,44 @@ export function QuickWidgetsBar({
 
       {/* Chrome/Edge Extension Key & ZIP Panel */}
       {extOpen && (
-        <div className="surface-soft rounded-2xl p-3.5 space-y-2.5 border border-blue-500/30 text-xs">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-black text-main inline-flex items-center gap-1.5">
-              <KeyRound className="w-4 h-4 text-[var(--gold)]" />
-              <span>{isFa ? 'کلید اتصال و دانلود اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension Key & Package'}</span>
-            </p>
-            <a
-              href="/downloads/dollarino-extension.zip"
-              download="dollarino-extension.zip"
-              className="btn-gold px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center gap-1"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{isFa ? 'دانلود اکستنشن (ZIP)' : 'Download Extension ZIP'}</span>
-            </a>
+        <div className="panel rounded-3xl p-4 space-y-3 border border-[var(--line-strong)] text-xs">
+          <div className="hero-cobalt dot-grid-light rounded-2xl p-3.5 relative overflow-hidden">
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-white/15 border border-white/25 backdrop-blur-md grid place-items-center shrink-0">
+                  <KeyRound className="w-5 h-5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="font-black text-white text-xs sm:text-sm truncate">
+                      {isFa ? 'افزونه گرافیکی مرورگر دلارینو' : 'Dollarino Browser Extension'}
+                    </p>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-white border border-white/25 shrink-0">
+                      v9.7
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-white/80 mt-0.5">
+                    {isFa ? 'کنترل ربات، نرخ زنده، رادار DEX و سوآپ Trust Wallet در کروم/اج' : 'Live bot control, markets & DEX radar in Chrome / Edge'}
+                  </p>
+                </div>
+              </div>
+              <a
+                href="/downloads/dollarino-extension.zip"
+                download="dollarino-extension.zip"
+                className="px-3.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center gap-1.5 bg-white text-[#0b3bb8] shadow-md hover:brightness-105 active:scale-95 transition"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isFa ? 'دانلود اکستنشن (ZIP)' : 'Download Extension ZIP'}</span>
+              </a>
+            </div>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            <code dir="ltr" className="flex-1 min-w-[200px] bg-black/30 px-3 py-2 rounded-xl font-mono text-[11px] text-main truncate border border-white/10">
+            <code
+              dir="ltr"
+              className="flex-1 min-w-[200px] px-3 py-2 rounded-xl font-mono text-[11px] text-main truncate border hairline"
+              style={{ background: 'var(--soft)' }}
+            >
               {extKey || (busy ? (isFa ? 'در حال تولید کلید امن...' : 'Generating...') : isFa ? 'هنوز کلیدی ایجاد نشده — روی دکمه ساخت کلید بزنید' : 'No key yet — click Generate Key')}
             </code>
             {extKey && (
@@ -336,11 +357,20 @@ export function QuickWidgetsBar({
               {extOkMsg}
             </div>
           )}
-          <p className="text-[11px] text-dim leading-relaxed">
-            {isFa
-              ? 'فایل ZIP را Extract کرده و در مرورگر به آدرس chrome://extensions بروید، Developer mode را فعال کرده و Load unpacked را بزنید. سپس در تب «اتصال» کلید بالا را وارد کنید.'
-              : 'Extract the ZIP, open chrome://extensions, enable Developer mode, click Load unpacked, and paste your extension key in the Sync tab.'}
-          </p>
+          <div className="grid sm:grid-cols-3 gap-2 text-[11px]">
+            <div className="rounded-xl p-2.5 border hairline flex items-center gap-2" style={{ background: 'var(--soft)' }}>
+              <span className="w-5 h-5 rounded-full bg-[#1652F0]/15 text-[#1652F0] font-black grid place-items-center shrink-0">۱</span>
+              <span className="text-dim">{isFa ? 'فایل ZIP را Extract کنید' : 'Extract the ZIP file'}</span>
+            </div>
+            <div className="rounded-xl p-2.5 border hairline flex items-center gap-2" style={{ background: 'var(--soft)' }}>
+              <span className="w-5 h-5 rounded-full bg-[#1652F0]/15 text-[#1652F0] font-black grid place-items-center shrink-0">۲</span>
+              <span className="text-dim">{isFa ? 'در chrome://extensions گزینه Load unpacked بزنید' : 'Load unpacked in chrome://extensions'}</span>
+            </div>
+            <div className="rounded-xl p-2.5 border hairline flex items-center gap-2" style={{ background: 'var(--soft)' }}>
+              <span className="w-5 h-5 rounded-full bg-[#0D9455]/15 text-[#0D9455] font-black grid place-items-center shrink-0">۳</span>
+              <span className="text-dim">{isFa ? 'در تب «اتصال» کلید بالا را وارد کنید' : 'Paste your key in the Sync tab'}</span>
+            </div>
+          </div>
         </div>
       )}
     </section>
