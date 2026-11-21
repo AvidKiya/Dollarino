@@ -416,7 +416,13 @@ export function CopyConnectPage({
                   rel="noreferrer"
                   className="btn-emerald px-3 py-1 rounded-lg font-bold"
                 >
-                  {isFa ? 'اتصال ۱-کلیکی به @Dollarino_bot' : '1-Click Connect'}
+                  {isFa ? (
+                    <>
+                      اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
+                    </>
+                  ) : (
+                    '1-Click Connect'
+                  )}
                 </a>
               </div>
             )}

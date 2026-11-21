@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowDownRight,
@@ -152,6 +152,11 @@ export function OverviewPage({
 
   // Simple Mode Guided 4-Step Launcher (TimeTrade parity)
   const [watchlistTab, setWatchlistTab] = useState<'popular' | 'favs' | 'gainers' | 'active'>('popular');
+  const [promoSlide, setPromoSlide] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setPromoSlide((s) => (s + 1) % 3), 7000);
+    return () => clearInterval(iv);
+  }, []);
   const [homePanel, setHomePanel] = useState<'bot' | 'trade' | 'positions'>('bot');
   const [simpleWizTab, setSimpleWizTab] = useState<'bot' | 'exchange'>('bot');
   const [simpleStep, setSimpleStep] = useState(0);
@@ -624,9 +629,13 @@ export function OverviewPage({
             <div className="flex items-center gap-2.5 text-xs">
               <Sparkles className="w-4 h-4 shrink-0 text-[#F59E0B]" />
               <span className="text-main font-bold">
-                {isFa
-                  ? 'حساب دمو رایگان ($۱۰,۰۰۰) فعال است. برای ذخیره دائمی حساب خود، ایمیل ثبت کنید.'
-                  : 'Free $10,000 Paper Demo active. Save an email anytime to keep your history.'}
+                {isFa ? (
+                  <>
+                    حساب دمو رایگان (<span dir="ltr" className="inline-block font-num">$10,000</span>) فعال است. برای ذخیره دائمی حساب خود، ایمیل ثبت کنید.
+                  </>
+                ) : (
+                  'Free $10,000 Paper Demo active. Save an email anytime to keep your history.'
+                )}
               </span>
             </div>
             <button type="button" onClick={() => setSaveGuestOpen(true)} className="btn-cobalt px-4 py-1.5 rounded-2xl text-xs">
@@ -685,12 +694,14 @@ export function OverviewPage({
                 </span>
               )}
               <span
-                dir="ltr"
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-black tabular ${
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-black tabular inline-flex items-center gap-1 ${
                   todayPnl >= 0 ? 'bg-[#10B981]/12 text-[#0D9455]' : 'bg-rose-500/12 text-loss'
                 }`}
               >
-                {todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)} {isFa ? 'امروز' : 'today'}
+                <span dir="ltr" className="inline-block font-num">
+                  {todayPnl >= 0 ? `+$${todayPnl.toFixed(2)}` : `-$${Math.abs(todayPnl).toFixed(2)}`}
+                </span>
+                <span>{isFa ? 'امروز' : 'today'}</span>
               </span>
             </div>
           )}
@@ -774,55 +785,93 @@ export function OverviewPage({
           })}
         </section>
 
-        {/* 3. Custom Artwork Cobalt Promotional Banner matching image-5.png */}
-        <div className="space-y-2">
-          <section
-            className="rounded-[24px] relative overflow-hidden text-white shadow-lg min-h-[126px] flex items-center"
-            style={{ background: '#0E49DF' }}
-          >
-            <img
-              src="/assets/banner-bot-gold.png"
-              alt=""
-              aria-hidden="true"
-              className="absolute inset-0 w-full h-full object-cover object-left pointer-events-none select-none"
-            />
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: isFa
-                  ? 'linear-gradient(90deg, rgba(14,73,223,0.12) 0%, rgba(14,73,223,0.78) 46%, rgba(11,55,180,0.96) 100%)'
-                  : 'linear-gradient(270deg, rgba(14,73,223,0.12) 0%, rgba(14,73,223,0.78) 46%, rgba(11,55,180,0.96) 100%)',
-              }}
-            />
+        {/* 3. Custom Artwork Interactive Promotional Carousel */}
+        {(() => {
+          const slides = [
+            {
+              img: '/assets/banner-bot-gold.png',
+              bg: '#0E49DF',
+              gradFa: 'linear-gradient(90deg, rgba(14,73,223,0.12) 0%, rgba(14,73,223,0.78) 46%, rgba(11,55,180,0.96) 100%)',
+              gradEn: 'linear-gradient(270deg, rgba(14,73,223,0.12) 0%, rgba(14,73,223,0.78) 46%, rgba(11,55,180,0.96) 100%)',
+              title: isFa ? 'ربات معامله‌گر خودکار در دلارینو' : 'Dollarino Autonomous 24/7 Bot',
+              desc: isFa ? 'ارز، فیوچرز، اسپات، اسکن هوشمند کل بازار، هر لحظه و هرجا' : 'Spot, Futures & AI market scanner anytime',
+              cta: isFa ? 'تنظیم ربات' : 'Setup Bot',
+              action: () => setWizardOpen(true),
+            },
+            {
+              img: '/assets/banner-radar-studio.png',
+              bg: '#1E293B',
+              gradFa: 'linear-gradient(90deg, rgba(15,23,42,0.10) 0%, rgba(15,23,42,0.78) 46%, rgba(15,23,42,0.96) 100%)',
+              gradEn: 'linear-gradient(270deg, rgba(15,23,42,0.10) 0%, rgba(15,23,42,0.78) 46%, rgba(15,23,42,0.96) 100%)',
+              title: isFa ? 'رادار هوشمند و استراتژی کاستوم' : 'AI Radar & Custom Strategy IDE',
+              desc: isFa ? 'بک‌تست ۳۶۵ روزه، موتور KBOS و کدنویسی Pine/Python' : '365d backtest, KBOS engine & custom script lab',
+              cta: isFa ? 'باز کردن رادار' : 'Open Radar',
+              action: () => onNavigate('radar'),
+            },
+            {
+              img: '/assets/banner-bot-gold.png',
+              bg: '#065F46',
+              gradFa: 'linear-gradient(90deg, rgba(6,95,70,0.14) 0%, rgba(6,95,70,0.80) 46%, rgba(4,65,48,0.96) 100%)',
+              gradEn: 'linear-gradient(270deg, rgba(6,95,70,0.14) 0%, rgba(6,95,70,0.80) 46%, rgba(4,65,48,0.96) 100%)',
+              title: isFa ? 'اتصال امن به صرافی و تلگرام' : 'Secure Exchange API & Telegram Bot',
+              desc: isFa ? 'مدیریت مستقیم پوزیشن‌ها از تلگرام و صرافی‌های Toobit و KCEX' : 'Live alerts & 1-tap sync via Telegram and exchanges',
+              cta: isFa ? 'اتصال صرافی' : 'Connect Now',
+              action: () => onNavigate('copy'),
+            },
+          ];
+          const cur = slides[promoSlide % slides.length]!;
+          return (
+            <div className="space-y-2">
+              <section
+                className="rounded-[24px] relative overflow-hidden text-white shadow-lg min-h-[126px] flex items-center transition-colors duration-500"
+                style={{ background: cur.bg }}
+              >
+                <img
+                  src={cur.img}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 w-full h-full object-cover object-left pointer-events-none select-none transition-opacity duration-500"
+                />
+                <div
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ background: isFa ? cur.gradFa : cur.gradEn }}
+                />
 
-            <div className="relative z-10 w-full px-5 py-4 flex items-center justify-between gap-4">
-              <div className="space-y-1.5 max-w-[66%]">
-                <h2 className="font-display font-extrabold text-sm sm:text-base leading-snug">
-                  {isFa ? 'ربات معامله‌گر خودکار در دلارینو' : 'Dollarino Autonomous 24/7 Bot'}
-                </h2>
-                <p className="text-[11px] text-white/85 leading-relaxed">
-                  {isFa ? 'ارز، فیوچرز، اسپات، اسکن هوشمند کل بازار، هر لحظه و هرجا' : 'Spot, Futures & AI market scanner anytime'}
-                </p>
-                <div className="pt-1 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setWizardOpen(true)}
-                    className="px-3.5 py-1.5 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-[11px] font-black inline-flex items-center gap-1 transition"
-                  >
-                    <span>{isFa ? 'تنظیم ربات' : 'Setup Bot'}</span>
-                    {isFa ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                  </button>
+                <div className="relative z-10 w-full px-5 py-4 flex items-center justify-between gap-4">
+                  <div className="space-y-1.5 max-w-[68%]">
+                    <h2 className="font-display font-extrabold text-sm sm:text-base leading-snug">{cur.title}</h2>
+                    <p className="text-[11px] text-white/85 leading-relaxed">{cur.desc}</p>
+                    <div className="pt-1 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={cur.action}
+                        className="px-3.5 py-1.5 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-[11px] font-black inline-flex items-center gap-1 transition"
+                      >
+                        <span>{cur.cta}</span>
+                        {isFa ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
                 </div>
+              </section>
+
+              <div className="flex items-center justify-center gap-1.5" role="tablist" aria-label={isFa ? 'اسلایدهای معرفی' : 'Promo slides'}>
+                {slides.map((s, idx) => (
+                  <button
+                    key={s.title}
+                    type="button"
+                    aria-label={s.title}
+                    aria-selected={promoSlide === idx}
+                    onClick={() => setPromoSlide(idx)}
+                    className={`h-1.5 rounded-full transition-all ${
+                      promoSlide === idx ? 'w-5 bg-[#1652F0]' : 'w-1.5 bg-[#1652F0]/25 hover:bg-[#1652F0]/45'
+                    }`}
+                  />
+                ))}
               </div>
             </div>
-          </section>
-
-          <div className="flex items-center justify-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#1652F0]/25" />
-            <span className="h-1.5 w-4 rounded-full bg-[#1652F0]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-[#1652F0]/25" />
-          </div>
-        </div>
+          );
+        })()}
 
         {/* 4. Kifpool-style Tabbed Market Watchlist Card matching image-5.png */}
         <section className="panel rounded-[26px] overflow-hidden">
@@ -857,6 +906,21 @@ export function OverviewPage({
               {isFa ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             </button>
           </div>
+
+          {watchlistTab === 'active' && data.openTrades.length === 0 && (
+            <div className="px-4 py-2.5 bg-[var(--soft)] border-b hairline flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-sub font-semibold">
+                {isFa ? 'هنوز معامله بازی ندارید؛ برای شروع روی هر ارز بزنید:' : 'No open positions yet — tap any coin below to start:'}
+              </span>
+              <button
+                type="button"
+                onClick={() => onNavigate('terminal')}
+                className="font-black text-[#1652F0] shrink-0 hover:underline"
+              >
+                {isFa ? 'معامله آسان' : 'Easy Trade'}
+              </button>
+            </div>
+          )}
 
           <div className="px-4 py-2 flex items-center justify-between text-[11px] font-bold text-dim border-b hairline">
             <span>{isFa ? 'نام ارز' : 'Coin'}</span>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -87,91 +87,321 @@ export function tabLabel(id: NavTab, lang: Lang): string {
   return found ? (isFa ? found.labelFa : found.labelEn) : id;
 }
 
-function DockTabIcon({ id, active }: { id: 'overview' | 'markets' | 'portfolio' | 'services'; active: boolean }) {
-  if (id === 'overview') {
+type DockTabId = 'overview' | 'markets' | 'portfolio' | 'services';
+
+function LiquidDockSvg({ id }: { id: DockTabId }) {
+  if (id === 'services') {
     return (
-      <span
-        className={`w-7 h-7 rounded-[9px] grid place-items-center transition-all ${
-          active ? 'bg-[#F59E0B]/18' : ''
-        }`}
-      >
-        <svg viewBox="0 0 24 24" className="w-[21px] h-[21px]" aria-hidden="true">
-          <path
-            d="M12 3.2 4 9.6c-.6.45-.9 1.15-.9 1.9V19a2 2 0 0 0 2 2h13.8a2 2 0 0 0 2-2v-7.5c0-.75-.3-1.45-.9-1.9L12 3.2Z"
-            fill={active ? '#F59E0B' : '#7A828F'}
-          />
-          <rect
-            x="11.15"
-            y="13.2"
-            width="1.7"
-            height="4.4"
-            rx="0.85"
-            fill={active ? '#FFFBEB' : 'var(--panel)'}
-          />
-        </svg>
-      </span>
-    );
-  }
-  if (id === 'markets') {
-    return (
-      <span
-        className={`w-7 h-7 rounded-[9px] grid place-items-center transition-all ${
-          active ? 'bg-[#F59E0B]/20' : 'bg-slate-400/15'
-        }`}
-      >
-        <svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" aria-hidden="true">
-          <rect x="4.5" y="12.5" width="3.2" height="6.5" rx="1.6" fill={active ? '#F59E0B' : '#7A828F'} />
-          <rect x="10.4" y="6.5" width="3.2" height="12.5" rx="1.6" fill={active ? '#F59E0B' : '#7A828F'} />
-          <rect x="16.3" y="9.8" width="3.2" height="9.2" rx="1.6" fill={active ? '#F59E0B' : '#7A828F'} />
-        </svg>
-      </span>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="7.2" height="7.2" rx="2.3" fill="var(--tab-b)" />
+        <rect x="13.3" y="3.5" width="7.2" height="7.2" rx="2.3" fill="var(--tab-a)" />
+        <rect x="3.5" y="13.3" width="7.2" height="7.2" rx="2.3" fill="var(--tab-a)" />
+        <rect x="13.3" y="13.3" width="7.2" height="7.2" rx="2.3" fill="var(--tab-b)" />
+      </svg>
     );
   }
   if (id === 'portfolio') {
     return (
-      <span
-        className={`w-7 h-7 rounded-[9px] grid place-items-center transition-all ${
-          active ? 'bg-[#F59E0B]/18' : ''
-        }`}
-      >
-        <svg viewBox="0 0 24 24" className="w-[21px] h-[21px]" aria-hidden="true">
-          <path
-            d="M6.8 6.8 14.9 4.2c1-.32 2 .25 2.25 1.25L18 8.8H5.6l1.2-2Z"
-            fill={active ? '#D97706' : '#334155'}
-          />
-          <rect
-            x="3.5"
-            y="8.2"
-            width="17"
-            height="12"
-            rx="3.6"
-            fill={active ? '#F59E0B' : '#7A828F'}
-          />
-          <rect
-            x="9.5"
-            y="13.4"
-            width="5"
-            height="1.9"
-            rx="0.95"
-            fill={active ? '#FFFBEB' : 'var(--panel)'}
-          />
-        </svg>
-      </span>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          className="dock-cap"
+          d="M5 8.5l8.3-2.9a2 2 0 0 1 2.6 1.9V9H5v-.5z"
+          fill="var(--tab-b)"
+          stroke="var(--tab-cap)"
+          strokeWidth=".6"
+        />
+        <rect x="3" y="8" width="18" height="12.5" rx="3.4" fill="var(--tab-a)" />
+        <rect x="7" y="13.7" width="9" height="1.7" rx=".85" fill="#fff" />
+      </svg>
+    );
+  }
+  if (id === 'markets') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" fill="var(--tab-a)" opacity=".3" />
+        <rect className="dock-bar-r" x="6" y="12.8" width="2.9" height="5.7" rx="1.45" fill="var(--tab-b)" />
+        <rect className="dock-bar-r" x="10.55" y="7" width="2.9" height="11.5" rx="1.45" fill="var(--tab-b)" />
+        <rect className="dock-bar-r" x="15.1" y="10.2" width="2.9" height="8.3" rx="1.45" fill="var(--tab-b)" />
+      </svg>
     );
   }
   return (
-    <span
-      className={`w-7 h-7 rounded-[9px] grid place-items-center transition-all ${
-        active ? 'bg-[#F59E0B]/18' : ''
-      }`}
-    >
-      <svg viewBox="0 0 24 24" className="w-[20px] h-[20px]" aria-hidden="true">
-        <rect x="3.5" y="3.5" width="7.4" height="7.4" rx="2.3" fill={active ? '#D97706' : '#1E293B'} />
-        <rect x="13.1" y="3.5" width="7.4" height="7.4" rx="2.3" fill={active ? '#FBBF24' : '#94A3B8'} />
-        <rect x="3.5" y="13.1" width="7.4" height="7.4" rx="2.3" fill={active ? '#FBBF24' : '#94A3B8'} />
-        <rect x="13.1" y="13.1" width="7.4" height="7.4" rx="2.3" fill={active ? '#F59E0B' : '#1E293B'} />
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.8L3.4 9.5A2.3 2.3 0 0 0 2.5 11.3V18.8A2.5 2.5 0 0 0 5 21.3H19A2.5 2.5 0 0 0 21.5 18.8V11.3A2.3 2.3 0 0 0 20.6 9.5Z" fill="var(--tab-a)" />
+      <rect className="dock-slit" x="11.15" y="13.5" width="1.7" height="3.9" rx=".85" fill="var(--tab-b)" />
+    </svg>
+  );
+}
+
+function LiquidGlassDock({
+  isFa,
+  activeTab,
+  isRunning,
+  onSelectTab,
+  onStartStop,
+}: {
+  isFa: boolean;
+  activeTab: NavTab;
+  isRunning: boolean;
+  onSelectTab: (id: DockTabId) => void;
+  onStartStop: () => Promise<void>;
+}) {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const glassRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const shapeClipRef = useRef<SVGPathElement | null>(null);
+  const innerRef = useRef<SVGPathElement | null>(null);
+  const hairRef = useRef<SVGPathElement | null>(null);
+  const edgeRef = useRef<SVGPathElement | null>(null);
+  const arcRef = useRef<SVGPathElement | null>(null);
+  const rimGradRef = useRef<SVGLinearGradientElement | null>(null);
+  const indRef = useRef<HTMLSpanElement | null>(null);
+  const btnRefs = useRef<Record<DockTabId, HTMLButtonElement | null>>({
+    overview: null,
+    markets: null,
+    portfolio: null,
+    services: null,
+  });
+
+  const [popTab, setPopTab] = useState<DockTabId | null>(null);
+  const popTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const indInitRef = useRef(false);
+
+  const isDockTab =
+    activeTab === 'overview' || activeTab === 'markets' || activeTab === 'portfolio' || activeTab === 'services';
+
+  const drawShape = useCallback(() => {
+    const shell = shellRef.current;
+    const glass = glassRef.current;
+    const svg = svgRef.current;
+    if (!shell || !glass || !svg) return;
+    const W = shell.clientWidth;
+    const H = shell.clientHeight;
+    if (W <= 0 || H <= 0) return;
+
+    const R = 28;
+    const cx = W / 2;
+    const top = `M0 ${R}A${R} ${R} 0 0 1 ${R} 0H${cx - 72}C${cx - 52} 0 ${cx - 41} 10 ${cx - 41} 24A41 41 0 0 0 ${cx + 41} 24C${cx + 41} 10 ${cx + 52} 0 ${cx + 72} 0H${W - R}A${R} ${R} 0 0 1 ${W} ${R}`;
+    const open = `M0 ${H + 4}V${R}${top.slice(`M0 ${R}`.length)}V${H + 4}`;
+    const closed = `${top}V${H + 200}H0Z`;
+
+    glass.style.clipPath = `path('${closed}')`;
+    (glass.style as unknown as { webkitClipPath?: string }).webkitClipPath = `path('${closed}')`;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    shapeClipRef.current?.setAttribute('d', closed);
+    innerRef.current?.setAttribute('d', open);
+    hairRef.current?.setAttribute('d', open);
+    edgeRef.current?.setAttribute('d', open);
+    arcRef.current?.setAttribute('d', `M${cx - 33} 48.3A41 41 0 0 0 ${cx + 33} 48.3`);
+  }, []);
+
+  const moveInd = useCallback(
+    (animate = true) => {
+      const ind = indRef.current;
+      const shell = shellRef.current;
+      if (!ind || !shell) return;
+      if (!isDockTab) {
+        ind.style.opacity = '0';
+        return;
+      }
+      const btn = btnRefs.current[activeTab as DockTabId];
+      if (!btn) return;
+      const s = shell.getBoundingClientRect();
+      const b = btn.getBoundingClientRect();
+      if (s.width <= 0 || b.width <= 0) return;
+      const x = b.left - s.left + (b.width - ind.offsetWidth) / 2;
+      if (!animate) ind.classList.add('no-anim');
+      ind.style.opacity = '1';
+      ind.style.transform = `translateX(${Math.round(x)}px)`;
+      if (!animate) {
+        void ind.offsetWidth;
+        ind.classList.remove('no-anim');
+      }
+    },
+    [activeTab, isDockTab],
+  );
+
+  useEffect(() => {
+    drawShape();
+    moveInd(indInitRef.current);
+    indInitRef.current = true;
+
+    const ro =
+      typeof ResizeObserver !== 'undefined' && shellRef.current
+        ? new ResizeObserver(() => {
+            drawShape();
+            moveInd(false);
+          })
+        : null;
+    if (ro && shellRef.current) ro.observe(shellRef.current);
+
+    const onScroll = () => {
+      const y = window.scrollY || document.documentElement.scrollTop || 0;
+      const dx = Math.max(-0.28, Math.min(0.28, Math.sin(y * 0.008) * 0.25));
+      rimGradRef.current?.setAttribute('gradientTransform', `translate(${dx.toFixed(2)}, 0)`);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, [drawShape, moveInd, isFa]);
+
+  useEffect(() => {
+    return () => {
+      if (popTimerRef.current) clearTimeout(popTimerRef.current);
+    };
+  }, []);
+
+  const handleSelect = (id: DockTabId) => {
+    setPopTab(null);
+    requestAnimationFrame(() => setPopTab(id));
+    if (popTimerRef.current) clearTimeout(popTimerRef.current);
+    popTimerRef.current = setTimeout(() => setPopTab(null), 750);
+    onSelectTab(id);
+  };
+
+  const leftPair: Array<{ id: DockTabId; label: string; cls: string }> = isFa
+    ? [
+        { id: 'services', label: 'خدمات', cls: 't-grid' },
+        { id: 'portfolio', label: 'کیف پول', cls: 't-wallet' },
+      ]
+    : [
+        { id: 'overview', label: 'Home', cls: 't-home' },
+        { id: 'markets', label: 'Markets', cls: 't-market' },
+      ];
+
+  const rightPair: Array<{ id: DockTabId; label: string; cls: string }> = isFa
+    ? [
+        { id: 'markets', label: 'بازار', cls: 't-market' },
+        { id: 'overview', label: 'خانه', cls: 't-home' },
+      ]
+    : [
+        { id: 'portfolio', label: 'Wallet', cls: 't-wallet' },
+        { id: 'services', label: 'Services', cls: 't-grid' },
+      ];
+
+  return (
+    <nav className="lg:hidden liquid-shell" ref={shellRef} aria-label={isFa ? 'ناوبری اصلی' : 'Main navigation'}>
+      <div className="dock-glass-body" ref={glassRef} />
+
+      <svg className="dock-rim" ref={svgRef} fill="none" aria-hidden="true">
+        <defs>
+          <clipPath id="dockShapeClip">
+            <path ref={shapeClipRef} />
+          </clipPath>
+          <filter id="dockBlurRim" x="-10%" y="-40%" width="120%" height="180%">
+            <feGaussianBlur stdDeviation="3.5" />
+          </filter>
+          <linearGradient id="dockRimGrad" ref={rimGradRef} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="var(--rim)" stopOpacity=".4" />
+            <stop offset="28%" stopColor="var(--rim)" stopOpacity=".95" />
+            <stop offset="50%" stopColor="var(--rim)" stopOpacity=".55" />
+            <stop offset="72%" stopColor="var(--rim)" stopOpacity=".95" />
+            <stop offset="100%" stopColor="var(--rim)" stopOpacity=".4" />
+          </linearGradient>
+        </defs>
+
+        <g clipPath="url(#dockShapeClip)">
+          <path ref={innerRef} stroke="var(--rim)" strokeOpacity=".42" strokeWidth="10" filter="url(#dockBlurRim)" />
+        </g>
+        <path ref={hairRef} stroke="var(--hairline-glass)" strokeWidth="1" />
+        <path ref={edgeRef} stroke="url(#dockRimGrad)" strokeWidth="3" strokeLinecap="round" />
+        <path ref={arcRef} stroke="var(--rim-soft)" strokeWidth="2.4" strokeLinecap="round" />
       </svg>
-    </span>
+
+      {/* Concentric Specular Liquid-Glass Center Bot Power Button (68px) */}
+      <button
+        type="button"
+        onClick={() => {
+          tgHaptic('medium');
+          void onStartStop();
+        }}
+        aria-label={isRunning ? (isFa ? 'خاموش کردن ربات' : 'Turn Off Bot') : isFa ? 'روشن کردن ربات' : 'Turn On Bot'}
+        title={
+          isRunning
+            ? isFa
+              ? 'ربات روشن است (لمس برای توقف)'
+              : 'Bot is ON (tap to pause)'
+            : isFa
+              ? 'ربات خاموش است (لمس برای شروع)'
+              : 'Bot is OFF (tap to start)'
+        }
+        className="dock-fab z-20"
+        style={{
+          background: isRunning
+            ? 'linear-gradient(155deg, rgba(16, 185, 129, 0.25), rgba(8, 42, 136, 0.96)), radial-gradient(circle at center, #0a36a8 0%, #051646 100%)'
+            : 'linear-gradient(155deg, rgba(255, 255, 255, 0.72), rgba(226, 232, 240, 0.45)), radial-gradient(circle at center, #475569 0%, #1e293b 100%)',
+          border: isRunning ? '3px solid #10B981' : '2px solid rgba(255, 255, 255, 0.92)',
+          boxShadow: isRunning
+            ? '0 0 0 3px rgba(16, 185, 129, 0.26), 0 12px 26px rgba(16, 185, 129, 0.45), inset 0 2px 3px rgba(255, 255, 255, 0.45), inset 0 -3px 5px rgba(5, 22, 70, 0.4)'
+            : '0 8px 22px rgba(25, 45, 90, 0.2), inset 0 2px 3px rgba(255, 255, 255, 0.85), inset 0 -3px 5px rgba(30, 50, 90, 0.22)',
+        }}
+      >
+        <img
+          src="/logo.png"
+          alt="Dollarino Bot"
+          className={`w-[46px] h-[46px] rounded-full object-contain transition-all duration-300 select-none ${
+            isRunning ? 'scale-105' : 'grayscale contrast-125 opacity-80'
+          }`}
+        />
+        {isRunning && (
+          <span className="absolute -top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-[#10B981] border-2 border-[var(--panel)] shadow-sm" />
+        )}
+      </button>
+
+      {/* 4 Surrounding Animated Liquid-Glass Tabs */}
+      <div className="dock-tabs" role="tablist">
+        <div className="dock-pair">
+          {leftPair.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                ref={(el) => {
+                  btnRefs.current[tab.id] = el;
+                }}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => handleSelect(tab.id)}
+                className={`liquid-tab ${tab.cls}${popTab === tab.id ? ' pop' : ''}`}
+              >
+                <LiquidDockSvg id={tab.id} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div aria-hidden="true" />
+
+        <div className="dock-pair">
+          {rightPair.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                ref={(el) => {
+                  btnRefs.current[tab.id] = el;
+                }}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => handleSelect(tab.id)}
+                className={`liquid-tab ${tab.cls}${popTab === tab.id ? ' pop' : ''}`}
+              >
+                <LiquidDockSvg id={tab.id} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Sliding Glowing Amber Bottom Pill */}
+      <span className="dock-ind" ref={indRef} aria-hidden="true" />
+    </nav>
   );
 }
 
@@ -619,13 +849,19 @@ export function Layout({
             </p>
           </div>
           <p className="text-[10px] text-dim truncate">
-            {entitlement?.hasPaidPlan
-              ? `${isFa ? entitlement.planNameFa : entitlement.planNameEn}`
-              : tradingMode === 'PAPER'
-                ? isFa
-                  ? 'حساب دمو ($۱۰,۰۰۰ رایگان)'
-                  : 'Paper Demo ($10,000 Free)'
-                : activeExchangeLabel}
+            {entitlement?.hasPaidPlan ? (
+              `${isFa ? entitlement.planNameFa : entitlement.planNameEn}`
+            ) : tradingMode === 'PAPER' ? (
+              isFa ? (
+                <>
+                  حساب دمو (<span dir="ltr" className="inline-block font-num">$10,000</span> رایگان)
+                </>
+              ) : (
+                'Paper Demo ($10,000 Free)'
+              )
+            ) : (
+              activeExchangeLabel
+            )}
           </p>
           <button
             type="button"
@@ -661,7 +897,15 @@ export function Layout({
           {onResetDemo && tradingMode === 'PAPER' ? (
             <button type="button" onClick={() => void onResetDemo()} className="inline-flex items-center gap-1 hover:text-main transition">
               <RotateCcw className="w-3 h-3" />
-              <span>{isFa ? 'ریست $۱۰k' : 'Reset $10k'}</span>
+              <span>
+                {isFa ? (
+                  <>
+                    ریست <span dir="ltr" className="inline-block font-num">$10k</span>
+                  </>
+                ) : (
+                  'Reset $10k'
+                )}
+              </span>
             </button>
           ) : (
             <span className="truncate">{user.username}</span>
@@ -678,7 +922,10 @@ export function Layout({
   return (
     <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell flex flex-col overflow-x-hidden max-w-full">
       <div className="flex-1 flex min-w-0">
-        <aside className="hidden lg:flex w-64 shrink-0 border-e hairline p-4 flex-col sticky top-0 h-screen overflow-y-auto backdrop-blur-2xl bg-[var(--panel)]">
+        <aside
+          className="hidden lg:flex w-64 shrink-0 border-e border-[var(--glass-border)] p-4 flex-col sticky top-0 h-screen overflow-y-auto backdrop-blur-2xl"
+          style={{ background: 'var(--panel-translucent)' }}
+        >
           {renderSidebarBody()}
         </aside>
 
@@ -694,15 +941,18 @@ export function Layout({
         )}
 
         <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-          {/* Unified Consistent Header Across Simple & Pro Modes */}
-          <header className="sticky top-0 z-30 backdrop-blur-2xl bg-[var(--bg)]/92 border-b hairline">
+          {/* Unified Consistent Frosted Liquid-Glass Header Across Simple & Pro Modes */}
+          <header
+            className="sticky top-0 z-30 backdrop-blur-2xl border-b border-[var(--glass-border)]"
+            style={{ background: 'var(--header-glass)' }}
+          >
             <div className="mx-auto max-w-6xl px-2.5 sm:px-6 py-2 flex items-center justify-between gap-1.5 sm:gap-2">
               <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                 <button
                   type="button"
                   onClick={() => setDrawerOpen(true)}
                   aria-label="Menu"
-                  className="lg:hidden h-8 w-8 grid place-items-center rounded-full btn-ghost shrink-0"
+                  className="lg:hidden h-8 w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] shrink-0 hover:brightness-95 transition"
                 >
                   <Menu className="w-4 h-4 text-main" />
                 </button>
@@ -711,7 +961,7 @@ export function Layout({
                   onClick={() => selectTab('services')}
                   className="flex items-center gap-1.5 sm:gap-2 text-start group min-w-0"
                 >
-                  <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border hairline shrink-0 overflow-hidden">
+                  <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border border-[var(--glass-border)] shrink-0 overflow-hidden shadow-sm">
                     {user.avatar_url ? (
                       <img src={user.avatar_url} alt={user.username} className="w-full h-full object-cover" />
                     ) : (
@@ -740,7 +990,7 @@ export function Layout({
                 </kbd>
               </button>
 
-              <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 {renderModeSwitcher(true)}
 
                 <button
@@ -748,10 +998,10 @@ export function Layout({
                   onClick={() => selectTab('faq')}
                   aria-label={isFa ? 'پشتیبانی و راهنما' : 'Support & Guide'}
                   title={isFa ? 'پشتیبانی و راهنما' : 'Support & Guide'}
-                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-full hover:bg-[var(--soft)] transition"
+                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition"
                 >
-                  <Headphones className="w-[15px] h-[15px] sm:w-[16px] sm:h-[16px] text-main" />
-                  <span className="absolute top-0.5 end-0.5 w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)]" />
+                  <Headphones className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-main" />
+                  <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)]" />
                 </button>
 
                 <button
@@ -765,11 +1015,11 @@ export function Layout({
                   }}
                   aria-label={isFa ? 'اعلان‌ها' : 'Notifications'}
                   title={isFa ? 'اعلان‌ها' : 'Notifications'}
-                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-full hover:bg-[var(--soft)] transition"
+                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition"
                 >
-                  <Bell className="w-[15px] h-[15px] sm:w-[16px] sm:h-[16px] text-main" />
+                  <Bell className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-main" />
                   {unreadNotifs > 0 && (
-                    <span className="absolute top-0.5 end-0.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--bg)]" />
+                    <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--bg)]" />
                   )}
                 </button>
 
@@ -778,12 +1028,12 @@ export function Layout({
                   onClick={toggleDayNight}
                   aria-label="Toggle day or night"
                   title={isFa ? 'حالت روز / شب' : 'Day / Night'}
-                  className="h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-full hover:bg-[var(--soft)] transition"
+                  className="h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition"
                 >
                   {currentLook === 'paper' ? (
-                    <Moon className="w-[15px] h-[15px] sm:w-4 sm:h-4 text-[var(--gold)]" />
+                    <Moon className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-[var(--gold)]" />
                   ) : (
-                    <Sun className="w-[15px] h-[15px] sm:w-4 sm:h-4 text-[#F59E0B]" />
+                    <Sun className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-[#F59E0B]" />
                   )}
                 </button>
 
@@ -824,11 +1074,8 @@ export function Layout({
             </div>
 
             {tickerCoins.length > 0 && uiMode === 'pro' && (
-              <div className="border-t hairline bg-black/5 dark:bg-black/20 overflow-hidden">
-                <div
-                  className="flex w-max gap-8 px-5 py-1.5 animate-ticker"
-                  style={isFa ? { animationName: 'ticker-rtl' } : undefined}
-                >
+              <div dir="ltr" className="border-t hairline bg-black/5 dark:bg-black/20 overflow-hidden">
+                <div className="flex w-max gap-8 px-5 py-1.5 animate-ticker">
                   {[...tickerCoins, ...tickerCoins].map((c, idx) => {
                     const ch = Number(c.changePct24h || 0);
                     const px = Number(c.lastPrice || 0);
@@ -900,113 +1147,13 @@ export function Layout({
         </div>
       )}
 
-      {/* Kifpool-inspired Deep U-Cradle Curved Notch Floating Bottom Tab Bar (matching image-1.png) */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 pointer-events-none select-none">
-        <div className="relative mx-auto max-w-md h-[84px] pointer-events-auto">
-          {/* Deep U-Notch Cradle SVG matching image-1.png */}
-          <svg
-            viewBox="0 0 390 84"
-            preserveAspectRatio="none"
-            className="w-full h-[84px] block"
-            style={{ filter: 'drop-shadow(0 -6px 20px rgba(15, 23, 42, 0.09))' }}
-            aria-hidden="true"
-          >
-            <path
-              d="M0,34 Q0,14 20,14 L142,14 C153,14 159,20 160,30 A35,35 0 0 0 230,30 C231,20 237,14 248,14 L370,14 Q390,14 390,34 L390,84 L0,84 Z"
-              fill="var(--panel)"
-            />
-            <path
-              d="M0,34 Q0,14 20,14 L142,14 C153,14 159,20 160,30 A35,35 0 0 0 230,30 C231,20 237,14 248,14 L370,14 Q390,14 390,34"
-              fill="none"
-              stroke="var(--line-strong)"
-              strokeWidth="1"
-            />
-          </svg>
-
-          {/* Concentric Floating Center Bot Power Logo Button: B&W when OFF, Full Color + Green Ring when ON */}
-          <button
-            type="button"
-            onClick={() => {
-              tgHaptic('medium');
-              void onStartStop();
-            }}
-            aria-label={isRunning ? (isFa ? 'خاموش کردن ربات' : 'Turn Off Bot') : isFa ? 'روشن کردن ربات' : 'Turn On Bot'}
-            title={isRunning ? (isFa ? 'ربات روشن است (لمس برای توقف)' : 'Bot is ON (tap to pause)') : isFa ? 'ربات خاموش است (لمس برای شروع)' : 'Bot is OFF (tap to start)'}
-            className="z-20 absolute left-1/2 -translate-x-1/2 top-[2px] w-[56px] h-[56px] rounded-full grid place-items-center active:scale-95 transition-all"
-            style={{
-              background: isRunning
-                ? 'radial-gradient(circle at center, #082a88 0%, #051646 100%)'
-                : 'radial-gradient(circle at center, #334155 0%, #1e293b 100%)',
-              border: isRunning ? '3px solid #10B981' : '2.5px solid #cbd5e1',
-              boxShadow: isRunning
-                ? '0 0 0 3px rgba(16, 185, 129, 0.22), 0 8px 20px rgba(16, 185, 129, 0.38)'
-                : '0 6px 16px rgba(15, 23, 42, 0.22)',
-            }}
-          >
-            <img
-              src="/logo.png"
-              alt="Dollarino Bot"
-              className={`w-[44px] h-[44px] rounded-full object-contain transition-all duration-300 select-none ${
-                isRunning ? 'scale-105' : 'grayscale contrast-125 opacity-75'
-              }`}
-            />
-            {isRunning && (
-              <span className="absolute -top-0.5 -end-0.5 w-3.5 h-3.5 rounded-full bg-[#10B981] border-2 border-[var(--panel)] shadow-sm" />
-            )}
-          </button>
-
-          {/* 4 Surrounding Balanced Tabs with Two-Tone Icons matching image-1.png */}
-          <div className="absolute inset-x-0 bottom-0 h-[70px] grid grid-cols-[1fr_1fr_82px_1fr_1fr] items-center px-2">
-            {([
-              { id: 'overview' as const, l: isFa ? 'خانه' : 'Home' },
-              { id: 'markets' as const, l: isFa ? 'بازار' : 'Markets' },
-            ]).map((x) => {
-              const active = activeTab === x.id;
-              return (
-                <button
-                  key={x.id}
-                  type="button"
-                  onClick={() => selectTab(x.id)}
-                  className="relative flex flex-col items-center justify-center gap-1 h-full pt-1"
-                >
-                  <DockTabIcon id={x.id} active={active} />
-                  <span className={`text-[11px] font-bold leading-none ${active ? 'text-[#F59E0B]' : 'text-main/80'}`}>
-                    {x.l}
-                  </span>
-                  {active && (
-                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_14px_rgba(245,158,11,0.9)]" />
-                  )}
-                </button>
-              );
-            })}
-
-            <div aria-hidden="true" className="h-full pointer-events-none" />
-
-            {([
-              { id: 'portfolio' as const, l: isFa ? 'کیف پول' : 'Wallet' },
-              { id: 'services' as const, l: isFa ? 'خدمات' : 'Services' },
-            ]).map((x) => {
-              const active = activeTab === x.id;
-              return (
-                <button
-                  key={x.id}
-                  type="button"
-                  onClick={() => selectTab(x.id)}
-                  className="relative flex flex-col items-center justify-center gap-1 h-full pt-1"
-                >
-                  <DockTabIcon id={x.id} active={active} />
-                  <span className={`text-[11px] font-bold leading-none ${active ? 'text-[#F59E0B]' : 'text-main/80'}`}>
-                    {x.l}
-                  </span>
-                  {active && (
-                    <span className="absolute bottom-0 w-7 h-[3px] rounded-t-full bg-[#F59E0B] shadow-[0_0_14px_rgba(245,158,11,0.9)]" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </nav>
+      <LiquidGlassDock
+        isFa={isFa}
+        activeTab={activeTab}
+        isRunning={isRunning}
+        onSelectTab={(id) => selectTab(id)}
+        onStartStop={onStartStop}
+      />
 
       {/* Command Palette (⌘K) */}
       {paletteOpen && (

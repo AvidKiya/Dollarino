@@ -220,6 +220,27 @@ authRoutes.post('/logout', (c) => {
   return c.json({ ok: true });
 });
 
+authRoutes.get('/session', async (c) => {
+  const customHeader = c.req.header('X-Dollarino-Token');
+  const authHeader = c.req.header('Authorization');
+  const cookieToken = getCookie(c, 'dollarino_session');
+  const token = customHeader || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken);
+  if (!token) return c.json({ authenticated: false, user: null });
+
+  const payload = await verifyJwt(token, c.env.SESSION_JWT_SECRET);
+  if (!payload || typeof payload.sub !== 'string') {
+    return c.json({ authenticated: false, user: null });
+  }
+  const full = await c.env.DB.prepare(
+    `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, avatar_url, created_at
+     FROM users WHERE id = ?`
+  ).bind(payload.sub).first<{ is_blocked?: number }>();
+  if (!full || full.is_blocked) {
+    return c.json({ authenticated: false, user: null });
+  }
+  return c.json({ authenticated: true, user: full });
+});
+
 authRoutes.get('/me', requireAuth, async (c) => {
   const u = c.get('user');
   const full = await c.env.DB.prepare(

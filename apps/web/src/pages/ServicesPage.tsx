@@ -20,6 +20,7 @@ import {
   Send,
   Shield,
   Sparkles,
+  Sprout,
   Sun,
   Trash2,
   User,
@@ -175,9 +176,13 @@ export function ServicesPage({
     ? isFa
       ? data.entitlement.planNameFa
       : data.entitlement.planNameEn
-    : isFa
-      ? 'نسخه رایگان دمو ($10K)'
-      : 'Free Paper ($10K)';
+    : isFa ? (
+        <>
+          نسخه رایگان دمو (<span dir="ltr" className="inline-block font-num">$10K</span>)
+        </>
+      ) : (
+        'Free Paper ($10K)'
+      );
 
   /* Dedicated Account Management View matching image-2.png + Real Profile Photo Upload */
   if (accountView) {
@@ -333,7 +338,13 @@ export function ServicesPage({
             <div className="flex items-center gap-2">
               <Link2 className="w-4 h-4 text-[#1652F0]" />
               <span className="text-xs font-black text-main">
-                {isFa ? 'اتصال همگام حساب وب و @Dollarino_bot' : 'Sync Web & @Dollarino_bot'}
+                {isFa ? (
+                  <>
+                    اتصال همگام حساب وب و <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
+                  </>
+                ) : (
+                  'Sync Web & @Dollarino_bot'
+                )}
               </span>
             </div>
             {user.telegram_id && !isTelegramPseudo && (
@@ -377,7 +388,17 @@ export function ServicesPage({
                 className="btn-cobalt px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
               >
                 <Link2 className="w-3.5 h-3.5" />
-                <span>{linkBusy ? '...' : isFa ? 'اتصال ۱-کلیکی به @Dollarino_bot' : '1-Click Connect'}</span>
+                <span>
+                  {linkBusy ? (
+                    '...'
+                  ) : isFa ? (
+                    <>
+                      اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
+                    </>
+                  ) : (
+                    '1-Click Connect'
+                  )}
+                </span>
               </button>
               {deepLinkUrl && (
                 <a
@@ -532,7 +553,7 @@ export function ServicesPage({
             title={isFa ? 'تغییر سطح کاربری (ساده / حرفه‌ای)' : 'Toggle Easy / Pro'}
             className="w-9 h-9 rounded-full surface-soft grid place-items-center text-xs font-black text-main hover:bg-[var(--line)] transition"
           >
-            {uiMode === 'simple' ? 'A' : 'P'}
+            {uiMode === 'simple' ? <Sprout className="w-4 h-4 text-[#0D9455]" /> : <Zap className="w-4 h-4 text-[#1652F0]" />}
           </button>
           <button
             type="button"
@@ -672,7 +693,15 @@ export function ServicesPage({
             </span>
             <div className="min-w-0 flex-1">
               <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، عکس پروفایل و اتصال تلگرام' : 'Profile Photo, Account & Telegram Link'}</span>
-              <span className="text-[11px] text-dim block">{isFa ? 'آپلود عکس پروفایل و اتصال ۱-کلیکی به @Dollarino_bot' : 'Upload avatar & sync @Dollarino_bot'}</span>
+              <span className="text-[11px] text-dim block">
+                {isFa ? (
+                  <>
+                    آپلود عکس پروفایل و اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
+                  </>
+                ) : (
+                  'Upload avatar & sync @Dollarino_bot'
+                )}
+              </span>
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>

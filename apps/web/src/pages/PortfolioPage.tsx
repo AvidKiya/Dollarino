@@ -220,13 +220,19 @@ export function PortfolioPage({
           {!hideBal && isFa && (
             <p className="text-xs text-white/80 font-semibold">معادل {formatTomanEq(totalEq)} تومان</p>
           )}
-          <div className="flex items-center justify-center gap-3 text-[11px] text-white/75 pt-1">
+          <div className="flex items-center justify-center gap-3 text-[11px] text-white/80 pt-1">
             <span>
-              {isFa ? 'آزاد:' : 'Free:'} <span dir="ltr" className="inline-block font-num">${freeCash.toFixed(0)}</span>
+              {isFa ? 'آزاد:' : 'Free:'}{' '}
+              <span dir="ltr" className="inline-block font-num font-bold">
+                ${freeCash.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              </span>
             </span>
             <span>·</span>
             <span>
-              {isFa ? 'درگیر:' : 'Used:'} <span dir="ltr" className="inline-block font-num">${usedMargin.toFixed(0)}</span>
+              {isFa ? 'درگیر:' : 'Used:'}{' '}
+              <span dir="ltr" className="inline-block font-num font-bold">
+                ${usedMargin.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              </span>
             </span>
             <span>·</span>
             <span dir="ltr" className={`inline-block font-bold font-num ${unreal >= 0 ? 'text-[#8EFFB6]' : 'text-rose-200'}`}>
@@ -291,7 +297,7 @@ export function PortfolioPage({
           <span className="text-[11px] font-extrabold text-main">
             {isFa ? (
               <>
-                ریست <span dir="ltr" className="font-num">$10K</span>
+                ریست <span dir="ltr" className="inline-block font-num">$10K</span>
               </>
             ) : (
               'Reset $10K'

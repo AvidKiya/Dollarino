@@ -171,16 +171,34 @@ export function CandlestickChart({
           showCustomOverlay && customOverlays?.markers?.length
             ? customOverlays.markers
             : kbosOverlays?.markers ?? [];
-        const markers: SeriesMarker<Time>[] = dedupAsc(
+        const sortedRaw = dedupAsc(
           rawMarkers.map((m) => ({
             time: m.time as Time,
             position: m.position,
             color: m.color,
             shape: m.shape,
-            text: m.text,
+            text: m.text.includes('BUY') ? 'BUY' : m.text.includes('SELL') ? 'SELL' : m.text.slice(0, 6),
           }))
         );
-        series.setMarkers(markers);
+        const barStepSec =
+          sortedCandles.length >= 2
+            ? Math.max(60, Number(sortedCandles[1]!.time) - Number(sortedCandles[0]!.time))
+            : 900;
+        const firstSec = Number(sortedCandles[0]?.time ?? 0);
+        const lastSec = Number(sortedCandles[sortedCandles.length - 1]?.time ?? 0);
+        const spanSec = Math.max(0, lastSec - firstSec);
+        const minGapSec = Math.max(barStepSec * 16, Math.floor(spanSec / 6));
+        const spaced: SeriesMarker<Time>[] = [];
+        for (const m of sortedRaw) {
+          const prev = spaced[spaced.length - 1];
+          if (!prev || Number(m.time) - Number(prev.time) >= minGapSec) {
+            spaced.push(m);
+          } else {
+            // Keep the newer signal within the cluster so labels stay readable
+            spaced[spaced.length - 1] = m;
+          }
+        }
+        series.setMarkers(spaced);
       }
 
       chart.timeScale().fitContent();

@@ -106,25 +106,25 @@ export function App() {
         window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
       }
 
-      let me: { user: AuthUserInfo };
-      try {
-        me = await apiFetch<{ user: AuthUserInfo }>('/api/auth/me');
-      } catch (firstErr) {
-        if (isInsideTelegramMiniApp()) {
-          const tg = getTelegramWebApp();
-          if (tg?.initData) {
-            const authRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-webapp', {
-              method: 'POST',
-              body: JSON.stringify({ initData: tg.initData }),
-            });
-            setStoredToken(authRes.token);
-            me = { user: authRes.user };
-          } else {
-            throw firstErr;
-          }
-        } else {
-          throw firstErr;
+      let me: { user: AuthUserInfo } | null = null;
+      const sess = await apiFetch<{ authenticated: boolean; user: AuthUserInfo | null }>('/api/auth/session');
+      if (sess.authenticated && sess.user) {
+        me = { user: sess.user };
+      } else if (isInsideTelegramMiniApp()) {
+        const tg = getTelegramWebApp();
+        if (tg?.initData) {
+          const authRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-webapp', {
+            method: 'POST',
+            body: JSON.stringify({ initData: tg.initData }),
+          });
+          setStoredToken(authRes.token);
+          me = { user: authRes.user };
         }
+      }
+      if (!me) {
+        setUser(null);
+        setDashboard(null);
+        return;
       }
       setUser(me.user);
       const dash = await apiFetch<DashboardPayload>('/api/trading/dashboard');

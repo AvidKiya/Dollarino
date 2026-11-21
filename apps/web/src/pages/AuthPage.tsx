@@ -147,7 +147,15 @@ export function AuthPage({
             className="btn-cobalt w-full py-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2"
           >
             <Send className="w-4 h-4" />
-            <span>{isFa ? 'ورود و ثبت‌نام ۱-کلیکی با ربات تلگرام (@Dollarino_bot)' : '1-Click Sign In via @Dollarino_bot'}</span>
+            <span>
+              {isFa ? (
+                <>
+                  ورود و ثبت‌نام ۱-کلیکی با ربات تلگرام (<span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>)
+                </>
+              ) : (
+                '1-Click Sign In via @Dollarino_bot'
+              )}
+            </span>
           </a>
 
           <div className="flex items-center gap-2 text-[11px] text-dim">
