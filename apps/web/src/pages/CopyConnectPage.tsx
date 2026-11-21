@@ -444,14 +444,15 @@ export function CopyConnectPage({
                           });
                           flash(
                             isFa
-                              ? `منتشر و برای ${r.mirroredCount ?? 0} دنبال‌کننده کپی شد ✅`
-                              : `Published & mirrored to ${r.mirroredCount ?? 0} followers ✅`
+                              ? `منتشر و برای ${r.mirroredCount ?? 0} دنبال‌کننده کپی شد.`
+                              : `Published & mirrored to ${r.mirroredCount ?? 0} followers.`
                           );
                           await loadConnections();
                         }}
-                        className="btn-emerald px-3.5 py-2 rounded-xl font-black text-[11px]"
+                        className="btn-emerald px-3.5 py-2 rounded-xl font-black text-[11px] inline-flex items-center gap-1"
                       >
-                        {isFa ? '✅ بله، منتشر و کپی شود' : '✅ Yes, Publish & Copy'}
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'بله، منتشر و کپی شود' : 'Yes, Publish & Copy'}</span>
                       </button>
                       <button
                         type="button"
@@ -465,7 +466,7 @@ export function CopyConnectPage({
                         }}
                         className="btn-ghost px-3.5 py-2 rounded-xl font-bold text-[11px] text-loss"
                       >
-                        {isFa ? '❌ خیر، فقط شخصی' : '❌ Private Only'}
+                        {isFa ? 'خیر، فقط شخصی' : 'Private Only'}
                       </button>
                     </div>
                   </div>
@@ -476,19 +477,26 @@ export function CopyConnectPage({
 
           {/* Verified Copy Traders Marketplace */}
           <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Trophy className="w-5 h-5 text-amber-400" />
-                  <h3 className="font-display font-bold text-xl text-main">
-                    {isFa ? 'تریدرهای تاییدشده کپی‌ترید دلارینو' : 'Admin-Verified Copy Traders'}
-                  </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <img
+                  src="/images/copytrade-trophy.png"
+                  alt="Verified Copy Traders"
+                  className="w-24 h-16 rounded-2xl object-cover border hairline shrink-0 hidden sm:block"
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-amber-400" />
+                    <h3 className="font-display font-bold text-xl text-main">
+                      {isFa ? 'تریدرهای تاییدشده کپی‌ترید دلارینو' : 'Admin-Verified Copy Traders'}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-dim mt-1">
+                    {isFa
+                      ? 'فقط معامله‌گران بررسی و تاییدشده توسط مدیریت دلارینو در این بخش نمایش داده می‌شوند. معاملات هر تریدر را ببینید و با یک کلیک کپی کنید.'
+                      : 'Only traders reviewed and verified by Dollarino admins appear here. Follow automatically or copy any trade with 1 tap.'}
+                  </p>
                 </div>
-                <p className="text-xs text-dim mt-1">
-                  {isFa
-                    ? 'فقط معامله‌گران بررسی و تاییدشده توسط مدیریت دلارینو در این بخش نمایش داده می‌شوند. معاملات هر تریدر را ببینید و با یک کلیک کپی کنید.'
-                    : 'Only traders reviewed and verified by Dollarino admins appear here. Follow automatically or copy any trade with 1 tap.'}
-                </p>
               </div>
               {!entitlement?.hasPaidPlan && (
                 <button type="button" onClick={() => onNavigate('pricing')} className="btn-gold px-4 py-2 rounded-xl text-xs font-black">
@@ -602,8 +610,8 @@ export function CopyConnectPage({
                         <span>
                           {tr.following
                             ? isFa
-                              ? 'توقف کپی خودکار (در حال دنبال کردن ✓)'
-                              : 'Stop Auto-Copy (Following ✓)'
+                              ? 'توقف کپی خودکار (در حال دنبال کردن)'
+                              : 'Stop Auto-Copy (Following)'
                             : isFa
                               ? `فعال‌سازی کپی خودکار (${tr.followers_count} دنبال‌کننده)`
                               : `Follow & Auto-Copy (${tr.followers_count})`}

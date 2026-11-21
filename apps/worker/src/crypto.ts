@@ -149,7 +149,7 @@ export async function verifyTelegramWebAppInitData(
   maxAgeSeconds = 86_400
 ): Promise<{
   valid: boolean;
-  user?: { id: number; first_name?: string; last_name?: string; username?: string; language_code?: string };
+  user?: { id: number; first_name?: string; last_name?: string; username?: string; language_code?: string; photo_url?: string };
   startParam?: string;
   error?: string;
 }> {

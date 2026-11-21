@@ -274,8 +274,9 @@ export function QuickWidgetsBar({
       {extOpen && (
         <div className="surface-soft rounded-2xl p-3.5 space-y-2.5 border border-blue-500/30 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-black text-main">
-              {isFa ? '🧩 کلید اتصال و دانلود اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension Key & Package'}
+            <p className="font-black text-main inline-flex items-center gap-1.5">
+              <KeyRound className="w-4 h-4 text-[var(--gold)]" />
+              <span>{isFa ? 'کلید اتصال و دانلود اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension Key & Package'}</span>
             </p>
             <a
               href="/downloads/dollarino-extension.zip"
@@ -353,7 +354,7 @@ export function QuickLauncherModal({
         <div className="surface-soft rounded-2xl p-4 space-y-2 text-xs">
           <p className="text-dim">
             {isFa ? 'وضعیت فعلی ربات:' : 'Bot Status:'}{' '}
-            <strong className={isRunning ? 'text-jade' : 'text-loss'}>{isRunning ? (isFa ? 'فعال 🟢' : 'Running') : isFa ? 'متوقف 🔴' : 'Stopped'}</strong>
+            <strong className={isRunning ? 'text-jade' : 'text-loss'}>{isRunning ? (isFa ? 'فعال' : 'Running') : isFa ? 'متوقف' : 'Stopped'}</strong>
           </p>
           <p className="text-dim">
             {isFa ? 'موجودی:' : 'Balance:'} <strong dir="ltr" className="text-main">${Number(dashboard.balance.total || 0).toFixed(2)}</strong> ·{' '}
@@ -368,9 +369,10 @@ export function QuickLauncherModal({
           <button
             type="button"
             onClick={() => void onToggleBot()}
-            className={`py-3 rounded-2xl text-xs font-black ${isRunning ? 'bg-rose-500 text-white' : 'btn-gold'}`}
+            className={`py-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5 ${isRunning ? 'bg-rose-500 text-white' : 'btn-gold'}`}
           >
-            {isRunning ? (isFa ? '🔴 خاموش کردن فوری ربات' : 'Turn Bot OFF') : isFa ? '🟢 روشن کردن فوری ربات' : 'Turn Bot ON'}
+            <Power className="w-4 h-4" />
+            <span>{isRunning ? (isFa ? 'خاموش کردن فوری ربات' : 'Turn Bot OFF') : isFa ? 'روشن کردن فوری ربات' : 'Turn Bot ON'}</span>
           </button>
           <button
             type="button"
@@ -378,16 +380,18 @@ export function QuickLauncherModal({
               onNavigate('dex');
               onClose();
             }}
-            className="btn-cobalt py-2.5 rounded-2xl text-xs font-black"
+            className="btn-cobalt py-2.5 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
           >
-            {isFa ? '🔍 باز کردن رادار DexScreener و Trust Wallet' : 'Open DexScreener & Trust Wallet'}
+            <Flame className="w-4 h-4" />
+            <span>{isFa ? 'باز کردن رادار DexScreener و Trust Wallet' : 'Open DexScreener & Trust Wallet'}</span>
           </button>
           <button
             type="button"
             onClick={() => void onKillSwitch().then(onClose)}
-            className="py-2.5 rounded-2xl text-xs font-black bg-rose-500/15 text-loss border border-rose-500/35"
+            className="py-2.5 rounded-2xl text-xs font-black bg-rose-500/15 text-loss border border-rose-500/35 inline-flex items-center justify-center gap-1.5"
           >
-            {isFa ? '🛑 توقف اضطراری کامل (Kill Switch)' : 'Emergency Kill Switch'}
+            <ShieldAlert className="w-4 h-4" />
+            <span>{isFa ? 'توقف اضطراری کامل (Kill Switch)' : 'Emergency Kill Switch'}</span>
           </button>
         </div>
       </div>

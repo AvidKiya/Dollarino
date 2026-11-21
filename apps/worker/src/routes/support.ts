@@ -1,12 +1,37 @@
 import { Hono } from 'hono';
+import { generateSupportAIReply } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE, OFFICIAL_CHANNEL_HANDLE } from '../telegram/formatter.js';
 import { notifyAllAdmins } from '../telegram/publisher.js';
 
 export const supportRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 supportRoutes.use('*', requireAuth);
+
+async function buildUserSupportContext(db: D1Database, user: AppVariables['user']): Promise<string> {
+  const [cfg, ent, userRow, exRows] = await Promise.all([
+    db.prepare(`SELECT bot_state, trading_mode, strategy_key, symbol FROM bot_configs WHERE user_id = ? LIMIT 1`)
+      .bind(user.id)
+      .first<{ bot_state: string; trading_mode: string; strategy_key: string; symbol: string }>()
+      .catch(() => null),
+    resolveUserEntitlement(db, user).catch(() => null),
+    db.prepare(`SELECT trust_wallet_address, trust_wallet_verified, ui_mode FROM users WHERE id = ? LIMIT 1`)
+      .bind(user.id)
+      .first<{ trust_wallet_address: string | null; trust_wallet_verified: number; ui_mode: string | null }>()
+      .catch(() => null),
+    db.prepare(`SELECT provider, is_active FROM exchange_connections WHERE user_id = ? AND is_active = 1`)
+      .bind(user.id)
+      .all<{ provider: string }>()
+      .catch(() => ({ results: [] })),
+  ]);
+
+  const plan = ent ? `${ent.planNameFa}${ent.daysRemaining ? ` (${ent.daysRemaining}d left)` : ''}` : 'Standard';
+  const exchanges = exRows.results.map((r) => r.provider).join(', ') || 'paper';
+  const tw = userRow?.trust_wallet_address ? `Connected (${userRow.trust_wallet_address.slice(0, 8)}...)` : 'Not linked';
+  return `Plan: ${plan} | Bot: ${cfg?.bot_state || 'STOPPED'} (${cfg?.trading_mode || 'PAPER'}, strategy: ${cfg?.strategy_key || 'dollarino_v01'}) | Exchanges: ${exchanges} | TrustWallet: ${tw}`;
+}
 
 supportRoutes.get('/tickets', async (c) => {
   const user = c.get('user');
@@ -20,6 +45,7 @@ supportRoutes.get('/tickets', async (c) => {
       subject: string;
       status: string;
       channel: string;
+      support_mode?: string;
       last_message_at: string;
       created_at: string;
     }>().catch(() => ({ results: [] })),
@@ -54,57 +80,167 @@ supportRoutes.post('/message', async (c) => {
     ticketId?: string;
     subject?: string;
     message?: string;
-  }>().catch(() => ({} as { ticketId?: string; subject?: string; message?: string }));
+    mode?: 'AI' | 'HUMAN' | 'ESCALATE';
+  }>().catch(() => ({} as { ticketId?: string; subject?: string; message?: string; mode?: 'AI' | 'HUMAN' | 'ESCALATE' }));
 
   const text = String(body.message || '').trim();
   if (!text) return c.json({ error: 'متن پیام پشتیبانی نمی‌تواند خالی باشد.' }, 400);
 
   let ticketId = (body.ticketId || '').trim();
+  let currentMode = 'AI_ASSISTANT';
   if (ticketId) {
     const own = await c.env.DB.prepare(
-      `SELECT id FROM support_tickets WHERE id = ? AND user_id = ? LIMIT 1`
-    ).bind(ticketId, user.id).first<{ id: string }>();
+      `SELECT id, COALESCE(support_mode, 'AI_ASSISTANT') as support_mode FROM support_tickets WHERE id = ? AND user_id = ? LIMIT 1`
+    ).bind(ticketId, user.id).first<{ id: string; support_mode: string }>();
     if (!own) ticketId = '';
+    else currentMode = own.support_mode || 'AI_ASSISTANT';
   }
 
   if (!ticketId) {
     const openExisting = await c.env.DB.prepare(
-      `SELECT id FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
-    ).bind(user.id).first<{ id: string }>();
+      `SELECT id, COALESCE(support_mode, 'AI_ASSISTANT') as support_mode FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
+    ).bind(user.id).first<{ id: string; support_mode: string }>();
     if (openExisting) {
       ticketId = openExisting.id;
+      currentMode = openExisting.support_mode || 'AI_ASSISTANT';
     } else {
       ticketId = randomId('tkt');
+      const initMode = body.mode === 'HUMAN' || body.mode === 'ESCALATE' ? 'HUMAN_ADMIN' : 'AI_ASSISTANT';
+      currentMode = initMode;
       await c.env.DB.prepare(
-        `INSERT INTO support_tickets (id, user_id, subject, status, channel) VALUES (?, ?, ?, 'OPEN', 'WEB')`
-      ).bind(ticketId, user.id, (body.subject || 'پشتیبانی آنلاین دلارینو').trim().slice(0, 100)).run();
+        `INSERT INTO support_tickets (id, user_id, subject, status, channel, support_mode) VALUES (?, ?, ?, 'OPEN', 'WEB', ?)`
+      ).bind(ticketId, user.id, (body.subject || 'پشتیبانی آنلاین دلارینو').trim().slice(0, 100), initMode).run();
     }
   }
 
+  const wantsHuman = body.mode === 'HUMAN' || body.mode === 'ESCALATE' || currentMode === 'HUMAN_ADMIN';
   const msgId = randomId('smsg');
   await c.env.DB.prepare(
     `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message)
      VALUES (?, ?, ?, 'user', ?, ?)`
   ).bind(msgId, ticketId, user.id, user.username || user.email, text.slice(0, 2000)).run();
 
+  if (wantsHuman) {
+    await c.env.DB.prepare(
+      `UPDATE support_tickets SET status = 'OPEN', support_mode = 'HUMAN_ADMIN', escalated_at = COALESCE(escalated_at, datetime('now')), last_message_at = datetime('now') WHERE id = ?`
+    ).bind(ticketId).run();
+
+    const alert = [
+      `💬 درخواست پشتیبانی مستقیم با مدیران (وب)`,
+      `کاربر: ${user.username} (${user.email})`,
+      `تیکت: ${ticketId}`,
+      ``,
+      text.slice(0, 800),
+    ].join('\n');
+
+    await notifyAllAdmins(c.env, alert, {
+      inlineKeyboard: [
+        [{ text: '✍️ پاسخ آنلاین به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }],
+      ],
+    }).catch(() => {});
+
+    return c.json({ ok: true, ticketId, messageId: msgId, supportMode: 'HUMAN_ADMIN', aiReply: null }, 201);
+  }
+
+  // AI Support Mode: answer immediately while keeping option to escalate to humans
+  const recentRows = await c.env.DB.prepare(
+    `SELECT sender_role, message FROM support_messages WHERE ticket_id = ? ORDER BY created_at DESC LIMIT 8`
+  ).bind(ticketId).all<{ sender_role: string; message: string }>().catch(() => ({ results: [] }));
+
+  const contextSummary = await buildUserSupportContext(c.env.DB, user);
+  const aiRes = await generateSupportAIReply(c.env, {
+    userId: user.id,
+    username: user.username || user.email,
+    question: text,
+    contextSummary,
+    recentMessages: recentRows.results.reverse(),
+  });
+
+  const aiMsgId = randomId('smsg');
   await c.env.DB.prepare(
-    `UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`
+    `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message)
+     VALUES (?, ?, ?, 'ai', ?, ?)`
+  ).bind(aiMsgId, ticketId, user.id, `دستیار هوشمند دلارینو (${aiRes.usedModel})`, aiRes.reply).run();
+
+  await c.env.DB.prepare(
+    `UPDATE support_tickets SET status = 'OPEN', support_mode = 'AI_ASSISTANT', last_message_at = datetime('now') WHERE id = ?`
   ).bind(ticketId).run();
 
-  // Notify ALL admins/owners via Telegram Bot (never personal DMs)
-  const alert = [
-    `💬 پیام پشتیبانی آنلاین جدید (وب)`,
-    `کاربر: ${user.username} (${user.email})`,
-    `تیکت: ${ticketId}`,
-    ``,
-    text.slice(0, 800),
-  ].join('\n');
+  return c.json(
+    {
+      ok: true,
+      ticketId,
+      messageId: msgId,
+      supportMode: 'AI_ASSISTANT',
+      aiReply: {
+        id: aiMsgId,
+        sender_role: 'ai',
+        sender_name: `دستیار هوشمند دلارینو (${aiRes.usedModel})`,
+        message: aiRes.reply,
+      },
+    },
+    201
+  );
+});
 
-  await notifyAllAdmins(c.env, alert, {
-    inlineKeyboard: [
-      [{ text: '✍️ پاسخ آنلاین به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }],
-    ],
-  }).catch(() => {});
+supportRoutes.post('/escalate', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ ticketId?: string; reason?: string }>().catch(
+    () => ({} as { ticketId?: string; reason?: string })
+  );
 
-  return c.json({ ok: true, ticketId, messageId: msgId }, 201);
+  let ticketId = (body.ticketId || '').trim();
+  if (!ticketId) {
+    const openExisting = await c.env.DB.prepare(
+      `SELECT id FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
+    ).bind(user.id).first<{ id: string }>();
+    ticketId = openExisting?.id || '';
+  }
+
+  if (!ticketId) {
+    ticketId = randomId('tkt');
+    await c.env.DB.prepare(
+      `INSERT INTO support_tickets (id, user_id, subject, status, channel, support_mode, escalated_at) VALUES (?, ?, 'ارتباط مستقیم با مدیران', 'OPEN', 'WEB', 'HUMAN_ADMIN', datetime('now'))`
+    ).bind(ticketId, user.id).run();
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE support_tickets SET support_mode = 'HUMAN_ADMIN', escalated_at = datetime('now'), status = 'OPEN', last_message_at = datetime('now') WHERE id = ? AND user_id = ?`
+    ).bind(ticketId, user.id).run();
+  }
+
+  const sysMsgId = randomId('smsg');
+  const note = body.reason?.trim()
+    ? `درخواست ارتباط مستقیم با مدیران پشتیبانی ثبت شد. پیام شما: «${body.reason.trim()}»`
+    : 'تیکت شما با اولویت به پنل مدیران انسانی دلارینو ارجاع داده شد. پاسخ مدیریت به‌زودی در همین گفتگو و ربات تلگرام برایتان ارسال می‌شود.';
+  await c.env.DB.prepare(
+    `INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message) VALUES (?, ?, ?, 'system', 'سیستم پشتیبانی', ?)`
+  ).bind(sysMsgId, ticketId, user.id, note).run();
+
+  const lastUserMsg = await c.env.DB.prepare(
+    `SELECT message FROM support_messages WHERE ticket_id = ? AND sender_role = 'user' ORDER BY created_at DESC LIMIT 1`
+  ).bind(ticketId).first<{ message: string }>().catch(() => null);
+
+  await notifyAllAdmins(
+    c.env,
+    `👨‍💼 درخواست گفتگوی مستقیم کاربر با مدیران (وب)\nکاربر: ${user.username} (${user.email})\nتیکت: ${ticketId}\nآخرین پیام: ${lastUserMsg?.message || body.reason || 'درخواست ارتباط مستقیم'}`,
+    {
+      inlineKeyboard: [
+        [{ text: '✍️ پاسخ آنلاین به این تیکت', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }],
+      ],
+    }
+  ).catch(() => {});
+
+  return c.json({ ok: true, ticketId, supportMode: 'HUMAN_ADMIN', systemMessage: note });
+});
+
+supportRoutes.post('/switch-ai', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ ticketId?: string }>().catch(() => ({} as { ticketId?: string }));
+  const ticketId = (body.ticketId || '').trim();
+  if (ticketId) {
+    await c.env.DB.prepare(
+      `UPDATE support_tickets SET support_mode = 'AI_ASSISTANT', last_message_at = datetime('now') WHERE id = ? AND user_id = ?`
+    ).bind(ticketId, user.id).run();
+  }
+  return c.json({ ok: true, supportMode: 'AI_ASSISTANT' });
 });

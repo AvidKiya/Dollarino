@@ -22,6 +22,7 @@ export interface AuthUserInfo {
   role: string;
   telegram_id: string | null;
   avatar_url?: string | null;
+  avatar_custom?: number | boolean;
   phone_number?: string | null;
   phone_verified?: boolean;
   trust_wallet_address?: string | null;

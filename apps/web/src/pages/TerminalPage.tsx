@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
+  Bell,
+  BellRing,
   BrainCircuit,
+  Calculator,
   CandlestickChart as CandleIcon,
   CheckCircle2,
   Code2,
@@ -11,13 +14,16 @@ import {
   History,
   Layers,
   Play,
+  RefreshCw,
   Rocket,
   Save,
   Scale,
   Send,
   Shield,
   ShieldCheck,
+  Sparkles,
   Target,
+  Trash2,
   TrendingDown,
   TrendingUp,
   X,
@@ -36,6 +42,7 @@ import {
   type CustomStrategyChartOverlay,
   type KbosChartOverlays,
 } from '../components/CandlestickChart';
+import { CoinIcon } from '../components/CoinIcon';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { apiFetch } from '../lib/api';
@@ -82,12 +89,28 @@ interface ChartAIResult {
   resistances?: number[];
 }
 
+interface PriceAlertItem {
+  id: string;
+  symbol: string;
+  condition: 'ABOVE' | 'BELOW';
+  target_price: number;
+  note?: string | null;
+  is_active: number;
+  triggered_at?: string | null;
+  created_at: string;
+}
+
 function fmtPx(v?: number | string): string {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return '—';
   if (n >= 1000) return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (n >= 1) return n.toFixed(4);
   return n.toFixed(6);
+}
+
+function fmtUsd(v: number): string {
+  if (!Number.isFinite(v)) return '$0';
+  return '$' + Math.round(v).toLocaleString('en-US');
 }
 
 export function TerminalPage({
@@ -116,8 +139,9 @@ export function TerminalPage({
   const isFa = lang === 'fa';
   const [tf, setTf] = useState<Timeframe>('15m');
   const [showSimpleChart, setShowSimpleChart] = useState(false);
-  const [rightIntel, setRightIntel] = useState<'ai' | 'book' | 'script'>('ai');
+  const [rightIntel, setRightIntel] = useState<'ai' | 'book' | 'script' | 'tools'>('ai');
   const [snap, setSnap] = useState<OverviewResponse | null>(null);
+  const [loadingSymbol, setLoadingSymbol] = useState(false);
   const [showEma, setShowEma] = useState(true);
   const [showKbos, setShowKbos] = useState(true);
   const [customChartOverlay, setCustomChartOverlay] = useState<CustomStrategyChartOverlay | null>(null);
@@ -128,6 +152,13 @@ export function TerminalPage({
   const [scriptFeedback, setScriptFeedback] = useState<{ ok: boolean; text: string; retPct?: number; wr?: number } | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingTradeConfirmation | null>(null);
 
+  // Price Alerts state
+  const [alerts, setAlerts] = useState<PriceAlertItem[]>([]);
+  const [alertTarget, setAlertTarget] = useState('');
+  const [alertCond, setAlertCond] = useState<'ABOVE' | 'BELOW'>('ABOVE');
+  const [alertNote, setAlertNote] = useState('');
+  const [alertBusy, setAlertBusy] = useState(false);
+
   // Order ticket state
   const [side, setSide] = useState<'LONG' | 'SHORT'>('LONG');
   const effectiveSide: 'LONG' | 'SHORT' = marketType === 'SPOT' ? 'LONG' : side;
@@ -136,7 +167,7 @@ export function TerminalPage({
   const [limitPrice, setLimitPrice] = useState('');
   const [lev, setLev] = useState(10);
   const effectiveLev = marketType === 'SPOT' ? 1 : lev;
-  const [marginPct, setMarginPct] = useState<number>(Math.max(5, Math.min(100, Number(data.config.margin_pct || 10))));
+  const [marginPct, setMarginPct] = useState<number>(Math.max(1, Math.min(100, Number(data.config.margin_pct || 10))));
   const [stopLoss, setStopLoss] = useState('');
   const [tp1, setTp1] = useState('');
   const [tp2, setTp2] = useState('');
@@ -160,35 +191,111 @@ export function TerminalPage({
   const [aiAnalysis, setAiAnalysis] = useState<ChartAIResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const applyAutoLevels = (px: number, dir: 'LONG' | 'SHORT') => {
+  const applyAutoLevels = (px: number, dir: 'LONG' | 'SHORT', alsoResetLimit = false) => {
     if (!Number.isFinite(px) || px <= 0) return;
     const dec = px >= 1000 ? 2 : px >= 1 ? 4 : 6;
+    if (alsoResetLimit) {
+      setLimitPrice(px.toFixed(dec));
+    }
     setStopLoss((dir === 'LONG' ? px * 0.985 : px * 1.015).toFixed(dec));
     setTp1((dir === 'LONG' ? px * 1.02 : px * 0.98).toFixed(dec));
     setTp2((dir === 'LONG' ? px * 1.035 : px * 0.965).toFixed(dec));
     setTp3((dir === 'LONG' ? px * 1.055 : px * 0.945).toFixed(dec));
   };
 
-  const loadMarket = async (forceResetLevels = false) => {
+  const loadAlerts = async () => {
+    const res = await apiFetch<{ alerts: PriceAlertItem[] }>('/api/trading/alerts').catch(() => ({ alerts: [] }));
+    setAlerts(res.alerts || []);
+  };
+
+  const loadMarket = async (forceResetLevels = false, targetSym = symbol, targetTf = tf, targetSide = effectiveSide) => {
     const [ov, chats] = await Promise.all([
-      apiFetch<OverviewResponse>(`/api/trading/market/overview?symbol=${symbol}&timeframe=${tf}`).catch(() => null),
+      apiFetch<OverviewResponse>(`/api/trading/market/overview?symbol=${targetSym}&timeframe=${targetTf}`).catch(() => null),
       apiFetch<{ chats: Array<{ id: string; title: string; symbol: string; timeframe: string }> }>('/api/chart-ai/chats').catch(() => ({
         chats: [],
       })),
     ]);
-    if (ov) {
+    if (ov && ov.market24h?.symbol === targetSym) {
       setSnap(ov);
+      setLoadingSymbol(false);
       const px = Number(ov.market24h.lastPrice || 0);
-      if (forceResetLevels || !stopLoss) applyAutoLevels(px, side);
+      if (forceResetLevels && px > 0) {
+        applyAutoLevels(px, targetSide, true);
+        setAlertTarget((px * 1.01).toFixed(px >= 1000 ? 2 : px >= 1 ? 4 : 6));
+      }
     }
     setChatHistory(chats.chats);
   };
 
+  // Strict reset on symbol switch so stale BTC/SOL prices, SL, TP, or AI never bleed into the new market
   useEffect(() => {
-    void loadMarket(true);
-    const iv = setInterval(() => void loadMarket(false), 10_000);
-    return () => clearInterval(iv);
+    let active = true;
+    setLoadingSymbol(true);
+    setSnap(null);
+    setStopLoss('');
+    setTp1('');
+    setTp2('');
+    setTp3('');
+    setLimitPrice('');
+    setAiAnalysis(null);
+    setChatId(undefined);
+    setMessages([]);
+    setCustomChartOverlay(null);
+    setOrderMsg('');
+
+    const run = async (resetLevels: boolean) => {
+      const ov = await apiFetch<OverviewResponse>(`/api/trading/market/overview?symbol=${symbol}&timeframe=${tf}`).catch(() => null);
+      if (!active) return;
+      if (ov) {
+        setSnap(ov);
+        const px = Number(ov.market24h.lastPrice || 0);
+        if (resetLevels && px > 0) {
+          applyAutoLevels(px, effectiveSide, true);
+          setAlertTarget((px * 1.01).toFixed(px >= 1000 ? 2 : px >= 1 ? 4 : 6));
+        }
+      }
+      setLoadingSymbol(false);
+    };
+
+    void run(true);
+    void loadAlerts();
+    void apiFetch<{ chats: Array<{ id: string; title: string; symbol: string; timeframe: string }> }>('/api/chart-ai/chats')
+      .then((c) => { if (active) setChatHistory(c.chats || []); })
+      .catch(() => {});
+
+    const iv = setInterval(() => void run(false), 10_000);
+    return () => {
+      active = false;
+      clearInterval(iv);
+    };
   }, [symbol, tf]);
+
+  const createPriceAlert = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const tPx = Number(alertTarget);
+    if (!Number.isFinite(tPx) || tPx <= 0) return;
+    setAlertBusy(true);
+    try {
+      await apiFetch('/api/trading/alerts', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol,
+          condition: alertCond,
+          targetPrice: tPx,
+          note: alertNote.trim() || undefined,
+        }),
+      });
+      setAlertNote('');
+      await loadAlerts();
+    } finally {
+      setAlertBusy(false);
+    }
+  };
+
+  const deletePriceAlert = async (id: string) => {
+    await apiFetch(`/api/trading/alerts/${id}`, { method: 'DELETE' }).catch(() => {});
+    await loadAlerts();
+  };
 
   const askChartAI = async (customPrompt?: string) => {
     const q = customPrompt ?? prompt;
@@ -682,32 +789,33 @@ export function TerminalPage({
     );
   }
 
+  // Computed Risk / Reward & Liquidation metrics for the Order Ticket
+  const refEntry = orderType === 'LIMIT' && Number(limitPrice) > 0 ? Number(limitPrice) : lastPx;
+  const slNum = Number(stopLoss);
+  const tp1Num = Number(tp1);
+  const tp2Num = Number(tp2);
+  const slConflict =
+    refEntry > 0 &&
+    Number.isFinite(slNum) &&
+    slNum > 0 &&
+    ((effectiveSide === 'LONG' && slNum >= refEntry) || (effectiveSide === 'SHORT' && slNum <= refEntry));
+  const riskDistPct = refEntry > 0 && slNum > 0 ? Math.abs(refEntry - slNum) / refEntry : 0;
+  const riskUsdEst = marginEst * effectiveLev * riskDistPct;
+  const rewardRef = tp2Num > 0 ? tp2Num : tp1Num;
+  const rewardDistPct = refEntry > 0 && rewardRef > 0 ? Math.abs(rewardRef - refEntry) / refEntry : 0;
+  const rrPreview = riskDistPct > 0 && rewardDistPct > 0 ? (rewardDistPct / riskDistPct).toFixed(2) : '—';
+  const estLiqPx =
+    refEntry > 0 && marketType === 'FUTURES'
+      ? effectiveSide === 'LONG'
+        ? refEntry * (1 - 0.9 / Math.max(1, effectiveLev))
+        : refEntry * (1 + 0.9 / Math.max(1, effectiveLev))
+      : 0;
+
   return (
     <div className="space-y-4">
-      {onToggleUiMode && (
-        <div className="flex justify-center">
-          <div className="panel rounded-full p-1 inline-flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => onToggleUiMode('simple')}
-              className="px-5 py-2 rounded-full text-xs font-bold text-dim hover:text-main transition"
-            >
-              {isFa ? 'معامله آسان' : 'Easy Trade'}
-            </button>
-            <button
-              type="button"
-              onClick={() => onToggleUiMode('pro')}
-              className="px-5 py-2 rounded-full text-xs font-black bg-[#1E293B] text-white shadow-sm transition"
-            >
-              {isFa ? 'معامله حرفه‌ای' : 'Pro Trade'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Header Bar */}
-      <div className="panel rounded-[24px] px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
+      {/* Compact Unified Pro Header Bar (Zero wasted top space) */}
+      <div className="panel rounded-[22px] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <SymbolPicker
             lang={lang}
             markets={markets}
@@ -719,7 +827,7 @@ export function TerminalPage({
           />
 
           {onChangeMarketType && (
-            <div className="ios-segmented">
+            <div className="ios-segmented p-0.5">
               <button
                 type="button"
                 onClick={() => void onChangeMarketType('FUTURES')}
@@ -737,17 +845,18 @@ export function TerminalPage({
             </div>
           )}
 
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            {['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'].map((s) => (
+          <div className="hidden lg:flex items-center gap-1">
+            {['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ZECUSDT'].map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setSymbol(s)}
-                className={`px-3 py-1 rounded-full text-xs font-black transition shrink-0 ${
-                  symbol === s ? 'btn-gold' : 'btn-ghost text-dim'
+                className={`px-2.5 py-1 rounded-full text-[11px] font-black transition inline-flex items-center gap-1.5 shrink-0 ${
+                  symbol === s ? 'btn-gold' : 'btn-ghost text-dim hover:text-main'
                 }`}
               >
-                {s.replace('USDT', '')}
+                <CoinIcon symbol={s} size={14} />
+                <span>{s.replace('USDT', '')}</span>
               </button>
             ))}
           </div>
@@ -755,411 +864,554 @@ export function TerminalPage({
 
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <div>
-            <span className="text-dim block text-[10px]">{isFa ? 'قیمت لحظه‌ای' : 'Last Price'}</span>
-            <span dir="ltr" className="font-num font-bold text-base text-main">${fmtPx(lastPx)}</span>
+            <span className="text-dim block text-[10px]">{isFa ? 'قیمت لحظه‌ای' : 'Mark Price'}</span>
+            <span dir="ltr" className="font-num font-black text-base text-main">
+              {loadingSymbol && !lastPx ? '...' : `$${fmtPx(lastPx)}`}
+            </span>
           </div>
           <div>
-            <span className="text-dim block text-[10px]">{isFa ? 'تغییر ۲۴س' : '24h Change'}</span>
+            <span className="text-dim block text-[10px]">{isFa ? 'تغییر ۲۴س' : '24h'}</span>
             <span dir="ltr" className={`font-num font-bold ${chg24 >= 0 ? 'text-jade' : 'text-loss'}`}>
-              {chg24 >= 0 ? '+' : ''}{chg24.toFixed(2)}%
+              {chg24 >= 0 ? '+' : ''}
+              {chg24.toFixed(2)}%
+            </span>
+          </div>
+          <div className="hidden md:block">
+            <span className="text-dim block text-[10px]">{isFa ? 'سقف / کف ۲۴س' : '24h H / L'}</span>
+            <span dir="ltr" className="font-num font-bold text-sub">
+              ${fmtPx(snap?.market24h.high24h)} / ${fmtPx(snap?.market24h.low24h)}
             </span>
           </div>
           <div className="hidden sm:block">
             <span className="text-dim block text-[10px]">{isFa ? 'فاندینگ' : 'Funding'}</span>
             <span dir="ltr" className="font-num font-bold text-main">{snap?.market24h.fundingRate ?? '0.008%'}</span>
           </div>
-          <div className="flex gap-1">
-            {(['1m', '5m', '15m', '1h', '4h'] as Timeframe[]).map((x) => (
+          <button
+            type="button"
+            onClick={() => setRightIntel('tools')}
+            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold inline-flex items-center gap-1.5 transition ${
+              rightIntel === 'tools' ? 'btn-gold' : 'btn-ghost text-sub'
+            }`}
+            title={isFa ? 'هشدار قیمت و ماشین‌حساب R:R' : 'Price Alerts & R:R Calculator'}
+          >
+            <BellRing className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isFa ? `هشدار (${alerts.filter((a) => a.is_active).length})` : `Alerts (${alerts.filter((a) => a.is_active).length})`}</span>
+          </button>
+          {onToggleUiMode && (
+            <div className="panel rounded-full p-0.5 inline-flex items-center gap-0.5">
               <button
-                key={x}
                 type="button"
-                onClick={() => setTf(x)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${tf === x ? 'btn-gold' : 'btn-ghost text-dim'}`}
+                onClick={() => onToggleUiMode('simple')}
+                className="px-3 py-1 rounded-full text-[11px] font-bold text-dim hover:text-main transition"
               >
-                {x}
+                {isFa ? 'آسان' : 'Easy'}
               </button>
-            ))}
-          </div>
+              <button
+                type="button"
+                onClick={() => onToggleUiMode('pro')}
+                className="px-3 py-1 rounded-full text-[11px] font-black bg-[#1E293B] text-white shadow-sm transition"
+              >
+                {isFa ? 'حرفه‌ای' : 'Pro'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Main 3-Column Pro Terminal Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* Chart (6 cols) */}
-        <div className="xl:col-span-6 panel rounded-[26px] p-4 flex flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2">
-              <CandleIcon className="w-4 h-4" style={{ color: 'var(--gold)' }} />
-              <span className="font-bold text-main">{symbol} · Perpetual · {tf}</span>
+      {/* Main Responsive Pro Grid: 8 Columns Wide Chart + Bottom Tools | 4 Columns Clean Order Ticket */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+        {/* Left/Main 8 Columns: Wide Candlestick Chart + Tabbed Intelligence Workbench */}
+        <div className="xl:col-span-8 space-y-4">
+          <div className="panel rounded-[26px] p-4 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <CoinIcon symbol={symbol} size={22} showPair />
+                <span className="font-bold text-main">
+                  {symbol} · {marketType === 'SPOT' ? 'Spot' : 'Perpetual'} · {tf}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex gap-1 me-2">
+                  {(['1m', '5m', '15m', '1h', '4h'] as Timeframe[]).map((x) => (
+                    <button
+                      key={x}
+                      type="button"
+                      onClick={() => setTf(x)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${tf === x ? 'btn-gold' : 'btn-ghost text-dim'}`}
+                    >
+                      {x}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEma((v) => !v)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showEma ? 'badge-signal' : 'btn-ghost text-dim'}`}
+                >
+                  <Eye className="w-3 h-3" /> EMA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowKbos((v) => !v)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showKbos ? 'badge-signal' : 'btn-ghost text-dim'}`}
+                >
+                  <Eye className="w-3 h-3" /> KBOS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRightIntel('script')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${rightIntel === 'script' || customChartOverlay ? 'btn-lime' : 'btn-ghost text-dim'}`}
+                >
+                  <Code2 className="w-3 h-3" /> Pine/Py
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRightIntel('ai');
+                    void askChartAI();
+                  }}
+                  disabled={aiLoading}
+                  className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1.5"
+                >
+                  <BrainCircuit className="w-3.5 h-3.5" />
+                  <span>{aiLoading ? '...' : isFa ? 'تحلیل هوشمند AI' : 'AI Analyze'}</span>
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
+
+            {snap?.candles?.length ? (
+              <CandlestickChart
+                candles={snap.candles}
+                overlays={chartOverlays}
+                kbosOverlays={showKbos ? snap.kbosOverlays : undefined}
+                customOverlays={customChartOverlay ?? snap.customOverlays}
+                levels={chartLevels}
+                height={470}
+              />
+            ) : (
+              <div className="h-[470px] grid place-items-center text-xs text-dim">
+                <div className="flex flex-col items-center gap-2">
+                  <RefreshCw className="w-5 h-5 animate-spin text-[var(--gold)]" />
+                  <span>{isFa ? `در حال دریافت کندل‌های زنده ${symbol}...` : `Loading live ${symbol} chart...`}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Spacious Workbench below the Chart: Chart AI | Order Book | Pine/Python | R:R & Alerts */}
+          <div className="panel rounded-[26px] p-4 space-y-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 rounded-xl bg-black/25 border hairline">
               <button
                 type="button"
-                onClick={() => setShowEma((v) => !v)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showEma ? 'badge-signal' : 'btn-ghost text-dim'}`}
+                onClick={() => setRightIntel('ai')}
+                className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1.5 text-[11px] ${
+                  rightIntel === 'ai' ? 'btn-gold' : 'text-dim hover:text-main'
+                }`}
               >
-                <Eye className="w-3 h-3" /> EMA
+                <BrainCircuit className="w-3.5 h-3.5" />
+                <span>{isFa ? 'چارت AI و ستاپ' : 'Chart AI'}</span>
               </button>
               <button
                 type="button"
-                onClick={() => setShowKbos((v) => !v)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showKbos ? 'badge-signal' : 'btn-ghost text-dim'}`}
+                onClick={() => setRightIntel('book')}
+                className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1.5 text-[11px] ${
+                  rightIntel === 'book' ? 'btn-gold' : 'text-dim hover:text-main'
+                }`}
               >
-                <Eye className="w-3 h-3" /> KBOS
+                <Layers className="w-3.5 h-3.5" />
+                <span>{isFa ? 'دفتر سفارش‌ها' : 'Order Book'}</span>
               </button>
               <button
                 type="button"
                 onClick={() => setRightIntel('script')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${rightIntel === 'script' || customChartOverlay ? 'btn-lime' : 'btn-ghost text-dim'}`}
+                className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1.5 text-[11px] ${
+                  rightIntel === 'script' ? 'btn-gold' : 'text-dim hover:text-main'
+                }`}
               >
-                <Code2 className="w-3 h-3" /> Pine/Py
+                <Code2 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'اسکریپت Pine/Py' : 'Pine / Python'}</span>
               </button>
               <button
                 type="button"
-                onClick={() => void askChartAI()}
-                disabled={aiLoading}
-                className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1.5"
+                onClick={() => setRightIntel('tools')}
+                className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1.5 text-[11px] ${
+                  rightIntel === 'tools' ? 'btn-gold' : 'text-dim hover:text-main'
+                }`}
               >
-                <BrainCircuit className="w-3.5 h-3.5" />
-                <span>{aiLoading ? '...' : isFa ? 'تحلیل AI' : 'AI Analyze'}</span>
+                <Bell className="w-3.5 h-3.5" />
+                <span>{isFa ? 'هشدار قیمت و R:R' : 'Alerts & R:R'}</span>
               </button>
             </div>
-          </div>
 
-          {snap?.candles?.length ? (
-            <CandlestickChart
-              candles={snap.candles}
-              overlays={chartOverlays}
-              kbosOverlays={showKbos ? snap.kbosOverlays : undefined}
-              customOverlays={customChartOverlay ?? snap.customOverlays}
-              levels={chartLevels}
-              height={430}
-            />
-          ) : (
-            <div className="h-[430px] grid place-items-center text-xs text-dim">
-              {isFa ? 'در حال بارگذاری کندل‌های زنده...' : 'Loading live candlestick feed...'}
-            </div>
-          )}
-        </div>
-
-        {/* Middle Column: Chart AI + Order Book + Pine/Python Script Drawer (3 cols) */}
-        <div className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3 text-xs">
-          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-black/25 border hairline">
-            <button
-              type="button"
-              onClick={() => setRightIntel('ai')}
-              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1 text-[11px] ${
-                rightIntel === 'ai' ? 'btn-gold' : 'text-dim hover:text-main'
-              }`}
-            >
-              <BrainCircuit className="w-3.5 h-3.5" />
-              <span>{isFa ? 'چارت AI' : 'Chart AI'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightIntel('book')}
-              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1 text-[11px] ${
-                rightIntel === 'book' ? 'btn-gold' : 'text-dim hover:text-main'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>{isFa ? 'سفارش‌ها' : 'Book'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setRightIntel('script')}
-              className={`py-2 rounded-lg font-black transition flex items-center justify-center gap-1 text-[11px] ${
-                rightIntel === 'script' ? 'btn-gold' : 'text-dim hover:text-main'
-              }`}
-            >
-              <Code2 className="w-3.5 h-3.5" />
-              <span>Pine/Py</span>
-            </button>
-          </div>
-
-          {rightIntel === 'ai' ? (
-            <div className="flex flex-col flex-1 gap-3">
-              {aiAnalysis && (
-                <div className="rounded-2xl bg-[var(--soft)] border hairline p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className={`font-black ${aiAnalysis.direction === 'SHORT' || aiAnalysis.bias === 'SHORT' ? 'text-loss' : 'text-jade'}`}>
-                      {aiAnalysis.direction ?? aiAnalysis.bias ?? 'NEUTRAL'} · {aiAnalysis.confidence ?? 0}%
-                    </span>
-                    {aiAnalysis.rrRatio && (
-                      <span dir="ltr" className="font-num font-bold text-dim">R:R 1:{aiAnalysis.rrRatio}</span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-sub leading-relaxed">{aiAnalysis.summary}</p>
-                  <div className="grid grid-cols-2 gap-1.5 text-[10px] font-num" dir="ltr">
-                    <div className="surface-soft rounded-lg px-2 py-1">EN: ${fmtPx(aiAnalysis.entry)}</div>
-                    <div className="surface-soft rounded-lg px-2 py-1 text-loss">SL: ${fmtPx(aiAnalysis.stopLoss)}</div>
-                    <div className="surface-soft rounded-lg px-2 py-1 text-jade">TP1: ${fmtPx(aiAnalysis.tp1)}</div>
-                    <div className="surface-soft rounded-lg px-2 py-1 text-jade">TP2: ${fmtPx(aiAnalysis.tp2)}</div>
-                  </div>
-                  {(aiAnalysis.stopLoss || aiAnalysis.tp1) && (
-                    <button
-                      type="button"
-                      onClick={copyAiLevelsToTicket}
-                      className="btn-emerald w-full py-2 rounded-xl text-[11px] flex items-center justify-center gap-1"
-                    >
-                      <Target className="w-3.5 h-3.5" />
-                      <span>{isFa ? 'انتقال سطوح به فرم سفارش' : 'Copy Levels to Ticket'}</span>
-                    </button>
+            {rightIntel === 'ai' ? (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                <div className="lg:col-span-7 space-y-3">
+                  {aiAnalysis ? (
+                    <div className="rounded-2xl bg-[var(--soft)] border hairline p-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className={`font-black text-sm ${aiAnalysis.direction === 'SHORT' || aiAnalysis.bias === 'SHORT' ? 'text-loss' : 'text-jade'}`}>
+                          {aiAnalysis.direction ?? aiAnalysis.bias ?? 'NEUTRAL'} · {aiAnalysis.confidence ?? 0}%
+                        </span>
+                        {aiAnalysis.rrRatio && (
+                          <span dir="ltr" className="font-num font-bold text-dim">R:R 1:{aiAnalysis.rrRatio}</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-sub leading-relaxed whitespace-pre-wrap">{aiAnalysis.summary}</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px] font-num" dir="ltr">
+                        <div className="surface-soft rounded-lg px-2 py-1.5">EN: ${fmtPx(aiAnalysis.entry)}</div>
+                        <div className="surface-soft rounded-lg px-2 py-1.5 text-loss">SL: ${fmtPx(aiAnalysis.stopLoss)}</div>
+                        <div className="surface-soft rounded-lg px-2 py-1.5 text-jade">TP1: ${fmtPx(aiAnalysis.tp1)}</div>
+                        <div className="surface-soft rounded-lg px-2 py-1.5 text-jade">TP2: ${fmtPx(aiAnalysis.tp2)}</div>
+                      </div>
+                      {(aiAnalysis.stopLoss || aiAnalysis.tp1) && (
+                        <button
+                          type="button"
+                          onClick={copyAiLevelsToTicket}
+                          className="btn-emerald w-full py-2 rounded-xl text-[11px] flex items-center justify-center gap-1.5"
+                        >
+                          <Target className="w-3.5 h-3.5" />
+                          <span>{isFa ? 'انتقال دقیق سطوح AI به فرم سفارش' : 'Copy AI Levels to Ticket'}</span>
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl bg-[var(--soft)] border hairline p-4 text-center space-y-2">
+                      <Sparkles className="w-5 h-5 text-[var(--gold)] mx-auto" />
+                      <p className="text-[11px] text-sub">
+                        {isFa
+                          ? `روی «تحلیل هوشمند AI» کلیک کنید تا سطوح ورود، حد ضرر و اهداف سود برای ${symbol} روی چارت رسم شوند.`
+                          : `Click "AI Analyze" to draw smart Entry, SL, and TP levels for ${symbol} directly on the chart.`}
+                      </p>
+                    </div>
                   )}
-                </div>
-              )}
 
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  isFa ? 'ستاپ ورود + استاپ و ۳ تارگت' : 'Entry + SL + 3 TPs setup',
-                  isFa ? 'نواحی حمایت و مقاومت کلیدی' : 'Key Support / Resistance',
-                  isFa ? 'هم‌راستایی ۱۵دقیقه و ۴ساعته' : '15m & 4h trend alignment',
-                ].map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => void askChartAI(q)}
-                    className="text-[10px] px-2.5 py-1.5 rounded-xl btn-ghost font-semibold text-start"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex-1 min-h-[110px] max-h-[180px] overflow-y-auto space-y-2">
-                {messages.map((m, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-xl p-2.5 text-[11px] leading-relaxed ${
-                      m.role === 'user' ? 'banner-cobalt-soft text-main' : 'surface-soft text-sub'
-                    }`}
-                  >
-                    {m.content}
-                  </div>
-                ))}
-                {messages.length === 0 && !aiAnalysis && (
-                  <p className="text-[11px] text-dim text-center py-5">
-                    {isFa
-                      ? 'سوالی درباره این چارت بپرسید یا دکمه تحلیل AI را بزنید.'
-                      : 'Ask any question about this chart to draw levels & thesis.'}
-                  </p>
-                )}
-              </div>
-
-              {chatHistory.length > 0 && (
-                <div className="space-y-1 border-t hairline pt-2">
-                  <div className="text-[10px] text-dim font-bold flex items-center gap-1">
-                    <History className="w-3 h-3" />
-                    <span>{isFa ? 'تحلیل‌های ذخیره‌شده:' : 'Saved Analyses:'}</span>
-                  </div>
-                  <div className="flex gap-1 overflow-x-auto no-scrollbar">
-                    {chatHistory.slice(0, 4).map((c) => (
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      isFa ? 'ستاپ ورود + استاپ و ۳ تارگت' : 'Entry + SL + 3 TPs setup',
+                      isFa ? 'نواحی حمایت و مقاومت کلیدی' : 'Key Support / Resistance',
+                      isFa ? 'هم‌راستایی ۱۵دقیقه و ۴ساعته' : '15m & 4h trend alignment',
+                    ].map((q) => (
                       <button
-                        key={c.id}
+                        key={q}
                         type="button"
-                        onClick={() => void loadSavedChat(c.id)}
-                        className="px-2 py-1 rounded-lg surface-soft text-[10px] font-bold shrink-0 hover:border-[var(--gold)]"
+                        onClick={() => void askChartAI(q)}
+                        className="text-[10px] px-2.5 py-1.5 rounded-xl btn-ghost font-semibold text-start"
                       >
-                        {c.symbol} · {c.timeframe}
+                        {q}
                       </button>
                     ))}
                   </div>
                 </div>
-              )}
 
-              <div className="flex gap-1.5 mt-auto">
-                <input
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void askChartAI()}
-                  placeholder={isFa ? 'از چارت بپرس...' : 'Ask anything about this chart...'}
-                  className="field text-xs py-2"
-                />
-                <button
-                  type="button"
-                  disabled={aiLoading}
-                  onClick={() => void askChartAI()}
-                  className="btn-gold px-3 rounded-xl shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ) : rightIntel === 'book' ? (
-            <div className="space-y-2 flex-1">
-              <div className="flex justify-between text-[11px] text-dim pb-1 border-b hairline">
-                <span>{isFa ? `اسپرد: ${snap?.spreadPct ?? '0.02'}%` : `Spread: ${snap?.spreadPct ?? '0.02'}%`}</span>
-                <span>{isFa ? `توازن: ${snap?.imbalancePct ?? '50'}%` : `Imb: ${snap?.imbalancePct ?? '50'}%`}</span>
-              </div>
-              <div className="space-y-1 font-num text-[11px]" dir="ltr">
-                {(snap?.orderBook.asks ?? []).slice(0, 7).reverse().map(([p, s], idx) => (
-                  <div key={`a-${idx}`} className="flex justify-between text-loss bg-rose-500/5 px-2 py-0.5 rounded">
-                    <span>${fmtPx(p)}</span>
-                    <span className="text-dim">{Number(s).toFixed(3)}</span>
+                <div className="lg:col-span-5 flex flex-col gap-2.5">
+                  <div className="min-h-[120px] max-h-[200px] overflow-y-auto space-y-2 rounded-2xl bg-[var(--soft)] border hairline p-3">
+                    {messages.map((m, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-xl p-2 text-[11px] leading-relaxed ${
+                          m.role === 'user' ? 'banner-cobalt-soft text-main' : 'surface-soft text-sub'
+                        }`}
+                      >
+                        {m.content}
+                      </div>
+                    ))}
+                    {messages.length === 0 && (
+                      <p className="text-[11px] text-dim text-center py-6">
+                        {isFa ? 'گفتگوی زنده با دستیار چارت آماده است.' : 'Ask any question about this chart.'}
+                      </p>
+                    )}
                   </div>
-                ))}
-                <div className="text-center font-bold text-main py-1 border-y hairline">${fmtPx(lastPx)}</div>
-                {(snap?.orderBook.bids ?? []).slice(0, 7).map(([p, s], idx) => (
-                  <div key={`b-${idx}`} className="flex justify-between text-jade bg-jade/5 px-2 py-0.5 rounded">
-                    <span>${fmtPx(p)}</span>
-                    <span className="text-dim">{Number(s).toFixed(3)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col flex-1 gap-2.5">
-              <div className="grid grid-cols-2 gap-1.5">
-                {(['pine', 'python'] as const).map((lng) => (
-                  <button
-                    key={lng}
-                    type="button"
-                    onClick={() => {
-                      setScriptLang(lng);
-                      const sample = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.language === lng);
-                      if (sample) {
-                        setScriptName(isFa ? sample.nameFa : sample.nameEn);
-                        setScriptCode(sample.code);
-                      }
-                    }}
-                    className={`py-1.5 rounded-lg text-[11px] font-black uppercase ${scriptLang === lng ? 'btn-lime' : 'btn-ghost text-dim'}`}
-                  >
-                    {lng === 'pine' ? 'Pine v5' : 'Python'}
-                  </button>
-                ))}
-              </div>
 
-              <select
-                value=""
-                onChange={(e) => {
-                  const found = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.id === e.target.value);
-                  if (found) {
-                    setScriptLang(found.language);
-                    setScriptName(isFa ? found.nameFa : found.nameEn);
-                    setScriptCode(found.code);
-                  }
-                }}
-                className="field py-1.5 px-2.5 text-[11px]"
-              >
-                <option value="">{isFa ? 'بارگذاری از کتابخانه نمونه...' : 'Load sample script...'}</option>
-                {SAMPLE_CUSTOM_STRATEGIES.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {isFa ? s.nameFa : s.nameEn}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                value={scriptName}
-                onChange={(e) => setScriptName(e.target.value)}
-                placeholder={isFa ? 'نام اسکریپت' : 'Script name'}
-                className="field py-1.5 px-2.5 text-[11px] font-bold"
-              />
-
-              <textarea
-                dir="ltr"
-                spellCheck={false}
-                rows={9}
-                value={scriptCode}
-                onChange={(e) => setScriptCode(e.target.value)}
-                className="w-full rounded-xl p-2.5 font-mono text-[10px] leading-relaxed bg-[#060d20] text-[#dce8ff] border border-blue-500/30 outline-none flex-1"
-              />
-
-              {scriptFeedback && (
-                <div
-                  className={`p-2 rounded-xl text-[10px] font-bold ${
-                    scriptFeedback.ok ? 'badge-signal' : 'bg-rose-500/15 text-loss'
-                  }`}
-                >
-                  <div>{scriptFeedback.text}</div>
-                  {scriptFeedback.retPct !== undefined && (
-                    <div dir="ltr" className="font-num mt-0.5">
-                      Return: {scriptFeedback.retPct >= 0 ? '+' : ''}{scriptFeedback.retPct.toFixed(2)}% · WR: {scriptFeedback.wr?.toFixed(1)}%
+                  {chatHistory.length > 0 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                      <History className="w-3.5 h-3.5 text-dim shrink-0" />
+                      {chatHistory.slice(0, 4).map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => void loadSavedChat(c.id)}
+                          className="px-2 py-1 rounded-lg surface-soft text-[10px] font-bold shrink-0 hover:border-[var(--gold)]"
+                        >
+                          {c.symbol} · {c.timeframe}
+                        </button>
+                      ))}
                     </div>
                   )}
-                </div>
-              )}
 
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  disabled={scriptBusy}
-                  onClick={async () => {
-                    setScriptBusy(true);
-                    setScriptFeedback(null);
-                    try {
-                      const ev = await apiFetch<{
-                        valid: boolean;
-                        title: string;
-                        errors: string[];
-                        plots: CustomStrategyChartOverlay['plots'];
-                        markers: CustomStrategyChartOverlay['markers'];
-                        backtestSummary?: { metrics: { netReturnPct: number; winRatePct: number } };
-                      }>('/api/trading/strategies/evaluate', {
-                        method: 'POST',
-                        body: JSON.stringify({ language: scriptLang, code: scriptCode, symbol, timeframe: tf }),
-                      });
-                      if (ev.valid) {
-                        setCustomChartOverlay({
-                          title: ev.title || scriptName,
-                          language: scriptLang,
-                          plots: ev.plots,
-                          markers: ev.markers,
-                        });
-                        setScriptFeedback({
-                          ok: true,
-                          text: isFa ? `روی چارت اعمال شد (${ev.plots.length} خط، ${ev.markers.length} سیگنال)` : `Plotted (${ev.plots.length} lines, ${ev.markers.length} signals)`,
-                          retPct: ev.backtestSummary?.metrics.netReturnPct,
-                          wr: ev.backtestSummary?.metrics.winRatePct,
-                        });
-                      } else {
-                        setScriptFeedback({ ok: false, text: ev.errors[0] || 'Invalid script' });
-                      }
-                    } catch (err) {
-                      setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Error' });
-                    } finally {
-                      setScriptBusy(false);
-                    }
-                  }}
-                  className="btn-cobalt py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>{scriptBusy ? '...' : isFa ? 'اجرا روی چارت' : 'Plot Chart'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={scriptBusy}
-                  onClick={async () => {
-                    setScriptBusy(true);
-                    try {
-                      const saved = await apiFetch<{ strategy: { id: string } }>('/api/trading/strategies', {
-                        method: 'POST',
-                        body: JSON.stringify({ name: scriptName, language: scriptLang, code: scriptCode, timeframe: tf }),
-                      });
-                      await apiFetch(`/api/trading/strategies/${saved.strategy.id}/activate`, { method: 'POST' });
-                      setScriptFeedback({ ok: true, text: isFa ? 'ذخیره و روی ربات خودکار فعال شد' : 'Saved & deployed to auto bot' });
-                      await onRefresh();
-                    } catch (err) {
-                      setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Save failed' });
-                    } finally {
-                      setScriptBusy(false);
-                    }
-                  }}
-                  className="btn-emerald py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'فعال‌سازی ربات' : 'Deploy Bot'}</span>
-                </button>
+                  <div className="flex gap-1.5">
+                    <input
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && void askChartAI()}
+                      placeholder={isFa ? 'سوال از چارت...' : 'Ask chart AI...'}
+                      className="field text-xs py-2"
+                    />
+                    <button
+                      type="button"
+                      disabled={aiLoading}
+                      onClick={() => void askChartAI()}
+                      className="btn-gold px-3.5 rounded-xl shrink-0"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            ) : rightIntel === 'book' ? (
+              <div className="space-y-2.5">
+                <div className="flex justify-between text-[11px] text-dim pb-1.5 border-b hairline">
+                  <span>{isFa ? `اسپرد لحظه‌ای: ${snap?.spreadPct ?? '0.02'}%` : `Spread: ${snap?.spreadPct ?? '0.02'}%`}</span>
+                  <span>{isFa ? `توازن دفتر: ${snap?.imbalancePct ?? '50'}%` : `Imbalance: ${snap?.imbalancePct ?? '50'}%`}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-num text-[11px]" dir="ltr">
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-bold text-jade uppercase pb-1">Bids (Buyers)</div>
+                    {(snap?.orderBook.bids ?? []).slice(0, 8).map(([p, s], idx) => (
+                      <div key={`b-${idx}`} className="flex justify-between text-jade bg-jade/5 px-2.5 py-1 rounded-lg">
+                        <span>${fmtPx(p)}</span>
+                        <span className="text-dim">{Number(s).toFixed(3)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-bold text-loss uppercase pb-1">Asks (Sellers)</div>
+                    {(snap?.orderBook.asks ?? []).slice(0, 8).map(([p, s], idx) => (
+                      <div key={`a-${idx}`} className="flex justify-between text-loss bg-rose-500/5 px-2.5 py-1 rounded-lg">
+                        <span>${fmtPx(p)}</span>
+                        <span className="text-dim">{Number(s).toFixed(3)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : rightIntel === 'script' ? (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <div className="lg:col-span-4 space-y-2.5">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(['pine', 'python'] as const).map((lng) => (
+                      <button
+                        key={lng}
+                        type="button"
+                        onClick={() => {
+                          setScriptLang(lng);
+                          const sample = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.language === lng);
+                          if (sample) {
+                            setScriptName(isFa ? sample.nameFa : sample.nameEn);
+                            setScriptCode(sample.code);
+                          }
+                        }}
+                        className={`py-1.5 rounded-lg text-[11px] font-black uppercase ${scriptLang === lng ? 'btn-lime' : 'btn-ghost text-dim'}`}
+                      >
+                        {lng === 'pine' ? 'Pine v5' : 'Python'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const found = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.id === e.target.value);
+                      if (found) {
+                        setScriptLang(found.language);
+                        setScriptName(isFa ? found.nameFa : found.nameEn);
+                        setScriptCode(found.code);
+                      }
+                    }}
+                    className="field py-1.5 px-2.5 text-[11px]"
+                  >
+                    <option value="">{isFa ? 'بارگذاری از کتابخانه نمونه...' : 'Load sample script...'}</option>
+                    {SAMPLE_CUSTOM_STRATEGIES.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {isFa ? s.nameFa : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    value={scriptName}
+                    onChange={(e) => setScriptName(e.target.value)}
+                    placeholder={isFa ? 'نام اسکریپت' : 'Script name'}
+                    className="field py-1.5 px-2.5 text-[11px] font-bold"
+                  />
+
+                  {scriptFeedback && (
+                    <div className={`p-2.5 rounded-xl text-[10px] font-bold ${scriptFeedback.ok ? 'badge-signal' : 'bg-rose-500/15 text-loss'}`}>
+                      <div>{scriptFeedback.text}</div>
+                      {scriptFeedback.retPct !== undefined && (
+                        <div dir="ltr" className="font-num mt-0.5">
+                          Return: {scriptFeedback.retPct >= 0 ? '+' : ''}{scriptFeedback.retPct.toFixed(2)}% · WR: {scriptFeedback.wr?.toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      disabled={scriptBusy}
+                      onClick={async () => {
+                        setScriptBusy(true);
+                        setScriptFeedback(null);
+                        try {
+                          const ev = await apiFetch<{
+                            valid: boolean;
+                            title: string;
+                            errors: string[];
+                            plots: CustomStrategyChartOverlay['plots'];
+                            markers: CustomStrategyChartOverlay['markers'];
+                            backtestSummary?: { metrics: { netReturnPct: number; winRatePct: number } };
+                          }>('/api/trading/strategies/evaluate', {
+                            method: 'POST',
+                            body: JSON.stringify({ language: scriptLang, code: scriptCode, symbol, timeframe: tf }),
+                          });
+                          if (ev.valid) {
+                            setCustomChartOverlay({
+                              title: ev.title || scriptName,
+                              language: scriptLang,
+                              plots: ev.plots,
+                              markers: ev.markers,
+                            });
+                            setScriptFeedback({
+                              ok: true,
+                              text: isFa ? `روی چارت رسم شد (${ev.plots.length} خط، ${ev.markers.length} سیگنال)` : `Plotted (${ev.plots.length} lines, ${ev.markers.length} signals)`,
+                              retPct: ev.backtestSummary?.metrics.netReturnPct,
+                              wr: ev.backtestSummary?.metrics.winRatePct,
+                            });
+                          } else {
+                            setScriptFeedback({ ok: false, text: ev.errors[0] || 'Invalid script' });
+                          }
+                        } catch (err) {
+                          setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Error' });
+                        } finally {
+                          setScriptBusy(false);
+                        }
+                      }}
+                      className="btn-cobalt py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>{scriptBusy ? '...' : isFa ? 'اجرا روی چارت' : 'Plot Chart'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={scriptBusy}
+                      onClick={async () => {
+                        setScriptBusy(true);
+                        try {
+                          const saved = await apiFetch<{ strategy: { id: string } }>('/api/trading/strategies', {
+                            method: 'POST',
+                            body: JSON.stringify({ name: scriptName, language: scriptLang, code: scriptCode, timeframe: tf }),
+                          });
+                          await apiFetch(`/api/trading/strategies/${saved.strategy.id}/activate`, { method: 'POST' });
+                          setScriptFeedback({ ok: true, text: isFa ? 'ذخیره و روی ربات خودکار فعال شد' : 'Saved & deployed to auto bot' });
+                          await onRefresh();
+                        } catch (err) {
+                          setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Save failed' });
+                        } finally {
+                          setScriptBusy(false);
+                        }
+                      }}
+                      className="btn-emerald py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'فعال‌سازی ربات' : 'Deploy Bot'}</span>
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  dir="ltr"
+                  spellCheck={false}
+                  rows={10}
+                  value={scriptCode}
+                  onChange={(e) => setScriptCode(e.target.value)}
+                  className="lg:col-span-8 w-full rounded-2xl p-3 font-mono text-[11px] leading-relaxed bg-[#060d20] text-[#dce8ff] border border-blue-500/30 outline-none"
+                />
+              </div>
+            ) : (
+              /* Live Price Alerts + Position Risk Calculator */
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                <form onSubmit={createPriceAlert} className="lg:col-span-6 surface-soft rounded-2xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-main flex items-center gap-1.5">
+                      <BellRing className="w-4 h-4 text-[var(--gold)]" />
+                      <span>{isFa ? `ثبت هشدار قیمت زنده برای ${symbol}` : `Live Price Alert · ${symbol}`}</span>
+                    </span>
+                    <span className="text-[10px] text-dim">{isFa ? 'اطلاع فوری در وب و تلگرام' : 'Web + Telegram'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      value={alertCond}
+                      onChange={(e) => setAlertCond(e.target.value as 'ABOVE' | 'BELOW')}
+                      className="field text-xs py-2"
+                    >
+                      <option value="ABOVE">{isFa ? 'بالاتر از (≥)' : 'Crosses Above'}</option>
+                      <option value="BELOW">{isFa ? 'پایین‌تر از (≤)' : 'Drops Below'}</option>
+                    </select>
+                    <input
+                      value={alertTarget}
+                      onChange={(e) => setAlertTarget(e.target.value)}
+                      placeholder={isFa ? 'قیمت هدف $' : 'Target Price $'}
+                      className="field font-num text-xs py-2 col-span-2"
+                      required
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={alertNote}
+                      onChange={(e) => setAlertNote(e.target.value)}
+                      placeholder={isFa ? 'یادداشت دلخواه (مثلاً شکست مقاومت)...' : 'Optional note...'}
+                      className="field text-xs py-2 flex-1"
+                    />
+                    <button type="submit" disabled={alertBusy} className="btn-gold px-4 rounded-xl text-xs font-black shrink-0">
+                      {alertBusy ? '...' : isFa ? 'ثبت هشدار' : 'Set Alert'}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="lg:col-span-6 space-y-2 max-h-44 overflow-y-auto">
+                  {alerts.length === 0 ? (
+                    <div className="surface-soft rounded-2xl p-4 text-center text-[11px] text-dim">
+                      {isFa
+                        ? 'هنوز هشدار قیمتی ثبت نکرده‌اید. به محض رسیدن قیمت به هدف، در تلگرام و پنل به شما اطلاع می‌دهیم.'
+                        : 'No price alerts set yet. Alerts notify you on Web & Telegram.'}
+                    </div>
+                  ) : (
+                    alerts.map((al) => (
+                      <div key={al.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+                        <div className="flex items-center gap-2">
+                          <CoinIcon symbol={al.symbol} size={18} />
+                          <div>
+                            <div className="font-bold text-main">
+                              {al.symbol} {al.condition === 'ABOVE' ? '≥' : '≤'} ${al.target_price}
+                            </div>
+                            {al.note && <div className="text-[10px] text-dim">{al.note}</div>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${al.is_active ? 'bg-jade/15 text-jade' : 'bg-white/10 text-dim'}`}>
+                            {al.is_active ? (isFa ? 'فعال' : 'Active') : isFa ? 'عمل‌کرده' : 'Triggered'}
+                          </span>
+                          <button type="button" onClick={() => void deletePriceAlert(al.id)} className="text-dim hover:text-loss">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Order Ticket (3 cols) */}
-        <form onSubmit={prepareOrderConfirmation} className="xl:col-span-3 panel rounded-[26px] p-4 flex flex-col gap-3.5 text-xs">
+        {/* Right 4 Columns: Clean, Well-Proportioned Order Ticket */}
+        <form onSubmit={prepareOrderConfirmation} className="xl:col-span-4 panel rounded-[26px] p-5 flex flex-col gap-3.5 text-xs xl:sticky xl:top-20">
           <div className="flex items-center justify-between">
-            <span className="font-display font-bold text-base text-main">{isFa ? 'ثبت معامله' : 'Order Ticket'}</span>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full badge-signal">
+            <div className="flex items-center gap-2">
+              <CoinIcon symbol={symbol} size={22} />
+              <span className="font-display font-bold text-base text-main">{isFa ? `معامله ${symbol.replace('USDT', '')}` : `Trade ${symbol}`}</span>
+            </div>
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full badge-signal">
               {data.config.trading_mode} · {marketType}
             </span>
           </div>
@@ -1171,13 +1423,13 @@ export function TerminalPage({
                 type="button"
                 onClick={() => {
                   setSide(s);
-                  applyAutoLevels(lastPx, s);
+                  applyAutoLevels(lastPx, s, orderType === 'LIMIT');
                 }}
-                className={`py-2.5 rounded-lg font-black transition flex items-center justify-center gap-1 ${
+                className={`py-2.5 rounded-lg font-black transition flex items-center justify-center gap-1.5 ${
                   effectiveSide === s ? (s === 'LONG' ? 'bg-jade text-black' : 'bg-rose-500 text-white') : 'text-dim'
                 }`}
               >
-                {s === 'LONG' ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}
+                {s === 'LONG' ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
                 <span>{marketType === 'SPOT' ? (isFa ? 'خرید اسپات SPOT' : 'SPOT BUY') : s === 'LONG' ? (isFa ? 'خرید LONG' : 'LONG') : isFa ? 'فروش SHORT' : 'SHORT'}</span>
               </button>
             ))}
@@ -1188,41 +1440,70 @@ export function TerminalPage({
               <button
                 key={ot}
                 type="button"
-                onClick={() => setOrderType(ot)}
+                onClick={() => {
+                  setOrderType(ot);
+                  if (ot === 'LIMIT' && !limitPrice && lastPx > 0) {
+                    const dec = lastPx >= 1000 ? 2 : lastPx >= 1 ? 4 : 6;
+                    setLimitPrice(lastPx.toFixed(dec));
+                  }
+                }}
                 className={`py-2 rounded-xl font-bold ${orderType === ot ? 'btn-gold' : 'btn-ghost text-dim'}`}
               >
-                {ot === 'MARKET' ? (isFa ? 'مارکت لحظه‌ای' : 'Market') : isFa ? 'لیمیت' : 'Limit'}
+                {ot === 'MARKET' ? (isFa ? 'مارکت لحظه‌ای' : 'Market') : isFa ? 'سفارش لیمیت' : 'Limit'}
               </button>
             ))}
           </div>
 
           {marketType === 'FUTURES' && (
-            <>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(['ISOLATED', 'CROSS'] as const).map((mm) => (
-                  <button
-                    key={mm}
-                    type="button"
-                    onClick={() => setMarginMode(mm)}
-                    className={`py-1.5 rounded-lg text-[10px] font-bold ${
-                      marginMode === mm ? 'banner-cobalt-soft text-main border border-[var(--gold)]' : 'btn-ghost text-dim'
-                    }`}
-                  >
-                    {mm}
-                  </button>
-                ))}
-              </div>
-            </>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['ISOLATED', 'CROSS'] as const).map((mm) => (
+                <button
+                  key={mm}
+                  type="button"
+                  onClick={() => setMarginMode(mm)}
+                  className={`py-1.5 rounded-lg text-[10px] font-bold ${
+                    marginMode === mm ? 'banner-cobalt-soft text-main border border-[var(--gold)]' : 'btn-ghost text-dim'
+                  }`}
+                >
+                  {mm}
+                </button>
+              ))}
+            </div>
           )}
 
           {orderType === 'LIMIT' && (
-            <input
-              value={limitPrice}
-              onChange={(e) => setLimitPrice(e.target.value)}
-              placeholder={isFa ? 'قیمت لیمیت (USDT)' : 'Limit Price'}
-              className="field font-num text-xs"
-            />
+            <div>
+              <label className="text-[10px] text-dim block mb-1">{isFa ? `قیمت ورود لیمیت (${symbol})` : 'Limit Entry Price'}</label>
+              <input
+                value={limitPrice}
+                onChange={(e) => setLimitPrice(e.target.value)}
+                placeholder={lastPx ? fmtPx(lastPx) : 'USDT'}
+                className="field font-num text-xs"
+              />
+            </div>
           )}
+
+          {/* Margin % Quick Selector */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-[11px]">
+              <span className="text-dim">{isFa ? 'درصد سرمایه درگیر' : 'Margin Allocation'}</span>
+              <span dir="ltr" className="font-num font-bold text-main">{marginPct}% ({fmtUsd(marginEst)})</span>
+            </div>
+            <div className="grid grid-cols-5 gap-1">
+              {[5, 10, 25, 50, 100].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => setMarginPct(pct)}
+                  className={`py-1.5 rounded-lg text-[10px] font-black transition ${
+                    marginPct === pct ? 'btn-gold' : 'btn-ghost text-dim'
+                  }`}
+                >
+                  {pct}%
+                </button>
+              ))}
+            </div>
+          </div>
 
           {marketType === 'FUTURES' && (
             <div>
@@ -1242,34 +1523,81 @@ export function TerminalPage({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] text-dim block mb-1">{isFa ? 'حد ضرر SL' : 'Stop Loss'}</label>
-              <input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} className="field font-num text-xs py-2" />
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-sub">{isFa ? 'حد ضرر و تارگت‌های سود' : 'Stop Loss & Take Profits'}</span>
+              <button
+                type="button"
+                onClick={() => applyAutoLevels(lastPx, effectiveSide, orderType === 'LIMIT')}
+                className="text-[10px] font-bold text-[var(--gold)] hover:underline inline-flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>{isFa ? 'محاسبه خودکار' : 'Auto Reset'}</span>
+              </button>
             </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">{isFa ? 'تارگت ۱' : 'TP 1'}</label>
-              <input value={tp1} onChange={(e) => setTp1(e.target.value)} className="field font-num text-xs py-2" />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{isFa ? 'حد ضرر SL' : 'Stop Loss'}</label>
+                <input
+                  value={stopLoss}
+                  onChange={(e) => setStopLoss(e.target.value)}
+                  className={`field font-num text-xs py-2 ${slConflict ? '!border-rose-500' : ''}`}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{isFa ? 'تارگت ۱' : 'TP 1'}</label>
+                <input value={tp1} onChange={(e) => setTp1(e.target.value)} className="field font-num text-xs py-2" />
+              </div>
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{isFa ? 'تارگت ۲' : 'TP 2'}</label>
+                <input value={tp2} onChange={(e) => setTp2(e.target.value)} className="field font-num text-xs py-2" />
+              </div>
+              <div>
+                <label className="text-[10px] text-dim block mb-1">{isFa ? 'تارگت ۳' : 'TP 3'}</label>
+                <input value={tp3} onChange={(e) => setTp3(e.target.value)} className="field font-num text-xs py-2" />
+              </div>
             </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">{isFa ? 'تارگت ۲' : 'TP 2'}</label>
-              <input value={tp2} onChange={(e) => setTp2(e.target.value)} className="field font-num text-xs py-2" />
-            </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">{isFa ? 'تارگت ۳' : 'TP 3'}</label>
-              <input value={tp3} onChange={(e) => setTp3(e.target.value)} className="field font-num text-xs py-2" />
-            </div>
+            {slConflict && (
+              <div className="text-[10px] text-loss font-bold flex items-center justify-between bg-rose-500/10 rounded-lg px-2.5 py-1.5">
+                <span>
+                  {isFa
+                    ? `حد ضرر با جهت ${effectiveSide} هم‌خوانی ندارد!`
+                    : `SL is on the wrong side for ${effectiveSide}!`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => applyAutoLevels(lastPx, effectiveSide, false)}
+                  className="underline font-black"
+                >
+                  {isFa ? 'اصلاح فوری' : 'Fix'}
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="rounded-2xl bg-[var(--soft)] border hairline p-3 space-y-1 text-[11px]">
+          <div className="rounded-2xl bg-[var(--soft)] border hairline p-3 space-y-1.5 text-[11px]">
             <div className="flex justify-between">
               <span className="text-dim">{isFa ? 'مارجین تخمینی' : 'Est. Margin'}</span>
-              <span dir="ltr" className="font-num font-bold text-main">${marginEst.toFixed(0)}</span>
+              <span dir="ltr" className="font-num font-bold text-main">{fmtUsd(marginEst)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-dim">{isFa ? 'حجم پوزیشن' : 'Position Size'}</span>
-              <span dir="ltr" className="font-num font-bold text-main">${(marginEst * effectiveLev).toFixed(0)}</span>
+              <span className="text-dim">{isFa ? 'حجم کل پوزیشن' : 'Position Notional'}</span>
+              <span dir="ltr" className="font-num font-bold text-main">{fmtUsd(marginEst * effectiveLev)}</span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-dim inline-flex items-center gap-1">
+                <Calculator className="w-3 h-3" /> {isFa ? 'نسبت ریسک به ریوارد' : 'Risk : Reward'}
+              </span>
+              <span dir="ltr" className="font-num font-bold text-jade">
+                {rrPreview !== '—' ? `1 : ${rrPreview}` : '—'} {riskUsdEst > 0 ? `(Risk ${fmtUsd(riskUsdEst)})` : ''}
+              </span>
+            </div>
+            {estLiqPx > 0 && (
+              <div className="flex justify-between">
+                <span className="text-dim">{isFa ? 'لیکویید شدن تقریبی' : 'Est. Liq Price'}</span>
+                <span dir="ltr" className="font-num font-bold text-amber-400">${fmtPx(estLiqPx)}</span>
+              </div>
+            )}
           </div>
 
           {orderMsg && (

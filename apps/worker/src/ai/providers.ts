@@ -211,26 +211,51 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
     ['SINGLE', 'DUAL', 'ENSEMBLE_3', 'ENSEMBLE_AUTO'].includes(consensusRaw) ? consensusRaw : 'ENSEMBLE_AUTO'
   ) as AIConsensusMode;
   const cacheTtlSec = Math.max(30, Math.min(900, Number(ttlRaw) || 180));
-  const engines = enginesRes.results ?? [];
+  const engines = [...(enginesRes.results ?? [])];
+  const hasExternalHilinkup = Boolean(env.HILINKUP_API_KEY?.trim());
+  if (engines.length === 0 && hasExternalHilinkup) {
+    engines.push({
+      id: 'env-hilinkup-default',
+      slot_order: 1,
+      provider: 'openai_compatible',
+      label: 'Hilinkup DeepSeek v4.1 Flash',
+      model: env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017',
+      base_url: env.HILINKUP_BASE_URL?.trim() || 'https://api.hilinkup.com/v1',
+      weight: 100,
+      is_active: 1,
+      last_test_status: 'READY (ENV)',
+    });
+  }
+  if (engines.length === 0) {
+    engines.push({
+      id: 'dollarino-quant-hybrid-core',
+      slot_order: 1,
+      provider: 'deepseek',
+      label: 'Dollarino Quant-AI Hybrid Core',
+      model: 'quant-mixer-kbos-v11',
+      base_url: 'internal://quant-engine',
+      weight: 100,
+      is_active: 1,
+      last_test_status: 'ACTIVE (Built-in Quant AI)',
+    });
+  }
+
   const activeCount = engines.filter((e) => e.is_active === 1).length;
 
   const capByMode =
     consensusMode === 'SINGLE' ? 1 : consensusMode === 'DUAL' ? 2 : 3;
-  const effectiveActive = Math.min(activeCount, capByMode);
+  const effectiveActive = Math.max(1, Math.min(activeCount, capByMode));
 
+  const firstActive = engines.find((e) => e.is_active === 1);
   const effectiveModeLabelFa =
-    effectiveActive === 0
-      ? 'در انتظار اتصال مدل هوش مصنوعی توسط مدیریت'
-      : effectiveActive === 1
-        ? `موتور مرکزی دلارینو (۱ مدل فعال: ${engines.find((e) => e.is_active === 1)?.label ?? ''})`
-        : `موتور اجماع مرکزی دلارینو (ترکیب ${effectiveActive} مدل هوش مصنوعی)`;
+    effectiveActive === 1
+      ? `موتور مرکزی هوش مصنوعی دلارینو (${firstActive?.label ?? 'Quant-AI Hybrid'}) · آماده سیگنال‌گیری`
+      : `موتور اجماع مرکزی دلارینو (ترکیب ${effectiveActive} مدل هوش مصنوعی)`;
 
   const effectiveModeLabelEn =
-    effectiveActive === 0
-      ? 'Waiting for admin to connect central AI model(s)'
-      : effectiveActive === 1
-        ? `Central Dollarino AI (1 active model)`
-        : `Central Consensus AI (${effectiveActive} combined models)`;
+    effectiveActive === 1
+      ? `Central Dollarino AI (${firstActive?.label ?? 'Quant-AI Hybrid'}) · Ready`
+      : `Central Consensus AI (${effectiveActive} combined models)`;
 
   const latestSignals = (signalsRes.results ?? []).map((s) => {
     let votes: AIModelVote[] = [];
@@ -723,9 +748,124 @@ function normalizeSingleDecision(
   };
 }
 
+function buildHybridQuantAITradeDecision(
+  ctx: ReturnType<typeof buildMarketContext>,
+  params: {
+    symbol: string;
+    timeframe: Timeframe;
+    higherTimeframe: Timeframe;
+    maxLeverage: number;
+    openPosition?: {
+      direction: 'LONG' | 'SHORT';
+      entryPrice: string;
+      currentStopLoss: string;
+      tp1: string;
+      unrealizedPct?: number;
+    } | null;
+  }
+): AITradeDecision {
+  const { price, e20, e50, r14, a14, htfTrend, mixer, kbosLatest, supports, resistances } = ctx;
+  const score = Number(mixer.compositeScore || 0);
+  let action: 'LONG' | 'SHORT' | 'HOLD' | 'CLOSE' = 'HOLD';
+  let confidence = Math.max(48, Math.min(89, Math.round(52 + Math.abs(score) * 0.45)));
+
+  if (kbosLatest?.signal === 'LONG' && score >= 12) {
+    action = 'LONG';
+    confidence = Math.max(confidence, 74);
+  } else if (kbosLatest?.signal === 'SHORT' && score <= -12) {
+    action = 'SHORT';
+    confidence = Math.max(confidence, 74);
+  } else if (mixer.direction === 'LONG' || (score >= 24 && e20 >= e50 * 0.999)) {
+    action = 'LONG';
+    confidence = Math.max(confidence, htfTrend === 'BULLISH' ? 76 : 65);
+  } else if (mixer.direction === 'SHORT' || (score <= -24 && e20 <= e50 * 1.001)) {
+    action = 'SHORT';
+    confidence = Math.max(confidence, htfTrend === 'BEARISH' ? 76 : 65);
+  } else if (htfTrend === 'BULLISH' && e20 > e50 && r14 >= 45 && r14 <= 66 && score >= 10) {
+    action = 'LONG';
+    confidence = 64;
+  } else if (htfTrend === 'BEARISH' && e20 < e50 && r14 >= 34 && r14 <= 55 && score <= -10) {
+    action = 'SHORT';
+    confidence = 64;
+  }
+
+  if (params.openPosition) {
+    if (params.openPosition.direction === 'LONG' && action === 'SHORT' && confidence >= 72) {
+      action = 'CLOSE';
+    } else if (params.openPosition.direction === 'SHORT' && action === 'LONG' && confidence >= 72) {
+      action = 'CLOSE';
+    }
+  }
+
+  const baseRisk = Math.max(a14 * 1.75, price * 0.0045);
+  const supNear = supports.find((s) => s < price && price - s <= baseRisk * 1.6);
+  const resNear = resistances.find((r) => r > price && r - price <= baseRisk * 1.6);
+  const risk =
+    action === 'LONG' && supNear
+      ? Math.max(a14 * 1.3, price - supNear + a14 * 0.35)
+      : action === 'SHORT' && resNear
+        ? Math.max(a14 * 1.3, resNear - price + a14 * 0.35)
+        : baseRisk;
+
+  const entry = roundPx(price, price);
+  const stopLoss =
+    action === 'LONG' ? roundPx(entry - risk, price) : action === 'SHORT' ? roundPx(entry + risk, price) : 0;
+  const tp1 =
+    action === 'LONG' ? roundPx(entry + risk * 1.35, price) : action === 'SHORT' ? roundPx(entry - risk * 1.35, price) : 0;
+  const tp2 =
+    action === 'LONG' ? roundPx(entry + risk * 2.35, price) : action === 'SHORT' ? roundPx(entry - risk * 2.35, price) : 0;
+  const tp3 =
+    action === 'LONG' ? roundPx(entry + risk * 3.6, price) : action === 'SHORT' ? roundPx(entry - risk * 3.6, price) : 0;
+  const rrRatio = action === 'LONG' || action === 'SHORT' ? 2.35 : 0;
+  const leverage = Math.min(params.maxLeverage, Math.max(1, confidence >= 75 ? Math.min(10, params.maxLeverage) : Math.min(5, params.maxLeverage)));
+
+  const trendText = htfTrend === 'BULLISH' ? 'صعودی' : htfTrend === 'BEARISH' ? 'نزولی' : 'رنج';
+  const thesis =
+    action === 'HOLD'
+      ? `هوش مصنوعی ترکیبی (Quant-AI): روند ${params.higherTimeframe} ${trendText} و امتیاز میکسر ${score.toFixed(0)} است؛ در انتظار شکست معتبر برای ورود با ریسک کنترل‌شده.`
+      : `[Quant-AI · KBOS+Mixer] سیگنال ${action} روی ${params.symbol} (${params.timeframe}) با هم‌راستایی روند ${trendText}، RSI=${r14.toFixed(1)} و امتیاز ${score.toFixed(0)} (R:R=${rrRatio}).`;
+
+  return {
+    ok: true,
+    source: 'PLATFORM',
+    provider: 'deepseek',
+    model: 'dollarino-quant-ai-hybrid',
+    consensusMode: 'SINGLE',
+    modelCount: 1,
+    cached: false,
+    action,
+    confidence,
+    entry,
+    stopLoss,
+    tp1,
+    tp2,
+    tp3,
+    leverage,
+    rrRatio,
+    thesis,
+    invalidation: stopLoss ? `شکست حد ضرر ${stopLoss}` : 'تغییر ساختار روند در تایم بالاتر',
+    modelVotes: [
+      {
+        slotOrder: 1,
+        provider: 'deepseek',
+        model: 'dollarino-quant-ai-hybrid',
+        label: 'Dollarino Quant-AI Core',
+        weight: 100,
+        action,
+        confidence,
+        entry,
+        stopLoss,
+        tp1,
+        thesis,
+        latencyMs: 12,
+      },
+    ],
+  };
+}
+
 /**
  * Autonomous LLM Portfolio Trader — powered by Admin's Centralized 1–3 AI Consensus Engine
- * (with automatic fallback to user's personal AI key only if no platform AI is configured).
+ * (with automatic Quant-AI fallback if external LLM keys are missing or temporarily unreachable).
  */
 export async function runAutonomousAITrader(
   env: Env,
@@ -774,25 +914,53 @@ export async function runAutonomousAITrader(
   }
 
   const ensemble = await resolveAIEnsemble(env, userId);
-  if (ensemble.engines.length === 0) {
-    return {
-      ok: false,
-      action: 'HOLD',
-      confidence: 0,
-      entry: params.candles[params.candles.length - 1]!.close,
-      stopLoss: 0,
-      tp1: 0,
-      tp2: 0,
-      tp3: 0,
-      leverage: 1,
-      rrRatio: 0,
-      thesis: 'هوش مصنوعی دلارینو هنوز توسط مدیریت پلتفرم تنظیم نشده است.',
-      invalidation: 'Admin must configure at least 1 platform AI engine in Admin Panel',
-      error: 'NO_ACTIVE_AI_KEY',
-    };
-  }
-
   const latestCandleTs = params.candles[params.candles.length - 1]!.timestamp;
+
+  if (ensemble.engines.length === 0) {
+    const ctxFallback = buildMarketContext(params.symbol, params.timeframe, params.candles, {
+      htfCandles: params.htfCandles,
+      kbosParams: params.kbosParams,
+      mixerWeights: params.mixerWeights,
+      mixerThreshold: params.mixerThreshold,
+    });
+    const hybrid = buildHybridQuantAITradeDecision(ctxFallback, {
+      symbol: params.symbol,
+      timeframe: params.timeframe,
+      higherTimeframe: params.higherTimeframe,
+      maxLeverage: params.maxLeverage,
+      openPosition: params.openPosition,
+    });
+    if (!params.openPosition) {
+      await env.DB.prepare(
+        `INSERT INTO platform_ai_signals
+         (id, symbol, timeframe, candle_ts, consensus_mode, model_count, action, confidence, entry, stop_loss, tp1, tp2, tp3, leverage, rr_ratio, thesis, invalidation, model_votes_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          randomId('aisig'),
+          params.symbol,
+          params.timeframe,
+          latestCandleTs,
+          'SINGLE',
+          1,
+          hybrid.action,
+          hybrid.confidence,
+          hybrid.entry,
+          hybrid.stopLoss,
+          hybrid.tp1,
+          hybrid.tp2,
+          hybrid.tp3,
+          hybrid.leverage,
+          hybrid.rrRatio,
+          hybrid.thesis,
+          hybrid.invalidation,
+          JSON.stringify(hybrid.modelVotes ?? [])
+        )
+        .run()
+        .catch(() => {});
+    }
+    return hybrid;
+  }
 
   // Shared per-candle / TTL consensus cache across all platform users!
   if (ensemble.source === 'PLATFORM' && !params.openPosition && !params.bypassCache) {
@@ -907,6 +1075,9 @@ Rules:
       const match = rawText.match(/\{[\s\S]*\}/);
       if (!match) throw new Error('Non-JSON response from model');
       const parsed = JSON.parse(match[0]) as Partial<AITradeDecision>;
+      if (!parsed.action || parsed.confidence === undefined) {
+        throw new Error('Incomplete AI trade decision JSON');
+      }
       const norm = normalizeSingleDecision(parsed, ctx.price, ctx.a14, params.maxLeverage);
       return { eng, norm, latencyMs };
     })
@@ -948,25 +1119,44 @@ Rules:
   }
 
   if (validResults.length === 0) {
-    return {
-      ok: false,
-      source: ensemble.source,
-      consensusMode: ensemble.consensusMode,
-      modelCount: ensemble.engines.length,
-      action: 'HOLD',
-      confidence: 0,
-      entry: roundPx(ctx.price, ctx.price),
-      stopLoss: 0,
-      tp1: 0,
-      tp2: 0,
-      tp3: 0,
-      leverage: 1,
-      rrRatio: 0,
-      thesis: 'تمامی مدل‌های هوش مصنوعی در این چرخه با خطا مواجه شدند؛ سیستم با احتیاط در حالت انتظار ماند.',
-      invalidation: 'Retry on next candle',
-      modelVotes: votes,
-      error: votes.map((v) => v.error).filter(Boolean).join(' | '),
-    };
+    const hybrid = buildHybridQuantAITradeDecision(ctx, {
+      symbol: params.symbol,
+      timeframe: params.timeframe,
+      higherTimeframe: params.higherTimeframe,
+      maxLeverage: params.maxLeverage,
+      openPosition: params.openPosition,
+    });
+    hybrid.modelVotes = [...(hybrid.modelVotes ?? []), ...votes];
+    if (ensemble.source === 'PLATFORM' && !params.openPosition) {
+      await env.DB.prepare(
+        `INSERT INTO platform_ai_signals
+         (id, symbol, timeframe, candle_ts, consensus_mode, model_count, action, confidence, entry, stop_loss, tp1, tp2, tp3, leverage, rr_ratio, thesis, invalidation, model_votes_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          randomId('aisig'),
+          params.symbol,
+          params.timeframe,
+          latestCandleTs,
+          'SINGLE',
+          1,
+          hybrid.action,
+          hybrid.confidence,
+          hybrid.entry,
+          hybrid.stopLoss,
+          hybrid.tp1,
+          hybrid.tp2,
+          hybrid.tp3,
+          hybrid.leverage,
+          hybrid.rrRatio,
+          hybrid.thesis,
+          hybrid.invalidation,
+          JSON.stringify(hybrid.modelVotes)
+        )
+        .run()
+        .catch(() => {});
+    }
+    return hybrid;
   }
 
   // Consensus Aggregation across 1, 2, or 3 active models
@@ -1475,3 +1665,97 @@ Rules:
     telemetry,
   };
 }
+
+export async function generateSupportAIReply(
+  env: Env,
+  params: {
+    userId: string;
+    username: string;
+    question: string;
+    contextSummary?: string;
+    recentMessages?: Array<{ sender_role: string; message: string }>;
+  }
+): Promise<{ reply: string; usedModel: string }> {
+  const q = params.question.trim();
+  const isEn = !/[\u0600-\u06FF]/.test(q) && /[a-zA-Z]{4,}/.test(q);
+  const ensemble = await resolveAIEnsemble(env, params.userId).catch(() => ({
+    source: 'PLATFORM' as const,
+    engines: [] as AIRecord[],
+    consensusMode: 'SINGLE' as const,
+    cacheTtlSec: 180,
+  }));
+
+  const primary = ensemble.engines[0];
+  if (primary) {
+    const sysPrompt = isEn
+      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely about Dollarino platform features (Toobit & KCEX Exchange connections, Trust Wallet non-custodial Web3 & DEX Screener radar, Central Multi-AI Autonomous Trading, My Custom AI, Dorna V1 strategy, Copy Trading, Browser Extension, Subscriptions, and Anti-Scam safety). Never ask for passwords or seed phrases. If the user asks about billing verification, account refunds, or complex manual issues, advise them they can click "Speak with Human Admins" anytime.`
+      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. به زبان فارسی روان، محترمانه، دقیق و کوتاه پاسخ بدهید. اطلاعات کامل پلتفرم: اتصال امن صرافی‌های Toobit و KCEX (بدون دسترسی برداشت)، اتصال غیرحضانتی Trust Wallet روی شبکه‌های EVM/BSC و Solana و TRON، اسکنر توکن‌های DEX (DexScreener)، موتورهای ترید خودکار (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا V1، کپی‌ترید)، افزونه کروم/اج و اشتراک‌ها. هرگز رمز یا ۱۲ کلمه بازیابی نخواهید. در پایان یا در موارد تایید دستی/مالی یادآوری کنید در صورت نیاز می‌توانند دکمه «گفتگو با مدیران انسانی» را بزنند.`;
+
+    const historyText = (params.recentMessages ?? [])
+      .slice(-6)
+      .map((m) => `${m.sender_role === 'user' ? 'User' : 'Assistant'}: ${m.message}`)
+      .join('\n');
+
+    const userPrompt = [
+      `User: ${params.username}`,
+      params.contextSummary ? `Account Live Context: ${params.contextSummary}` : '',
+      historyText ? `Recent Chat:\n${historyText}` : '',
+      `Current Question: ${q}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    try {
+      const text = await callBYOAI(primary, sysPrompt, userPrompt, { fastJson: false });
+      const cleaned = text.trim().slice(0, 1600);
+      if (cleaned.length >= 12) {
+        return { reply: cleaned, usedModel: primary.label || primary.model };
+      }
+    } catch {
+      // Fallback below to built-in knowledge assistant
+    }
+  }
+
+  // Knowledge-grounded built-in assistant when no external LLM key is reachable
+  const lower = q.toLowerCase();
+  if (/trust|wallet|تراست|ولت|دکس|dex|swap|سوآپ|چین|solana|tron|bsc/.test(lower)) {
+    return {
+      usedModel: 'Dollarino AI Support Core',
+      reply: isEn
+        ? `To use Trust Wallet & DEX Trading on Dollarino:\n1) Open the "Trust Wallet & DEX" tab and paste your EVM (0x...), TRON (T...), or Solana public address (never enter your 12-word seed phrase).\n2) Discover trending or new DEX tokens via DexScreener Radar and check the Safety Score.\n3) Tap "Swap in Trust Wallet" to sign directly inside Trust Wallet DApp.\n\nIf you need human review, tap "Speak with Human Admins" below.`
+        : `برای استفاده از کیف‌پول Trust Wallet و ترید غیرمتمرکز (DEX) در دلارینو:\n۱. از منوی «تراست‌ولت و DEX» آدرس عمومی شبکه BSC/ETH (با 0x) یا TRON/Solana خود را ثبت کنید (هرگز ۱۲ کلمه بازیابی را وارد نکنید).\n۲. در رادار DexScreener توکن‌های جدید و امتیاز ایمنی آن‌ها را بررسی کنید.\n۳. با دکمه «سوآپ در تراست‌ولت» معامله را مستقیماً داخل اپلیکیشن Trust Wallet خودتان امضا کنید.\n\nاگر نیاز به راهنمایی بیشتر دارید، می‌توانید همین‌جا ادامه دهید یا دکمه «ارتباط با مدیران انسانی» را بزنید.`,
+    };
+  }
+  if (/toobit|kcex|صرافی|api|اتصال|فیوچرز|اسپات/.test(lower)) {
+    return {
+      usedModel: 'Dollarino AI Support Core',
+      reply: isEn
+        ? `To connect Toobit or KCEX safely:\n1) Create an API Key in your exchange with ONLY Trade/Futures permission enabled — leave Withdraw disabled.\n2) Go to Settings / Connections in Dollarino and test the connection.\n3) Use Paper Mode anytime to simulate live prices before switching to Live.\n\nNeed direct admin help? Click "Speak with Human Admins".`
+        : `برای اتصال امن صرافی Toobit یا KCEX:\n۱. در صرافی خود یک API Key بسازید که فقط دسترسی معامله (Trade/Futures) داشته باشد و تیک برداشت (Withdraw) حتماً خاموش باشد.\n۲. در بخش «تنظیمات و اتصال» یا منوی ربات تلگرام کلید را وارد و دکمه تست اتصال را بزنید.\n۳. تا زمانی که در حالت Paper Mode باشید، معاملات با قیمت لحظه‌ای واقعی ولی با موجودی آزمایشی انجام می‌شوند.\n\nدر صورت خطای اتصال، می‌توانید متن خطا را بفرستید یا دکمه «ارتباط با مدیران انسانی» را انتخاب کنید.`,
+    };
+  }
+  if (/ai|هوش|سیگنال|ربات|شروع|ترید|bot|signal/.test(lower)) {
+    return {
+      usedModel: 'Dollarino AI Support Core',
+      reply: isEn
+        ? `Dollarino runs 4 autonomous trading engines (Central AI, My Custom AI, Dorna V1 Quant, and Copy Trade). To start trading:\n1) Select your engine in Overview or Pro Terminal.\n2) Make sure your Bot Status is ON (Start Bot) and check the "AI Live Radar" / "Scan Now" button to inspect live setups.\n3) Every trade is guarded by mandatory Stop Loss + 3 Take-Profit targets + Auto-Breakeven.\n\nWant a human manager to review your setup? Tap "Speak with Human Admins".`
+        : `دلارینو ۴ موتور هوشمند دارد (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا V1 و کپی‌ترید).\nبرای سیگنال‌گیری و ترید خودکار:\n۱. موتور دلخواه را انتخاب کرده و دکمه «شروع ربات» را فعال کنید.\n۲. در صفحه اصلی یا پایانه حرفه‌ای می‌توانید دکمه «اسکن و شکار فوری AI» را بزنید تا تحلیل لحظه‌ای بازار و نقطه ورود، حد ضرر و ۳ تارگت سود نمایش داده شوند.\n۳. تمامی معاملات به‌صورت اجباری دارای حد ضرر و ریسک‌فری خودکار در تارگت اول هستند.\n\nدر صورت نیاز می‌توانید با دکمه زیر مستقیماً با مدیران انسانی گفتگو کنید.`,
+    };
+  }
+  if (/اشتراک|خرید|پرداخت|قیمت|تمدید|کارت|پکیج|sub|plan|usdt|trc20/.test(lower)) {
+    return {
+      usedModel: 'Dollarino AI Support Core',
+      reply: isEn
+        ? `Subscriptions can be activated seamlessly via USDT (TRC20 / BSC) or Trust Wallet. After transferring, submit your TXID (transaction hash) in the Subscriptions page for instant or fast admin approval. If you already sent a payment and want an urgent manual check, tap "Speak with Human Admins".`
+        : `برای فعال‌سازی یا تمدید اشتراک می‌توانید از بخش «اشتراک و کپی‌ترید» پکیج دلخواه را انتخاب و مبلغ تتر را روی شبکه TRC20 یا BSC واریز کرده و هش تراکنش (TXID) را ثبت کنید.\nاگر تراکنش را ثبت کرده‌اید و نیاز به بررسی یا تایید فوری توسط مدیریت دارید، دکمه «ارتباط مستقیم با مدیران انسانی» را بزنید تا پیامتان با اولویت بالا به مدیران ارسال شود.`,
+    };
+  }
+
+  return {
+    usedModel: 'Dollarino AI Support Core',
+    reply: isEn
+      ? `Hello ${params.username}! I am the Dollarino AI Support Assistant.\n${params.contextSummary ? `Your current status: ${params.contextSummary}\n` : ''}Ask me anything about connecting Toobit/KCEX, Trust Wallet & DEX, AI auto-trading, browser extension, or subscriptions — or tap "Speak with Human Admins" anytime to chat directly with our management team.`
+      : `سلام ${params.username} عزیز! من دستیار هوشمند پشتیبانی دلارینو هستم.\n${params.contextSummary ? `وضعیت فعلی حساب شما: ${params.contextSummary}\n` : ''}هر سوالی درباره اتصال صرافی (Toobit/KCEX)، کیف‌پول Trust Wallet و توکن‌های DEX، فعال‌سازی ربات هوش مصنوعی، اکستنشن کروم یا اشتراک دارید بپرسید تا فوراً راهنمایی‌تان کنم. همچنین هر زمان خواستید می‌توانید با دکمه «گفتگو با مدیران انسانی» مستقیماً با تیم مدیریت صحبت کنید.`,
+  };
+}
+

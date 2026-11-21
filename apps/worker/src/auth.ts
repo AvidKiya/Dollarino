@@ -3,6 +3,56 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, Next } from 'hono';
 import type { AuthUser, Env } from './env.js';
 import { hashPassword, randomId, signJwt, verifyJwt, verifyPassword, verifyTelegramWebAppInitData } from './crypto.js';
+import { TelegramBotClient } from './telegram/client.js';
+
+export async function syncTelegramAvatarForUser(
+  env: Env,
+  userId: string,
+  telegramId: string,
+  explicitPhotoUrl?: string | null,
+  forceRefresh = false
+): Promise<string | null> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT avatar_url, avatar_custom, telegram_avatar_file_id FROM users WHERE id = ? LIMIT 1`
+    ).bind(userId).first<{ avatar_url: string | null; avatar_custom: number; telegram_avatar_file_id: string | null }>();
+    if (!row) return null;
+    if (row.avatar_custom === 1 && row.avatar_url && !forceRefresh) {
+      return row.avatar_url;
+    }
+
+    let fileId = row.telegram_avatar_file_id;
+    const botToken = env.TELEGRAM_BOT_TOKEN?.trim();
+    if (botToken && telegramId && (!fileId || forceRefresh)) {
+      const bot = new TelegramBotClient(botToken);
+      const photos = await bot.getUserProfilePhotos(telegramId, 1).catch(() => null);
+      const sizes = photos?.photos?.[0];
+      if (sizes && sizes.length > 0) {
+        // Pick medium/large crisp size (usually index 1 or last)
+        const chosen = sizes[Math.min(1, sizes.length - 1)] || sizes[sizes.length - 1]!;
+        fileId = chosen.file_id;
+      }
+    }
+
+    if (fileId) {
+      const proxyPath = `/api/auth/avatar/${encodeURIComponent(userId)}`;
+      await env.DB.prepare(
+        `UPDATE users SET telegram_avatar_file_id = ?, avatar_url = CASE WHEN COALESCE(avatar_custom, 0) = 0 THEN ? ELSE avatar_url END WHERE id = ?`
+      ).bind(fileId, proxyPath, userId).run().catch(() => {});
+      return proxyPath;
+    }
+
+    if (explicitPhotoUrl && explicitPhotoUrl.startsWith('https://')) {
+      await env.DB.prepare(
+        `UPDATE users SET avatar_url = CASE WHEN COALESCE(avatar_custom, 0) = 0 THEN ? ELSE avatar_url END WHERE id = ?`
+      ).bind(explicitPhotoUrl, userId).run().catch(() => {});
+      return explicitPhotoUrl;
+    }
+    return row.avatar_url ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export type AppVariables = {
   user: AuthUser;
@@ -238,13 +288,17 @@ authRoutes.get('/session', async (c) => {
   }
   const full = await c.env.DB.prepare(
     `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
-            wallet_balance_usdt, avatar_url, phone_number, phone_verified,
+            wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
             trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
             ui_mode, mobile_widgets_json, extension_api_key, created_at
      FROM users WHERE id = ?`
-  ).bind(payload.sub).first<{ is_blocked?: number }>();
+  ).bind(payload.sub).first<{ is_blocked?: number; id: string; telegram_id?: string | null; avatar_url?: string | null; avatar_custom?: number }>();
   if (!full || full.is_blocked) {
     return c.json({ authenticated: false, user: null });
+  }
+  if (full.telegram_id && !full.avatar_url && !full.avatar_custom) {
+    const synced = await syncTelegramAvatarForUser(c.env, full.id, full.telegram_id);
+    if (synced) full.avatar_url = synced;
   }
   return c.json({ authenticated: true, user: full });
 });
@@ -253,22 +307,67 @@ authRoutes.get('/me', requireAuth, async (c) => {
   const u = c.get('user');
   const full = await c.env.DB.prepare(
     `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
-            wallet_balance_usdt, avatar_url, phone_number, phone_verified,
+            wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
             trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
             ui_mode, mobile_widgets_json, extension_api_key, created_at
      FROM users WHERE id = ?`
-  ).bind(u.id).first();
+  ).bind(u.id).first<{ id: string; telegram_id?: string | null; avatar_url?: string | null; avatar_custom?: number }>();
+  if (full?.telegram_id && !full.avatar_url && !full.avatar_custom) {
+    const synced = await syncTelegramAvatarForUser(c.env, full.id, full.telegram_id);
+    if (synced) full.avatar_url = synced;
+  }
   return c.json({ user: full });
+});
+
+authRoutes.get('/avatar/:userId', async (c) => {
+  const userId = decodeURIComponent(c.req.param('userId') || '').trim();
+  if (!userId) return c.notFound();
+  const row = await c.env.DB.prepare(
+    `SELECT telegram_id, telegram_avatar_file_id FROM users WHERE id = ? LIMIT 1`
+  ).bind(userId).first<{ telegram_id: string | null; telegram_avatar_file_id: string | null }>();
+  if (!row || !row.telegram_id) return c.notFound();
+
+  const botToken = c.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!botToken) return c.notFound();
+  const bot = new TelegramBotClient(botToken);
+
+  let fileId = row.telegram_avatar_file_id;
+  if (!fileId) {
+    const photos = await bot.getUserProfilePhotos(row.telegram_id, 1).catch(() => null);
+    const sizes = photos?.photos?.[0];
+    if (sizes && sizes.length > 0) {
+      const chosen = sizes[Math.min(1, sizes.length - 1)] || sizes[sizes.length - 1]!;
+      fileId = chosen.file_id;
+      await c.env.DB.prepare(`UPDATE users SET telegram_avatar_file_id = ? WHERE id = ?`).bind(fileId, userId).run().catch(() => {});
+    }
+  }
+  if (!fileId) return c.notFound();
+
+  const tgFile = await bot.getFile(fileId).catch(() => null);
+  if (!tgFile?.file_path) return c.notFound();
+
+  const imgRes = await fetch(`https://api.telegram.org/file/bot${botToken}/${tgFile.file_path}`, {
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!imgRes || !imgRes.ok) return c.notFound();
+
+  return new Response(imgRes.body, {
+    status: 200,
+    headers: {
+      'Content-Type': imgRes.headers.get('Content-Type') || 'image/jpeg',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
 });
 
 authRoutes.patch('/profile', requireAuth, async (c) => {
   const u = c.get('user');
-  const body = await c.req.json<{ username?: string; avatarUrl?: string | null }>().catch(
-    () => ({} as { username?: string; avatarUrl?: string | null })
+  const body = await c.req.json<{ username?: string; avatarUrl?: string | null; useTelegramAvatar?: boolean }>().catch(
+    () => ({} as { username?: string; avatarUrl?: string | null; useTelegramAvatar?: boolean })
   );
 
   const updates: string[] = [];
-  const binds: Array<string | null> = [];
+  const binds: Array<string | number | null> = [];
 
   if (typeof body.username === 'string') {
     const cleanName = body.username.trim();
@@ -279,19 +378,24 @@ authRoutes.patch('/profile', requireAuth, async (c) => {
     binds.push(cleanName);
   }
 
-  if (body.avatarUrl !== undefined) {
+  if (body.useTelegramAvatar) {
+    updates.push('avatar_custom = 0');
+    updates.push('avatar_url = NULL');
+  } else if (body.avatarUrl !== undefined) {
     if (body.avatarUrl === null || body.avatarUrl === '') {
       updates.push('avatar_url = NULL');
+      updates.push('avatar_custom = 0');
     } else if (typeof body.avatarUrl === 'string') {
       const val = body.avatarUrl.trim();
-      if (!val.startsWith('data:image/') && !val.startsWith('https://')) {
+      if (!val.startsWith('data:image/') && !val.startsWith('https://') && !val.startsWith('/api/auth/avatar/')) {
         return c.json({ error: 'فرمت تصویر نامعتبر است' }, 400);
       }
-      if (val.length > 260_000) {
-        return c.json({ error: 'حجم تصویر پروفایل بیش از حد مجاز است (حداکثر ۲۰۰ کیلوبایت)' }, 400);
+      if (val.length > 350_000) {
+        return c.json({ error: 'حجم تصویر پروفایل بیش از حد مجاز است (حداکثر ۲۵۰ کیلوبایت)' }, 400);
       }
       updates.push('avatar_url = ?');
       binds.push(val);
+      updates.push('avatar_custom = 1');
     }
   }
 
@@ -300,8 +404,13 @@ authRoutes.patch('/profile', requireAuth, async (c) => {
     await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
   }
 
+  if (body.useTelegramAvatar && u.telegramId) {
+    await syncTelegramAvatarForUser(c.env, u.id, u.telegramId, undefined, true);
+  }
+
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, avatar_url, created_at
+    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
+            wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, created_at
      FROM users WHERE id = ?`
   ).bind(u.id).first();
 
@@ -481,6 +590,10 @@ authRoutes.post('/telegram-webapp', async (c) => {
   }
 
   await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
+  const syncedAvatar = await syncTelegramAvatarForUser(c.env, row.id, tgId, verified.user.photo_url);
+  if (syncedAvatar && !row.avatar_url) {
+    row.avatar_url = syncedAvatar;
+  }
   const isHttps = isHttpsRequest(c);
   const token = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);
   setCookie(c, 'dollarino_session', token, {
@@ -538,6 +651,10 @@ authRoutes.post('/telegram-magic-login', async (c) => {
   await c.env.DB.prepare(
     `UPDATE users SET web_magic_token = NULL, web_magic_expires_at = NULL, last_active_at = datetime('now') WHERE id = ?`
   ).bind(row.id).run();
+  if (row.telegram_id && !row.avatar_url) {
+    const synced = await syncTelegramAvatarForUser(c.env, row.id, row.telegram_id);
+    if (synced) row.avatar_url = synced;
+  }
 
   const isHttps = isHttpsRequest(c);
   const jwt = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);

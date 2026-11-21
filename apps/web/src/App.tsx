@@ -369,7 +369,7 @@ export function App() {
             </p>
           </div>
           <button type="button" onClick={() => setActiveTab('pricing')} className="btn-gold px-5 py-2.5 rounded-2xl text-xs font-black shrink-0">
-            {lang === 'fa' ? 'خرید / تمدید اشتراک 💎' : 'Buy Subscription'}
+            {lang === 'fa' ? 'خرید / تمدید اشتراک' : 'Buy Subscription'}
           </button>
         </div>
       )}

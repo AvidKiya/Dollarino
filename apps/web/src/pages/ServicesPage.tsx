@@ -142,6 +142,23 @@ export function ServicesPage({
     }
   };
 
+  const handleUseTelegramAvatar = async () => {
+    setAvatarBusy(true);
+    setAvatarStatus('');
+    try {
+      const res = await apiFetch<{ ok: boolean; user?: AuthUserInfo }>('/api/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ useTelegramAvatar: true }),
+      });
+      if (res.user && onUpdateUser) onUpdateUser(res.user);
+      setAvatarStatus(isFa ? 'تصویر پروفایل تلگرام شما همگام‌سازی و جایگزین شد' : 'Synced with your Telegram profile photo');
+    } catch (err) {
+      setAvatarStatus(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
   const handleGenerateLinkCode = async () => {
     setLinkBusy(true);
     setLinkStatus('');
@@ -240,7 +257,7 @@ export function ServicesPage({
             <p className="text-xs text-dim mt-0.5">{user.email}</p>
           </div>
 
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
               disabled={avatarBusy}
@@ -248,8 +265,19 @@ export function ServicesPage({
               className="px-3.5 py-1.5 rounded-full panel text-[11px] font-bold text-[#1652F0] inline-flex items-center gap-1.5 hover:bg-[var(--soft)] transition"
             >
               <Camera className="w-3.5 h-3.5" />
-              <span>{avatarBusy ? '...' : isFa ? 'تغییر تصویر پروفایل' : 'Upload Photo'}</span>
+              <span>{avatarBusy ? '...' : isFa ? 'آپلود تصویر دلخواه' : 'Upload Photo'}</span>
             </button>
+            {user.telegram_id && (
+              <button
+                type="button"
+                disabled={avatarBusy}
+                onClick={() => void handleUseTelegramAvatar()}
+                className="px-3.5 py-1.5 rounded-full panel text-[11px] font-bold text-[#0EA5E9] inline-flex items-center gap-1.5 hover:bg-[var(--soft)] transition"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{isFa ? 'عکس پروفایل تلگرام' : 'Use Telegram Photo'}</span>
+              </button>
+            )}
             {user.avatar_url && (
               <button
                 type="button"
@@ -262,6 +290,19 @@ export function ServicesPage({
               </button>
             )}
           </div>
+          <p className="text-[10px] text-dim">
+            {user.telegram_id
+              ? user.avatar_custom
+                ? isFa
+                  ? 'حالت تصویر: تصویر اختصاصی آپلودشده توسط شما'
+                  : 'Avatar: Custom uploaded photo'
+                : isFa
+                  ? 'حالت تصویر: همگام‌سازی خودکار با عکس پروفایل تلگرام'
+                  : 'Avatar: Auto-synced from Telegram'
+              : isFa
+                ? 'با اتصال به ربات تلگرام می‌توانید عکس پروفایل تلگرام را همگام کنید'
+                : 'Link Telegram to auto-sync your Telegram photo'}
+          </p>
           {avatarStatus && <p className="text-[11px] font-bold text-jade">{avatarStatus}</p>}
         </div>
 

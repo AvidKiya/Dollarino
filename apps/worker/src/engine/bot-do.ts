@@ -23,6 +23,8 @@ import { publishSignalBroadcast, publishSignalClosedCard } from '../telegram/pub
 import {
   executeSignalForUser,
   logAudit,
+  notifyUserTelegram,
+  pushNotification,
   reconcileOpenPositionsForUser,
   type UserBotConfigRow,
 } from './executor.js';
@@ -66,9 +68,14 @@ export class TradingBotCoordinator implements DurableObject {
       `SELECT DISTINCT user_id FROM trades WHERE status = 'OPEN'`
     ).all<{ user_id: string }>();
 
+    const alertUsers = await this.env.DB.prepare(
+      `SELECT DISTINCT user_id FROM price_alerts WHERE is_active = 1`
+    ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> }));
+
     const allUserIds = new Set([
       ...runningUsers.results.map((r) => r.user_id),
       ...openUsers.results.map((r) => r.user_id),
+      ...alertUsers.results.map((r) => r.user_id),
     ]);
 
     for (const userId of allUserIds) {
@@ -77,6 +84,42 @@ export class TradingBotCoordinator implements DurableObject {
 
     if (allUserIds.size > 0) {
       await this.state.storage.setAlarm(Date.now() + 15_000);
+    }
+  }
+
+  private async checkUserPriceAlerts(
+    userId: string,
+    adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter']
+  ) {
+    const alerts = await this.env.DB.prepare(
+      `SELECT id, symbol, condition, target_price, note FROM price_alerts WHERE user_id = ? AND is_active = 1 LIMIT 20`
+    )
+      .bind(userId)
+      .all<{ id: string; symbol: string; condition: 'ABOVE' | 'BELOW'; target_price: number; note: string | null }>()
+      .catch(() => ({ results: [] }));
+    if (!alerts.results.length) return;
+
+    const pxCache = new Map<string, number>();
+    for (const al of alerts.results) {
+      let curPx = pxCache.get(al.symbol);
+      if (curPx === undefined) {
+        const pxStr = await adapter.getTickerPrice(al.symbol).catch(() => '0');
+        curPx = Number(pxStr);
+        if (!Number.isFinite(curPx) || curPx <= 0) continue;
+        pxCache.set(al.symbol, curPx);
+      }
+      const hit = al.condition === 'BELOW' ? curPx <= al.target_price : curPx >= al.target_price;
+      if (!hit) continue;
+
+      await this.env.DB.prepare(
+        `UPDATE price_alerts SET is_active = 0, triggered_at = datetime('now') WHERE id = ?`
+      ).bind(al.id).run().catch(() => {});
+
+      const dirFa = al.condition === 'BELOW' ? 'کاهش به زیر' : 'عبور از';
+      const title = `هشدار قیمت ${al.symbol}`;
+      const msg = `${al.symbol} به قیمت لحظه‌ای $${curPx} رسید (${dirFa} $${al.target_price})${al.note ? ` · ${al.note}` : ''}`;
+      await pushNotification(this.env.DB, userId, 'SYSTEM', title, msg).catch(() => {});
+      await notifyUserTelegram(this.env, userId, `🔔 ${title}\n${msg}`).catch(() => {});
     }
   }
 
@@ -156,6 +199,12 @@ export class TradingBotCoordinator implements DurableObject {
   private async runUserTick(userId: string) {
     // 1. Always manage open positions (3-TP + Risk-Free trailing)
     await reconcileOpenPositionsForUser(this.env, userId);
+
+    // 1B. Check live price alerts even when auto-trading bot is stopped
+    const { adapter: alertAdapter } = await resolveUserExchangeAdapter(this.env, userId, 'paper').catch(() => ({ adapter: null }));
+    if (alertAdapter) {
+      await this.checkUserPriceAlerts(userId, alertAdapter).catch(() => {});
+    }
 
     // 2. Check if bot is actively scanning strategies or Dollarino AI
     const cfg = await this.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
@@ -411,13 +460,21 @@ export class TradingBotCoordinator implements DurableObject {
       }
     } catch { /* fallback */ }
 
-    // 2A. Dollarino AI (Centralized Multi-AI Consensus Trader)
+    // 2A. Dollarino AI (Centralized Multi-AI Consensus Trader + Quant-AI Fallback)
     if (cfg.strategy_key === 'ai_autonomous_agent') {
       const latestBarTs = ltfClosed[ltfClosed.length - 1]!.timestamp;
       const aiBarKey = `last_ai_bar_ts_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
-      const lastAiTs = await this.state.storage.get<number>(aiBarKey);
-      if (lastAiTs === latestBarTs) return false;
-      await this.state.storage.put(aiBarKey, latestBarTs);
+      const aiCheckKey = `last_ai_check_ms_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
+      const [lastAiTs, lastCheckMs] = await Promise.all([
+        this.state.storage.get<number>(aiBarKey),
+        this.state.storage.get<number>(aiCheckKey),
+      ]);
+      // Allow re-evaluation every 3 minutes even inside the same candle so AI stays responsive
+      if (lastAiTs === latestBarTs && lastCheckMs && now - lastCheckMs < 180_000) return false;
+      await Promise.all([
+        this.state.storage.put(aiBarKey, latestBarTs),
+        this.state.storage.put(aiCheckKey, now),
+      ]);
 
       const [orderBook, market24h] = await Promise.all([
         adapter.getOrderBook(scanSymbol, 15).catch(() => ({ bids: [], asks: [] })),
@@ -440,7 +497,7 @@ export class TradingBotCoordinator implements DurableObject {
           candles: ltfClosed,
           htfCandles: htfClosed,
           maxLeverage: marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
-          minConfidence: cfg.ai_min_confidence ?? 65,
+          minConfidence: cfg.ai_min_confidence ?? 62,
           orderBookImbalancePct: imbalancePct,
           spreadPct,
           fundingRate: market24h?.fundingRate,
@@ -480,7 +537,7 @@ export class TradingBotCoordinator implements DurableObject {
         return false;
       }
 
-      if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 65)) {
+      if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 62)) {
         const sameSideOpen = decision.action === 'LONG' ? openState.long : openState.short;
         const oppositeSideOpen = decision.action === 'LONG' ? openState.short : openState.long;
 

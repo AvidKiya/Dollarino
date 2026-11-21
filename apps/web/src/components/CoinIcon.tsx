@@ -1,183 +1,350 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-function normalizeBase(symbol: string): string {
-  return symbol
-    .toUpperCase()
-    .replace(/-SWAP-USDT|-SWAP|-PERP|_USDT|_USDC/gi, '')
-    .replace(/USDT$|USDC$|USD$|BUSD$/i, '')
-    .replace(/[^A-Z0-9]/g, '');
+interface Props {
+  symbol: string;
+  size?: number;
+  className?: string;
+  imageUrl?: string | null;
+  showPair?: boolean;
 }
 
-const COIN_COLORS: Record<string, { from: string; to: string }> = {
-  BTC: { from: '#F7931A', to: '#E07000' },
-  ETH: { from: '#627EEA', to: '#3B5BDB' },
-  SOL: { from: '#9945FF', to: '#14F195' },
-  BNB: { from: '#F3BA2F', to: '#D99B06' },
-  USDT: { from: '#26A17B', to: '#17785B' },
-  XRP: { from: '#23292F', to: '#0B1220' },
-  TON: { from: '#0098EA', to: '#0072B8' },
-  DOGE: { from: '#C2A633', to: '#947B1B' },
-  ADA: { from: '#0033AD', to: '#001F73' },
-  AVAX: { from: '#E84142', to: '#B71C1C' },
-  TRX: { from: '#EF0027', to: '#A8001A' },
-  LINK: { from: '#2A5ADA', to: '#1B3C9B' },
-  DOT: { from: '#E6007A', to: '#9E0053' },
-  SUI: { from: '#4DA2FF', to: '#1E64D8' },
-  PEPE: { from: '#3D9947', to: '#1E6826' },
-  ARB: { from: '#28A0F0', to: '#17629B' },
-  OP: { from: '#FF0420', to: '#B80015' },
-  LTC: { from: '#345D9D', to: '#1D3969' },
-  NEAR: { from: '#111827', to: '#374151' },
-  APT: { from: '#1F2937', to: '#0F172A' },
-  MATIC: { from: '#8247E5', to: '#5621B8' },
-  POL: { from: '#8247E5', to: '#5621B8' },
+const PALETTE: Record<string, string> = {
+  BTC: '#F7931A',
+  ETH: '#627EEA',
+  SOL: '#14F195',
+  BNB: '#F3BA2F',
+  XRP: '#00A2FF',
+  DOGE: '#C2A633',
+  ADA: '#0033AD',
+  AVAX: '#E84142',
+  TON: '#0098EA',
+  DOT: '#E6007A',
+  LINK: '#2A5ADA',
+  TRX: '#FF060A',
+  USDT: '#26A17B',
+  USDC: '#2775CA',
+  SUI: '#4DA2FF',
+  PEPE: '#479F53',
+  ARB: '#28A0F0',
+  OP: '#FF0420',
+  ZEC: '#F4B728',
+  HYPE: '#4CE6B0',
+  LTC: '#345D9D',
+  UNI: '#FF007A',
+  SHIB: '#FFA409',
+  NEAR: '#00EC97',
+  APT: '#1AD1A5',
+  ATOM: '#2E3148',
+  INJ: '#00B2FF',
+  WIF: '#B97E56',
+  BONK: '#F59E0B',
+  TRUMP: '#D97706',
+  XAU: '#EAB308',
+  PAXG: '#EAB308',
+  GOLD: '#EAB308',
+  NVDA: '#76B900',
+  SOXL: '#2563EB',
+  SOXS: '#E11D48',
+  TSLA: '#CC0000',
+  AAPL: '#374151',
 };
 
-function BrandSvgMark({ base }: { base: string }) {
+const STOCK_AND_COMMODITY_SET = new Set([
+  'XAU', 'PAXG', 'GOLD', 'XAG', 'NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'GOOG', 'GOOGL', 'META', 'NFLX', 'AMD', 'SOXL', 'SOXS', 'SPY', 'QQQ', 'TQQQ', 'SQQQ', 'COIN', 'MSTR',
+]);
+
+function extractParts(raw: string): { base: string; quote: string } {
+  let clean = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9/_-]/g, '');
+  if (clean.includes('/')) {
+    const [b, q] = clean.split('/');
+    return { base: (b || 'COIN').replace(/^\d+/, ''), quote: q || 'USDT' };
+  }
+  if (clean.includes('_')) {
+    const [b, q] = clean.split('_');
+    return { base: (b || 'COIN').replace(/^\d+/, ''), quote: q || 'USDT' };
+  }
+  if (clean.includes('-')) {
+    const [b, q] = clean.split('-');
+    return { base: (b || 'COIN').replace(/^\d+/, ''), quote: q || 'USDT' };
+  }
+  const quotes = ['USDT', 'USDC', 'USD', 'BTC', 'ETH'];
+  for (const q of quotes) {
+    if (clean.length > q.length && clean.endsWith(q)) {
+      clean = clean.slice(0, -q.length);
+      return { base: clean.replace(/^1000+/, '') || clean, quote: q };
+    }
+  }
+  return { base: (clean || 'COIN').replace(/^1000+/, '') || 'COIN', quote: 'USDT' };
+}
+
+function renderInlineBrandSvg(base: string, size: number) {
   switch (base) {
     case 'BTC':
       return (
-        <svg viewBox="0 0 32 32" className="w-[62%] h-[62%] text-white fill-current">
-          <path d="M21.4 14.3c.6-2.4-1.5-3.7-4-4.5l.8-3.3-2-.5-.8 3.2c-.5-.1-1-.3-1.6-.4l.8-3.2-2-.5-.8 3.3c-.4-.1-.9-.2-1.3-.3l-2.7-.7-.5 2.1s1.5.3 1.4.4c.8.2.9.7.9 1.1l-.9 3.6c.1 0 .2 0 .3.1l-.3-.1-1.3 5c-.1.2-.3.6-.9.4 0 0-1.4-.4-1.4-.4l-1 2.3 2.5.6c.5.1 1 .3 1.4.4l-.8 3.3 2 .5.8-3.3c.5.1 1.1.3 1.6.4l-.8 3.3 2 .5.8-3.3c3.4.6 6 .4 7.1-2.7.9-2.5 0-3.9-1.8-4.9 1.3-.3 2.3-1.1 2.5-2.9zm-4.5 6.3c-.6 2.5-4.8 1.1-6.2.8l1.1-4.4c1.4.3 5.7 1 5.1 3.6zm.6-6.3c-.6 2.3-4.1 1.1-5.2.8l1-4c1.2.3 4.8.9 4.2 3.2z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#F7931A" />
+          <path
+            fill="#FFF"
+            d="M22.5 14.1c.3-2-1.2-3.1-3.3-3.8l.7-2.7-1.6-.4-.7 2.6c-.4-.1-.9-.2-1.3-.3l.7-2.7-1.6-.4-.7 2.7c-.4-.1-.7-.2-1-.2l-2.3-.6-.4 1.7s1.2.3 1.2.3c.7.2.8.6.8 1l-.8 3.2c0 0 .1 0 .2.1h-.2l-1.1 4.5c-.1.2-.3.5-.8.4 0 0-1.2-.3-1.2-.3l-.8 1.9 2.2.5c.4.1.8.2 1.2.3l-.7 2.8 1.6.4.7-2.7c.5.1.9.2 1.3.3l-.7 2.7 1.6.4.7-2.8c2.8.5 4.9.3 5.8-2.2.7-2-.1-3.2-1.5-3.9 1.1-.3 1.9-1 2.1-2.5zm-3.8 5.3c-.5 2-4 .9-5.1.7l.9-3.7c1.1.3 4.7.8 4.2 3zm.5-5.3c-.5 1.8-3.4.9-4.3.7l.8-3.3c1 .2 4 .7 3.5 2.6z"
+          />
         </svg>
       );
     case 'ETH':
       return (
-        <svg viewBox="0 0 32 32" className="w-[60%] h-[60%] text-white fill-current">
-          <path d="M16 4l-.2.7v15.4l.2.2 7.2-4.2L16 4z" opacity="0.85" />
-          <path d="M16 4L8.8 16.1 16 20.3V4z" />
-          <path d="M16 21.7l-.1.2v5.4l.1.3 7.2-10.1-7.2 4.2z" opacity="0.85" />
-          <path d="M16 27.6v-5.9l-7.2-4.2L16 27.6z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#627EEA" />
+          <path fill="#FFF" fillOpacity=".6" d="M16 4v8.87l7.5 3.35L16 4z" />
+          <path fill="#FFF" d="M16 4L8.5 16.22 16 12.87V4z" />
+          <path fill="#FFF" fillOpacity=".6" d="M16 21.97v6.02l7.5-10.38L16 21.97z" />
+          <path fill="#FFF" d="M16 28v-6.03l-7.5-4.36L16 28z" />
+          <path fill="#FFF" fillOpacity=".2" d="M16 20.57l7.5-4.35L16 12.87v7.7z" />
+          <path fill="#FFF" fillOpacity=".6" d="M8.5 16.22l7.5 4.35v-7.7l-7.5 3.35z" />
         </svg>
       );
     case 'SOL':
       return (
-        <svg viewBox="0 0 32 32" className="w-[58%] h-[58%] text-white fill-current">
-          <path d="M7.5 21.8c.3-.3.7-.5 1.1-.5h16.9c.7 0 1 .8.5 1.3l-2.8 2.8c-.3.3-.7.5-1.1.5H5.2c-.7 0-1-.8-.5-1.3l2.8-2.8z" />
-          <path d="M7.5 6.4c.3-.3.7-.5 1.1-.5h16.9c.7 0 1 .8.5 1.3l-2.8 2.8c-.3.3-.7.5-1.1.5H5.2c-.7 0-1-.8-.5-1.3L7.5 6.4z" />
-          <path d="M23.2 14c-.3-.3-.7-.5-1.1-.5H5.2c-.7 0-1 .8-.5 1.3l2.8 2.8c.3.3.7.5 1.1.5h16.9c.7 0 1-.8.5-1.3L23.2 14z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <defs>
+            <linearGradient id="sol_grad_svg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#9945FF" />
+              <stop offset="50%" stopColor="#19FB9B" />
+              <stop offset="100%" stopColor="#00FFA3" />
+            </linearGradient>
+          </defs>
+          <circle cx="16" cy="16" r="16" fill="#0B111E" />
+          <path fill="url(#sol_grad_svg)" d="M9.6 20.5a.8.8 0 0 1 .56-.23h13.5c.36 0 .54.43.28.68l-2.3 2.3a.8.8 0 0 1-.56.23H7.58a.4.4 0 0 1-.28-.68l2.3-2.3zm0-9.6a.8.8 0 0 1 .56-.23h13.5c.36 0 .54.43.28.68l-2.3 2.3a.8.8 0 0 1-.56.23H7.58a.4.4 0 0 1-.28-.68l2.3-2.3zm11.9 4.8a.8.8 0 0 0-.56-.23H7.44a.4.4 0 0 0-.28.68l2.3 2.3a.8.8 0 0 0 .56.23h13.5c.36 0 .54-.43.28-.68l-2.3-2.3z" />
         </svg>
       );
     case 'BNB':
       return (
-        <svg viewBox="0 0 32 32" className="w-[60%] h-[60%] text-white fill-current">
-          <path d="M16 5l3.9 3.9-6.8 6.8L9.2 11.8 16 5zm-8.9 8.9l3.1 3.1-3.1 3.1L4 17l3.1-3.1zm8.9 3.1l6.8-6.8L26.7 14 16 24.7 12.1 20.8 16 17zm8.9 0L28 17l-3.1 3.1-3.1-3.1L24.9 17zM16 27l-3.9-3.9L16 19.2l3.9 3.9L16 27z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#F3BA2F" />
+          <path fill="#FFF" d="M12.1 14.3L16 10.4l3.9 3.9 2.3-2.3L16 5.9 9.8 12l2.3 2.3zm-6.2 1.7l2.3-2.3 2.3 2.3-2.3 2.3-2.3-2.3zm6.2 1.7L16 21.6l3.9-3.9 2.3 2.3L16 26.1 9.8 20l2.3-2.3zm9.4-1.7l2.3-2.3 2.3 2.3-2.3 2.3-2.3-2.3zM16 13.7L18.3 16 16 18.3 13.7 16 16 13.7z" />
         </svg>
       );
     case 'TON':
       return (
-        <svg viewBox="0 0 32 32" className="w-[58%] h-[58%] text-white" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round">
-          <path d="M8 9.5C8 8.7 8.7 8 9.5 8h13c.8 0 1.5.7 1.5 1.5 0 .3-.1.6-.2.8L16 24.5 8.2 10.3c-.1-.2-.2-.5-.2-.8z" />
-          <path d="M16 8v16.5" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#0098EA" />
+          <path fill="#FFF" d="M21.8 9.2H10.2c-2.1 0-3.4 2.3-2.3 4.1l7.1 11.4c.5.8 1.6.8 2.1 0l7.1-11.4c1.1-1.8-.2-4.1-2.4-4.1zm-6.7 11.9l-4.9-8.3c-.2-.4.1-.9.5-.9h4.4v9.2zm6.7-8.3l-4.9 8.3v-9.2h4.4c.4 0 .7.5.5.9z" />
         </svg>
       );
     case 'XRP':
       return (
-        <svg viewBox="0 0 32 32" className="w-[58%] h-[58%] text-white fill-current">
-          <path d="M23.6 7h2.7l-6.1 6.1a5.9 5.9 0 01-8.4 0L5.7 7h2.7l4.8 4.8a3.9 3.9 0 005.6 0L23.6 7zM8.4 25H5.7l6.1-6.1a5.9 5.9 0 018.4 0l6.1 6.1h-2.7l-4.8-4.8a3.9 3.9 0 00-5.6 0L8.4 25z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#111827" />
+          <path fill="#FFF" d="M22.7 8h2.6l-5.7 5.6a5.1 5.1 0 0 1-7.2 0L6.7 8h2.6l4.4 4.3a3.2 3.2 0 0 0 4.6 0L22.7 8zm-13.4 16H6.7l5.7-5.6a5.1 5.1 0 0 1 7.2 0L25.3 24h-2.6l-4.4-4.3a3.2 3.2 0 0 0-4.6 0L9.3 24z" />
         </svg>
       );
     case 'USDT':
       return (
-        <svg viewBox="0 0 32 32" className="w-[58%] h-[58%] text-white fill-current">
-          <path d="M17.9 14.3V12h5.3V8.2H8.8V12h5.3v2.3c-4.2.2-7.4 1.1-7.4 2.1s3.2 1.9 7.4 2.1V25h3.8v-6.5c4.2-.2 7.4-1.1 7.4-2.1s-3.2-1.9-7.4-2.1zm0 3.3c-.6 0-1.2.1-1.9.1s-1.3 0-1.9-.1c-3.4-.2-5.9-.8-5.9-1.4s2.5-1.2 5.9-1.4v2.1c.6 0 1.2.1 1.9.1s1.3 0 1.9-.1v-2.1c3.4.2 5.9.8 5.9 1.4s-2.5 1.2-5.9 1.4z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#26A17B" />
+          <path fill="#FFF" d="M17.9 17.5v-.1c-.1 0-.7.1-1.9.1s-1.7-.1-1.9-.1v.1c-3.6-.2-6.3-.9-6.3-1.7 0-.8 2.7-1.5 6.3-1.7v2.7c.2 0 .8.1 1.9.1s1.7-.1 1.9-.1v-2.7c3.6.2 6.3.9 6.3 1.7 0 .8-2.7 1.5-6.3 1.7zm0-3.7v-2.4h5.3V7.8H8.8v3.6h5.3v2.4c-4.1.2-7.2 1.1-7.2 2.1s3.1 1.9 7.2 2.1v6.2h3.8v-6.2c4.1-.2 7.2-1.1 7.2-2.1s-3.1-1.9-7.2-2.1z" />
+        </svg>
+      );
+    case 'USDC':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#2775CA" />
+          <circle cx="16" cy="16" r="10.5" fill="none" stroke="#FFF" strokeWidth="1.8" strokeDasharray="16 6" />
+          <path fill="#FFF" d="M16.8 21.8v1.6h-1.6v-1.6c-1.8-.3-3-1.4-3.1-3h1.8c.1.9.7 1.5 1.8 1.5 1.1 0 1.8-.6 1.8-1.4 0-.7-.5-1.1-1.7-1.4l-1.1-.3c-1.7-.4-2.6-1.3-2.6-2.7 0-1.5 1.1-2.6 2.9-2.9v-1.6h1.6v1.6c1.6.3 2.7 1.3 2.8 2.8h-1.8c-.1-.8-.6-1.3-1.6-1.3-1 0-1.6.5-1.6 1.3 0 .7.5 1 1.5 1.3l1.1.3c1.9.5 2.8 1.4 2.8 2.8 0 1.6-1.1 2.7-3 3z" />
         </svg>
       );
     case 'TRX':
       return (
-        <svg viewBox="0 0 32 32" className="w-[58%] h-[58%] text-white" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinejoin="round">
-          <path d="M5.5 7l19.8 3.6-8.6 15.8L5.5 7zm0 0l10.3 7.5 9.5-3.9M15.8 14.5l.9 11.9" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#EF0027" />
+          <path fill="#FFF" d="M8.5 9.2l14.7 2.5-7.4 12.6-7.3-15.1zm2.2 1.8l4.9 10.2 5.1-8.6-10-1.6z" />
         </svg>
       );
     case 'LINK':
       return (
-        <svg viewBox="0 0 32 32" className="w-[56%] h-[56%] text-white" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinejoin="round">
-          <polygon points="16,5 25.5,10.5 25.5,21.5 16,27 6.5,21.5 6.5,10.5" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#2A5ADA" />
+          <path fill="#FFF" d="M16 6l-8.5 4.9v10.2L16 26l8.5-4.9V10.9L16 6zm5.3 13.2L16 22.3l-5.3-3.1v-6.4L16 9.7l5.3 3.1v6.4z" />
         </svg>
       );
     case 'AVAX':
       return (
-        <svg viewBox="0 0 32 32" className="w-[58%] h-[58%] text-white fill-current">
-          <path d="M21.2 22.8h4.2c.9 0 1.3-.7.9-1.5l-2.1-3.7c-.4-.8-1.1-.8-1.6 0l-2.1 3.7c-.4.8 0 1.5.7 1.5zM14.3 6.8l-8.6 14.5c-.5.8-.1 1.5.9 1.5h4.1c.9 0 1.7-.5 2.1-1.2l4.7-8.1c.4-.7.4-1.6 0-2.3l-1.5-2.6c-.4-.8-1.3-.8-1.7-1.8z" />
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#E84142" />
+          <path fill="#FFF" d="M20.2 21.6h3.6c.7 0 1-.5.7-1.1l-7.8-13.6c-.3-.6-1-.6-1.3 0L7.5 20.5c-.3.6 0 1.1.7 1.1h3.5c.4 0 .8-.2 1-.6l3.3-5.8 3.2 5.8c.2.4.6.6 1 .6z" />
         </svg>
       );
-    default: {
-      const label = base.slice(0, 3) || 'USD';
+    case 'DOGE':
       return (
-        <span
-          className="font-display font-black tracking-tight text-white leading-none"
-          style={{ fontSize: label.length >= 3 ? '0.68em' : '0.84em' }}
-        >
-          {label}
-        </span>
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#C2A633" />
+          <path fill="#FFF" d="M12.2 9.5h4.2c4.1 0 6.8 2.5 6.8 6.5s-2.7 6.5-6.8 6.5h-4.2v-5.3H10v-2.2h2.2V9.5zm2.8 2.4v3.1h2.4v2.2H15v2.9h1.4c2.4 0 3.9-1.5 3.9-4.1s-1.5-4.1-3.9-4.1H15z" />
+        </svg>
+      );
+    case 'ADA':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#0033AD" />
+          <circle cx="16" cy="16" r="2.6" fill="#FFF" />
+          <circle cx="16" cy="8.5" r="1.4" fill="#FFF" />
+          <circle cx="16" cy="23.5" r="1.4" fill="#FFF" />
+          <circle cx="9.5" cy="12.2" r="1.4" fill="#FFF" />
+          <circle cx="22.5" cy="12.2" r="1.4" fill="#FFF" />
+          <circle cx="9.5" cy="19.8" r="1.4" fill="#FFF" />
+          <circle cx="22.5" cy="19.8" r="1.4" fill="#FFF" />
+        </svg>
+      );
+    case 'DOT':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#E6007A" />
+          <ellipse cx="16" cy="9" rx="3.2" ry="1.9" fill="#FFF" />
+          <ellipse cx="16" cy="23" rx="3.2" ry="1.9" fill="#FFF" />
+          <ellipse cx="9.8" cy="12.5" rx="3.2" ry="1.9" transform="rotate(-60 9.8 12.5)" fill="#FFF" />
+          <ellipse cx="22.2" cy="19.5" rx="3.2" ry="1.9" transform="rotate(-60 22.2 19.5)" fill="#FFF" />
+          <ellipse cx="9.8" cy="19.5" rx="3.2" ry="1.9" transform="rotate(60 9.8 19.5)" fill="#FFF" />
+          <ellipse cx="22.2" cy="12.5" rx="3.2" ry="1.9" transform="rotate(60 22.2 12.5)" fill="#FFF" />
+        </svg>
+      );
+    case 'SUI':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#3B82F6" />
+          <path fill="#FFF" d="M16 6.8c2.6 3.7 6 7.5 6 11.4a6 6 0 1 1-12 0c0-3.9 3.4-7.7 6-11.4zm-3.2 11.4c0 1.9 1.4 3.4 3.2 3.4 1.3 0 2.4-.7 2.9-1.8-.8.2-1.8 0-2.5-.6-.8-.7-1.1-1.9-.6-3.1l.4-.9c-1.8 1-3.4 2.1-3.4 3z" />
+        </svg>
+      );
+    case 'ZEC':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#F4B728" />
+          <path fill="#111827" d="M14.7 6.5h2.6v2.7h4.3v2.3l-6.7 8.8h6.8v2.7h-4.4v2.6h-2.6v-2.6h-4.4v-2.3l6.8-8.8h-6.7V9.2h4.3V6.5z" />
+        </svg>
+      );
+    case 'HYPE':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#0B1917" />
+          <path fill="#4CE6B0" d="M9.5 11.5c2.2-2.6 5.2-1.3 6.5 1.1 1.3-2.4 4.3-3.7 6.5-1.1 2.1 2.5 1.8 6.6-.4 9-2.2 2.4-5.2 1.2-6.1-1.1-.9 2.3-3.9 3.5-6.1 1.1-2.2-2.4-2.5-6.5-.4-9z" />
+        </svg>
+      );
+    case 'XAU':
+    case 'PAXG':
+    case 'GOLD':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <defs>
+            <linearGradient id="gold_bar_svg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#FDE68A" />
+              <stop offset="55%" stopColor="#EAB308" />
+              <stop offset="100%" stopColor="#B45309" />
+            </linearGradient>
+          </defs>
+          <circle cx="16" cy="16" r="16" fill="#1C1917" />
+          <path fill="url(#gold_bar_svg)" d="M9.5 19.5l3-7h7l3 7h-13zm3.8-5l-1.5 3.4h8.4l-1.5-3.4h-5.4z" />
+          <path fill="#FEF08A" d="M12.8 11.5l1.2-2.5h4l1.2 2.5h-6.4z" />
+        </svg>
+      );
+    case 'NVDA':
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill="#76B900" />
+          <path fill="#FFF" d="M15.2 11.1c2.8 0 5.3 1.7 6.3 4.3-.9 2.5-3.3 4.2-6.1 4.2-2.1 0-4-1.1-5.1-2.9 1.2-1.8 2.8-2.9 4.9-2.9 1.3 0 2.5.7 3.2 1.8-.5.9-1.4 1.5-2.5 1.5-1.2 0-2.1-.8-2.3-1.9h-1.8c.2 2 1.9 3.6 4.1 3.6 2 0 3.7-1.2 4.4-3.1-.9-1.9-2.9-3.1-5.1-3.1-2.7 0-5.1 1.6-6.2 4.1 1.3 2.8 4.1 4.6 7.3 4.6 3.7 0 6.8-2.3 8.1-5.8-1.3-3.5-4.5-5.8-8.3-5.8-2.9 0-5.6 1.4-7.2 3.7l1.5 1c1.3-1.8 3.4-2.8 5.8-2.8z" />
+        </svg>
+      );
+    case 'SOXL':
+    case 'SOXS':
+    case 'TSLA':
+    case 'AAPL':
+    case 'SPY':
+    case 'QQQ':
+    case 'AMD':
+    case 'COIN':
+    case 'MSTR': {
+      const bg = PALETTE[base] || '#2563EB';
+      return (
+        <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
+          <circle cx="16" cy="16" r="16" fill={bg} />
+          <rect x="7" y="8" width="18" height="16" rx="4" fill="rgba(255,255,255,0.16)" stroke="rgba(255,255,255,0.45)" strokeWidth="1.2" />
+          <path fill="none" stroke="#FFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M10 19l4-4 3 2.5 5-5.5" />
+          <circle cx="22" cy="12" r="1.6" fill="#FFF" />
+        </svg>
       );
     }
+    default:
+      return null;
   }
 }
 
-export function CoinIcon({ symbol, size = 32 }: { symbol: string; size?: number }) {
-  const base = useMemo(() => normalizeBase(symbol), [symbol]);
-  const low = base.toLowerCase();
+export function CoinIcon({ symbol, size = 28, className = '', imageUrl, showPair = false }: Props) {
+  const { base, quote } = extractParts(symbol);
+  const inlineSvg = renderInlineBrandSvg(base, size);
 
-  const logoUrls = useMemo(
-    () =>
-      low
-        ? [
-            `https://assets.coincap.io/assets/icons/${low}@2x.png`,
-            `https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/${low}.png`,
-            `https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@master/128/color/${low}.png`,
-          ]
-        : [],
-    [low]
-  );
+  const lower = base.toLowerCase();
+  const sources: string[] = [];
+  if (imageUrl && imageUrl.startsWith('http')) sources.push(imageUrl);
+  if (!STOCK_AND_COMMODITY_SET.has(base)) {
+    sources.push(
+      `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/${lower}.svg`,
+      `https://assets.coincap.io/assets/icons/${lower}@2x.png`,
+      `https://bin.bnbstatic.com/static/assets/logos/${base}.png`,
+      `https://cdn.jsdelivr.net/gh/vadimmalykhin/binance-icons/crypto/${lower}.svg`
+    );
+  }
 
-  const [urlIndex, setUrlIndex] = useState(0);
-  const [imgReady, setImgReady] = useState(false);
-
+  const [srcIdx, setSrcIdx] = useState(0);
   useEffect(() => {
-    setUrlIndex(0);
-    setImgReady(false);
-  }, [low]);
+    setSrcIdx(0);
+  }, [base, imageUrl]);
 
-  const colors = COIN_COLORS[base] ?? (() => {
-    let h = 0;
-    for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) % 360;
-    return {
-      from: `hsl(${h}, 72%, 46%)`,
-      to: `hsl(${(h + 36) % 360}, 78%, 32%)`,
-    };
-  })();
+  const bg = PALETTE[base] ?? '#3B82F6';
+  const showImg = !inlineSvg && srcIdx < sources.length;
 
-  const activeUrl = urlIndex < logoUrls.length ? logoUrls[urlIndex] : null;
-
-  return (
+  const primaryBadge = (
     <div
-      style={{
-        width: size,
-        height: size,
-        fontSize: Math.max(11, Math.round(size * 0.44)),
-        background: `linear-gradient(135deg, ${colors.from}, ${colors.to})`,
-      }}
-      className="relative rounded-full flex items-center justify-center shadow-sm shrink-0 select-none overflow-hidden ring-1 ring-white/15"
+      className={`rounded-full shrink-0 inline-flex items-center justify-center overflow-hidden shadow-sm ring-1 ring-white/15 ${className}`}
+      style={{ width: size, height: size, background: inlineSvg ? 'transparent' : showImg ? 'rgba(255,255,255,0.06)' : bg }}
+      aria-label={base}
       title={base}
     >
-      {!imgReady && <BrandSvgMark base={base} />}
-      {activeUrl && (
+      {inlineSvg ? (
+        inlineSvg
+      ) : showImg ? (
         <img
-          src={activeUrl}
+          src={sources[srcIdx]}
           alt={base}
+          width={size}
+          height={size}
           loading="lazy"
-          decoding="async"
-          onLoad={() => setImgReady(true)}
-          onError={() => {
-            setImgReady(false);
-            setUrlIndex((idx) => idx + 1);
-          }}
-          className={`absolute inset-0 w-full h-full object-cover rounded-full transition-opacity duration-200 ${
-            imgReady ? 'opacity-100' : 'opacity-0 pointer-events-none'
-          }`}
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover rounded-full"
+          onError={() => setSrcIdx((i) => i + 1)}
         />
+      ) : (
+        <span
+          className="font-display font-black text-white select-none leading-none tracking-tight"
+          style={{ fontSize: Math.max(8, Math.round(size * (base.length >= 4 ? 0.28 : 0.34))) }}
+        >
+          {base.slice(0, 4)}
+        </span>
       )}
+    </div>
+  );
+
+  if (!showPair || !quote || quote === base) {
+    return primaryBadge;
+  }
+
+  const qSize = Math.max(12, Math.round(size * 0.56));
+  const quoteSvg = renderInlineBrandSvg(quote, qSize);
+  return (
+    <div className="relative inline-flex items-center shrink-0" style={{ width: size + Math.round(qSize * 0.45), height: size }}>
+      {primaryBadge}
+      <div
+        className="rounded-full overflow-hidden ring-2 ring-[var(--panel)] -ms-2 z-10 inline-flex items-center justify-center"
+        style={{ width: qSize, height: qSize, background: PALETTE[quote] || '#26A17B' }}
+      >
+        {quoteSvg || (
+          <span className="text-[7px] font-black text-white">{quote.slice(0, 2)}</span>
+        )}
+      </div>
     </div>
   );
 }

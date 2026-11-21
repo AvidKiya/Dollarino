@@ -63,6 +63,22 @@ export class TelegramBotClient {
     return this.call<{ id: number; username: string; first_name: string }>('getMe', {});
   }
 
+  getUserProfilePhotos(userId: string | number, limit = 1) {
+    return this.call<{
+      total_count: number;
+      photos: Array<Array<{ file_id: string; file_unique_id: string; width: number; height: number }>>;
+    }>('getUserProfilePhotos', {
+      user_id: Number(userId),
+      limit,
+    });
+  }
+
+  getFile(fileId: string) {
+    return this.call<{ file_id: string; file_unique_id: string; file_size?: number; file_path?: string }>('getFile', {
+      file_id: fileId,
+    });
+  }
+
   getChat(chatId: string | number) {
     return this.call<{ id: number; title?: string; username?: string; type: string }>('getChat', {
       chat_id: chatId,

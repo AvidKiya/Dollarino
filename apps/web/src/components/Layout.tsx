@@ -936,7 +936,7 @@ export function Layout({
             className="sticky top-0 z-30 backdrop-blur-2xl border-b border-[var(--glass-border)]"
             style={{ background: 'var(--header-glass)' }}
           >
-            <div className="mx-auto max-w-6xl px-2.5 sm:px-6 py-2 flex items-center justify-between gap-1.5 sm:gap-2">
+            <div className="mx-auto max-w-7xl px-2.5 sm:px-6 py-2 flex items-center justify-between gap-1.5 sm:gap-2">
               <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                 <button
                   type="button"
@@ -953,7 +953,14 @@ export function Layout({
                 >
                   <span className="h-8 w-8 rounded-full surface-soft grid place-items-center text-main font-display font-bold text-xs border border-[var(--glass-border)] shrink-0 overflow-hidden shadow-sm">
                     {user.avatar_url ? (
-                      <img src={user.avatar_url} alt={user.username} className="w-full h-full object-cover" />
+                      <img
+                        src={user.avatar_url}
+                        alt={user.username}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
                     ) : (
                       user.username.slice(0, 1).toUpperCase()
                     )}
@@ -1097,7 +1104,7 @@ export function Layout({
             )}
           </header>
 
-          <main className="flex-1 mx-auto w-full max-w-6xl px-3 sm:px-6 py-5 pb-32 lg:pb-10">{children}</main>
+          <main className="flex-1 mx-auto w-full max-w-7xl px-3 sm:px-6 py-5 pb-32 lg:pb-10">{children}</main>
         </div>
       </div>
 

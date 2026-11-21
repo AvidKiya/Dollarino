@@ -196,8 +196,8 @@ export function AuthPage({
                 {referralCode.trim() && (
                   <div className="px-3 py-2 rounded-xl bg-emerald-500/12 border border-emerald-500/30 text-[11px] font-bold text-jade">
                     {isFa
-                      ? `🎁 کد معرف ${referralCode.trim()} روی حساب شما ثبت می‌شود.`
-                      : `🎁 Referral code ${referralCode.trim()} will be applied.`}
+                      ? `کد معرف ${referralCode.trim()} روی حساب شما ثبت می‌شود.`
+                      : `Referral code ${referralCode.trim()} will be applied.`}
                   </div>
                 )}
               </>

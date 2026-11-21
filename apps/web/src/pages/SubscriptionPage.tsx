@@ -167,8 +167,8 @@ export function SubscriptionPage({
       setMsg(
         res.autoVerified
           ? isFa
-            ? '✅ تراکنش بلاک‌چین تایید خودکار شد و اشتراک شما هم‌اکنون فعال گردید!'
-            : '✅ Blockchain transaction auto-verified! Your subscription is now ACTIVE.'
+            ? 'تراکنش بلاک‌چین تایید خودکار شد و اشتراک شما هم‌اکنون فعال گردید!'
+            : 'Blockchain transaction auto-verified! Your subscription is now ACTIVE.'
           : res.message ||
             (isFa
               ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر، اشتراک شما فوراً فعال می‌شود.'
@@ -211,11 +211,11 @@ export function SubscriptionPage({
       setMsg(
         res.autoVerified
           ? isFa
-            ? `✅ پرداخت Trust Wallet با TX ${txHash.slice(0, 12)}... تایید آن‌چین شد و اشتراک فعال گردید!`
-            : `✅ Trust Wallet payment verified on-chain (${txHash.slice(0, 12)}...)!`
+            ? `پرداخت Trust Wallet با TX ${txHash.slice(0, 12)}... تایید آن‌چین شد و اشتراک فعال گردید!`
+            : `Trust Wallet payment verified on-chain (${txHash.slice(0, 12)}...)!`
           : res.message ||
             (isFa
-              ? `✅ تراکنش ${txHash.slice(0, 12)}... ارسال و ثبت شد! پس از تایید بلاک BSC اشتراک فوراً فعال می‌شود.`
+              ? `تراکنش ${txHash.slice(0, 12)}... ارسال و ثبت شد! پس از تایید بلاک BSC اشتراک فوراً فعال می‌شود.`
               : `Transaction submitted (${txHash.slice(0, 12)}...).`)
       );
       await loadData();
@@ -480,10 +480,13 @@ export function SubscriptionPage({
             </span>
           </div>
 
-          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-main">
-            {isFa
-              ? '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای دریافت وجه یا پشتیبانی ندارد. پرداخت را فقط به آدرس‌های داخل همین صفحه انجام دهید و در صورت نیاز فقط با پشتیبانی آنلاین سایت یا ربات @Dollarino_bot در ارتباط باشید.'
-              : '⚠️ Security Notice: Dollarino has NO personal DM support account. Only pay to addresses shown here and contact us via Online Support or @Dollarino_bot.'}
+          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-main flex items-start gap-2">
+            <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span>
+              {isFa
+                ? 'هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای دریافت وجه یا پشتیبانی ندارد. پرداخت را فقط به آدرس‌های داخل همین صفحه انجام دهید و در صورت نیاز فقط با پشتیبانی آنلاین سایت یا ربات @Dollarino_bot در ارتباط باشید.'
+                : 'Security Notice: Dollarino has NO personal DM support account. Only pay to addresses shown here and contact us via Online Support or @Dollarino_bot.'}
+            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -496,7 +499,7 @@ export function SubscriptionPage({
             >
               <Wallet className="w-5 h-5 shrink-0" />
               <div>
-                <div className="font-extrabold">{isFa ? '🦊 Trust Wallet (BEP20)' : 'Trust Wallet (BEP20)'}</div>
+                <div className="font-extrabold">Trust Wallet (BEP20)</div>
                 <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT · کارمزد ناچیز</div>
               </div>
             </button>
@@ -564,7 +567,7 @@ export function SubscriptionPage({
                   className="px-4 py-2 rounded-xl btn-gold font-black inline-flex items-center gap-1.5"
                 >
                   <Wallet className="w-3.5 h-3.5" />
-                  <span>{isFa ? '🦊 پرداخت مستقیم از Trust Wallet' : 'Instant Pay in Trust Wallet'}</span>
+                  <span>{isFa ? 'پرداخت مستقیم از Trust Wallet' : 'Instant Pay in Trust Wallet'}</span>
                 </button>
               )}
               <button

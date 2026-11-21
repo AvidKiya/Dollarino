@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react';
 import {
   BrainCircuit,
   CheckCircle2,
+  CreditCard,
   Crown,
+  Flame,
   Gift,
   Headphones,
+  History,
   KeyRound,
   Megaphone,
   MessageCircle,
@@ -16,11 +19,14 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Smartphone,
   Trash2,
   Trophy,
   UserCheck,
   Users,
+  Wallet,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
@@ -653,38 +659,44 @@ export function AdminPage({
               </div>
               <div className="flex flex-wrap gap-1.5 text-xs">
                 {[
-                  { id: 'all', fa: 'همه بخش‌ها', en: 'All' },
-                  { id: 'overview', fa: '🧠 هوش مصنوعی و آمار', en: 'AI & KPIs' },
-                  { id: 'users', fa: '👥 کاربران و KYC', en: 'Users & KYC' },
-                  { id: 'payments', fa: '💳 مالی و Trust Wallet', en: 'Payments & Wallets' },
-                  { id: 'ops', fa: '📢 کانال، کپی‌ترید و پشتیبانی', en: 'Channel & Support' },
-                  { id: 'dex_logs', fa: '🔥 DEX و لاگ‌ها', en: 'DEX & Audit Logs' },
-                ].map((sec) => (
-                  <button
-                    key={sec.id}
-                    type="button"
-                    onClick={() => setAdminSection(sec.id as typeof adminSection)}
-                    className={`px-3 py-1.5 rounded-xl font-bold transition ${
-                      adminSection === sec.id ? 'btn-cobalt' : 'surface-soft text-dim hover:text-main'
-                    }`}
-                  >
-                    {isFa ? sec.fa : sec.en}
-                  </button>
-                ))}
+                  { id: 'all', icon: null, fa: 'همه بخش‌ها', en: 'All' },
+                  { id: 'overview', icon: BrainCircuit, fa: 'هوش مصنوعی و آمار', en: 'AI & KPIs' },
+                  { id: 'users', icon: Users, fa: 'کاربران و KYC', en: 'Users & KYC' },
+                  { id: 'payments', icon: CreditCard, fa: 'مالی و Trust Wallet', en: 'Payments & Wallets' },
+                  { id: 'ops', icon: Megaphone, fa: 'کانال، کپی‌ترید و پشتیبانی', en: 'Channel & Support' },
+                  { id: 'dex_logs', icon: Flame, fa: 'DEX و لاگ‌ها', en: 'DEX & Audit Logs' },
+                ].map((sec) => {
+                  const SecIcon = sec.icon;
+                  return (
+                    <button
+                      key={sec.id}
+                      type="button"
+                      onClick={() => setAdminSection(sec.id as typeof adminSection)}
+                      className={`px-3 py-1.5 rounded-xl font-bold transition inline-flex items-center gap-1.5 ${
+                        adminSection === sec.id ? 'btn-cobalt' : 'surface-soft text-dim hover:text-main'
+                      }`}
+                    >
+                      {SecIcon && <SecIcon className="w-3.5 h-3.5" />}
+                      <span>{isFa ? sec.fa : sec.en}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
               <div className="surface-soft rounded-2xl p-3.5">
                 <div className="text-[11px] text-sub">{isFa ? 'کل کاربران / تایید KYC' : 'Users / Phone KYC'}</div>
-                <div className="text-lg font-black font-mono-num text-main mt-1">
-                  {data.stats.totalUsers} <span className="text-xs text-jade">/ {data.stats.phoneVerifiedCount ?? 0}📱</span>
+                <div className="text-lg font-black font-mono-num text-main mt-1 inline-flex items-center gap-1">
+                  <span>{data.stats.totalUsers}</span>
+                  <span className="text-xs text-jade inline-flex items-center gap-0.5">/ {data.stats.phoneVerifiedCount ?? 0} <Smartphone className="w-3 h-3" /></span>
                 </div>
               </div>
               <div className="surface-soft rounded-2xl p-3.5">
                 <div className="text-[11px] text-sub">{isFa ? 'کیف‌پول Trust Wallet' : 'Trust Wallets'}</div>
-                <div className="text-lg font-black font-mono-num text-amber-400 mt-1">
-                  {data.stats.trustWalletConnectedCount ?? 0} 🦊
+                <div className="text-lg font-black font-mono-num text-amber-400 mt-1 inline-flex items-center gap-1.5">
+                  <span>{data.stats.trustWalletConnectedCount ?? 0}</span>
+                  <Wallet className="w-4 h-4" />
                 </div>
               </div>
               <div className="surface-soft rounded-2xl p-3.5">
@@ -917,9 +929,10 @@ export function AdminPage({
                       label: `مدل ${aiForm.slotOrder} (Hilinkup DeepSeek v4.1)`,
                     })
                   }
-                  className="px-3 py-1 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px]"
+                  className="px-3 py-1 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px] inline-flex items-center gap-1"
                 >
-                  {isFa ? '⚡️ پرکردن سریع Hilinkup Gateway' : '⚡️ Fill Hilinkup Gateway'}
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'پرکردن سریع Hilinkup Gateway' : 'Fill Hilinkup Gateway'}</span>
                 </button>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5 items-end">
@@ -1221,8 +1234,9 @@ export function AdminPage({
 
               <div className="pt-2 border-t hairline space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-black text-amber-400">
-                    {isFa ? '🦊 آدرس‌های دریافت Trust Wallet و امنیت ربات:' : '🦊 Trust Wallet Receivers & KYC Gate:'}
+                  <span className="text-[11px] font-black text-amber-400 inline-flex items-center gap-1">
+                    <Wallet className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'آدرس‌های دریافت Trust Wallet و امنیت ربات:' : 'Trust Wallet Receivers & KYC Gate:'}</span>
                   </span>
                   <label className="flex items-center gap-1.5 text-[11px] font-bold text-main">
                     <input
@@ -1406,9 +1420,9 @@ export function AdminPage({
                 />
                 {[
                   { id: 'all', label: isFa ? 'همه' : 'All' },
-                  { id: 'kyc_verified', label: isFa ? '📱 KYC تایید' : 'Verified' },
-                  { id: 'trust_wallet', label: isFa ? '🦊 Trust Wallet' : 'Trust Wallet' },
-                  { id: 'unverified', label: isFa ? '⏳ بدون KYC' : 'Pending KYC' },
+                  { id: 'kyc_verified', label: isFa ? 'KYC تایید' : 'Verified' },
+                  { id: 'trust_wallet', label: isFa ? 'Trust Wallet' : 'Trust Wallet' },
+                  { id: 'unverified', label: isFa ? 'بدون KYC' : 'Pending KYC' },
                 ].map((f) => (
                   <button
                     key={f.id}
@@ -1453,15 +1467,17 @@ export function AdminPage({
                     <td className="py-2.5 px-2 font-mono-num text-sub">
                       <div>{u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '-'}</div>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className={u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}>
-                          {u.phone_verified === 1 ? `✅ ${u.phone_number || 'Verified'}` : '⏳ Unverified'}
+                        <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
+                          {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
+                          <span>{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
                         </span>
                       </div>
                     </td>
                     <td className="py-2.5 px-2 font-mono-num text-[11px] text-sub" dir="ltr">
                       {u.trust_wallet_address ? (
-                        <span className="badge-signal px-2 py-0.5 rounded-full">
-                          🦊 {u.trust_wallet_address.slice(0, 6)}...{u.trust_wallet_address.slice(-4)}
+                        <span className="badge-signal px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                          <Wallet className="w-3 h-3" />
+                          <span>{u.trust_wallet_address.slice(0, 6)}...{u.trust_wallet_address.slice(-4)}</span>
                         </span>
                       ) : (
                         <span className="text-dim">—</span>
@@ -1859,7 +1875,7 @@ export function AdminPage({
                         note: channelSignalForm.note || undefined,
                       }),
                     });
-                    setMsg(isFa ? 'سیگنال با دکمه‌های تعاملی در کانال @Dollarino_official منتشر شد ✅' : 'Signal published to channel ✅');
+                    setMsg(isFa ? 'سیگنال با دکمه‌های تعاملی در کانال @Dollarino_official منتشر شد.' : 'Signal published to channel.');
                   } catch (err) {
                     setMsg(err instanceof Error ? err.message : 'Publish signal failed');
                   }
@@ -1877,10 +1893,10 @@ export function AdminPage({
                     <option value="SHORT">SHORT</option>
                   </select>
                   <select value={channelSignalForm.engineKey} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, engineKey: e.target.value })} className="surface-input rounded-xl px-2.5 py-2">
-                    <option value="dollarino_v01">🎯 استراتژی شکار (دُرنا)</option>
-                    <option value="ai_autonomous_agent">🧠 هوش مصنوعی دلارینو</option>
-                    <option value="my_custom_ai">🤖 هوش مصنوعی خام</option>
-                    <option value="copy_trade">🏆 کپی‌ترید تاییدشده</option>
+                    <option value="dollarino_v01">استراتژی شکار (دُرنا)</option>
+                    <option value="ai_autonomous_agent">هوش مصنوعی دلارینو</option>
+                    <option value="my_custom_ai">هوش مصنوعی خام</option>
+                    <option value="copy_trade">کپی‌ترید تاییدشده</option>
                   </select>
                 </div>
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -1915,7 +1931,7 @@ export function AdminPage({
                       }),
                     });
                     setChannelNewsForm({ ...channelNewsForm, title: '', summary: '', analysis: '' });
-                    setMsg(isFa ? 'خبر و تحلیل فاندامنتال در کانال @Dollarino_official منتشر شد ✅' : 'News published to channel ✅');
+                    setMsg(isFa ? 'خبر و تحلیل فاندامنتال در کانال @Dollarino_official منتشر شد.' : 'News published to channel.');
                     void load();
                   } catch (err) {
                     setMsg(err instanceof Error ? err.message : 'Publish news failed');
@@ -1930,9 +1946,9 @@ export function AdminPage({
                 <div className="grid grid-cols-3 gap-2">
                   <input required value={channelNewsForm.title} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, title: e.target.value })} placeholder={isFa ? 'تیتر خبر یا تحلیل...' : 'Headline...'} className="col-span-2 surface-input rounded-xl px-2.5 py-2" />
                   <select value={channelNewsForm.impact} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, impact: e.target.value })} className="surface-input rounded-xl px-2 py-2">
-                    <option value="HIGH">🔴 HIGH IMPACT</option>
-                    <option value="MEDIUM">🟡 MEDIUM</option>
-                    <option value="LOW">🟢 INFO</option>
+                    <option value="HIGH">HIGH IMPACT</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="LOW">INFO</option>
                   </select>
                 </div>
                 <textarea required rows={2} value={channelNewsForm.summary} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, summary: e.target.value })} placeholder={isFa ? 'متن خبر یا داده‌های فاندامنتال...' : 'News summary...'} className="w-full surface-input rounded-xl p-2.5" />
@@ -2006,8 +2022,9 @@ export function AdminPage({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
               <div className="surface-card p-5 space-y-3 overflow-x-auto">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-black text-sm text-main">
-                    {isFa ? '🔥 معاملات غیرمتمرکز DEX و Trust Wallet کاربران' : '🔥 User DEX & Trust Wallet Trades'}
+                  <h3 className="font-black text-sm text-main inline-flex items-center gap-1.5">
+                    <Flame className="w-4 h-4 text-amber-400" />
+                    <span>{isFa ? 'معاملات غیرمتمرکز DEX و Trust Wallet کاربران' : 'User DEX & Trust Wallet Trades'}</span>
                   </h3>
                   <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{dexTrades.length}</span>
                 </div>
@@ -2049,8 +2066,9 @@ export function AdminPage({
 
               <div className="surface-card p-5 space-y-3 overflow-x-auto">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-black text-sm text-main">
-                    {isFa ? '📜 لاگ‌های حسابرسی و امنیت سیستم (Audit Logs)' : '📜 System & Security Audit Logs'}
+                  <h3 className="font-black text-sm text-main inline-flex items-center gap-1.5">
+                    <History className="w-4 h-4 text-brand" />
+                    <span>{isFa ? 'لاگ‌های حسابرسی و امنیت سیستم (Audit Logs)' : 'System & Security Audit Logs'}</span>
                   </h3>
                   <span className="px-2.5 py-0.5 rounded-full surface-soft text-[10px] font-black">{auditLogs.length}</span>
                 </div>

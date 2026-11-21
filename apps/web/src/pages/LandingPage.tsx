@@ -486,6 +486,29 @@ export function LandingPage({
 
           {/* Right Live Market & 4-Mode Interactive Card */}
           <div className="panel glow-card-anim rounded-[30px] p-5 sm:p-6 space-y-4">
+            <div className="relative rounded-2xl overflow-hidden border hairline h-36 sm:h-40">
+              <img
+                src="/images/hero-quant-desk.png"
+                alt="Dollarino AI Quantitative Desk"
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#081022]/90 via-[#081022]/30 to-transparent flex items-end p-3.5">
+                <div className="flex items-center justify-between gap-2 w-full">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--gold)' }}>
+                      DOLLARINO QUANT DESK
+                    </p>
+                    <p className="text-xs font-bold text-white">
+                      {isFa ? 'ترید هوشمند، کپی‌ترید، و Trust Wallet DApp' : 'AI Trading, Copy-Trade & Trust Wallet DApp'}
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black shrink-0">
+                    {isFa ? 'آنلاین ۲۴/۷' : '24/7 LIVE'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--gold)' }}>

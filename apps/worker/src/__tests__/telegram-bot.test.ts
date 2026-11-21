@@ -98,8 +98,14 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
 
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith('https://api.telegram.org/file/bot')) {
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        });
+      }
       if (url.startsWith('https://api.telegram.org/bot')) {
-        const method = url.split('/').pop() || 'unknown';
+        const method = url.split('/').pop()?.split('?')[0] || 'unknown';
         let body: Record<string, unknown> = {};
         if (typeof init?.body === 'string') {
           body = JSON.parse(init.body) as Record<string, unknown>;
@@ -113,6 +119,24 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
             }
           }
           body = entries;
+        }
+        if (method === 'getUserProfilePhotos') {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              result: {
+                total_count: 1,
+                photos: [[{ file_id: 'tg_photo_file_123', width: 160, height: 160 }]],
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (method === 'getFile') {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_id: 'tg_photo_file_123', file_path: 'photos/file_123.jpg' } }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
         }
         tgCalls.push({ method, body });
         return new Response(JSON.stringify({ ok: true, result: { message_id: tgCalls.length } }), {
@@ -194,6 +218,15 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       }
 
       if (url.includes('bitunix.com') || url.includes('toobit.com') || url.includes('binance.com') || url.includes('kcex.com')) {
+        if (url.includes('klines') || url.includes('kline')) {
+          const now = Date.now();
+          const bars = Array.from({ length: 120 }, (_, i) => {
+            const t = now - (120 - i) * 3600_000;
+            const p = 90000 + Math.sin(i / 6) * 1200 + i * 25;
+            return [t, String(p - 80), String(p + 180), String(p - 150), String(p + 100), '1400'];
+          });
+          return new Response(JSON.stringify(bars), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
         if (url.includes('market/tickers')) {
           return new Response(
             JSON.stringify({ code: 0, data: [{ symbol: 'BTCUSDT', lastPrice: '92000', last: '92000' }] }),
@@ -949,5 +982,146 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const newsPost = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.chat_id) === '@Dollarino_official');
     expect(newsPost).toBeTruthy();
     expect(String(newsPost?.body.text || '')).toContain('گزارش هفتگی بازار');
+  });
+
+  it('supports v9.5 Telegram avatar proxy, instant AI scan-now fallback, price alerts CRUD, and AI->Human support escalation', async () => {
+    const env = makeEnv();
+
+    // 1. Register & login a web user with telegram_id + avatar proxy check
+    const reg = await worker.fetch(
+      new Request('https://dollarino.local/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'v95@dollarino.local',
+          password: 'Password123!',
+          username: 'v95trader',
+        }),
+      }),
+      env
+    );
+    expect(reg.status).toBe(201);
+    const regData = (await reg.json()) as { token: string; user: { id: string } };
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${regData.token}`,
+    };
+
+    // Simulate Telegram link & photo sync
+    await db
+      .prepare(`UPDATE users SET telegram_id = '99887766', telegram_avatar_file_id = 'tg_photo_file_123', avatar_url = ? WHERE id = ?`)
+      .bind(`/api/auth/avatar/${regData.user.id}`, regData.user.id)
+      .run();
+
+    const avatarRes = await worker.fetch(new Request(`https://dollarino.local/api/auth/avatar/${regData.user.id}`), env);
+    expect(avatarRes.status).toBe(200);
+    expect(avatarRes.headers.get('Content-Type')).toContain('image/jpeg');
+
+    const toggleAvatar = await worker.fetch(
+      new Request('https://dollarino.local/api/auth/profile', {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({ useTelegramAvatar: true }),
+      }),
+      env
+    );
+    expect(toggleAvatar.status).toBe(200);
+    const toggleBody = (await toggleAvatar.json()) as { ok: boolean; user: { avatar_url: string; avatar_custom: number } };
+    expect(toggleBody.ok).toBe(true);
+    expect(toggleBody.user.avatar_url).toBe(`/api/auth/avatar/${regData.user.id}`);
+    expect(toggleBody.user.avatar_custom).toBe(0);
+
+    // 2. Price Alerts CRUD
+    const createAlert = await worker.fetch(
+      new Request('https://dollarino.local/api/trading/alerts', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ symbol: 'BTCUSDT', condition: 'ABOVE', targetPrice: 98500, note: 'Breakout level' }),
+      }),
+      env
+    );
+    expect([200, 201]).toContain(createAlert.status);
+    const createdAlertJson = (await createAlert.json()) as { ok: boolean; alert: { id: string; symbol: string } };
+    expect(createdAlertJson.ok).toBe(true);
+    expect(createdAlertJson.alert.symbol).toBe('BTCUSDT');
+
+    const listAlerts = await worker.fetch(
+      new Request('https://dollarino.local/api/trading/alerts', { headers: authHeaders }),
+      env
+    );
+    const listAlertsJson = (await listAlerts.json()) as { alerts: Array<{ id: string }> };
+    expect(listAlertsJson.alerts.some((a) => a.id === createdAlertJson.alert.id)).toBe(true);
+
+    const delAlert = await worker.fetch(
+      new Request(`https://dollarino.local/api/trading/alerts/${createdAlertJson.alert.id}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      }),
+      env
+    );
+    expect(delAlert.status).toBe(200);
+
+    // 3. AI Scan Now (even when external LLM response is unavailable or mocked -> Hybrid Quant-AI succeeds)
+    const scanRes = await worker.fetch(
+      new Request('https://dollarino.local/api/trading/ai-scan-now', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ symbol: 'BTCUSDT', timeframe: '1h', autoExecute: false }),
+      }),
+      env
+    );
+    expect(scanRes.status).toBe(200);
+    const scanJson = (await scanRes.json()) as {
+      ok: boolean;
+      results: Array<{ symbol: string; confidence: number; action: string }>;
+    };
+    expect(scanJson.ok).toBe(true);
+    expect(scanJson.results[0]?.symbol).toBe('BTCUSDT');
+    expect(scanJson.results[0]?.confidence).toBeGreaterThan(0);
+
+    // 4. Smart Support: AI Assistant instant answer -> Escalate to Human -> Switch back to AI
+    const supMsgRes = await worker.fetch(
+      new Request('https://dollarino.local/api/support/message', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ message: 'چرا ربات هنوز معامله باز نکرده؟', mode: 'AI' }),
+      }),
+      env
+    );
+    expect([200, 201]).toContain(supMsgRes.status);
+    const supMsgJson = (await supMsgRes.json()) as {
+      ok: boolean;
+      ticketId: string;
+      supportMode: string;
+      aiReply: { id: string; sender_role: string; sender_name: string; message: string } | null;
+    };
+    expect(supMsgJson.ok).toBe(true);
+    expect(supMsgJson.supportMode).toBe('AI_ASSISTANT');
+    expect(typeof supMsgJson.aiReply?.message).toBe('string');
+    expect((supMsgJson.aiReply?.message || '').length).toBeGreaterThan(10);
+
+    const escRes = await worker.fetch(
+      new Request('https://dollarino.local/api/support/escalate', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ ticketId: supMsgJson.ticketId, reason: 'Need admin review' }),
+      }),
+      env
+    );
+    expect(escRes.status).toBe(200);
+    const escJson = (await escRes.json()) as { ok: boolean; supportMode: string };
+    expect(escJson.supportMode).toBe('HUMAN_ADMIN');
+
+    const backAiRes = await worker.fetch(
+      new Request('https://dollarino.local/api/support/switch-ai', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ ticketId: supMsgJson.ticketId }),
+      }),
+      env
+    );
+    expect(backAiRes.status).toBe(200);
+    const backAiJson = (await backAiRes.json()) as { ok: boolean; supportMode: string };
+    expect(backAiJson.supportMode).toBe('AI_ASSISTANT');
   });
 });

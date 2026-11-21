@@ -341,8 +341,8 @@ export function WeeklyCardPage({
       });
       setNotice(
         isFa
-          ? `تصویر ${layout === 'horizontal' ? 'افقی' : 'عمودی'} کارت سود مستقیم به تلگرام شما (@Dollarino_bot) ارسال شد ✅`
-          : `Profit Card PNG sent to your Telegram (@Dollarino_bot) ✅`
+          ? `تصویر ${layout === 'horizontal' ? 'افقی' : 'عمودی'} کارت سود مستقیم به تلگرام شما (@Dollarino_bot) ارسال شد.`
+          : `Profit Card PNG sent to your Telegram (@Dollarino_bot).`
       );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Telegram dispatch failed');

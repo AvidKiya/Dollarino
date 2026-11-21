@@ -4,9 +4,11 @@ import {
   AlertTriangle,
   Bot,
   Check,
+  CheckCircle2,
   Coins,
   ExternalLink,
   Flame,
+  History,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -15,7 +17,9 @@ import {
   TrendingUp,
   Unlink,
   Wallet,
+  X,
 } from 'lucide-react';
+import { CoinIcon } from '../components/CoinIcon';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import {
@@ -34,6 +38,7 @@ export interface DexTokenCardItem {
   baseToken: { address: string; name: string; symbol: string };
   quoteToken: { address: string; name: string; symbol: string };
   priceUsd?: string | null;
+  info?: { imageUrl?: string };
   volume?: { h24?: number };
   priceChange?: { m5?: number; h1?: number; h24?: number };
   liquidity?: { usd?: number };
@@ -359,33 +364,41 @@ export function DexTrustPage({
 
   return (
     <div className="space-y-5">
-      {/* Header Hero */}
-      <section className="panel rounded-[28px] p-5 md:p-6 flex flex-wrap items-center justify-between gap-4 border border-amber-500/25">
-        <div className="space-y-1.5 max-w-2xl">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="badge-signal text-[11px] font-black px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
-              <Flame className="w-3.5 h-3.5" />
-              {isFa ? 'رادار زنده DexScreener + Trust Wallet DApp' : 'DexScreener Live + Trust Wallet Core'}
-            </span>
-            {isTrustWalletEnvironment() && (
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/20 text-jade">
-                {isFa ? 'مرورگر Trust Wallet تشخیص داده شد ✅' : 'Trust Wallet DApp Active ✅'}
+      {/* Header Hero with Generated Web3 Banner */}
+      <section className="panel rounded-[28px] p-5 md:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-5 border border-amber-500/25 overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-1 min-w-0">
+          <img
+            src="/images/trust-dex-hub.png"
+            alt="Trust Wallet & DEX Hub"
+            className="w-full sm:w-44 h-28 rounded-2xl object-cover shrink-0 border hairline shadow-lg"
+          />
+          <div className="space-y-1.5 max-w-2xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="badge-signal text-[11px] font-black px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                <Flame className="w-3.5 h-3.5" />
+                {isFa ? 'رادار زنده DexScreener + Trust Wallet DApp' : 'DexScreener Live + Trust Wallet Core'}
               </span>
-            )}
+              {isTrustWalletEnvironment() && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/20 text-jade inline-flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'مرورگر Trust Wallet تشخیص داده شد' : 'Trust Wallet DApp Active'}</span>
+                </span>
+              )}
+            </div>
+            <h2 className="font-display font-black text-xl md:text-2xl text-main">
+              {isFa
+                ? 'کشف توکن‌های جدید در DexScreener و ترید مستقیم با Trust Wallet'
+                : 'Discover Non-CEX Tokens on DexScreener & Swap Directly via Trust Wallet'}
+            </h2>
+            <p className="text-xs text-dim leading-relaxed">
+              {isFa
+                ? 'توکن‌هایی که هنوز در Toobit و KCEX لیست نشده‌اند را لحظه‌ای پیدا کنید، ریسک نقدینگی را با هوش مصنوعی بسنجید و مستقیماً از کیف‌پول غیرامانی خودتان در Trust Wallet DApp معامله و ردیابی کنید.'
+                : 'Spot trending on-chain pools before CEX listings, audit pool safety with Dollarino AI, and execute non-custodial swaps directly in Trust Wallet.'}
+            </p>
           </div>
-          <h2 className="font-display font-black text-xl md:text-2xl text-main">
-            {isFa
-              ? 'کشف توکن‌های جدید در DexScreener و ترید مستقیم بدون صرافی با Trust Wallet'
-              : 'Discover Non-CEX Tokens on DexScreener & Swap Directly via Trust Wallet'}
-          </h2>
-          <p className="text-xs text-dim leading-relaxed">
-            {isFa
-              ? 'توکن‌هایی که هنوز در Toobit و KCEX لیست نشده‌اند را لحظه‌ای پیدا کنید، ریسک نقدینگی را با هوش مصنوعی بسنجید و مستقیماً از کیف‌پول غیرامانی خودتان در Trust Wallet DApp معامله و ردیابی کنید.'
-              : 'Spot trending on-chain pools before CEX listings, audit pool safety with Dollarino AI, and execute non-custodial swaps directly in Trust Wallet.'}
-          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => void handleConnectInjectedTrust()}
@@ -426,21 +439,25 @@ export function DexTrustPage({
       {/* Navigation Tabs */}
       <div className="flex flex-wrap gap-2">
         {[
-          { id: 'dex', fa: '🔍 رادار زنده DexScreener', en: 'DexScreener Scanner' },
-          { id: 'wallet', fa: '🦊 مدیریت کیف‌پول Trust Wallet', en: 'Trust Wallet Manager' },
-          { id: 'trades', fa: `📜 پورتفوی معاملات DEX (${dexTrades.length})`, en: `DEX Trades (${dexTrades.length})` },
-        ].map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setSubTab(t.id as typeof subTab)}
-            className={`px-4 py-2.5 rounded-2xl text-xs font-black transition ${
-              subTab === t.id ? 'btn-gold shadow-sm' : 'panel text-dim hover:text-main'
-            }`}
-          >
-            {isFa ? t.fa : t.en}
-          </button>
-        ))}
+          { id: 'dex', icon: Search, fa: 'رادار زنده DexScreener', en: 'DexScreener Scanner' },
+          { id: 'wallet', icon: ShieldCheck, fa: 'مدیریت کیف‌پول Trust Wallet', en: 'Trust Wallet Manager' },
+          { id: 'trades', icon: History, fa: `پورتفوی معاملات DEX (${dexTrades.length})`, en: `DEX Trades (${dexTrades.length})` },
+        ].map((t) => {
+          const TabIcon = t.icon;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setSubTab(t.id as typeof subTab)}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-black transition inline-flex items-center gap-2 ${
+                subTab === t.id ? 'btn-gold shadow-sm' : 'panel text-dim hover:text-main'
+              }`}
+            >
+              <TabIcon className="w-4 h-4" />
+              <span>{isFa ? t.fa : t.en}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* TAB 1: DexScreener Live Radar */}
@@ -519,16 +536,19 @@ export function DexTrustPage({
                   <div key={`${t.chainId}-${t.pairAddress}`} className="panel rounded-3xl p-4 flex flex-col justify-between gap-3">
                     <div className="space-y-2.5">
                       <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <strong className="font-display text-base text-main">{t.baseToken.symbol}</strong>
-                            <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 uppercase">
-                              {t.chainId} · {t.dexId}
-                            </span>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <CoinIcon symbol={t.baseToken.symbol} imageUrl={t.info?.imageUrl} size={32} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <strong className="font-display text-base text-main">{t.baseToken.symbol}</strong>
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 uppercase">
+                                {t.chainId} · {t.dexId}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-dim truncate max-w-[180px]">{t.baseToken.name}</p>
                           </div>
-                          <p className="text-[11px] text-dim truncate max-w-[200px]">{t.baseToken.name}</p>
                         </div>
-                        <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black inline-flex items-center gap-1 ${safeColor}`}>
+                        <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black inline-flex items-center gap-1 shrink-0 ${safeColor}`}>
                           <ShieldCheck className="w-3.5 h-3.5" />
                           {t.safetyScore}/100
                         </span>
@@ -566,17 +586,18 @@ export function DexTrustPage({
 
                       <div className="flex flex-wrap gap-1">
                         <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-lg inline-flex items-center gap-1 ${
                             t.isOnCentralizedHint ? 'bg-slate-500/15 text-dim' : 'bg-amber-500/15 text-amber-400'
                           }`}
                         >
+                          {!t.isOnCentralizedHint && <Sparkles className="w-2.5 h-2.5" />}
                           {t.isOnCentralizedHint
                             ? isFa
                               ? 'موجود در صرافی‌های اصلی'
                               : 'On CEXs'
                             : isFa
-                              ? '🆕 ویژه DEX (ناموجود در Toobit/KCEX)'
-                              : '🆕 DEX-Exclusive'}
+                              ? 'ویژه DEX (ناموجود در Toobit/KCEX)'
+                              : 'DEX-Exclusive'}
                         </span>
                         {t.riskFlags.slice(0, 2).map((rf) => (
                           <span key={rf} className="text-[10px] px-2 py-0.5 rounded-lg bg-rose-500/10 text-loss inline-flex items-center gap-0.5">
@@ -822,8 +843,8 @@ export function DexTrustPage({
                   {isFa ? `تحلیل هوشمند AI برای ${aiModal.token.baseToken.symbol}` : `AI Analysis: ${aiModal.token.baseToken.symbol}`}
                 </span>
               </h3>
-              <button type="button" onClick={() => setAiModal(null)} className="btn-ghost px-2.5 py-1 rounded-xl text-xs">
-                ✕
+              <button type="button" onClick={() => setAiModal(null)} className="btn-ghost p-1.5 rounded-xl text-xs">
+                <X className="w-4 h-4" />
               </button>
             </div>
             {aiModal.loading ? (
@@ -852,9 +873,10 @@ export function DexTrustPage({
                     href={aiModal.token.trustWallet.trustWalletDappUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="btn-gold flex-1 py-2.5 rounded-2xl text-xs font-black text-center"
+                    className="btn-gold flex-1 py-2.5 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
                   >
-                    {isFa ? '🦊 خرید غیرحضانتی در Trust Wallet' : 'Swap in Trust Wallet'}
+                    <Wallet className="w-4 h-4" />
+                    <span>{isFa ? 'خرید غیرحضانتی در Trust Wallet' : 'Swap in Trust Wallet'}</span>
                   </a>
                   <button type="button" onClick={() => setAiModal(null)} className="btn-ghost px-4 py-2.5 rounded-2xl text-xs font-bold">
                     {isFa ? 'بستن' : 'Close'}

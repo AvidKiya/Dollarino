@@ -293,10 +293,11 @@ export function MyAiPage({
               </div>
               <div>
                 <p className="text-xs font-black text-main">{agentName}</p>
-                <p className="text-[11px] text-dim">
+                <p className="text-[11px] text-dim inline-flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
                   {isActive
-                    ? isFa ? '🟢 در حال معامله با استراتژی شما' : '🟢 Actively trading your rules'
-                    : isFa ? '🧠 آماده دریافت آموزش جدید' : '🧠 Ready to learn'}
+                    ? isFa ? 'در حال معامله با استراتژی شما' : 'Actively trading your rules'
+                    : isFa ? 'آماده دریافت آموزش جدید' : 'Ready to learn'}
                 </p>
               </div>
             </div>

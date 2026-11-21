@@ -2148,4 +2148,205 @@ tradingRoutes.post('/strategies/:id/activate', async (c) => {
   return c.json({ ok: true, strategyKey, activeCustomStrategyId: row.id, name: row.name });
 });
 
+// =========================================================================
+// Live AI Signal Scanner & Instant Autonomous Trigger
+// =========================================================================
+tradingRoutes.post('/ai-scan-now', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{
+    symbol?: string;
+    symbols?: string[];
+    timeframe?: Timeframe;
+    autoExecute?: boolean;
+  }>().catch(() => ({} as { symbol?: string; symbols?: string[]; timeframe?: Timeframe; autoExecute?: boolean }));
+
+  const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<UserBotConfigRow>();
+
+  const tf: Timeframe = (body.timeframe || cfg?.entry_timeframe || '15m') as Timeframe;
+  const htf: Timeframe = cfg?.higher_timeframe || (tf === '5m' ? '15m' : tf === '15m' ? '1h' : '4h');
+  const requestedList = Array.isArray(body.symbols) && body.symbols.length
+    ? body.symbols.map((s) => normalizeCanonicalSymbol(s)).slice(0, 6)
+    : body.symbol
+      ? [normalizeCanonicalSymbol(body.symbol)]
+      : [cfg?.symbol || 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT'];
+
+  const uniqueSymbols = Array.from(new Set(requestedList));
+  const { adapter } = await resolveUserExchangeAdapter(
+    c.env,
+    user.id,
+    cfg?.trading_mode === 'PAPER' ? 'paper' : undefined
+  );
+
+  let canExecute = false;
+  if (body.autoExecute) {
+    const gate = await requirePaidEntitlement(c.env.DB, user);
+    canExecute = gate.ok;
+  }
+
+  const results = await Promise.all(
+    uniqueSymbols.map(async (sym) => {
+      try {
+        const [ltfRaw, htfRaw] = await Promise.all([
+          adapter.getKlines(sym, tf, 180),
+          adapter.getKlines(sym, htf, 90).catch(() => []),
+        ]);
+        const ltfClosed = selectClosedCandles(ltfRaw, tf);
+        const htfClosed = selectClosedCandles(htfRaw, htf);
+        const decision = await runAutonomousAITrader(c.env, user.id, {
+          symbol: sym,
+          timeframe: tf,
+          higherTimeframe: htf,
+          candles: ltfClosed.length >= 35 ? ltfClosed : ltfRaw,
+          htfCandles: htfClosed.length >= 25 ? htfClosed : htfRaw,
+          maxLeverage: cfg?.market_type === 'SPOT' ? 1 : Math.max(1, cfg?.max_leverage ?? 10),
+          minConfidence: cfg?.ai_min_confidence ?? 60,
+          bypassCache: true,
+        });
+
+        let signalId: string | null = null;
+        let executed = false;
+        let executeNote = '';
+
+        if (decision.ok && (decision.action === 'LONG' || decision.action === 'SHORT')) {
+          signalId = randomId('sig');
+          const sigObj = {
+            symbol: sym,
+            direction: decision.action as Direction,
+            timeframe: tf,
+            price: String(decision.entry),
+            stopLoss: String(decision.stopLoss),
+            leverage: cfg?.market_type === 'SPOT' ? 1 : decision.leverage,
+            tp1: String(decision.tp1),
+            tp2: String(decision.tp2),
+            tp3: String(decision.tp3),
+            channelHandle: '@Dollarino_official',
+            engineKey: 'ai_autonomous_agent',
+            engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
+            reason: decision.thesis,
+          };
+          await c.env.DB.prepare(
+            `INSERT INTO signals (id, user_id, symbol, direction, timeframe, entry_price, stop_loss, tp1, tp2, tp3, leverage, raw_message, source, engine_source, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai_agent', 'ai_autonomous_agent', 'PENDING')`
+          ).bind(
+            signalId,
+            user.id,
+            sym,
+            sigObj.direction,
+            tf,
+            sigObj.price,
+            sigObj.stopLoss,
+            sigObj.tp1,
+            sigObj.tp2,
+            sigObj.tp3,
+            sigObj.leverage,
+            formatDollarinoSignal(sigObj)
+          ).run().catch(() => {});
+
+          if (canExecute && decision.confidence >= (cfg?.ai_min_confidence ?? 60)) {
+            const execRes = await executeSignalForUser(c.env, user.id, sigObj, {
+              signalId,
+              strategyKey: 'ai_autonomous_agent',
+              aiConfidence: decision.confidence,
+              aiReasoning: decision.thesis,
+              marketType: cfg?.market_type ?? 'FUTURES',
+            }).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : 'Execution skipped' }));
+            executed = Boolean(execRes.ok);
+            executeNote = ('error' in execRes ? execRes.error : '') || ('tradeId' in execRes && execRes.tradeId ? `Trade #${execRes.tradeId}` : '');
+            if (executed) {
+              await c.env.DB.prepare(`UPDATE signals SET status = 'EXECUTED' WHERE id = ?`).bind(signalId).run().catch(() => {});
+            }
+          }
+        }
+
+        await logAudit(
+          c.env.DB,
+          user.id,
+          'AI_AGENT',
+          decision.ok ? 'INFO' : 'WARN',
+          `[اسکن فوری AI] ${sym} (${tf}): ${decision.action} (${decision.confidence}%) — ${decision.thesis}`,
+          sym,
+          decision
+        ).catch(() => {});
+
+        return {
+          symbol: sym,
+          timeframe: tf,
+          signalId,
+          executed,
+          executeNote,
+          ...decision,
+        };
+      } catch (err) {
+        return {
+          symbol: sym,
+          timeframe: tf,
+          ok: false,
+          action: 'HOLD' as const,
+          confidence: 0,
+          entry: 0,
+          stopLoss: 0,
+          tp1: 0,
+          tp2: 0,
+          tp3: 0,
+          leverage: 1,
+          rrRatio: 0,
+          thesis: err instanceof Error ? err.message : 'Scan failed',
+          invalidation: 'Retry',
+          executed: false,
+        };
+      }
+    })
+  );
+
+  return c.json({ ok: true, results });
+});
+
+// =========================================================================
+// Live Price Alerts (Web + Telegram Trigger via TradingBotCoordinator)
+// =========================================================================
+tradingRoutes.get('/alerts', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM price_alerts WHERE user_id = ? ORDER BY is_active DESC, created_at DESC LIMIT 40`
+  ).bind(user.id).all().catch(() => ({ results: [] }));
+  return c.json({ alerts: rows.results });
+});
+
+tradingRoutes.post('/alerts', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{
+    symbol?: string;
+    condition?: 'ABOVE' | 'BELOW';
+    targetPrice?: number;
+    note?: string;
+  }>().catch(() => ({} as { symbol?: string; condition?: 'ABOVE' | 'BELOW'; targetPrice?: number; note?: string }));
+
+  const symbol = normalizeCanonicalSymbol(body.symbol || 'BTCUSDT');
+  const targetPrice = Number(body.targetPrice);
+  const condition = body.condition === 'BELOW' ? 'BELOW' : 'ABOVE';
+  if (!Number.isFinite(targetPrice) || targetPrice <= 0) {
+    return c.json({ error: 'قیمت هدف معتبر نیست' }, 400);
+  }
+
+  const id = randomId('alrt');
+  await c.env.DB.prepare(
+    `INSERT INTO price_alerts (id, user_id, symbol, condition, target_price, note, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, 1)`
+  ).bind(id, user.id, symbol, condition, targetPrice, (body.note || '').trim().slice(0, 140) || null).run();
+
+  const doId = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
+  await c.env.TRADING_BOT_DO.get(doId).fetch('https://do/start').catch(() => {});
+
+  const row = await c.env.DB.prepare(`SELECT * FROM price_alerts WHERE id = ?`).bind(id).first();
+  return c.json({ ok: true, alert: row }, 201);
+});
+
+tradingRoutes.delete('/alerts/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  await c.env.DB.prepare(`DELETE FROM price_alerts WHERE id = ? AND user_id = ?`).bind(id, user.id).run();
+  return c.json({ ok: true });
+});
+
 

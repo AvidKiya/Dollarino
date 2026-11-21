@@ -1,6 +1,6 @@
 import { formatDollarinoSignal, parseDollarinoSignal, resolveEngineDisplayLabel } from '@dollarino/core';
-import { getPlatformAISummary } from '../ai/providers.js';
-import { ensureUserDefaults } from '../auth.js';
+import { generateSupportAIReply, getPlatformAISummary } from '../ai/providers.js';
+import { ensureUserDefaults, syncTelegramAvatarForUser } from '../auth.js';
 import { encryptVaultJson, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
 import { fetchDexTrendingOverview, searchDexPairs, type DexTokenEnriched } from '../dex/screener.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
@@ -183,6 +183,9 @@ async function getOrProvisionTelegramUser(
       `UPDATE users SET last_active_at = datetime('now'), telegram_username = COALESCE(?, telegram_username), telegram_first_name = COALESCE(?, telegram_first_name) WHERE id = ?`
     ).bind(tgUser.username ?? null, tgUser.first_name ?? null, row.id).run().catch(() => {});
   }
+
+  // Sync default Telegram profile picture unless user uploaded a custom avatar
+  await syncTelegramAvatarForUser(env, row.id, tgId).catch(() => {});
 
   return row;
 }
@@ -1780,10 +1783,63 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
       await bot.sendMessage(
         chatId,
-        `💬 پشتیبانی آنلاین دلارینو\n\n` +
-        `سوال، مشکل یا پیام خود را همین‌جا بنویسید تا مستقیماً برای تیم پشتیبانی ارسال شود و پاسخ در همین ربات (${safeSup}) و پنل وب برایتان نمایش داده شود.\n\n` +
-        `${ANTI_SCAM_WARNING_FA}`
+        `💬 پشتیبانی هوشمند و آنلاین دلارینو (${safeSup})\n\n` +
+        `سوال یا مشکل خود را همین‌جا بنویسید تا **دستیار هوش مصنوعی پشتیبانی** ظرف چند ثانیه پاسخ شما را بدهد. همچنین هر زمان بخواهید می‌توانید دکمه «گفتگو مستقیم با مدیران» را بزنید تا به تیم مدیریت انسانی وصل شوید.\n\n` +
+        `${ANTI_SCAM_WARNING_FA}`,
+        {
+          inlineKeyboard: [
+            [{ text: '👨‍💼 اتصال مستقیم به مدیران پشتیبانی', callback_data: 'tg_support_human:new', style: 'primary' }],
+          ],
+        }
       );
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_support_human:')) {
+      const argTicketId = data.slice('tg_support_human:'.length).trim();
+      let ticketId = argTicketId && argTicketId !== 'new' ? argTicketId : '';
+      if (!ticketId) {
+        const openTkt = await env.DB.prepare(
+          `SELECT id FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
+        ).bind(user.id).first<{ id: string }>();
+        ticketId = openTkt?.id || '';
+      }
+      if (!ticketId) {
+        ticketId = randomId('tkt');
+        await env.DB.prepare(
+          `INSERT INTO support_tickets (id, user_id, subject, status, channel, support_mode, escalated_at) VALUES (?, ?, 'ارتباط مستقیم با مدیران (تلگرام)', 'OPEN', 'TELEGRAM', 'HUMAN_ADMIN', datetime('now'))`
+        ).bind(ticketId, user.id).run();
+      } else {
+        await env.DB.prepare(
+          `UPDATE support_tickets SET support_mode = 'HUMAN_ADMIN', escalated_at = datetime('now'), status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`
+        ).bind(ticketId).run();
+      }
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+        .bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }), user.id).run();
+      await bot.answerCallbackQuery(cq.id, 'متصل شدید به مدیران پشتیبانی 👨‍💼');
+      await notifyAllAdmins(
+        env,
+        `👨‍💼 درخواست گفتگوی مستقیم کاربر با مدیران (تلگرام)\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}`,
+        { inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }]] }
+      ).catch(() => {});
+      await bot.sendMessage(
+        chatId,
+        `👨‍💼 درخواست شما برای گفتگوی مستقیم با **مدیران پشتیبانی دلارینو** در تیکت #${ticketId} ثبت شد.\n\nپیام یا توضیحات تکمیلی خود را بنویسید تا مستقیماً برای تیم مدیریت ارسال شود و پاسخ مدیریت در همین‌جا برایتان پیام شود.`
+      );
+      return { ok: true };
+    }
+
+    if (data === 'tg_support_ai') {
+      const openTkt = await env.DB.prepare(
+        `SELECT id FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
+      ).bind(user.id).first<{ id: string }>();
+      if (openTkt) {
+        await env.DB.prepare(`UPDATE support_tickets SET support_mode = 'AI_ASSISTANT' WHERE id = ?`).bind(openTkt.id).run();
+      }
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+        .bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }), user.id).run();
+      await bot.answerCallbackQuery(cq.id, 'دستیار هوشمند فعال شد 🤖');
+      await bot.sendMessage(chatId, '🤖 دستیار هوشمند پشتیبانی آماده است! سوال خود را بنویسید:');
       return { ok: true };
     }
 
@@ -2428,25 +2484,65 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (state.step === 'AWAIT_SUPPORT_MSG') {
-      await clearState();
-      let tkt = await env.DB.prepare(`SELECT id FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`).bind(user.id).first<{ id: string }>();
+      const isMainMenuCommand =
+        text.startsWith('/') ||
+        ['📊 گزارش و حساب', '🚀 راه‌اندازی ربات', '💎 اشتراک و کپی‌ترید', '⚙️ اتصال صرافی و ولت', '🔍 توکن‌های DEX داغ', '🎛 وضعیت و پنل وب', '🤖 کنترل و ربات AI', '🛡 کپی‌ترید و ژورنال', '💬 پشتیبانی آنلاین', '👑 پنل مدیریت'].some((btn) =>
+          text.startsWith(btn.slice(0, 6))
+        );
+      if (isMainMenuCommand) {
+        await clearState();
+      } else {
+        let tkt = await env.DB.prepare(
+          `SELECT id, COALESCE(support_mode, 'AI_ASSISTANT') as support_mode FROM support_tickets WHERE user_id = ? AND status != 'CLOSED' ORDER BY last_message_at DESC LIMIT 1`
+        ).bind(user.id).first<{ id: string; support_mode: string }>();
       const ticketId = tkt?.id || randomId('tkt');
+      const supportMode = tkt?.support_mode || 'AI_ASSISTANT';
       if (!tkt) {
-        await env.DB.prepare(`INSERT INTO support_tickets (id, user_id, subject, status, channel) VALUES (?, ?, 'پشتیبانی تلگرام', 'OPEN', 'TELEGRAM')`).bind(ticketId, user.id).run();
+        await env.DB.prepare(
+          `INSERT INTO support_tickets (id, user_id, subject, status, channel, support_mode) VALUES (?, ?, 'پشتیبانی تلگرام', 'OPEN', 'TELEGRAM', 'AI_ASSISTANT')`
+        ).bind(ticketId, user.id).run();
       }
       await env.DB.prepare(`INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message) VALUES (?, ?, ?, 'user', ?, ?)`)
         .bind(randomId('smsg'), ticketId, user.id, user.username, text.slice(0, 2000)).run();
+
+      if (supportMode === 'HUMAN_ADMIN') {
+        await clearState();
+        await env.DB.prepare(`UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`).bind(ticketId).run();
+        await notifyAllAdmins(env, `💬 پیام پشتیبانی جدید از ربات (گفتگوی مستقیم با مدیران):\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${text}`, {
+          inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }]],
+        }).catch(() => {});
+        await bot.sendMessage(
+          chatId,
+          `✅ پیام شما به تیکت #${ticketId} برای مدیران پشتیبانی ارسال شد و به‌زودی همین‌جا پاسخ می‌گیرید.\n\n${ANTI_SCAM_WARNING_FA}`,
+          {
+            replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+            inlineKeyboard: [[{ text: '🤖 بازگشت به پاسخگویی فوری هوش مصنوعی', callback_data: 'tg_support_ai' }]],
+          }
+        );
+        return { ok: true };
+      }
+
+      // AI Support Auto-Answer mode — keeps AWAIT_SUPPORT_MSG active for continuous AI chat
+      const aiRes = await generateSupportAIReply(env, {
+        userId: user.id,
+        username: user.username || tgId,
+        question: text,
+      });
+      await env.DB.prepare(`INSERT INTO support_messages (id, ticket_id, user_id, sender_role, sender_name, message) VALUES (?, ?, ?, 'ai', ?, ?)`)
+        .bind(randomId('smsg'), ticketId, user.id, `دستیار هوشمند (${aiRes.usedModel})`, aiRes.reply).run();
       await env.DB.prepare(`UPDATE support_tickets SET status = 'OPEN', last_message_at = datetime('now') WHERE id = ?`).bind(ticketId).run();
 
-      await notifyAllAdmins(env, `💬 پیام پشتیبانی جدید از ربات:\n👤 ${user.username} (${tgId})\nتیکت: #${ticketId}\n\n${text}`, {
-        inlineKeyboard: [[{ text: '✍️ پاسخ فوری به کاربر', callback_data: `adm:sup_reply:${ticketId}`, style: 'primary' }]],
-      }).catch(() => {});
-      await bot.sendMessage(
-        chatId,
-        `✅ پیام شما به تیکت #${ticketId} ارسال شد. پاسخ تیم پشتیبانی در همین‌جا برایتان پیام می‌شود.\n\n${ANTI_SCAM_WARNING_FA}`,
-        { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
-      );
-      return { ok: true };
+        await bot.sendMessage(
+          chatId,
+          `🤖 **پاسخ دستیار هوشمند دلارینو:**\n\n${aiRes.reply}\n\n—\nمی‌توانید سوال بعدی خود را همین‌جا بپرسید یا با دکمه زیر مستقیماً با مدیران صحبت کنید.`,
+          {
+            inlineKeyboard: [
+              [{ text: '👨‍💼 سوال من حل نشد / گفتگو با مدیران انسانی', callback_data: `tg_support_human:${ticketId}`, style: 'primary' }],
+            ],
+          }
+        );
+        return { ok: true };
+      }
     }
 
     if (state.step === 'AWAIT_TW_EVM') {
@@ -2684,9 +2780,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
     await bot.sendMessage(
       chatId,
-      `💬 پشتیبانی آنلاین دلارینو (${safeSup})\n\n` +
-      `پیام خود را همین‌جا بنویسید تا مستقیماً به پنل آنلاین تمام مدیران ارسال شود.\n\n` +
-      `${ANTI_SCAM_WARNING_FA}`
+      `💬 پشتیبانی هوشمند و آنلاین دلارینو (${safeSup})\n\n` +
+      `سوال خود را همین‌جا بنویسید تا **هوش مصنوعی پشتیبانی** فوری پاسخ دهد. هر زمان خواستید می‌توانید از دکمه زیر مستقیم با **مدیران انسانی** گفتگو کنید.\n\n` +
+      `${ANTI_SCAM_WARNING_FA}`,
+      {
+        inlineKeyboard: [
+          [{ text: '👨‍💼 اتصال مستقیم به مدیران پشتیبانی', callback_data: 'tg_support_human:new', style: 'primary' }],
+        ],
+      }
     );
     return { ok: true };
   }
