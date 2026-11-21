@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
+  Bot,
   BrainCircuit,
   CheckCircle2,
+  Copy,
   CreditCard,
   Crown,
   Flame,
@@ -2131,6 +2133,124 @@ export function AdminPage({
               >
                 Send Broadcast
               </button>
+            </div>
+          </div>
+
+          {/* BotFather Complete Setup & Command Sync Card */}
+          <div className="surface-card p-5 space-y-4 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-black text-sm flex items-center gap-2 text-main">
+                  <Bot className="w-4 h-4 text-[#0EA5E9]" />
+                  <span>{isFa ? 'پیکربندی کامل ربات @Dollarino_bot و BotFather' : '@Dollarino_bot & BotFather Control'}</span>
+                </h3>
+                <p className="text-[11px] text-sub mt-0.5">
+                  {isFa
+                    ? 'ثبت هم‌زمان ۱۴ دستور اسلش، دکمه منوی مینی‌اپ و وب‌هوک تلگرام به همراه چک‌لیست تنظیمات BotFather'
+                    : 'Sync all 14 slash commands, Mini App Menu button, webhook, and BotFather settings checklist'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const res = await apiFetch<{ ok: boolean; webhook?: boolean; commands?: boolean; menuButton?: boolean }>(
+                      '/api/webhook/telegram/setup',
+                      { method: 'POST', body: JSON.stringify({}) }
+                    );
+                    setMsg(
+                      res.ok
+                        ? isFa
+                          ? 'وب‌هوک، ۱۴ دستور ربات و دکمه مینی‌اپ با موفقیت روی تلگرام همگام‌سازی شدند.'
+                          : 'Webhook, commands & Mini App menu synced to Telegram.'
+                        : 'Setup failed'
+                    );
+                  } catch (err) {
+                    setMsg(err instanceof Error ? err.message : 'Telegram setup error');
+                  }
+                }}
+                className="btn-cobalt px-4 py-2 rounded-xl font-black inline-flex items-center gap-1.5"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{isFa ? 'همگام‌سازی فوری با سرور تلگرام' : 'Sync Bot Commands & Webhook'}</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="surface-soft rounded-2xl p-4 space-y-2 border hairline">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-main">{isFa ? '۱. دستورات آماده برای /setcommands در @BotFather:' : '1. /setcommands List for @BotFather:'}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cmds = [
+                        'start - شروع، احراز هویت و منوی اصلی دلارینو',
+                        'app - باز کردن مینی‌اپ معاملاتی دلارینو',
+                        'weblogin - دریافت لینک ورود فوری با یک کلیک به سایت',
+                        'wizard - راه‌اندازی ۴ مرحله‌ای ربات ترید',
+                        'positions - مشاهده و مدیریت معاملات باز',
+                        'balance - نمایش موجودی لحظه‌ای حساب',
+                        'wallet - مدیریت کیف‌پول Trust Wallet DApp',
+                        'dex - رادار توکن‌های داغ DexScreener',
+                        'myai - آموزش و فعال‌سازی هوش مصنوعی من',
+                        'copy - کپی‌ترید تاییدشده دلارینو',
+                        'card - صدور و دریافت تصویر کارت سود دلارینو',
+                        'settings - تنظیمات بازار (اسپات/فیوچرز) و جهت',
+                        'support - پشتیبانی هوشمند ۲۴/۷ و گفتگو با مدیران',
+                        'help - راهنمای کامل و امنیت حساب',
+                      ].join('\n');
+                      void navigator.clipboard?.writeText(cmds);
+                      setMsg(isFa ? 'لیست ۱۴ دستور BotFather کپی شد.' : 'Commands copied.');
+                    }}
+                    className="btn-ghost px-2.5 py-1 rounded-lg font-bold inline-flex items-center gap-1 text-[11px]"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>{isFa ? 'کپی دستورات' : 'Copy'}</span>
+                  </button>
+                </div>
+                <pre dir="ltr" className="text-[11px] font-mono-num text-sub bg-black/20 rounded-xl p-3 overflow-x-auto leading-relaxed">
+{`start - شروع، احراز هویت و منوی اصلی دلارینو
+app - باز کردن مینی‌اپ معاملاتی دلارینو
+weblogin - دریافت لینک ورود فوری با یک کلیک به سایت
+wizard - راه‌اندازی ۴ مرحله‌ای ربات ترید
+positions - مشاهده و مدیریت معاملات باز
+balance - نمایش موجودی لحظه‌ای حساب
+wallet - مدیریت کیف‌پول Trust Wallet DApp
+dex - رادار توکن‌های داغ DexScreener
+myai - آموزش و فعال‌سازی هوش مصنوعی من
+copy - کپی‌ترید تاییدشده دلارینو
+card - صدور و دریافت تصویر کارت سود دلارینو
+settings - تنظیمات بازار (اسپات/فیوچرز) و جهت
+support - پشتیبانی هوشمند ۲۴/۷ و گفتگو با مدیران
+help - راهنمای کامل و امنیت حساب`}
+                </pre>
+              </div>
+
+              <div className="surface-soft rounded-2xl p-4 space-y-2.5 border hairline leading-relaxed">
+                <span className="font-black text-main block">{isFa ? '۲. چک‌لیست تنظیمات داخل @BotFather (بخش Edit Bot / Bot Settings):' : '2. @BotFather Checklist (Bot Settings):'}</span>
+                <ul className="space-y-1.5 text-[11px] text-sub">
+                  <li>
+                    <strong className="text-main">• Mini Apps (/newapp &amp; Menu Button):</strong>{' '}
+                    {isFa ? 'آدرس وب‌اپ را روی دامنه اصلی (https://dollarino.pages.dev) ثبت کنید؛ دکمه بالای منو با دکمه «همگام‌سازی فوری» خودکار ست می‌شود.' : 'Register your Mini App URL and Menu Button.'}
+                  </li>
+                  <li>
+                    <strong className="text-main">• Domain / Login Widget (/setdomain):</strong>{' '}
+                    {isFa ? 'دامنه سایت را با /setdomain در BotFather ثبت کنید تا ورود رسمی Login Widget (در صورت نیاز) بدون خطای دامنه کار کند.' : 'Bind domain via /setdomain for Telegram Login Widget.'}
+                  </li>
+                  <li>
+                    <strong className="text-main">• Group Privacy &amp; Allow Groups:</strong>{' '}
+                    {isFa ? 'اگر ربات قرار است در گروه سیگنال یا پشتیبانی پاسخ دهد، Group Privacy را روی Disable بگذارید و ربات را ادمین کانال رسمی کنید.' : 'Disable Group Privacy if bot moderates groups; promote bot as Channel Admin for signal publishing.'}
+                  </li>
+                  <li>
+                    <strong className="text-main">• Payments &amp; Affiliate Program:</strong>{' '}
+                    {isFa ? 'پرداخت‌های ریالی/ارزی اشتراک از طریق Trust Wallet BEP20/TRC20 داخل ربات فعال است؛ در صورت تمایل به دریافت Telegram Stars، بخش Payments را در BotFather وصل کنید.' : 'Trust Wallet BEP20/TRC20 checkout is built-in; optionally link Payments for Telegram Stars.'}
+                  </li>
+                  <li>
+                    <strong className="text-main">• About / Description / Botpic:</strong>{' '}
+                    {isFa ? 'متن معرفی و لوگوی رسمی دلارینو را در Edit Bot تکمیل کنید تا صفحه اول ربات قبل از زدن Start حرفه‌ای دیده شود.' : 'Set About, Description, and Botpic in @BotFather -> Edit Bot.'}
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
           </>

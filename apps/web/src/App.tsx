@@ -121,6 +121,8 @@ export function App() {
       setAuthError(null);
       const urlParams = new URLSearchParams(window.location.search);
       const tgLoginToken = urlParams.get('tg_login');
+      const tgWidgetHash = urlParams.get('hash');
+      const tgWidgetId = urlParams.get('id');
       if (tgLoginToken) {
         const magicRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-magic-login', {
           method: 'POST',
@@ -128,6 +130,22 @@ export function App() {
         });
         setStoredToken(magicRes.token);
         urlParams.delete('tg_login');
+        const nextQuery = urlParams.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+      } else if (tgWidgetHash && tgWidgetId) {
+        const widgetPayload: Record<string, string> = {};
+        for (const k of ['id', 'first_name', 'last_name', 'username', 'photo_url', 'auth_date', 'hash']) {
+          const v = urlParams.get(k);
+          if (v) widgetPayload[k] = v;
+        }
+        const widgetRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-login-widget', {
+          method: 'POST',
+          body: JSON.stringify(widgetPayload),
+        });
+        setStoredToken(widgetRes.token);
+        for (const k of ['id', 'first_name', 'last_name', 'username', 'photo_url', 'auth_date', 'hash']) {
+          urlParams.delete(k);
+        }
         const nextQuery = urlParams.toString();
         window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
       }

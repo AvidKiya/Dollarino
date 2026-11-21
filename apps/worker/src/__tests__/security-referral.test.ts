@@ -143,17 +143,102 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
   });
 
   beforeEach(async () => {
-    await db.exec('DELETE FROM rate_limits; DELETE FROM referral_withdrawals; DELETE FROM referrals; DELETE FROM user_subscriptions; DELETE FROM gift_redemptions; DELETE FROM gift_codes; DELETE FROM users;');
+    await db.exec("DELETE FROM rate_limits; DELETE FROM referral_withdrawals; DELETE FROM referrals; DELETE FROM user_subscriptions; DELETE FROM gift_redemptions; DELETE FROM gift_codes; DELETE FROM users; INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'true');");
   });
 
-  it('serves v9.6.0 health with security headers and falls back cleanly to GeckoTerminal when DexScreener fails', async () => {
+  it('blocks direct web email signup by default, verifies Telegram Login Widget, and lets user edit profile while locking verified phone', async () => {
+    const env = makeEnv();
+
+    // 1. Direct email registration is blocked by default (403 TELEGRAM_SIGNUP_REQUIRED)
+    const blockedReg = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'fake@gmail.com', username: 'FakeUser', password: 'password123' }),
+      }),
+      env
+    );
+    expect(blockedReg.status).toBe(403);
+    const blockedJson = (await blockedReg.json()) as { code: string; botUrl: string };
+    expect(blockedJson.code).toBe('TELEGRAM_SIGNUP_REQUIRED');
+    expect(blockedJson.botUrl).toContain('t.me/Dollarino_bot');
+
+    // 2. Provision a Telegram-registered & phone-verified user + issue magic login
+    await db.prepare(
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, phone_number, phone_verified, web_magic_token, web_magic_expires_at, has_custom_password)
+       VALUES ('usr_tg_prof_1', 'tg_555001@telegram.dollarino.local', 'RezaQuant', 'x', 'user', '555001', 'reza_q', '+989121112233', 1, 'tglm_test_prof_1', datetime('now', '+10 minutes'), 0)`
+    ).run();
+
+    const magicRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/telegram-magic-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'tglm_test_prof_1' }),
+      }),
+      env
+    );
+    expect(magicRes.status).toBe(200);
+    const magicJson = (await magicRes.json()) as { token: string; user: { id: string } };
+    expect(magicJson.user.id).toBe('usr_tg_prof_1');
+
+    // 3. Attempting to alter phone_number via PATCH /api/auth/profile must be rejected with 403
+    const phoneTamperRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${magicJson.token}` },
+        body: JSON.stringify({ phoneNumber: '+989999999999' }),
+      }),
+      env
+    );
+    expect(phoneTamperRes.status).toBe(403);
+
+    // 4. Editing username, real email, displayBio & setting first password succeeds
+    const editRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${magicJson.token}` },
+        body: JSON.stringify({
+          username: 'RezaUpdated',
+          email: 'reza.real@example.com',
+          displayBio: 'Futures & Gold trader',
+          newPassword: 'StrongPassword99',
+        }),
+      }),
+      env
+    );
+    expect(editRes.status).toBe(200);
+    const editJson = (await editRes.json()) as {
+      ok: boolean;
+      user: { username: string; email: string; display_bio: string; phone_number: string; has_custom_password: number };
+    };
+    expect(editJson.ok).toBe(true);
+    expect(editJson.user.username).toBe('RezaUpdated');
+    expect(editJson.user.email).toBe('reza.real@example.com');
+    expect(editJson.user.display_bio).toBe('Futures & Gold trader');
+    expect(editJson.user.phone_number).toBe('+989121112233');
+    expect(editJson.user.has_custom_password).toBe(1);
+
+    // 5. User can now sign in with the real email & custom password they set
+    const loginRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'reza.real@example.com', password: 'StrongPassword99' }),
+      }),
+      env
+    );
+    expect(loginRes.status).toBe(200);
+  });
+
+  it('serves v9.7.0 health with security headers and falls back cleanly to GeckoTerminal when DexScreener fails', async () => {
     const env = makeEnv();
     const healthRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/health'), env);
     expect(healthRes.status).toBe(200);
     expect(healthRes.headers.get('X-Content-Type-Options')).toBe('nosniff');
     const health = (await healthRes.json()) as { version: string; capabilities: Record<string, boolean> };
-    expect(health.version).toBe('9.6.0');
+    expect(health.version).toBe('9.7.0');
     expect(health.capabilities.antiAbuseReferralSystem).toBe(true);
+    expect(health.capabilities.telegramFirstRegistration).toBe(true);
 
     const dexRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/dex/trending'), env);
     expect(dexRes.status).toBe(200);
@@ -165,6 +250,8 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
 
   it('prevents self-referral IP farming, blocks $0 gift commission unlock, and processes legitimate tiered payout + refund', async () => {
     const env = makeEnv();
+    // Temporarily disable telegram_only_signup inside this anti-fraud unit test to exercise IP/UA duplicate registration checks directly
+    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false');`);
 
     // 1. Register Referrer (first user becomes owner/admin automatically)
     const reg1 = await worker.fetch(

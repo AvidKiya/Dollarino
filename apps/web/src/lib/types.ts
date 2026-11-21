@@ -21,10 +21,15 @@ export interface AuthUserInfo {
   username: string;
   role: string;
   telegram_id: string | null;
+  telegram_username?: string | null;
+  telegram_first_name?: string | null;
   avatar_url?: string | null;
   avatar_custom?: number | boolean;
   phone_number?: string | null;
-  phone_verified?: boolean;
+  phone_verified?: boolean | number;
+  has_custom_password?: boolean | number;
+  display_bio?: string | null;
+  referral_code?: string | null;
   trust_wallet_address?: string | null;
   trust_wallet_tron?: string | null;
   trust_wallet_solana?: string | null;

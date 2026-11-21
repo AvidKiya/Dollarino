@@ -2,9 +2,26 @@ import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, Next } from 'hono';
 import type { AuthUser, Env } from './env.js';
-import { hashPassword, randomId, signJwt, verifyJwt, verifyPassword, verifyTelegramWebAppInitData } from './crypto.js';
+import {
+  hashPassword,
+  randomId,
+  signJwt,
+  verifyJwt,
+  verifyPassword,
+  verifyTelegramLoginWidget,
+  verifyTelegramWebAppInitData,
+} from './crypto.js';
 import { buildClientFingerprints, enforceRateLimit, getClientIp } from './security.js';
 import { TelegramBotClient } from './telegram/client.js';
+
+const USER_PROFILE_COLUMNS = `
+  id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
+  wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
+  COALESCE(has_custom_password, 0) as has_custom_password, display_bio,
+  COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) as referral_code,
+  trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
+  ui_mode, mobile_widgets_json, extension_api_key, created_at
+`;
 
 export async function syncTelegramAvatarForUser(
   env: Env,
@@ -167,6 +184,21 @@ authRoutes.post('/register', async (c) => {
     );
   }
 
+  const tgOnlyRow = await c.env.DB.prepare(
+    `SELECT value FROM system_settings WHERE key = 'telegram_only_signup' LIMIT 1`
+  ).first<{ value: string }>().catch(() => null);
+  const telegramOnlySignup = (tgOnlyRow?.value ?? 'true') !== 'false';
+  if (telegramOnlySignup) {
+    return c.json(
+      {
+        error: 'ثبت‌نام مستقیم با ایمیل غیرفعال شده است. برای جلوگیری از حساب‌های جعلی، ثبت‌نام و احراز هویت فقط از طریق ربات تلگرام @Dollarino_bot و اشتراک‌گذاری شماره تماس اکانت تلگرام انجام می‌شود.',
+        code: 'TELEGRAM_SIGNUP_REQUIRED',
+        botUrl: 'https://t.me/Dollarino_bot?start=web_auth',
+      },
+      403
+    );
+  }
+
   const body = await c.req.json<{ email?: string; username?: string; password?: string; referralCode?: string }>().catch(
     () => ({} as { email?: string; username?: string; password?: string; referralCode?: string })
   );
@@ -278,13 +310,14 @@ authRoutes.post('/login', async (c) => {
   }>();
 
   if (!row || !(await verifyPassword(password, row.password_hash))) {
-    return c.json({ error: 'Invalid email or password' }, 401);
+    return c.json({ error: 'ایمیل یا رمز عبور نامعتبر است' }, 401);
   }
   if (row.is_blocked) {
     return c.json({ error: 'Account is suspended by admin' }, 403);
   }
 
   await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
+  const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(row.id).first();
 
   const isHttps = isHttpsRequest(c);
   const token = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);
@@ -298,7 +331,7 @@ authRoutes.post('/login', async (c) => {
 
   return c.json({
     token,
-    user: {
+    user: fullUser || {
       id: row.id,
       email: row.email,
       username: row.username,
@@ -351,11 +384,7 @@ authRoutes.get('/session', async (c) => {
   }
 
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
-            wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
-            trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
-            ui_mode, mobile_widgets_json, extension_api_key, created_at
-     FROM users WHERE id = ?`
+    `SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`
   ).bind(userId).first<{ is_blocked?: number; id: string; telegram_id?: string | null; avatar_url?: string | null; avatar_custom?: number }>();
   if (!full || full.is_blocked) {
     return c.json({ authenticated: false, user: null });
@@ -370,11 +399,7 @@ authRoutes.get('/session', async (c) => {
 authRoutes.get('/me', requireAuth, async (c) => {
   const u = c.get('user');
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
-            wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
-            trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
-            ui_mode, mobile_widgets_json, extension_api_key, created_at
-     FROM users WHERE id = ?`
+    `SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`
   ).bind(u.id).first<{ id: string; telegram_id?: string | null; avatar_url?: string | null; avatar_custom?: number }>();
   if (full?.telegram_id && !full.avatar_url && !full.avatar_custom) {
     const synced = await syncTelegramAvatarForUser(c.env, full.id, full.telegram_id);
@@ -426,12 +451,51 @@ authRoutes.get('/avatar/:userId', async (c) => {
 
 authRoutes.patch('/profile', requireAuth, async (c) => {
   const u = c.get('user');
-  const body = await c.req.json<{ username?: string; avatarUrl?: string | null; useTelegramAvatar?: boolean }>().catch(
-    () => ({} as { username?: string; avatarUrl?: string | null; useTelegramAvatar?: boolean })
-  );
+  const body = await c.req
+    .json<{
+      username?: string;
+      email?: string;
+      displayBio?: string | null;
+      avatarUrl?: string | null;
+      useTelegramAvatar?: boolean;
+      currentPassword?: string;
+      newPassword?: string;
+      phoneNumber?: string;
+      phone_number?: string;
+    }>()
+    .catch(
+      () =>
+        ({} as {
+          username?: string;
+          email?: string;
+          displayBio?: string | null;
+          avatarUrl?: string | null;
+          useTelegramAvatar?: boolean;
+          currentPassword?: string;
+          newPassword?: string;
+          phoneNumber?: string;
+          phone_number?: string;
+        })
+    );
+
+  // Security rule: Verified Telegram phone number can NEVER be altered by the user from profile panel
+  if (body.phoneNumber !== undefined || body.phone_number !== undefined) {
+    return c.json(
+      { error: 'شماره تماس احراز هویت‌شده از طریق تلگرام قفل است و قابل تغییر نمی‌باشد.' },
+      403
+    );
+  }
+
+  const currentRow = await c.env.DB.prepare(
+    `SELECT email, password_hash, COALESCE(has_custom_password, 0) as has_custom_password FROM users WHERE id = ?`
+  )
+    .bind(u.id)
+    .first<{ email: string; password_hash: string; has_custom_password: number }>();
+  if (!currentRow) return c.json({ error: 'User not found' }, 404);
 
   const updates: string[] = [];
   const binds: Array<string | number | null> = [];
+  let nextEmailForToken = currentRow.email;
 
   if (typeof body.username === 'string') {
     const cleanName = body.username.trim();
@@ -440,6 +504,48 @@ authRoutes.patch('/profile', requireAuth, async (c) => {
     }
     updates.push('username = ?');
     binds.push(cleanName);
+  }
+
+  if (typeof body.email === 'string') {
+    const cleanEmail = body.email.trim().toLowerCase();
+    if (cleanEmail !== currentRow.email) {
+      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail);
+      if (!emailOk || cleanEmail.endsWith('.local') || cleanEmail.endsWith('@dollarino.app')) {
+        return c.json({ error: 'لطفاً یک ایمیل معتبر و شخصی وارد کنید' }, 400);
+      }
+      const taken = await c.env.DB.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ? LIMIT 1')
+        .bind(cleanEmail, u.id)
+        .first();
+      if (taken) {
+        return c.json({ error: 'این ایمیل قبلاً برای حساب دیگری ثبت شده است' }, 409);
+      }
+      updates.push('email = ?');
+      binds.push(cleanEmail);
+      nextEmailForToken = cleanEmail;
+    }
+  }
+
+  if (body.displayBio !== undefined) {
+    const cleanBio = body.displayBio === null ? null : String(body.displayBio).trim().slice(0, 160);
+    updates.push('display_bio = ?');
+    binds.push(cleanBio || null);
+  }
+
+  if (typeof body.newPassword === 'string' && body.newPassword.length > 0) {
+    if (body.newPassword.length < 6) {
+      return c.json({ error: 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد' }, 400);
+    }
+    const alreadyHadCustomPassword =
+      currentRow.has_custom_password === 1 && !currentRow.email.endsWith('@telegram.dollarino.local');
+    if (alreadyHadCustomPassword) {
+      if (!body.currentPassword || !(await verifyPassword(body.currentPassword, currentRow.password_hash))) {
+        return c.json({ error: 'رمز عبور فعلی صحیح نیست' }, 401);
+      }
+    }
+    const nextHash = await hashPassword(body.newPassword);
+    updates.push('password_hash = ?');
+    binds.push(nextHash);
+    updates.push('has_custom_password = 1');
   }
 
   if (body.useTelegramAvatar) {
@@ -473,12 +579,23 @@ authRoutes.patch('/profile', requireAuth, async (c) => {
   }
 
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
-            wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, created_at
-     FROM users WHERE id = ?`
+    `SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`
   ).bind(u.id).first();
 
-  return c.json({ ok: true, user: full });
+  let refreshedToken: string | undefined;
+  if (nextEmailForToken !== currentRow.email) {
+    const isHttps = isHttpsRequest(c);
+    refreshedToken = await signJwt({ sub: u.id, email: nextEmailForToken, role: u.role }, c.env.SESSION_JWT_SECRET);
+    setCookie(c, 'dollarino_session', refreshedToken, {
+      httpOnly: true,
+      sameSite: isHttps ? 'None' : 'Lax',
+      secure: isHttps,
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7,
+    });
+  }
+
+  return c.json({ ok: true, user: full, token: refreshedToken });
 });
 
 authRoutes.post('/telegram-link-code', requireAuth, async (c) => {
@@ -622,7 +739,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
   const tgId = String(verified.user.id);
   const ownerId = c.env.OWNER_TELEGRAM_ID || '944021185';
   let row = await c.env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_id, avatar_url FROM users WHERE telegram_id = ?`
+    `SELECT id, email, username, role, is_blocked, telegram_id, avatar_url, phone_verified FROM users WHERE telegram_id = ?`
   ).bind(tgId).first<{
     id: string;
     email: string;
@@ -631,6 +748,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
     is_blocked: number;
     telegram_id: string | null;
     avatar_url?: string | null;
+    phone_verified?: number;
   }>();
 
   if (!row) {
@@ -641,16 +759,32 @@ authRoutes.post('/telegram-webapp', async (c) => {
     const pwd = await hashPassword(randomId('tg_pwd'));
 
     await c.env.DB.prepare(
-      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, email, username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null).run();
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, email, username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null, tgId === ownerId ? 1 : 0).run();
 
     await ensureUserDefaults(c.env.DB, id);
-    row = { id, email, username, role, is_blocked: 0, telegram_id: tgId, avatar_url: null };
+    row = { id, email, username, role, is_blocked: 0, telegram_id: tgId, avatar_url: null, phone_verified: tgId === ownerId ? 1 : 0 };
   }
 
   if (row.is_blocked) {
     return c.json({ error: 'Account is suspended by admin' }, 403);
+  }
+
+  const kycSettingRow = await c.env.DB.prepare(
+    `SELECT value FROM system_settings WHERE key = 'require_telegram_phone_kyc' LIMIT 1`
+  ).first<{ value: string }>().catch(() => null);
+  const kycRequired = (kycSettingRow?.value ?? 'true') !== 'false';
+
+  if (kycRequired && Number(row.phone_verified ?? 0) !== 1 && row.role !== 'owner' && row.role !== 'admin') {
+    return c.json(
+      {
+        error: 'برای فعال‌سازی حساب و ورود به مینی‌اپ، ابتدا داخل ربات @Dollarino_bot شماره تماس اکانت تلگرام خود را به اشتراک بگذارید.',
+        code: 'PHONE_KYC_REQUIRED',
+        botUrl: 'https://t.me/Dollarino_bot?start=web_auth',
+      },
+      403
+    );
   }
 
   await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
@@ -658,6 +792,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
   if (syncedAvatar && !row.avatar_url) {
     row.avatar_url = syncedAvatar;
   }
+  const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(row.id).first();
   const isHttps = isHttpsRequest(c);
   const token = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);
   setCookie(c, 'dollarino_session', token, {
@@ -670,7 +805,7 @@ authRoutes.post('/telegram-webapp', async (c) => {
 
   return c.json({
     token,
-    user: {
+    user: fullUser || {
       id: row.id,
       email: row.email,
       username: row.username,
@@ -730,9 +865,13 @@ authRoutes.post('/telegram-magic-login', async (c) => {
     maxAge: 60 * 60 * 24 * 7,
   });
 
+  const fullUser = await c.env.DB.prepare(
+    `SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`
+  ).bind(row.id).first();
+
   return c.json({
     token: jwt,
-    user: {
+    user: fullUser || {
       id: row.id,
       email: row.email,
       username: row.username,
@@ -741,6 +880,72 @@ authRoutes.post('/telegram-magic-login', async (c) => {
       avatar_url: row.avatar_url ?? null,
     },
   });
+});
+
+// Telegram Login Widget verification (BotFather -> Login Widget) for phone-verified users
+authRoutes.post('/telegram-login-widget', async (c) => {
+  const botToken = c.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!botToken) {
+    return c.json({ error: 'TELEGRAM_BOT_TOKEN not configured on server' }, 503);
+  }
+  const payload = await c.req.json<Record<string, string | number | undefined>>().catch(
+    () => ({} as Record<string, string | number | undefined>)
+  );
+  const verified = await verifyTelegramLoginWidget(payload, botToken);
+  if (!verified.valid || !verified.user) {
+    return c.json({ error: verified.error || 'Invalid Telegram login signature' }, 401);
+  }
+
+  const tgId = String(verified.user.id);
+  const row = await c.env.DB.prepare(
+    `SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE telegram_id = ? LIMIT 1`
+  ).bind(tgId).first<{
+    id: string;
+    email: string;
+    username: string;
+    role: string;
+    is_blocked: number;
+    phone_verified: number;
+    telegram_id: string | null;
+    avatar_url?: string | null;
+  }>();
+
+  const kycRow = await c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'require_telegram_phone_kyc' LIMIT 1`)
+    .first<{ value: string }>()
+    .catch(() => null);
+  const kycRequired = (kycRow?.value ?? 'true') !== 'false';
+
+  if (!row || (kycRequired && Number(row.phone_verified || 0) !== 1 && row.role !== 'owner' && row.role !== 'admin')) {
+    return c.json(
+      {
+        error: 'برای اولین ورود و احراز هویت شماره تماس، ابتدا ربات @Dollarino_bot را استارت کرده و شماره تماس اکانت خود را به اشتراک بگذارید.',
+        code: 'PHONE_KYC_REQUIRED',
+        botUrl: 'https://t.me/Dollarino_bot?start=web_auth',
+      },
+      403
+    );
+  }
+  if (row.is_blocked) {
+    return c.json({ error: 'Account is suspended by admin' }, 403);
+  }
+
+  await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
+  if (verified.user.photo_url && !row.avatar_url) {
+    const synced = await syncTelegramAvatarForUser(c.env, row.id, tgId, verified.user.photo_url);
+    if (synced) row.avatar_url = synced;
+  }
+
+  const isHttps = isHttpsRequest(c);
+  const jwt = await signJwt({ sub: row.id, email: row.email, role: row.role }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', jwt, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  return c.json({ token: jwt, user: row });
 });
 
 // Generate or retrieve personal Browser Extension & Mobile Shortcut API key

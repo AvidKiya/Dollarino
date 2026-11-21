@@ -40,7 +40,6 @@ import {
   mainMenuKeyboard,
   miniAppInlineKeyboard,
   OFFICIAL_BOT_HANDLE,
-  preAuthIntroInlineButtons,
   preAuthIntroMessage,
   settingsKeyboard,
   welcomeMessage,
@@ -148,11 +147,14 @@ async function getOrProvisionTelegramUser(
     const username = tgUser.username || tgUser.first_name || `tg_${tgId}`;
     const pseudoEmail = `tg_${tgId}@telegram.dollarino.local`;
     const pwd = await hashPassword(randomId('pwd'));
+    const myRefCode = `DLR-${id.slice(-6).toUpperCase()}`;
 
     await env.DB.prepare(
-      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, ui_mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'simple')`
-    ).bind(id, pseudoEmail, username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, tgId === ownerId ? 1 : 0).run();
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, ui_mode, referral_code, has_custom_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'simple', ?, 0)`
+    )
+      .bind(id, pseudoEmail, username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, tgId === ownerId ? 1 : 0, myRefCode)
+      .run();
 
     await ensureUserDefaults(env.DB, id);
     row = {
@@ -259,12 +261,15 @@ async function sendWebMagicLoginLink(env: Env, bot: TelegramBotClient, chatId: s
 
   const loginUrl = `${webAppUrl}/?tg_login=${encodeURIComponent(magicToken)}`;
   const kb: InlineKeyboardButton[][] = loginUrl.startsWith('https://')
-    ? [[{ text: '🌐 ورود فوری با یک کلیک به سایت دلارینو', url: loginUrl }]]
+    ? [[{ text: '🌐 ورود فوری با یک کلیک به حساب کاربری در سایت', url: loginUrl, style: 'success' }]]
     : [];
 
   await bot.sendMessage(
     chatId,
-    `🌐 لینک ورود مستقیم شما به نسخه وب دلارینو آماده شد (معتبر به مدت ۱۰ دقیقه):\n\n${loginUrl}\n\nبا باز کردن این لینک بدون نیاز به رمز عبور وارد حساب همگام‌سازی‌شده خود می‌شوید.`,
+    `🌐 **لینک اختصاصی ورود به سایت دلارینو آماده شد** (معتبر به مدت ۱۰ دقیقه):\n\n` +
+      `${loginUrl}\n\n` +
+      `✅ با کلیک روی لینک بالا، حساب تلگرام شما به‌صورت مستقیم وارد سایت می‌شود.\n` +
+      `✏️ از بخش «مدیریت حساب» در پنل خودتان می‌توانید نام نمایشی، ایمیل، رمز عبور، بیوگرافی و عکس پروفایل را تغییر دهید (فقط شماره تماس تاییدشده شما به دلیل امنیت حساب ثابت می‌ماند).`,
     { inlineKeyboard: kb.length ? kb : undefined }
   );
 }
@@ -365,15 +370,49 @@ async function sendPreAuthIntro(
       .catch(() => {});
   }
   await bot.sendMessage(chatId, preAuthIntroMessage(firstName), {
-    inlineKeyboard: preAuthIntroInlineButtons(),
+    replyKeyboard: contactVerificationKeyboard(),
   });
-  await bot.sendMessage(
-    chatId,
-    `🔐 **تکمیل ثبت‌نام و ورود امن (مرحله احراز هویت)**\n` +
-      `برای حفاظت از حساب‌ها، جلوگیری از اسپم و فعال‌شدن منوهای ربات و اتصال وب/اکستنشن، لطفاً دکمه‌ی پایین صفحه (**«📱 اشتراک‌گذاری شماره تماس اکانت من»**) را لمس کنید.\n\n` +
-      `⚠️ توجه: تنها شماره تماس اکانت تلگرامِ خودتان پذیرفته می‌شود و فوروارد شماره دیگران مسدود است.`,
-    { replyKeyboard: contactVerificationKeyboard() }
-  );
+}
+
+async function applyReferralIfPresent(env: Env, userId: string, rawPayload?: string | null, phoneNumber?: string | null) {
+  if (!rawPayload) return;
+  const match = rawPayload.match(/(?:REF_|DLR-)([A-Za-z0-9_-]+)/i);
+  if (!match) return;
+  const extracted = rawPayload.toUpperCase().includes('DLR-')
+    ? rawPayload.toUpperCase().match(/DLR-[A-Z0-9]+/)?.[0] || ''
+    : rawPayload.replace(/^.*REF_/i, '').trim().toUpperCase();
+  if (!extracted) return;
+
+  const existingRef = await env.DB.prepare(`SELECT id FROM referrals WHERE referred_user_id = ? LIMIT 1`).bind(userId).first();
+  if (existingRef) return;
+
+  const referrer = await env.DB.prepare(
+    `SELECT id FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
+  )
+    .bind(extracted, extracted)
+    .first<{ id: string }>()
+    .catch(() => null);
+  if (!referrer?.id || referrer.id === userId) return;
+
+  let fraudFlag = 0;
+  let fraudReason: string | null = null;
+  if (phoneNumber) {
+    const dupPhone = await env.DB.prepare(`SELECT id FROM users WHERE phone_number = ? AND id != ? LIMIT 1`)
+      .bind(phoneNumber, userId)
+      .first();
+    if (dupPhone) {
+      fraudFlag = 1;
+      fraudReason = 'شماره تماس تکراری روی اکانت دیگر';
+    }
+  }
+  await env.DB.prepare(`UPDATE users SET referred_by = COALESCE(referred_by, ?) WHERE id = ?`).bind(extracted, userId).run().catch(() => {});
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status, fraud_flag, fraud_reason)
+     VALUES (?, ?, ?, ?, 7, ?, ?, ?)`
+  )
+    .bind(randomId('ref'), referrer.id, userId, extracted, fraudFlag ? 'FLAGGED_DUPLICATE' : 'REGISTERED', fraudFlag, fraudReason)
+    .run()
+    .catch(() => {});
 }
 
 async function showTrustWalletMenu(
@@ -835,46 +874,9 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
-    // Pre-registration information callbacks (always accessible before phone KYC)
-    if (data.startsWith('pre_info:')) {
-      const topic = data.slice('pre_info:'.length);
-      await bot.answerCallbackQuery(cq.id);
-      const infoMap: Record<string, string> = {
-        engines:
-          `🧠 **آشنایی با ۴ موتور معاملاتی دلارینو:**\n\n` +
-          `۱. **هوش مصنوعی دلارینو:** تحلیل لحظه‌ای چارت، اخبار و حجم با مدل‌های هوشمند برای شکار دقیق نقطه ورود.\n` +
-          `۲. **هوش مصنوعی شخصی (خام):** با زبان ساده فارسی استراتژی خود را آموزش دهید تا همان قانون را ۲۴ ساعته اجرا کند.\n` +
-          `۳. **استراتژی شکار (دُرنا V1 + کدنویسی شخصی):** شکار نقدینگی و شکست‌های معتبر یا ساخت اندیکاتور اختصاصی با بک‌تست ۹۰۰ کندلی.\n` +
-          `۴. **کپی‌ترید تاییدشده:** دنبال کردن خودکار تریدرهای ارزیابی‌شده بدون نیاز به تحلیل شخصی.\n\n` +
-          `📱 برای ساخت حساب و شروع، دکمه **«اشتراک‌گذاری شماره تماس اکانت من»** در پایین صفحه را لمس کنید.`,
-        trust:
-          `🦊 **راهنمای Trust Wallet DApp و رادار DexScreener:**\n\n` +
-          `• بدون نیاز به صرافی متمرکز (یا در کنار Toobit و KCEX) می‌توانید مستقیماً با کیف‌پول غیرامانی **Trust Wallet** متصل شوید.\n` +
-          `• **رادار DexScreener:** کشف لحظه‌ای توکن‌های ترند و پرپتانسیل در شبکه‌های BSC، Ethereum، Base، Solana، TRON و Arbitrum که هنوز در Toobit/KCEX لیست نشده‌اند.\n` +
-          `• با یک کلیک لینک سوآپ امن داخل مرورگر Trust Wallet برای شما باز می‌شود و دارایی همیشه در کیف‌پول خودتان می‌ماند.\n\n` +
-          `📱 برای فعال‌سازی حساب، شماره تماس تلگرام خود را به اشتراک بگذارید.`,
-        plans:
-          `💎 **تعرفه و اشتراک‌های دلارینو:**\n\n` +
-          `• **حساب رایگان (تازه وارد):** مشاهده معرفی، وضعیت حساب، رادار پایه و تست محیط.\n` +
-          `• **اشتراک ماهانه / ۳ ماهه / ۶ ماهه / سالانه:** دسترسی کامل به ترید خودکار ۴ موتور، شبیه‌ساز Paper، کپی‌ترید تاییدشده، صدور کارت سود رسمی و اتصال اکستنشن کروم.\n` +
-          `• پرداخت آنی با **Trust Wallet (USDT BEP20 / TRC20)** با تایید خودکار بلاکچینی یا از کیف‌پول حساب.\n\n` +
-          `📱 پس از تایید شماره تماس، فاکتور و منوی کامل اشتراک برایتان باز می‌شود.`,
-        security:
-          `🛡 **امنیت، احراز هویت و قوانین ضدکلاهبرداری دلارینو:**\n\n` +
-          `• تایید هویت فقط از طریق اشتراک شماره تماس اکانت تلگرامِ خودتان داخل ربات رسمی (${OFFICIAL_BOT_HANDLE}) انجام می‌شود.\n` +
-          `• برای صرافی‌ها فقط کلید Trade-Only (بدون دسترسی Withdraw) دریافت و رمزنگاری AES-GCM می‌شود.\n` +
-          `• در Trust Wallet هیچ‌گاه Seed Phrase از شما خواسته نمی‌شود و کلید خصوصی همیشه دست خودتان است.\n` +
-          `${ANTI_SCAM_WARNING_FA}`,
-      };
-      await bot.sendMessage(chatId, infoMap[topic] || preAuthIntroMessage(cq.from.first_name || user.username), {
-        inlineKeyboard: preAuthIntroInlineButtons(),
-      });
-      return { ok: true };
-    }
-
-    // Hard Phone-KYC Gate on all callbacks before account verification
+    // Hard Phone-KYC Gate on all callbacks before account verification (no extra buttons before KYC)
     if (await isPhoneKycRequiredForUser(env, user, tgId)) {
-      await bot.answerCallbackQuery(cq.id, '🔐 ابتدا شماره تماس اکانت خود را به اشتراک بگذارید.', true);
+      await bot.answerCallbackQuery(cq.id, '🔐 ابتدا شماره تماس اکانت خود را از دکمه پایین به اشتراک بگذارید.', true);
       await sendPreAuthIntro(env, bot, chatId, user, cq.from.first_name || user.username);
       return { ok: true };
     }
@@ -2095,7 +2097,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   // 3A. Handle Native Telegram Contact Sharing (Mandatory Phone KYC)
   if (msg.contact) {
-    if (msg.contact.user_id !== undefined && String(msg.contact.user_id) !== tgId) {
+    if (!msg.contact.user_id || String(msg.contact.user_id) !== tgId) {
       await bot.sendMessage(
         chatId,
         `⛔️ لطفاً فقط شماره تماس **اکانت تلگرام خودتان** را از طریق دکمه‌ی زیر به اشتراک بگذارید (ارسال یا فوروارد شماره افراد دیگر پذیرفته نمی‌شود).`,
@@ -2119,14 +2121,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     user.phone_number = normalizedPhone;
     user.phone_verified = 1;
 
+    await applyReferralIfPresent(env, user.id, pendingStartArg, normalizedPhone);
+
     await bot.sendMessage(
       chatId,
-      `✅ احراز هویت شماره تماس شما با موفقیت انجام شد (${normalizedPhone})!\nحساب شما اکنون آماده استفاده در ربات تلگرام، وب، مینی‌اپ و اکستنشن است.`
+      `✅ احراز هویت شماره تماس شما با موفقیت انجام شد (${normalizedPhone})!\nحساب شما با مشخصات تلگرام خودتان ساخته و فعال گردید.`
     );
 
     if (pendingStartArg && pendingStartArg.toUpperCase().startsWith('LINK-')) {
       const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, pendingStartArg);
       await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
+      await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
       return { ok: true };
     }
 
@@ -2136,6 +2141,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await bot.sendMessage(chatId, '🚀 پنل کنترل سریع، راه‌اندازی ۴ مرحله‌ای و ابزارهای دلارینو:', {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
     });
+    await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
     return { ok: true };
   }
 
@@ -2207,24 +2213,20 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
     if (payload.toUpperCase().startsWith('REF_') || payload.toUpperCase().startsWith('DLR-')) {
-      const refCode = payload.replace(/^ref_/i, '').trim().toUpperCase();
-      const referrerId = await env.DB.prepare(
-        `SELECT id FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
-      ).bind(refCode, refCode).first<{ id: string }>().catch(() => null);
-      if (referrerId?.id && referrerId.id !== user.id) {
-        await env.DB.prepare(
-          `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REGISTERED')`
-        ).bind(randomId('ref'), referrerId.id, user.id, refCode).run().catch(() => {});
-      }
+      await applyReferralIfPresent(env, user.id, payload, user.phone_number);
       await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
         replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
       });
-      await bot.sendMessage(chatId, '🎁 شما از طریق لینک دعوت دوستتان وارد شدید! با فعال‌سازی اشتراک، ۷ روز هدیه برای دعوت‌کننده ثبت می‌شود.', {
+      await bot.sendMessage(chatId, '🎁 شما از طریق لینک دعوت دوستتان وارد شدید! با فعال‌سازی اشتراک، پورسانت و هدیه اشتراک ثبت می‌شود.', {
         inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
       });
+      await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
       return { ok: true };
     }
-    if (payload === 'web_auth') {
+    if (payload === 'web_auth' || payload.toLowerCase().startsWith('web_auth__')) {
+      if (payload.toLowerCase().includes('ref_') || payload.toUpperCase().includes('DLR-')) {
+        await applyReferralIfPresent(env, user.id, payload, user.phone_number);
+      }
       await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
         replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
       });
@@ -2233,7 +2235,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
   }
 
-  if (text === '/start' || text === 'بازگشت به صفحه قبل 🔙') {
+  if (text === '/start' || text === '/menu' || text === 'بازگشت به صفحه قبل 🔙') {
     await clearState();
     const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
     const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
@@ -2251,6 +2253,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  if (text === '/wizard') {
+    await clearState();
+    await showSimpleWizardStep(bot, chatId, 1);
+    return { ok: true };
+  }
+
   if (text === '/app' || text === '🚀 مینی‌اپ دلارینو') {
     await bot.sendMessage(chatId, '📱 برای ورود مستقیم و بدون نیاز به لاگین به مینی‌اپ دلارینو روی دکمه زیر بزنید:', {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
@@ -2264,7 +2272,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  const SLASH_OVERRIDE = new Set(['/card', '/copy', '/support', '/positions', '/balance', '/settings', '/help', '/menu', '/dex', '/wallet']);
+  const SLASH_OVERRIDE = new Set(['/card', '/copy', '/support', '/positions', '/balance', '/settings', '/help', '/menu', '/dex', '/wallet', '/wizard', '/myai', '/weblogin']);
   if (SLASH_OVERRIDE.has(text) && user.telegram_state) {
     await clearState();
     user.telegram_state = null;
@@ -2486,9 +2494,26 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     if (state.step === 'AWAIT_SUPPORT_MSG') {
       const isMainMenuCommand =
         text.startsWith('/') ||
-        ['📊 گزارش و حساب', '🚀 راه‌اندازی ربات', '💎 اشتراک و کپی‌ترید', '⚙️ اتصال صرافی و ولت', '🔍 توکن‌های DEX داغ', '🎛 وضعیت و پنل وب', '🤖 کنترل و ربات AI', '🛡 کپی‌ترید و ژورنال', '💬 پشتیبانی آنلاین', '👑 پنل مدیریت'].some((btn) =>
-          text.startsWith(btn.slice(0, 6))
-        );
+        [
+          '🚀 راه‌اندازی ۴ مرحله‌ای ربات',
+          '🦊 کیف‌پول Trust Wallet',
+          'ربات و هوش مصنوعی من',
+          '🏆 کپی‌ترید تاییدشده',
+          'حساب کاربری 👤',
+          'خرید اشتراک 💎',
+          'اتصال به صرافی 🔗',
+          '⚡ رفتن به حالت حرفه‌ای',
+          '🌱 رفتن به حالت ساده',
+          '🔍 رادار DexScreener',
+          'تنظیمات ⚙️',
+          '📈 معاملات باز',
+          '🎯 استراتژی شکار',
+          '🧩 اکستنشن و ویجت موبایل',
+          '💬 پشتیبانی آنلاین',
+          'راهنما 📚',
+          'بازگشت به صفحه قبل 🔙',
+          'پنل مدیریت 💼',
+        ].some((btn) => text.startsWith(btn.slice(0, 7)));
       if (isMainMenuCommand) {
         await clearState();
       } else {
@@ -2690,6 +2715,37 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text.startsWith('🦊 کیف‌پول Trust Wallet') || text === '/wallet') {
     await showTrustWalletMenu(env, bot, chatId, user, webAppUrl);
+    return { ok: true };
+  }
+
+  if (text === '/myai') {
+    let ag = await env.DB.prepare(`SELECT name, system_rules_json, is_active_for_trading FROM user_ai_agents WHERE user_id = ?`)
+      .bind(user.id)
+      .first<{ name: string; system_rules_json: string; is_active_for_trading: number }>()
+      .catch(() => null);
+    if (!ag) {
+      await env.DB.prepare(`INSERT OR IGNORE INTO user_ai_agents (id, user_id, name, system_rules_json) VALUES (?, ?, 'هوش مصنوعی شخصی من', ?)`)
+        .bind(randomId('myai'), user.id, JSON.stringify(DEFAULT_TRAINED_RULES))
+        .run();
+      ag = { name: 'هوش مصنوعی شخصی من', system_rules_json: JSON.stringify(DEFAULT_TRAINED_RULES), is_active_for_trading: 0 };
+    }
+    let rules: TrainedAIRules = DEFAULT_TRAINED_RULES;
+    try {
+      rules = { ...DEFAULT_TRAINED_RULES, ...JSON.parse(ag.system_rules_json || '{}') };
+    } catch { /* default */ }
+    await bot.sendMessage(
+      chatId,
+      `🧠 **${ag.name}** (${ag.is_active_for_trading ? '🟢 فعال روی ربات' : '⚪️ آماده آموزش'})\n\n` +
+        `• تایم‌فریم: ${rules.timeframe} | سبک: ${rules.style}\n` +
+        `• ارزها: ${rules.symbols.join('، ')}\n` +
+        `• SL ${rules.stopLossPct}% / TP ${rules.takeProfitPct}% | اهرم ${rules.maxLeverage}x`,
+      {
+        inlineKeyboard: [
+          [{ text: '✍️ آموزش جدید به هوش مصنوعی من', callback_data: 'tg_myai_train', style: 'primary' }],
+          [{ text: '🚀 فعال‌سازی ترید خودکار با هوش مصنوعی من', callback_data: 'tg_myai_activate', style: 'success' }],
+        ],
+      }
+    );
     return { ok: true };
   }
 

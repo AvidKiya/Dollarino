@@ -450,7 +450,7 @@ export function LandingPage({
                 className="btn-lime inline-flex items-center gap-2 font-black px-7 py-4 rounded-2xl text-sm"
               >
                 <Zap className="h-[18px] w-[18px]" />
-                <span>{isFa ? 'ثبت‌نام و شروع اشتراک دلارینو' : 'Register & Activate Subscription'}</span>
+                <span>{isFa ? 'ثبت‌نام امن در @Dollarino_bot' : 'Register via @Dollarino_bot'}</span>
               </button>
               <button
                 type="button"
@@ -670,13 +670,13 @@ export function LandingPage({
               {[
                 {
                   n: '۱',
-                  t: isFa ? 'ثبت‌نام سریع یا ورود با تلگرام' : 'Quick Sign Up or Telegram Login',
-                  d: isFa ? 'حساب خود را در کمتر از ۲۰ ثانیه بسازید.' : 'Create your account in under 20 seconds.',
+                  t: isFa ? 'ثبت‌نام و تایید شماره در @Dollarino_bot' : 'Register & Verify Phone in @Dollarino_bot',
+                  d: isFa ? 'شماره تلگرام خودتان را به اشتراک بگذارید و بلافاصله لینک ورود به سایت را بگیرید.' : 'Share your own Telegram contact and receive your 1-click web login link.',
                 },
                 {
                   n: '۲',
-                  t: isFa ? 'انتخاب اشتراک (تتر TRC20 یا کارت‌به‌کارت)' : 'Activate Your Subscription Plan',
-                  d: isFa ? 'اشتراک ماهانه یا فصلی را انتخاب و فعال کنید.' : 'Pick Monthly or VIP plan via USDT or Card.',
+                  t: isFa ? 'انتخاب اشتراک (Trust Wallet یا کارت‌به‌کارت)' : 'Activate Your Subscription Plan',
+                  d: isFa ? 'اشتراک ماهانه یا فصلی را انتخاب و فعال کنید.' : 'Pick Monthly or VIP plan via Trust Wallet or Card.',
                 },
                 {
                   n: '۳',

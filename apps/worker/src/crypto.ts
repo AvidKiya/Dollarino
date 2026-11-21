@@ -194,3 +194,52 @@ export async function verifyTelegramWebAppInitData(
   return { valid: true, user: tgUser, startParam: params.get('start_param') ?? undefined };
 }
 
+export async function verifyTelegramLoginWidget(
+  payload: Record<string, string | number | undefined>,
+  botToken: string,
+  maxAgeSeconds = 86_400
+): Promise<{
+  valid: boolean;
+  user?: { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string };
+  error?: string;
+}> {
+  const hash = String(payload.hash || '').trim().toLowerCase();
+  if (!hash || !/^[0-9a-f]{64}$/.test(hash) || !botToken) {
+    return { valid: false, error: 'Missing or invalid Login Widget hash' };
+  }
+  const authDate = Number(payload.auth_date || 0);
+  if (!Number.isFinite(authDate) || Math.floor(Date.now() / 1000) - authDate > maxAgeSeconds) {
+    return { valid: false, error: 'Telegram Login Widget auth_date expired' };
+  }
+  const pairs: Array<[string, string]> = [];
+  for (const [k, v] of Object.entries(payload)) {
+    if (k === 'hash' || v === undefined || v === null || v === '') continue;
+    pairs.push([k, String(v)]);
+  }
+  pairs.sort(([a], [b]) => a.localeCompare(b));
+  const dataCheckString = pairs.map(([k, v]) => `${k}=${v}`).join('\n');
+
+  const secretDigest = await crypto.subtle.digest('SHA-256', enc.encode(botToken));
+  const key = await crypto.subtle.importKey('raw', secretDigest, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sigHex = toHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(dataCheckString))));
+
+  if (sigHex.length !== hash.length) return { valid: false, error: 'Hash length mismatch' };
+  let diff = 0;
+  for (let i = 0; i < sigHex.length; i++) diff |= sigHex.charCodeAt(i) ^ hash.charCodeAt(i);
+  if (diff !== 0) return { valid: false, error: 'Invalid Telegram Login Widget signature' };
+
+  const idNum = Number(payload.id);
+  if (!Number.isFinite(idNum) || idNum <= 0) return { valid: false, error: 'Invalid Telegram user id' };
+  return {
+    valid: true,
+    user: {
+      id: idNum,
+      first_name: payload.first_name ? String(payload.first_name) : undefined,
+      last_name: payload.last_name ? String(payload.last_name) : undefined,
+      username: payload.username ? String(payload.username) : undefined,
+      photo_url: payload.photo_url ? String(payload.photo_url) : undefined,
+    },
+  };
+}
+
+

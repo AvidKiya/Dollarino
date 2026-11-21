@@ -51,7 +51,7 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '9.6.0',
+    version: '9.7.0',
     openSource: false,
     paidSubscriptions: true,
     centralMultiAI: true,
@@ -79,6 +79,9 @@ app.get('/api/health', (c) => {
       browserExtension: true,
       smartSupportEscalation: true,
       antiAbuseReferralSystem: true,
+      telegramFirstRegistration: true,
+      profileEditorWithLockedPhone: true,
+      telegramLoginWidget: true,
     },
     timestamp: new Date().toISOString(),
   });

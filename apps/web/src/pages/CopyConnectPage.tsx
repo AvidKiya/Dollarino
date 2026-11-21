@@ -134,7 +134,6 @@ export function CopyConnectPage({
   const [tgBots, setTgBots] = useState<TgBot[]>([]);
   const [tgToken, setTgToken] = useState('');
   const [tgChannel, setTgChannel] = useState(data.config.signal_channel_handle || '@Dollarino_official');
-  const [linkCode, setLinkCode] = useState<{ code: string; command: string; deepLinkUrl?: string } | null>(null);
 
   // Exchanges & Platform AI
   const [exchanges, setExchanges] = useState<ExchangeConn[]>([]);
@@ -380,7 +379,7 @@ export function CopyConnectPage({
 
         <div className="inline-flex p-1 panel rounded-full overflow-x-auto no-scrollbar">
           {[
-            { id: 'copy' as const, icon: Bot, l: isFa ? 'کپی‌ترید و تلگرام' : 'Copy & Telegram' },
+            { id: 'copy' as const, icon: Bot, l: isFa ? 'کپی‌ترید و وب‌هوک' : 'Copy & Webhooks' },
             { id: 'exchanges' as const, icon: Link2, l: isFa ? 'اتصال صرافی واقعی' : 'Exchanges' },
             { id: 'risk' as const, icon: Sliders, l: isFa ? 'سپر ریسک و ۳ تارگت' : 'Risk Shield' },
           ].map((x) => {
@@ -708,38 +707,6 @@ export function CopyConnectPage({
                           </div>
                         </div>
                       ))}
-                    </div>
-                  )}
-                  <div className="pt-2 border-t hairline flex items-center justify-between text-xs">
-                    <span className="text-dim">{isFa ? 'کد اتصال سریع به ربات تلگرام:' : 'Quick Telegram Account Link:'}</span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const res = await apiFetch<{ code: string; command: string; deepLinkUrl?: string }>('/api/auth/telegram-link-code', { method: 'POST' });
-                        setLinkCode(res);
-                      }}
-                      className="btn-ghost px-3 py-1.5 rounded-xl font-bold"
-                    >
-                      {isFa ? 'ساخت کد اتصال' : 'Generate Code'}
-                    </button>
-                  </div>
-                  {linkCode && (
-                    <div className="panel rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <span dir="ltr" className="font-mono text-jade font-bold">{linkCode.command}</span>
-                      <a
-                        href={linkCode.deepLinkUrl || `https://t.me/Dollarino_bot?start=${linkCode.code}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn-emerald px-3 py-1 rounded-lg font-bold"
-                      >
-                        {isFa ? (
-                          <>
-                            اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
-                          </>
-                        ) : (
-                          '1-Click Connect'
-                        )}
-                      </a>
                     </div>
                   )}
                 </div>

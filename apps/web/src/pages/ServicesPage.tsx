@@ -12,15 +12,18 @@ import {
   CreditCard,
   Download,
   ExternalLink,
+  FileText,
   Gift,
   Headphones,
   Image,
   KeyRound,
-  Link2,
+  Lock,
   LogOut,
   Mail,
   Moon,
+  Phone,
   Radar,
+  Save,
   Send,
   Shield,
   Sparkles,
@@ -32,7 +35,7 @@ import {
   Users,
   Zap,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch, setStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { AuthUserInfo, DashboardPayload, NavTab } from '../lib/types';
@@ -96,15 +99,28 @@ export function ServicesPage({
   const BackArrow = isFa ? ArrowRight : ArrowLeft;
   const isTelegramPseudo = user.email.endsWith('@telegram.dollarino.local');
   const [accountView, setAccountView] = useState(false);
-  const [mergeCode, setMergeCode] = useState('');
-  const [linkCmd, setLinkCmd] = useState('');
-  const [deepLinkUrl, setDeepLinkUrl] = useState('');
-  const [linkStatus, setLinkStatus] = useState('');
-  const [linkBusy, setLinkBusy] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarStatus, setAvatarStatus] = useState('');
+
+  const [editUsername, setEditUsername] = useState(user.username || '');
+  const [editEmail, setEditEmail] = useState(isTelegramPseudo ? '' : user.email || '');
+  const [editBio, setEditBio] = useState(user.display_bio || '');
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    setEditUsername(user.username || '');
+    setEditEmail(user.email.endsWith('@telegram.dollarino.local') ? '' : user.email || '');
+    setEditBio(user.display_bio || '');
+  }, [user.username, user.email, user.display_bio]);
 
   const handleAvatarSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -161,37 +177,76 @@ export function ServicesPage({
     }
   };
 
-  const handleGenerateLinkCode = async () => {
-    setLinkBusy(true);
-    setLinkStatus('');
+  const handleSaveProfileDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileBusy(true);
+    setProfileMsg(null);
     try {
-      const r = await apiFetch<{ code: string; command: string; deepLinkUrl?: string }>('/api/auth/telegram-link-code', { method: 'POST' });
-      setLinkCmd(r.command);
-      setDeepLinkUrl(r.deepLinkUrl || `https://t.me/Dollarino_bot?start=${r.code}`);
-      setLinkStatus(isFa ? `کد اتصال ساخته شد: ${r.code} (روی دکمه باز کردن ربات بزنید تا خودکار متصل شود)` : `Code created: ${r.code}`);
-    } catch (e) {
-      setLinkStatus(e instanceof Error ? e.message : 'Error');
+      const payload: { username?: string; email?: string; displayBio?: string | null } = {
+        username: editUsername.trim(),
+        displayBio: editBio.trim() || null,
+      };
+      const cleanEmail = editEmail.trim().toLowerCase();
+      if (cleanEmail) payload.email = cleanEmail;
+
+      const res = await apiFetch<{ ok: boolean; user?: AuthUserInfo; token?: string }>('/api/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      if (res.token) setStoredToken(res.token);
+      if (res.user && onUpdateUser) onUpdateUser(res.user);
+      setProfileMsg({
+        ok: true,
+        text: isFa ? 'مشخصات حساب با موفقیت ذخیره و به‌روزرسانی شد.' : 'Profile details updated successfully.',
+      });
+    } catch (err) {
+      setProfileMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : isFa ? 'خطا در ذخیره مشخصات' : 'Failed to save profile',
+      });
     } finally {
-      setLinkBusy(false);
+      setProfileBusy(false);
     }
   };
 
-  const handleMergeTelegramToWeb = async () => {
-    if (!mergeCode.trim()) return;
-    setLinkBusy(true);
-    setLinkStatus('');
+  const handleSavePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordMsg(null);
+    if (newPassword.length < 6) {
+      setPasswordMsg({ ok: false, text: isFa ? 'رمز عبور باید حداقل ۶ کاراکتر باشد' : 'Password must be at least 6 characters' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordMsg({ ok: false, text: isFa ? 'تکرار رمز عبور مطابقت ندارد' : 'Passwords do not match' });
+      return;
+    }
+    setPasswordBusy(true);
     try {
-      const res = await apiFetch<{ ok: boolean; token: string; user: AuthUserInfo }>('/api/auth/telegram/merge-code', {
-        method: 'POST',
-        body: JSON.stringify({ code: mergeCode.trim() }),
+      const hasExistingPwd = Boolean(user.has_custom_password) && !isTelegramPseudo;
+      const res = await apiFetch<{ ok: boolean; user?: AuthUserInfo }>('/api/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          currentPassword: hasExistingPwd ? currentPassword : undefined,
+          newPassword,
+        }),
       });
-      if (res.token) setStoredToken(res.token);
-      setLinkStatus(isFa ? 'حساب مینی‌اپ با موفقیت به اکانت وب متصل شد! صفحه در حال همگام‌سازی...' : 'Account merged! Reloading...');
-      setTimeout(() => window.location.reload(), 900);
-    } catch (e) {
-      setLinkStatus(e instanceof Error ? e.message : 'Merge failed');
+      if (res.user && onUpdateUser) onUpdateUser(res.user);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordMsg({
+        ok: true,
+        text: isFa
+          ? 'رمز عبور اختصاصی شما ذخیره شد. از این پس می‌توانید با ایمیل شخصی و همین رمز نیز وارد شوید.'
+          : 'Password saved successfully.',
+      });
+    } catch (err) {
+      setPasswordMsg({
+        ok: false,
+        text: err instanceof Error ? err.message : isFa ? 'خطا در تغییر رمز عبور' : 'Failed to update password',
+      });
     } finally {
-      setLinkBusy(false);
+      setPasswordBusy(false);
     }
   };
 
@@ -203,8 +258,9 @@ export function ServicesPage({
       ? 'بدون اشتراک فعال (نیازمند خرید اشتراک)'
       : 'No Active Plan (Subscription Required)';
 
-  /* Dedicated Account Management View matching image-2.png + Real Profile Photo Upload */
+  /* Dedicated Account Management View: Full Editable Profile with Locked Verified Phone */
   if (accountView) {
+    const hasExistingPwd = Boolean(user.has_custom_password) && !isTelegramPseudo;
     return (
       <div className="space-y-4 max-w-2xl mx-auto">
         <input
@@ -215,7 +271,7 @@ export function ServicesPage({
           className="hidden"
         />
 
-        {/* Header matching image-2.png */}
+        {/* Header */}
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
@@ -225,10 +281,10 @@ export function ServicesPage({
             <BackArrow className="w-4 h-4" />
             <span>{isFa ? 'مدیریت حساب' : 'Account'}</span>
           </button>
-          <span className="text-[11px] font-bold text-dim">{isFa ? 'حساب کاربری دلارینو' : 'Dollarino Profile'}</span>
+          <span className="text-[11px] font-bold text-dim">{isFa ? 'پروفایل یکپارچه تلگرام و وب' : 'Synced Dollarino Profile'}</span>
         </div>
 
-        {/* Centered Profile Photo Upload Avatar matching image-2.png */}
+        {/* Centered Profile Photo Upload Avatar */}
         <div className="pt-2 pb-1 text-center space-y-2.5">
           <div className="relative inline-flex mx-auto">
             <button
@@ -256,7 +312,10 @@ export function ServicesPage({
 
           <div>
             <h2 className="font-display font-bold text-lg text-main">{user.username}</h2>
-            <p className="text-xs text-dim mt-0.5">{user.email}</p>
+            <p className="text-xs text-dim mt-0.5">
+              {user.telegram_username ? `@${user.telegram_username} · ` : ''}
+              {isTelegramPseudo ? (isFa ? 'ثبت‌نام‌شده با تلگرام (ایمیل شخصی ثبت نشده)' : 'Telegram Account') : user.email}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -292,40 +351,37 @@ export function ServicesPage({
               </button>
             )}
           </div>
-          <p className="text-[10px] text-dim">
-            {user.telegram_id
-              ? user.avatar_custom
-                ? isFa
-                  ? 'حالت تصویر: تصویر اختصاصی آپلودشده توسط شما'
-                  : 'Avatar: Custom uploaded photo'
-                : isFa
-                  ? 'حالت تصویر: همگام‌سازی خودکار با عکس پروفایل تلگرام'
-                  : 'Avatar: Auto-synced from Telegram'
-              : isFa
-                ? 'با اتصال به ربات تلگرام می‌توانید عکس پروفایل تلگرام را همگام کنید'
-                : 'Link Telegram to auto-sync your Telegram photo'}
-          </p>
           {avatarStatus && <p className="text-[11px] font-bold text-jade">{avatarStatus}</p>}
         </div>
 
-        {/* Section 1: اطلاعات حساب matching image-2.png */}
+        {/* Locked Verified Phone + Account Overview */}
         <div className="space-y-1.5">
-          <p className="text-xs font-extrabold text-dim px-1">{isFa ? 'اطلاعات حساب' : 'Account Details'}</p>
+          <p className="text-xs font-extrabold text-dim px-1">{isFa ? 'هویت تاییدشده تلگرام (غیرقابل تغییر)' : 'Verified Telegram Identity (Locked)'}</p>
           <div className="panel rounded-[24px] divide-y hairline overflow-hidden">
             <div className="px-4 py-3.5 flex items-center justify-between gap-3 text-xs">
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
-                <User className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'نام کاربری' : 'Username'}</span>
+                <Phone className="w-4 h-4 text-jade" />
+                <span>{isFa ? 'شماره تماس تاییدشده' : 'Verified Phone'}</span>
               </span>
-              <span className="font-extrabold text-sub">{user.username}</span>
+              <div className="flex items-center gap-2">
+                <span dir="ltr" className="font-mono-num font-black text-main">
+                  {user.phone_number || (isFa ? 'تاییدشده' : 'Verified')}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-jade text-[10px] font-black inline-flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  <span>{isFa ? 'قفل‌شده' : 'Locked'}</span>
+                </span>
+              </div>
             </div>
 
             <div className="px-4 py-3.5 flex items-center justify-between gap-3 text-xs">
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
-                <Mail className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'ایمیل' : 'Email'}</span>
+                <Send className="w-4 h-4 text-[#0EA5E9]" />
+                <span>{isFa ? 'شناسه اکانت تلگرام' : 'Telegram Account'}</span>
               </span>
-              <span dir="ltr" className="font-extrabold text-sub truncate max-w-[58%]">{user.email}</span>
+              <span dir="ltr" className="font-mono-num font-bold text-sub">
+                {user.telegram_username ? `@${user.telegram_username}` : user.telegram_id ? `ID: ${user.telegram_id}` : '—'}
+              </span>
             </div>
 
             <div className="px-4 py-3.5 flex items-center justify-between gap-3 text-xs">
@@ -340,7 +396,141 @@ export function ServicesPage({
           </div>
         </div>
 
-        {/* Section 2: حساب کاربری دلارینو matching image-2.png */}
+        {/* Editable Profile Form */}
+        <form onSubmit={handleSaveProfileDetails} className="panel rounded-[24px] p-4 sm:p-5 space-y-3.5">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-black text-main flex items-center gap-2">
+              <User className="w-4 h-4 text-[#1652F0]" />
+              <span>{isFa ? 'ویرایش مشخصات کاربری' : 'Edit Profile Information'}</span>
+            </h3>
+            <span className="text-[10px] text-dim">{isFa ? 'تمامی فیلدها به جز شماره تماس قابل ویرایشند' : 'All fields editable except phone'}</span>
+          </div>
+
+          <div className="space-y-2.5 text-xs">
+            <div>
+              <label className="text-[11px] font-bold text-dim block mb-1">{isFa ? 'نام نمایشی / نام کاربری' : 'Username'}</label>
+              <div className="relative">
+                <User className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  minLength={2}
+                  maxLength={40}
+                  required
+                  className="field ps-10 text-xs"
+                  placeholder={isFa ? 'نام شما در پنل و کارت سود' : 'Your display name'}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-dim block mb-1">
+                {isFa ? 'ایمیل شخصی (برای ورود با ایمیل و اعلان‌ها)' : 'Personal Email'}
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  dir="ltr"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="field ps-10 text-xs"
+                  placeholder="you@gmail.com"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-dim block mb-1">{isFa ? 'معرفی کوتاه / بیوگرافی (اختیاری)' : 'Short Bio (optional)'}</label>
+              <div className="relative">
+                <FileText className="w-4 h-4 text-dim absolute start-3.5 top-3" />
+                <textarea
+                  rows={2}
+                  maxLength={160}
+                  value={editBio}
+                  onChange={(e) => setEditBio(e.target.value)}
+                  className="field ps-10 text-xs py-2.5"
+                  placeholder={isFa ? 'مثلاً تریدر فیوچرز و اسکالپ طلا و BTC...' : 'Short bio...'}
+                />
+              </div>
+            </div>
+          </div>
+
+          {profileMsg && (
+            <div className={`p-2.5 rounded-xl text-[11px] font-bold ${profileMsg.ok ? 'bg-emerald-500/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
+              {profileMsg.text}
+            </div>
+          )}
+
+          <button type="submit" disabled={profileBusy} className="btn-cobalt w-full py-2.5 rounded-xl text-xs font-black inline-flex items-center justify-center gap-2">
+            <Save className="w-4 h-4" />
+            <span>{profileBusy ? '...' : isFa ? 'ذخیره تغییرات پروفایل' : 'Save Profile Changes'}</span>
+          </button>
+        </form>
+
+        {/* Password Setup / Change Form */}
+        <form onSubmit={handleSavePassword} className="panel rounded-[24px] p-4 sm:p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-black text-main flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-gold" />
+              <span>{hasExistingPwd ? (isFa ? 'تغییر رمز عبور' : 'Change Password') : isFa ? 'تنظیم رمز عبور برای ورود از سایت' : 'Set Web Login Password'}</span>
+            </h3>
+          </div>
+          {!hasExistingPwd && (
+            <p className="text-[11px] text-sub leading-relaxed">
+              {isFa
+                ? 'شما با حساب تلگرام وارد شده‌اید. اگر ایمیل شخصی خود را در کادر بالا ثبت کرده و این‌جا یک رمز عبور بسازید، از این پس علاوه‌بر ربات می‌توانید با ایمیل و رمز نیز وارد سایت شوید.'
+                : 'Set a password here along with your personal email above if you also want password sign-in.'}
+            </p>
+          )}
+          <div className="space-y-2.5 text-xs">
+            {hasExistingPwd && (
+              <input
+                type="password"
+                dir="ltr"
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder={isFa ? 'رمز عبور فعلی' : 'Current Password'}
+                className="field text-xs"
+              />
+            )}
+            <div className="grid sm:grid-cols-2 gap-2.5">
+              <input
+                type="password"
+                dir="ltr"
+                minLength={6}
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={isFa ? 'رمز عبور جدید (حداقل ۶ کاراکتر)' : 'New Password (min 6)'}
+                className="field text-xs"
+              />
+              <input
+                type="password"
+                dir="ltr"
+                minLength={6}
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder={isFa ? 'تکرار رمز عبور جدید' : 'Confirm Password'}
+                className="field text-xs"
+              />
+            </div>
+          </div>
+
+          {passwordMsg && (
+            <div className={`p-2.5 rounded-xl text-[11px] font-bold ${passwordMsg.ok ? 'bg-emerald-500/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
+              {passwordMsg.text}
+            </div>
+          )}
+
+          <button type="submit" disabled={passwordBusy} className="btn-gold w-full py-2.5 rounded-xl text-xs font-black">
+            {passwordBusy ? '...' : hasExistingPwd ? (isFa ? 'به‌روزرسانی رمز عبور' : 'Update Password') : isFa ? 'ثبت رمز عبور اختصاصی' : 'Set Password'}
+          </button>
+        </form>
+
+        {/* Dollarino Quick Settings */}
         <div className="space-y-1.5">
           <p className="text-xs font-extrabold text-dim px-1">{isFa ? 'حساب کاربری دلارینو' : 'Dollarino Settings'}</p>
           <div className="panel rounded-[24px] divide-y hairline overflow-hidden">
@@ -373,96 +563,6 @@ export function ServicesPage({
               <Arrow className="w-4 h-4 text-dim" />
             </button>
           </div>
-        </div>
-
-        {/* Telegram Mini App <-> Web Account Sync Card */}
-        <div className="panel rounded-[24px] p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-[#1652F0]" />
-              <span className="text-xs font-black text-main">
-                {isFa ? (
-                  <>
-                    اتصال همگام حساب وب و <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
-                  </>
-                ) : (
-                  'Sync Web & @Dollarino_bot'
-                )}
-              </span>
-            </div>
-            {user.telegram_id && !isTelegramPseudo && (
-              <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
-                {isFa ? 'متصل به تلگرام' : 'Linked'}
-              </span>
-            )}
-          </div>
-
-          {isTelegramPseudo ? (
-            <div className="space-y-2">
-              <p className="text-[11px] text-sub leading-relaxed">
-                {isFa
-                  ? 'اگر از قبل اکانت وب دارید، کد اتصال (LINK-...) را این‌جا وارد کنید تا اشتراک و سابقه یکی شود:'
-                  : 'Paste your web account LINK code below to merge both accounts:'}
-              </p>
-              <div className="flex gap-2">
-                <input
-                  value={mergeCode}
-                  onChange={(e) => setMergeCode(e.target.value.toUpperCase())}
-                  placeholder="LINK-ABC123"
-                  dir="ltr"
-                  className="field text-xs font-mono-num flex-1"
-                />
-                <button
-                  type="button"
-                  disabled={linkBusy}
-                  onClick={() => void handleMergeTelegramToWeb()}
-                  className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black shrink-0"
-                >
-                  {linkBusy ? '...' : isFa ? 'اتصال به وب' : 'Link Web'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={linkBusy}
-                onClick={() => void handleGenerateLinkCode()}
-                className="btn-cobalt px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
-              >
-                <Link2 className="w-3.5 h-3.5" />
-                <span>
-                  {linkBusy ? (
-                    '...'
-                  ) : isFa ? (
-                    <>
-                      اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
-                    </>
-                  ) : (
-                    '1-Click Connect'
-                  )}
-                </span>
-              </button>
-              {deepLinkUrl && (
-                <a
-                  href={deepLinkUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-emerald px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'باز کردن تلگرام' : 'Open Telegram'}</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              )}
-              {linkCmd && (
-                <code dir="ltr" className="px-3 py-1.5 rounded-xl surface-soft font-mono-num text-xs font-black text-jade">
-                  {linkCmd}
-                </code>
-              )}
-            </div>
-          )}
-          {linkStatus && <p className="text-[11px] font-bold text-jade">{linkStatus}</p>}
         </div>
 
         <button
@@ -744,15 +844,9 @@ export function ServicesPage({
               <UserCheck className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، عکس پروفایل و اتصال تلگرام' : 'Profile Photo, Account & Telegram Link'}</span>
+              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، ویرایش مشخصات و رمز عبور' : 'Account Details, Avatar & Password'}</span>
               <span className="text-[11px] text-dim block">
-                {isFa ? (
-                  <>
-                    آپلود عکس پروفایل و اتصال ۱-کلیکی به <span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>
-                  </>
-                ) : (
-                  'Upload avatar & sync @Dollarino_bot'
-                )}
+                {isFa ? 'ویرایش نام کاربری، ایمیل، بیوگرافی، عکس پروفایل و رمز عبور (شماره تماس ثابت)' : 'Edit profile, email, bio, avatar & password'}
               </span>
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />

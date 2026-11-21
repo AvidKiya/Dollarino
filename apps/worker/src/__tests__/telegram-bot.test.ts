@@ -257,23 +257,23 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
   it('enforces pre-auth phone KYC gate, rejects third-party contacts, unlocks menus after own-contact verification, and issues web magic login', async () => {
     const env = makeEnv();
 
-    // 1. Unverified user gets educational intro + contact verification keyboard (NO main menus yet)
+    // 1. Unverified user gets full educational intro + ONLY native contact verification keyboard (ZERO inline buttons)
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
       update_id: 1,
       message: {
         message_id: 10,
         from: { id: 1001001, first_name: 'علی', username: 'ali_trader' },
         chat: { id: 1001001, type: 'private' },
-        text: '/start',
+        text: '/start web_auth',
       },
     });
 
     const introCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('دلارینو چیست'));
     expect(introCall).toBeTruthy();
-    expect(JSON.stringify(introCall!.body.reply_markup)).toContain('pre_info:engines');
-
-    const kycKbCall = tgCalls.find((c) => c.method === 'sendMessage' && JSON.stringify(c.body.reply_markup).includes('request_contact'));
-    expect(kycKbCall).toBeTruthy();
+    const introMarkup = JSON.stringify(introCall!.body.reply_markup);
+    expect(introMarkup).toContain('request_contact');
+    expect(introMarkup).not.toContain('inline_keyboard');
+    expect(introMarkup).not.toContain('pre_info');
 
     // Attempting menu text before verification stays gated
     tgCalls = [];
@@ -302,7 +302,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     });
     expect(tgCalls[0]?.body.text).toContain('فقط شماره تماس **اکانت تلگرام خودتان**');
 
-    // 3. Sharing own contact verifies KYC & unlocks Simple Mode + main keyboards
+    // 3. Sharing own contact verifies KYC, unlocks Simple Mode + main keyboards, AND immediately issues web magic login link
     tgCalls = [];
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
       update_id: 4,
@@ -314,10 +314,14 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       },
     });
 
-    const verifiedRow = await db.prepare('SELECT phone_number, phone_verified FROM users WHERE telegram_id = ?')
-      .bind('1001001').first<{ phone_number: string; phone_verified: number }>();
+    const verifiedRow = await db.prepare('SELECT phone_number, phone_verified, web_magic_token FROM users WHERE telegram_id = ?')
+      .bind('1001001').first<{ phone_number: string; phone_verified: number; web_magic_token: string }>();
     expect(verifiedRow?.phone_verified).toBe(1);
     expect(verifiedRow?.phone_number).toBe('+989123456789');
+    expect(verifiedRow?.web_magic_token).toMatch(/^tglm_/);
+
+    const autoMagicCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('tg_login='));
+    expect(autoMagicCall).toBeTruthy();
 
     const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('سلام خوش اومدی علی 🌹'));
     expect(welcomeCall).toBeTruthy();
@@ -326,7 +330,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(kbText).toContain('Trust Wallet و DEX');
     expect(kbText).toContain('راهنما 📚');
 
-    // 4. Verified user can switch to Pro Mode & trigger /weblogin
+    // 4. Verified user can trigger /weblogin & /wizard & /myai
     tgCalls = [];
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
       update_id: 5,
@@ -701,16 +705,30 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
   it('verifies HTTP Worker APIs for Extension Key Auth, UI Preferences, DexScreener AI/Trades, Trust Wallet & Admin Overview', async () => {
     const env = makeEnv();
 
-    // 1. Register user via HTTP API
+    // 1. Provision user via Telegram contact verification + magic login (v9.7 Telegram-first flow)
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 700,
+      message: { message_id: 700, from: { id: 7007007, first_name: 'ExtTrader', username: 'ext_trader' }, chat: { id: 7007007, type: 'private' }, text: '/start web_auth' },
+    });
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 701,
+      message: {
+        message_id: 701,
+        from: { id: 7007007, first_name: 'ExtTrader', username: 'ext_trader' },
+        chat: { id: 7007007, type: 'private' },
+        contact: { phone_number: '+989124445566', first_name: 'ExtTrader', user_id: 7007007 },
+      },
+    });
+    const extU = await db.prepare(`SELECT id, web_magic_token FROM users WHERE telegram_id = '7007007'`).first<{ id: string; web_magic_token: string }>();
     const regRes = await worker.fetch(
-      new Request('https://dollarino.test/api/auth/register', {
+      new Request('https://dollarino.test/api/auth/telegram-magic-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'extuser@dollarino.test', username: 'ExtTrader', password: 'password123' }),
+        body: JSON.stringify({ token: extU?.web_magic_token }),
       }),
       env
     );
-    expect(regRes.status).toBe(201);
+    expect(regRes.status).toBe(200);
     const regJson = (await regRes.json()) as { token: string; user: { id: string } };
     expect(regJson.token).toBeTruthy();
 
@@ -988,19 +1006,30 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const env = makeEnv();
 
     // 1. Register & login a web user with telegram_id + avatar proxy check
+    // Register/verify v95trader via Telegram KYC + magic login
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 800,
+      message: { message_id: 800, from: { id: 8008008, first_name: 'v95trader', username: 'v95trader' }, chat: { id: 8008008, type: 'private' }, text: '/start web_auth' },
+    });
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 801,
+      message: {
+        message_id: 801,
+        from: { id: 8008008, first_name: 'v95trader', username: 'v95trader' },
+        chat: { id: 8008008, type: 'private' },
+        contact: { phone_number: '+989125556677', first_name: 'v95trader', user_id: 8008008 },
+      },
+    });
+    const v95User = await db.prepare(`SELECT web_magic_token FROM users WHERE telegram_id = '8008008'`).first<{ web_magic_token: string }>();
     const reg = await worker.fetch(
-      new Request('https://dollarino.local/api/auth/register', {
+      new Request('https://dollarino.local/api/auth/telegram-magic-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: 'v95@dollarino.local',
-          password: 'Password123!',
-          username: 'v95trader',
-        }),
+        body: JSON.stringify({ token: v95User?.web_magic_token }),
       }),
       env
     );
-    expect(reg.status).toBe(201);
+    expect(reg.status).toBe(200);
     const regData = (await reg.json()) as { token: string; user: { id: string } };
     const authHeaders = {
       'Content-Type': 'application/json',
@@ -1123,5 +1152,74 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(backAiRes.status).toBe(200);
     const backAiJson = (await backAiRes.json()) as { ok: boolean; supportMode: string };
     expect(backAiJson.supportMode).toBe('AI_ASSISTANT');
+  });
+
+  it('handles /wizard, /myai, Trust Wallet DApp keyboard button, web_auth__REF_ deep-link, and escapes AWAIT_SUPPORT_MSG cleanly on menu button taps', async () => {
+    const env = makeEnv();
+    // 1. User 1001001 (from earlier test, already verified) invokes /wizard & /myai
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 901,
+      message: { message_id: 901, from: { id: 1001001, first_name: 'علی' }, chat: { id: 1001001, type: 'private' }, text: '/wizard' },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('مرحله ۱ از ۴'))).toBe(true);
+
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 902,
+      message: { message_id: 902, from: { id: 1001001, first_name: 'علی' }, chat: { id: 1001001, type: 'private' }, text: '/myai' },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('هوش مصنوعی شخصی من'))).toBe(true);
+
+    // 2. Trust Wallet DApp button from exchangeSelectionKeyboard opens Trust Wallet menu
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 903,
+      message: {
+        message_id: 903,
+        from: { id: 1001001, first_name: 'علی' },
+        chat: { id: 1001001, type: 'private' },
+        text: '🦊 کیف‌پول Trust Wallet DApp (بدون نیاز به صرافی)',
+      },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('Trust Wallet'))).toBe(true);
+
+    // 3. While in AWAIT_SUPPORT_MSG state, tapping a main menu button like 'تنظیمات ⚙️' escapes support mode and opens settings
+    await db
+      .prepare(`UPDATE users SET telegram_state = ? WHERE telegram_id = '1001001'`)
+      .bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }))
+      .run();
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 904,
+      message: {
+        message_id: 904,
+        from: { id: 1001001, first_name: 'علی' },
+        chat: { id: 1001001, type: 'private' },
+        text: 'تنظیمات ⚙️',
+      },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('تنظیمات'))).toBe(true);
+
+    // 4. Verified user tapping /start web_auth__REF_<code> attaches referral and sends magic login link immediately
+    const referrer = await db.prepare(`SELECT id, referral_code FROM users WHERE telegram_id = '1001001'`)
+      .first<{ id: string; referral_code: string }>();
+    await db.prepare(
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, phone_number, phone_verified)
+       VALUES ('usr_tg_ref_2', 'tg_777001@telegram.dollarino.local', 'NimaFX', 'h', 'user', '777001', '+989128889900', 1)`
+    ).run();
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 905,
+      message: {
+        message_id: 905,
+        from: { id: 777001, first_name: 'نیما' },
+        chat: { id: 777001, type: 'private' },
+        text: `/start web_auth__REF_${referrer!.referral_code}`,
+      },
+    });
+    expect(tgCalls.some((c) => String(c.body.text).includes('tg_login='))).toBe(true);
+    const refLink = await db.prepare(`SELECT status FROM referrals WHERE referred_user_id = 'usr_tg_ref_2'`).first<{ status: string }>();
+    expect(refLink?.status).toBe('REGISTERED');
   });
 });

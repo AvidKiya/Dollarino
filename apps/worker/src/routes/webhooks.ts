@@ -11,15 +11,20 @@ import { handleTelegramUpdate } from '../telegram/handler.js';
 export const webhookRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 const DEFAULT_TG_COMMANDS = [
-  { command: 'start', description: 'شروع و منوی اصلی دلارینو' },
+  { command: 'start', description: 'شروع، احراز هویت و منوی اصلی دلارینو' },
   { command: 'app', description: 'باز کردن مینی‌اپ معاملاتی دلارینو' },
+  { command: 'weblogin', description: 'دریافت لینک ورود فوری با یک کلیک به سایت' },
+  { command: 'wizard', description: 'راه‌اندازی ۴ مرحله‌ای ربات ترید' },
   { command: 'positions', description: 'مشاهده و مدیریت معاملات باز' },
   { command: 'balance', description: 'نمایش موجودی لحظه‌ای حساب' },
-  { command: 'card', description: 'صدور و دریافت تصویر کارت سود دلارینو' },
+  { command: 'wallet', description: 'مدیریت کیف‌پول Trust Wallet DApp' },
+  { command: 'dex', description: 'رادار توکن‌های داغ DexScreener' },
+  { command: 'myai', description: 'آموزش و فعال‌سازی هوش مصنوعی من' },
   { command: 'copy', description: 'کپی‌ترید تاییدشده دلارینو' },
+  { command: 'card', description: 'صدور و دریافت تصویر کارت سود دلارینو' },
   { command: 'settings', description: 'تنظیمات بازار (اسپات/فیوچرز) و جهت' },
-  { command: 'support', description: 'پشتیبانی آنلاین و قوانین ضد کلاهبرداری' },
-  { command: 'help', description: 'راهنمای اتصال صرافی و ربات' },
+  { command: 'support', description: 'پشتیبانی هوشمند ۲۴/۷ و گفتگو با مدیران' },
+  { command: 'help', description: 'راهنمای کامل و امنیت حساب' },
 ];
 
 /**
