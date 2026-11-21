@@ -334,8 +334,9 @@ export function settingsKeyboard(isAdmin: boolean, isSuperAdmin = false, uiMode:
 export function exchangeSelectionKeyboard() {
   return [
     [{ text: '🦊 کیف‌پول Trust Wallet' }],
-    [{ text: 'Toobit (توبیت) 🟢' }, { text: 'KCEX (کی‌سی‌ای‌ایکس) 🔵' }],
-    [{ text: 'Paper Mode (دمو) 🧪' }, { text: 'بازگشت به صفحه قبل 🔙' }],
+    [{ text: 'Toobit (توبیت) 🟢' }, { text: 'Bitunix (بیت‌یونیکس) 🟠' }],
+    [{ text: 'KCEX (کی‌سی‌ای‌ایکس) 🔵' }, { text: 'Paper Mode (دمو) 🧪' }],
+    [{ text: 'بازگشت به صفحه قبل 🔙' }],
   ];
 }
 

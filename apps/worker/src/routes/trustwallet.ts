@@ -20,6 +20,42 @@ export function isValidSolana(addr: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr.trim()) && !addr.trim().startsWith('0x');
 }
 
+export function isValidTon(addr: string): boolean {
+  const clean = addr.trim();
+  return /^(EQ|UQ|kQ|0Q)[A-Za-z0-9_-]{46}$/.test(clean) || /^0:[a-fA-F0-9]{64}$/.test(clean);
+}
+
+export async function fetchSolanaBalance(address: string): Promise<number | null> {
+  try {
+    const res = await fetch('https://api.mainnet-beta.solana.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [address] }),
+      signal: AbortSignal.timeout(5500),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { result?: { value?: number } };
+    if (typeof j.result?.value !== 'number') return null;
+    return j.result.value / 1e9;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchTonBalance(address: string): Promise<number | null> {
+  try {
+    const res = await fetch(`https://toncenter.com/api/v2/getAddressBalance?address=${encodeURIComponent(address)}`, {
+      signal: AbortSignal.timeout(5500),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { ok?: boolean; result?: string };
+    if (!j.ok || !j.result) return null;
+    return Number(j.result) / 1e9;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchEvmNativeBalance(rpcUrl: string, address: string): Promise<number | null> {
   try {
     const res = await fetch(rpcUrl, {
@@ -86,12 +122,13 @@ trustWalletRoutes.get('/status', async (c) => {
   const user = c.get('user');
   const [u, trades, settingsRows] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified, trust_wallet_connected_at, phone_number, phone_verified
+      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified, trust_wallet_connected_at, phone_number, phone_verified
        FROM users WHERE id = ?`
     ).bind(user.id).first<{
       trust_wallet_address: string | null;
       trust_wallet_tron: string | null;
       trust_wallet_solana: string | null;
+      trust_wallet_ton: string | null;
       trust_wallet_verified: number;
       trust_wallet_connected_at: string | null;
       phone_number: string | null;
@@ -111,11 +148,12 @@ trustWalletRoutes.get('/status', async (c) => {
 
   return c.json({
     ok: true,
-    connected: Boolean(u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana),
+    connected: Boolean(u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana || u?.trust_wallet_ton),
     wallet: {
       evmAddress: u?.trust_wallet_address ?? null,
       tronAddress: u?.trust_wallet_tron ?? null,
       solanaAddress: u?.trust_wallet_solana ?? null,
+      tonAddress: u?.trust_wallet_ton ?? null,
       verified: Boolean(u?.trust_wallet_verified),
       connectedAt: u?.trust_wallet_connected_at ?? null,
     },
@@ -145,6 +183,7 @@ trustWalletRoutes.post('/connect', async (c) => {
     evmAddress?: string;
     tronAddress?: string;
     solanaAddress?: string;
+    tonAddress?: string;
     signature?: string;
     signedMessage?: string;
   };
@@ -152,18 +191,22 @@ trustWalletRoutes.post('/connect', async (c) => {
   const evm = body.evmAddress?.trim() || null;
   const tron = body.tronAddress?.trim() || null;
   const sol = body.solanaAddress?.trim() || null;
+  const ton = body.tonAddress?.trim() || null;
 
-  if (!evm && !tron && !sol) {
-    return c.json({ error: 'حداقل یک آدرس معتبر Trust Wallet (EVM / TRON / Solana) وارد یا متصل کنید.' }, 400);
+  if (!evm && !tron && !sol && !ton) {
+    return c.json({ error: 'حداقل یک آدرس معتبر کیف‌پول (EVM / Solana / TON / TRON) وارد یا متصل کنید.' }, 400);
   }
   if (evm && !isValidEvm(evm)) {
-    return c.json({ error: 'فرمت آدرس EVM (BSC/ETH) نامعتبر است؛ باید با 0x و ۴۲ کاراکتر باشد.' }, 400);
+    return c.json({ error: 'فرمت آدرس EVM (ETH/BSC/Base/Arbitrum/Polygon) نامعتبر است؛ باید با 0x و ۴۲ کاراکتر باشد.' }, 400);
   }
   if (tron && !isValidTron(tron)) {
     return c.json({ error: 'فرمت آدرس TRON (TRC20) نامعتبر است؛ باید با T و ۳۴ کاراکتر باشد.' }, 400);
   }
   if (sol && !isValidSolana(sol)) {
     return c.json({ error: 'فرمت آدرس Solana نامعتبر است.' }, 400);
+  }
+  if (ton && !isValidTon(ton)) {
+    return c.json({ error: 'فرمت آدرس TON نامعتبر است (باید با EQ یا UQ شروع شود).' }, 400);
   }
 
   const verified = body.signature && body.signature.length > 20 ? 1 : 0;
@@ -173,31 +216,32 @@ trustWalletRoutes.post('/connect', async (c) => {
       trust_wallet_address = COALESCE(?, trust_wallet_address),
       trust_wallet_tron = COALESCE(?, trust_wallet_tron),
       trust_wallet_solana = COALESCE(?, trust_wallet_solana),
+      trust_wallet_ton = COALESCE(?, trust_wallet_ton),
       trust_wallet_verified = CASE WHEN ? = 1 THEN 1 ELSE trust_wallet_verified END,
       trust_wallet_connected_at = datetime('now')
      WHERE id = ?`
-  ).bind(evm, tron, sol, verified, user.id).run();
+  ).bind(evm, tron, sol, ton, verified, user.id).run();
 
   await c.env.DB.prepare(
     `INSERT INTO audit_logs (id, user_id, category, level, message, details_json) VALUES (?, ?, 'EXCHANGE', 'INFO', ?, ?)`
   ).bind(
     randomId('aud'),
     user.id,
-    `Connected Trust Wallet (${evm ? 'EVM ' : ''}${tron ? 'TRON ' : ''}${sol ? 'SOL' : ''})`,
-    JSON.stringify({ evm, tron, sol, verified: Boolean(verified) })
+    `Connected Multi-Chain Wallet (${evm ? 'EVM ' : ''}${tron ? 'TRON ' : ''}${sol ? 'SOL ' : ''}${ton ? 'TON' : ''})`,
+    JSON.stringify({ evm, tron, sol, ton, verified: Boolean(verified) })
   ).run().catch(() => {});
 
   return c.json({
     ok: true,
     verified: Boolean(verified),
-    message: 'کیف پول Trust Wallet با موفقیت به حساب دلارینو متصل شد.',
+    message: 'کیف پول چندزنجیره‌ای با موفقیت به حساب دلارینو متصل شد.',
   });
 });
 
 trustWalletRoutes.post('/disconnect', async (c) => {
   const user = c.get('user');
   await c.env.DB.prepare(
-    `UPDATE users SET trust_wallet_address = NULL, trust_wallet_tron = NULL, trust_wallet_solana = NULL, trust_wallet_verified = 0 WHERE id = ?`
+    `UPDATE users SET trust_wallet_address = NULL, trust_wallet_tron = NULL, trust_wallet_solana = NULL, trust_wallet_ton = NULL, trust_wallet_verified = 0 WHERE id = ?`
   ).bind(user.id).run();
   return c.json({ ok: true });
 });
@@ -205,13 +249,23 @@ trustWalletRoutes.post('/disconnect', async (c) => {
 trustWalletRoutes.post('/balance', async (c) => {
   const user = c.get('user');
   const u = await c.env.DB.prepare(
-    `SELECT trust_wallet_address, trust_wallet_tron FROM users WHERE id = ?`
-  ).bind(user.id).first<{ trust_wallet_address: string | null; trust_wallet_tron: string | null }>();
+    `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton FROM users WHERE id = ?`
+  ).bind(user.id).first<{
+    trust_wallet_address: string | null;
+    trust_wallet_tron: string | null;
+    trust_wallet_solana: string | null;
+    trust_wallet_ton: string | null;
+  }>();
 
-  const [bnb, eth, bscUsdt, tronBal] = await Promise.all([
+  const [bnb, eth, baseEth, arbEth, polygonPol, bscUsdt, solBal, tonBal, tronBal] = await Promise.all([
     u?.trust_wallet_address ? fetchEvmNativeBalance('https://bsc-dataseed.binance.org', u.trust_wallet_address) : Promise.resolve(null),
-    u?.trust_wallet_address ? fetchEvmNativeBalance('https://cloudflare-eth.com', u.trust_wallet_address) : Promise.resolve(null),
+    u?.trust_wallet_address ? fetchEvmNativeBalance('https://ethereum-rpc.publicnode.com', u.trust_wallet_address) : Promise.resolve(null),
+    u?.trust_wallet_address ? fetchEvmNativeBalance('https://mainnet.base.org', u.trust_wallet_address) : Promise.resolve(null),
+    u?.trust_wallet_address ? fetchEvmNativeBalance('https://arb1.arbitrum.io/rpc', u.trust_wallet_address) : Promise.resolve(null),
+    u?.trust_wallet_address ? fetchEvmNativeBalance('https://polygon-rpc.com', u.trust_wallet_address) : Promise.resolve(null),
     u?.trust_wallet_address ? fetchBscUsdtBalance(u.trust_wallet_address) : Promise.resolve(null),
+    u?.trust_wallet_solana ? fetchSolanaBalance(u.trust_wallet_solana) : Promise.resolve(null),
+    u?.trust_wallet_ton ? fetchTonBalance(u.trust_wallet_ton) : Promise.resolve(null),
     u?.trust_wallet_tron ? fetchTronBalances(u.trust_wallet_tron) : Promise.resolve(null),
   ]);
 
@@ -220,7 +274,12 @@ trustWalletRoutes.post('/balance', async (c) => {
     balances: {
       bnb,
       eth,
+      baseEth,
+      arbEth,
+      polygonPol,
       bscUsdt,
+      sol: solBal,
+      ton: tonBal,
       trx: tronBal?.trx ?? null,
       trc20Usdt: tronBal?.usdt ?? null,
     },

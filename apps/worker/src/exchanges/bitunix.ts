@@ -98,7 +98,42 @@ export class BitunixFuturesAdapter implements IExchangeAdapter {
   }
 
   async getPositions(): Promise<ExchangePosition[]> {
-    return [];
+    try {
+      const headers = await this.signHeaders('', '');
+      const res = await fetch(`${this.baseUrl}/api/v1/futures/position/get_pending_positions`, {
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return [];
+      const json = (await res.json()) as {
+        code?: number;
+        data?: Array<{
+          symbol?: string;
+          side?: string;
+          qty?: string;
+          avgOpenPrice?: string;
+          markPrice?: string;
+          unrealizedPNL?: string;
+          leverage?: number;
+          margin?: string;
+        }>;
+      };
+      if (json.code !== 0 || !Array.isArray(json.data)) return [];
+      return json.data
+        .filter((p) => Number(p.qty || 0) > 0)
+        .map((p) => ({
+          symbol: normalizeCanonicalSymbol(p.symbol || ''),
+          direction: String(p.side).toUpperCase() === 'SHORT' || String(p.side).toUpperCase() === 'SELL' ? 'SHORT' : 'LONG',
+          quantity: String(p.qty || '0'),
+          entryPrice: String(p.avgOpenPrice || '0'),
+          markPrice: String(p.markPrice || p.avgOpenPrice || '0'),
+          unrealizedPnl: String(p.unrealizedPNL || '0'),
+          leverage: Number(p.leverage || 10),
+          marginUsed: String(p.margin || '0'),
+        }));
+    } catch {
+      return [];
+    }
   }
 
   async setLeverage(symbol: string, leverage: number): Promise<void> {

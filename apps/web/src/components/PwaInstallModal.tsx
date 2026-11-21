@@ -46,7 +46,7 @@ export function PwaInstallModal({
           </div>
         ) : (
           <>
-            {canPromptNatively && (
+            {canPromptNatively ? (
               <button
                 onClick={handleInstall}
                 className="w-full py-3 rounded-2xl btn-cobalt font-extrabold text-sm flex items-center justify-center gap-2 transition"
@@ -54,6 +54,17 @@ export function PwaInstallModal({
                 <Download className="w-4 h-4" />
                 <span>{isFa ? 'نصب فوری اپلیکیشن روی دستگاه شما' : 'Install Dollarino App Now'}</span>
               </button>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/25 text-xs text-main space-y-1">
+                <p className="font-black">
+                  {isFa ? 'نکته مهم برای نصب روی گوشی و ویندوز:' : 'Quick Install Tip:'}
+                </p>
+                <p className="text-dim leading-relaxed">
+                  {isFa
+                    ? 'اگر این صفحه از داخل تلگرام باز شده است، از منوی بالای صفحه گزینه «Open in Chrome / Safari» (باز کردن در مرورگر) را بزنید تا گزینه نصب مستقیم اپلیکیشن ظاهر شود.'
+                    : 'If opened inside Telegram in-app browser, tap the top menu → "Open in Chrome / Safari" so the direct app installer appears.'}
+                </p>
+              </div>
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">

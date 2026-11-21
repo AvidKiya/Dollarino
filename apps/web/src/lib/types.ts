@@ -33,6 +33,7 @@ export interface AuthUserInfo {
   trust_wallet_address?: string | null;
   trust_wallet_tron?: string | null;
   trust_wallet_solana?: string | null;
+  trust_wallet_ton?: string | null;
   trust_wallet_verified?: boolean;
   ui_mode?: 'simple' | 'pro';
   mobile_widgets?: string[];

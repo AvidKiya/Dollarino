@@ -4,6 +4,7 @@ import { authRoutes, requireAuth, type AppVariables } from './auth.js';
 import { hmacSha256Hex } from './crypto.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
 import { reconcileOpenPositionsForUser } from './engine/executor.js';
+import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
 import { adminRoutes } from './routes/admin.js';
@@ -51,11 +52,12 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '9.7.0',
+    version: '9.8.1',
     openSource: false,
     paidSubscriptions: true,
     centralMultiAI: true,
     multiCoinAutonomous: true,
+    alwaysOnSignalsAndAiIntel: true,
     primaryStrategy: 'dollarino_v01',
     brandNames: {
       ai: 'هوش مصنوعی دلارینو',
@@ -65,6 +67,7 @@ app.get('/api/health', (c) => {
     aiProviders: ['deepseek', 'anthropic', 'openai', 'gemini', 'openai_compatible'],
     exchanges: {
       toobit: 'LIVE_SPOT_AND_FUTURES_SUPPORTED',
+      bitunix: 'LIVE_FUTURES_SUPPORTED',
       kcex: 'MIRROR_0PCT_MAKER_AND_WEB_SESSION',
       paper: 'SIMULATOR_LIVE_QUOTES',
     },
@@ -82,6 +85,7 @@ app.get('/api/health', (c) => {
       telegramFirstRegistration: true,
       profileEditorWithLockedPhone: true,
       telegramLoginWidget: true,
+      alwaysOnSignalsAndAiIntel: true,
     },
     timestamp: new Date().toISOString(),
   });
@@ -353,9 +357,9 @@ app.all('*', async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    // 1-minute watchdog across all running bots & open trades
+    // 1-minute watchdog across running bots, open trades, always-on signal radar & AI market intel
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '9.7.0-ux').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '9.8.1').catch(() => {});
 
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);
@@ -368,6 +372,9 @@ export default {
       for (const u of openUsers.results) {
         await reconcileOpenPositionsForUser(env, u.user_id).catch(() => {});
       }
+
+      await runAlwaysOnSignalRadar(env).catch(() => {});
+      await runAlwaysOnAiIntel(env).catch(() => {});
     })());
   },
 };

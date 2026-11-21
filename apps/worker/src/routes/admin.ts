@@ -32,7 +32,7 @@ adminRoutes.get('/overview', async (c) => {
   const [users, trades, signals, bots, settings, aiSummary, plans, subs, openSupport, copyTraders, dexStats, revRow] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username,
-              phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified, ui_mode,
+              phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified, ui_mode,
               wallet_balance_usdt, created_at, last_active_at
        FROM users ORDER BY created_at DESC LIMIT 250`
     ).all<{
@@ -48,6 +48,7 @@ adminRoutes.get('/overview', async (c) => {
       trust_wallet_address: string | null;
       trust_wallet_tron: string | null;
       trust_wallet_solana: string | null;
+      trust_wallet_ton: string | null;
       trust_wallet_verified: number;
       ui_mode: string | null;
       wallet_balance_usdt: number;
@@ -91,7 +92,7 @@ adminRoutes.get('/overview', async (c) => {
   });
 
   const phoneVerifiedCount = enrichedUsers.filter((u) => u.phone_verified === 1).length;
-  const trustWalletConnectedCount = enrichedUsers.filter((u) => Boolean(u.trust_wallet_address || u.trust_wallet_tron || u.trust_wallet_solana)).length;
+  const trustWalletConnectedCount = enrichedUsers.filter((u) => Boolean(u.trust_wallet_address || u.trust_wallet_tron || u.trust_wallet_solana || u.trust_wallet_ton)).length;
 
   return c.json({
     users: enrichedUsers,

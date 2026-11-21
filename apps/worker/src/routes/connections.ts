@@ -66,7 +66,7 @@ connectionRoutes.get('/exchanges', async (c) => {
 connectionRoutes.post('/exchanges', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<{
-    provider: 'paper' | 'toobit' | 'kcex' | string;
+    provider: 'paper' | 'toobit' | 'bitunix' | 'kcex' | string;
     label?: string;
     apiKey?: string;
     apiSecret?: string;
@@ -77,13 +77,13 @@ connectionRoutes.post('/exchanges', async (c) => {
   }>();
 
   if (!body.provider) return c.json({ error: 'Provider is required' }, 400);
-  if (body.provider !== 'paper' && body.provider !== 'toobit' && body.provider !== 'kcex') {
-    return c.json({ error: 'Only Toobit, KCEX, and Simulation Account are supported in Dollarino.' }, 400);
+  if (body.provider !== 'paper' && body.provider !== 'toobit' && body.provider !== 'bitunix' && body.provider !== 'kcex') {
+    return c.json({ error: 'Only Toobit, Bitunix, KCEX, and Simulation Account are supported in Dollarino.' }, 400);
   }
 
-  const provider = body.provider as 'paper' | 'toobit' | 'kcex';
-  if (provider === 'toobit' && (!body.apiKey || !body.apiSecret)) {
-    return c.json({ error: 'API Key and API Secret are required for Toobit' }, 400);
+  const provider = body.provider as 'paper' | 'toobit' | 'bitunix' | 'kcex';
+  if ((provider === 'toobit' || provider === 'bitunix') && (!body.apiKey || !body.apiSecret)) {
+    return c.json({ error: `API Key and API Secret are required for ${provider === 'bitunix' ? 'Bitunix' : 'Toobit'}` }, 400);
   }
 
   const ent = await resolveUserEntitlement(c.env.DB, user);
@@ -133,7 +133,13 @@ connectionRoutes.post('/exchanges', async (c) => {
 
   const label =
     body.label?.trim() ||
-    (provider === 'kcex' ? 'KCEX Futures (0% Maker / Mirror)' : provider === 'paper' ? 'Simulation Account' : 'Toobit Futures');
+    (provider === 'kcex'
+      ? 'KCEX Futures (0% Maker / Mirror)'
+      : provider === 'bitunix'
+        ? 'Bitunix Futures'
+        : provider === 'paper'
+          ? 'Simulation Account'
+          : 'Toobit Futures');
 
   await c.env.DB.prepare(
     `INSERT INTO exchange_connections (id, user_id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials)
@@ -169,7 +175,7 @@ connectionRoutes.patch('/exchanges/:id/proxy', async (c) => {
   const body = await c.req.json<{ proxyUrl?: string; proxySecret?: string }>();
   const row = await c.env.DB.prepare(
     `SELECT id, provider, encrypted_credentials FROM exchange_connections WHERE id = ? AND user_id = ?`
-  ).bind(id, user.id).first<{ id: string; provider: 'paper' | 'toobit' | 'kcex'; encrypted_credentials: string }>();
+  ).bind(id, user.id).first<{ id: string; provider: 'paper' | 'toobit' | 'bitunix' | 'kcex'; encrypted_credentials: string }>();
   if (!row) return c.json({ error: 'Connection not found' }, 404);
 
   let normalizedProxy: string | undefined;
@@ -231,7 +237,7 @@ connectionRoutes.post('/exchanges/:id/test', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const row = await c.env.DB.prepare('SELECT provider FROM exchange_connections WHERE id = ? AND user_id = ?')
-    .bind(id, user.id).first<{ provider: 'paper' | 'toobit' | 'kcex' }>();
+    .bind(id, user.id).first<{ provider: 'paper' | 'toobit' | 'bitunix' | 'kcex' }>();
   if (!row) return c.json({ error: 'Not found' }, 404);
 
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, row.provider);

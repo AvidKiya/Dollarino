@@ -18,6 +18,7 @@ import {
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { buildTrustWalletDappOpenUrl, sendBep20UsdtViaTrustWallet } from '../lib/trustwallet';
+import { ExchangeLogo, WalletLogo } from '../components/BrandLogos';
 
 export interface UserEntitlement {
   hasPaidPlan: boolean;
@@ -325,13 +326,16 @@ export function SubscriptionPage({
   return (
     <div className="space-y-6">
       {/* Hero License Banner */}
-      <div className="hero-cobalt p-6 text-white flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
-            <Crown className={`w-6 h-6 ${entitlement?.hasPaidPlan ? 'text-[#55ff94]' : 'text-[#fde047]'}`} />
-          </div>
+      <div className="hero-cobalt p-6 text-white flex flex-col lg:flex-row lg:items-center justify-between gap-4 overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <img
+            src="/images/vip-club-banner.png"
+            alt="Dollarino VIP Subscriptions"
+            className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover border border-white/20 shadow-lg shrink-0 mx-auto sm:mx-0"
+          />
           <div>
             <div className="flex items-center gap-2 flex-wrap">
+              <Crown className={`w-5 h-5 ${entitlement?.hasPaidPlan ? 'text-[#55ff94]' : 'text-[#fde047]'}`} />
               <h1 className="text-lg font-black">
                 {isFa ? entitlement?.planNameFa || 'وضعیت اشتراک' : entitlement?.planNameEn || 'Subscription Status'}
               </h1>
@@ -345,11 +349,11 @@ export function SubscriptionPage({
                     : 'Subscription Required'}
               </span>
             </div>
-            <p className="text-xs text-white/80 mt-1">
+            <p className="text-xs text-white/85 mt-1.5 leading-relaxed max-w-2xl">
               {entitlement?.hasPaidPlan
                 ? isFa
-                  ? 'دسترسی کامل به ترید هوشمند اتومات، هوش مصنوعی من، کپی‌ترید تاییدشده، استراتژی شخصی و صرافی‌های Toobit و KCEX فعال است.'
-                  : 'Full access unlocked: Auto AI Trading, My Trainable AI, Verified Copy-Trade, Custom IDE & Live Toobit/KCEX.'
+                  ? 'دسترسی کامل به ترید هوشمند اتومات، هوش مصنوعی من، کپی‌ترید تاییدشده، استراتژی شخصی و صرافی‌های Toobit، Bitunix و KCEX فعال است.'
+                  : 'Full access unlocked: Auto AI Trading, My Trainable AI, Verified Copy-Trade, Custom IDE & Live Toobit/Bitunix/KCEX.'
                 : isFa
                   ? 'برای استفاده از ترید هوشمند، هوش مصنوعی من، کپی‌ترید تاییدشده و استراتژی شخصی، ابتدا یکی از اشتراک‌های زیر را انتخاب و فعال کنید.'
                   : 'Activate a subscription plan below to unlock Auto AI Trading, My AI, Verified Copy-Trade, and Custom Strategies.'}
@@ -362,7 +366,7 @@ export function SubscriptionPage({
             { ok: entitlement?.hasPaidPlan, label: isFa ? 'ترید هوشمند اتومات AI' : 'Auto AI Trading' },
             { ok: entitlement?.allowAiTrading, label: isFa ? 'هوش مصنوعی من' : 'My Trainable AI' },
             { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی‌ترید تاییدشده' : 'Verified Copy-Trade' },
-            { ok: entitlement?.allowLiveTrading, label: isFa ? 'اتصال صرافی Toobit / KCEX' : 'Live Toobit & KCEX' },
+            { ok: entitlement?.allowLiveTrading, label: isFa ? 'صرافی Toobit / Bitunix / KCEX' : 'Live Toobit / Bitunix / KCEX' },
           ].map((e) => (
             <span
               key={e.label}
@@ -838,7 +842,7 @@ export function SubscriptionPage({
                 paymentMethod === 'TRUST_WALLET_BEP20' ? 'btn-gold' : 'surface-soft text-sub'
               }`}
             >
-              <Wallet className="w-5 h-5 shrink-0" />
+              <WalletLogo wallet="trustwallet" size={28} />
               <div>
                 <div className="font-extrabold">Trust Wallet (BEP20)</div>
                 <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT · کارمزد ناچیز</div>

@@ -19,7 +19,7 @@ const USER_PROFILE_COLUMNS = `
   wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
   COALESCE(has_custom_password, 0) as has_custom_password, display_bio,
   COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) as referral_code,
-  trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
+  trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified,
   ui_mode, mobile_widgets_json, extension_api_key, created_at
 `;
 
@@ -848,7 +848,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
   }
 
   await c.env.DB.prepare(
-    `UPDATE users SET web_magic_token = NULL, web_magic_expires_at = NULL, last_active_at = datetime('now') WHERE id = ?`
+    `UPDATE users SET last_active_at = datetime('now') WHERE id = ?`
   ).bind(row.id).run();
   if (row.telegram_id && !row.avatar_url) {
     const synced = await syncTelegramAvatarForUser(c.env, row.id, row.telegram_id);

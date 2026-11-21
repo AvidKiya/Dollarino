@@ -13,9 +13,12 @@ import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import {
   fetchBscUsdtBalance,
   fetchEvmNativeBalance,
+  fetchSolanaBalance,
+  fetchTonBalance,
   fetchTronBalances,
   isValidEvm,
   isValidSolana,
+  isValidTon,
   isValidTron,
 } from '../routes/trustwallet.js';
 import {
@@ -86,7 +89,7 @@ interface TelegramUpdate {
 
 interface TelegramStepState extends Partial<AdminStepState> {
   step: string;
-  provider?: 'toobit' | 'kcex';
+  provider?: 'toobit' | 'bitunix' | 'kcex';
   apiKey?: string;
   subId?: string;
   pendingStartArg?: string;
@@ -110,6 +113,7 @@ interface ProvisionedUserRow {
   trust_wallet_address?: string | null;
   trust_wallet_tron?: string | null;
   trust_wallet_solana?: string | null;
+  trust_wallet_ton?: string | null;
   ui_mode?: string | null;
   extension_api_key?: string | null;
 }
@@ -369,7 +373,7 @@ async function getOrProvisionTelegramUser(
 
   let row = await env.DB.prepare(
     `SELECT id, email, username, role, is_blocked, telegram_state, telegram_admin_perms, admin_panel_last_active_at,
-            wallet_balance_usdt, phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana,
+            wallet_balance_usdt, phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton,
             ui_mode, extension_api_key
      FROM users WHERE telegram_id = ?`
   ).bind(tgId).first<ProvisionedUserRow>();
@@ -405,6 +409,7 @@ async function getOrProvisionTelegramUser(
       trust_wallet_address: null,
       trust_wallet_tron: null,
       trust_wallet_solana: null,
+      trust_wallet_ton: null,
       ui_mode: 'simple',
       extension_api_key: null,
     };
@@ -492,17 +497,23 @@ async function sendWebMagicLoginLink(env: Env, bot: TelegramBotClient, chatId: s
     `UPDATE users SET web_magic_token = ?, web_magic_expires_at = ? WHERE id = ?`
   ).bind(magicToken, expiresAt, userId).run();
 
-  const loginUrl = `${webAppUrl}/?tg_login=${encodeURIComponent(magicToken)}`;
+  const cleanBase = webAppUrl.replace(/\/$/, '');
+  const loginUrl = `${cleanBase}/?tg_login=${encodeURIComponent(magicToken)}`;
+  const browserInstallUrl = `${cleanBase}/?tg_login=${encodeURIComponent(magicToken)}&install=1`;
   const kb: InlineKeyboardButton[][] = loginUrl.startsWith('https://')
-    ? [[{ text: '🌐 ورود فوری با یک کلیک به حساب کاربری در سایت', url: loginUrl, style: 'success' }]]
+    ? [
+        [{ text: '📱 باز کردن مینی‌اپ تلگرام (ورود خودکار)', web_app: { url: loginUrl }, style: 'success' }],
+        [{ text: '🌐 باز کردن در گوگل / مرورگر (و نصب برنامه)', url: browserInstallUrl, style: 'primary' }],
+      ]
     : [];
 
   await bot.sendMessage(
     chatId,
-    `🌐 **لینک اختصاصی ورود به سایت دلارینو آماده شد** (معتبر به مدت ۱۰ دقیقه):\n\n` +
+    `🌐 **لینک اختصاصی ورود به سایت و مینی‌اپ دلارینو آماده شد** (معتبر به مدت ۱۰ دقیقه):\n\n` +
       `${loginUrl}\n\n` +
-      `✅ با کلیک روی لینک بالا، حساب تلگرام شما به‌صورت مستقیم وارد سایت می‌شود.\n` +
-      `✏️ از بخش «مدیریت حساب» در پنل خودتان می‌توانید نام نمایشی، ایمیل، رمز عبور، بیوگرافی و عکس پروفایل را تغییر دهید (فقط شماره تماس تاییدشده شما به دلیل امنیت حساب ثابت می‌ماند).`,
+      `📱 **دکمه اول (مینی‌اپ):** همین جا داخل تلگرام با حساب تاییدشده خودتان باز می‌شود.\n` +
+      `🌐 **دکمه دوم (گوگل / مرورگر):** سایت در مرورگر باز می‌شود تا هم وارد حساب شوید و هم اپلیکیشن دلارینو را نصب کنید.\n` +
+      `✏️ از بخش «مدیریت حساب» می‌توانید نام نمایشی، ایمیل، رمز عبور، بیوگرافی و عکس پروفایل را تغییر دهید.`,
     { inlineKeyboard: kb.length ? kb : undefined }
   );
 }
@@ -534,7 +545,7 @@ async function showAccountCard(env: Env, bot: TelegramBotClient, chatId: string 
     email: user.email,
     phoneNumber: user.phone_number,
     phoneVerified: Boolean(user.phone_verified),
-    trustWalletAddress: user.trust_wallet_address || user.trust_wallet_tron || user.trust_wallet_solana,
+    trustWalletAddress: user.trust_wallet_address || user.trust_wallet_tron || user.trust_wallet_solana || user.trust_wallet_ton,
     uiMode: getUserUiMode(user),
     walletUsdt: Number(user.wallet_balance_usdt ?? 0),
     tomanRate: Number(rateStr) || 70000,
@@ -678,6 +689,14 @@ async function showTrustWalletMenu(
       );
       parts.push(`• موجودی ETH: ${eth !== null ? eth.toFixed(4) : '—'} ETH`);
     }
+    if (user.trust_wallet_solana) {
+      const sol = await fetchSolanaBalance(user.trust_wallet_solana);
+      if (sol !== null) parts.push(`• موجودی Solana: ${sol.toFixed(4)} SOL`);
+    }
+    if (user.trust_wallet_ton) {
+      const ton = await fetchTonBalance(user.trust_wallet_ton);
+      if (ton !== null) parts.push(`• موجودی TON: ${ton.toFixed(4)} TON`);
+    }
     if (user.trust_wallet_tron) {
       const tr = await fetchTronBalances(user.trust_wallet_tron);
       if (tr) parts.push(`• موجودی TRON: ${tr.trx.toFixed(2)} TRX | ${tr.usdt.toFixed(2)} USDT (TRC20)`);
@@ -692,32 +711,34 @@ async function showTrustWalletMenu(
   )}`;
 
   const msgText =
-    `🦊 **هسته مرکزی Trust Wallet DApp و ترید غیرمتمرکز**\n` +
+    `🦊 **هسته مرکزی چندزنجیره‌ای Trust Wallet و رادار DEX**\n` +
     `وضعیت سرویس DApp: ${walletEnabled === 'true' ? '🟢 فعال' : '🔴 غیرفعال'}\n\n` +
-    `🔐 **کیف‌پول‌های متصل شما (غیرامانی / کنترل کامل نزد خودتان):**\n` +
-    `• شبکه EVM (BSC / ETH / Base / Arbitrum): \`${user.trust_wallet_address || 'ثبت‌نشده'}\`\n` +
-    `• شبکه TRON (TRC20): \`${user.trust_wallet_tron || 'ثبت‌نشده'}\`\n` +
+    `🔐 **کیف‌پول‌های متصل شما (پوشش همه شبکه‌ها):**\n` +
+    `• شبکه EVM (ETH / BSC / Base / Arbitrum / Polygon / AVAX): \`${user.trust_wallet_address || 'ثبت‌نشده'}\`\n` +
     `• شبکه Solana (SPL): \`${user.trust_wallet_solana || 'ثبت‌نشده'}\`\n` +
+    `• شبکه TON (Jetton / تلگرام): \`${user.trust_wallet_ton || 'ثبت‌نشده'}\`\n` +
+    `• شبکه TRON (TRC20): \`${user.trust_wallet_tron || 'ثبت‌نشده'}\`\n` +
     balLines +
-    `\n📡 **ترید مستقیم بدون نیاز به صرافی متمرکز (Toobit/KCEX):**\n` +
-    `با دکمه‌های زیر می‌توانید توکن‌های **DexScreener** را مستقیماً از طریق مرورگر DApp در Trust Wallet (${dexPref}) سوآپ و مدیریت کنید یا اشتراک خود را با BEP20 / TRC20 بپردازید.\n` +
+    `\n📡 **ترید مستقیم روی همه شبکه‌ها (بدون نیاز به صرافی متمرکز):**\n` +
+    `با دکمه‌های زیر می‌توانید توکن‌های **DexScreener** را روی هر شبکه از طریق مرورگر DApp در Trust Wallet (${dexPref}) سوآپ کنید یا اشتراک خود را بپردازید.\n` +
     `\n🏦 آدرس دریافت پلتفرم BEP20: \`${bep20Recv}\`\n` +
     `🏦 آدرس دریافت پلتفرم TRC20: \`${trc20Recv}\``;
 
   const kb: InlineKeyboardButton[][] = [
     [{ text: '🌐 باز کردن دلارینو در مرورگر Trust Wallet', url: twDappDeepLink, style: 'success' }],
     [
-      { text: '✏️ ثبت/ویرایش آدرس EVM (0x)', callback_data: 'tg_tw_set:evm', style: 'primary' },
-      { text: '✏️ ثبت آدرس TRON (T...)', callback_data: 'tg_tw_set:tron' },
+      { text: '✏️ آدرس EVM (0x)', callback_data: 'tg_tw_set:evm', style: 'primary' },
+      { text: '✏️ آدرس Solana', callback_data: 'tg_tw_set:solana' },
     ],
     [
-      { text: '✏️ ثبت آدرس Solana', callback_data: 'tg_tw_set:solana' },
-      { text: '💰 استعلام موجودی آن‌چین', callback_data: 'tg_tw_bal', style: 'success' },
+      { text: '✏️ آدرس TON', callback_data: 'tg_tw_set:ton' },
+      { text: '✏️ آدرس TRON (T...)', callback_data: 'tg_tw_set:tron' },
     ],
     [
+      { text: '💰 استعلام موجودی همه شبکه‌ها', callback_data: 'tg_tw_bal', style: 'success' },
       { text: '🔍 اسکن توکن داغ DexScreener', callback_data: 'tg_dex_trending', style: 'primary' },
-      { text: '💳 پرداخت اشتراک با تراست‌ولت', callback_data: 'tg_open_sub' },
     ],
+    [{ text: '💳 پرداخت اشتراک با تراست‌ولت', callback_data: 'tg_open_sub' }],
     [{ text: '🔙 بازگشت به منوی سریع', callback_data: 'tg_acc:trust' }],
   ];
 
@@ -1600,6 +1621,10 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         solana: {
           step: 'AWAIT_TW_SOLANA',
           prompt: '🦊 لطفاً آدرس کیف‌پول **Trust Wallet شبکه Solana (SPL)** خود را ارسال کنید:',
+        },
+        ton: {
+          step: 'AWAIT_TW_TON',
+          prompt: '💎 لطفاً آدرس کیف‌پول **TON (شروع با EQ یا UQ)** خود را ارسال کنید:',
         },
       };
       const item = stepMap[chainKind];
@@ -2884,6 +2909,24 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (state.step === 'AWAIT_TW_TON') {
+      const addr = text.trim();
+      if (!isValidTon(addr)) {
+        await bot.sendMessage(chatId, '❌ فرمت آدرس TON نامعتبر است! آدرس باید با `EQ` یا `UQ` شروع شود:');
+        return { ok: true };
+      }
+      await env.DB.prepare(
+        `UPDATE users SET trust_wallet_ton = ?, trust_wallet_verified = 1, trust_wallet_connected_at = datetime('now') WHERE id = ?`
+      ).bind(addr, user.id).run();
+      user.trust_wallet_ton = addr;
+      await clearState();
+      await bot.sendMessage(chatId, `✅ آدرس TON تراست‌ولت شما ثبت شد:\n\`${addr}\``, {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      });
+      await showTrustWalletMenu(env, bot, chatId, user, webAppUrl, undefined, true);
+      return { ok: true };
+    }
+
     if (state.step === 'AWAIT_DEX_SEARCH') {
       const q = text.trim();
       await clearState();
@@ -3023,10 +3066,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await bot.sendMessage(
       chatId,
       `🔗 انتخاب بستر معاملاتی دلارینو\n\n` +
-      `• 🦊 Trust Wallet DApp: ترید مستقیم روی شبکه بلاکچین و توکن‌های DexScreener (بدون نیاز به صرافی متمرکز)\n` +
+      `• 🦊 Trust Wallet DApp: ترید مستقیم روی همه شبکه‌ها (EVM, Solana, TON, TRON)\n` +
       `• 🟢 Toobit (توبیت): اتصال مستقیم API فیوچرز با اجرای سریع\n` +
-      `• 🔵 KCEX (کی‌سی‌ای‌ایکس): ۰٪ کارمزد میرر و همگام‌سازی خودکار\n` +
-      `• 🧪 Paper Mode: شبیه‌ساز آزمایشی (نیازمند اشتراک فعال)\n\n` +
+      `• 🟠 Bitunix (بیت‌یونیکس): اتصال مستقیم فیوچرز بدون نیاز به رله و بدون KYC اجباری\n` +
+      `• 🔵 KCEX (کی‌سی‌ای‌ایکس): ۰٪ کارمزد میکر (Mirror و لینک مستقیم پوزیشن)\n` +
+      `• 🧪 Paper Mode: شبیه‌ساز آزمایشی\n\n` +
       `گزینه مورد نظر خود را انتخاب کنید:`,
       { replyKeyboard: exchangeSelectionKeyboard() }
     );
@@ -3115,6 +3159,19 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       `🟢 راهنمای اتصال به صرافی Toobit:\n` +
       `۱. وارد اپلیکیشن یا سایت Toobit > بخش API Management شوید.\n` +
       `۲. یک کلید با دسترسی Trade / Futures Trade بسازید (دسترسی Withdraw را حتماً خاموش بگذارید).\n` +
+      `۳. اکنون API Key خود را ارسال کنید:`,
+      { removeKeyboard: true }
+    );
+    return { ok: true };
+  }
+
+  if (text.startsWith('Bitunix')) {
+    await setState({ step: 'AWAIT_API_KEY', provider: 'bitunix' });
+    await bot.sendMessage(
+      chatId,
+      `🟠 راهنمای اتصال به صرافی Bitunix:\n` +
+      `۱. وارد اپلیکیشن یا سایت Bitunix > بخش API Management شوید.\n` +
+      `۲. کلید API را با دسترسی Futures Trade بسازید (دسترسی Withdraw را خاموش بگذارید).\n` +
       `۳. اکنون API Key خود را ارسال کنید:`,
       { removeKeyboard: true }
     );

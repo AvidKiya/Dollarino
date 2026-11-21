@@ -88,6 +88,13 @@ const TRUST_COIN_IDS: Record<string, number> = {
   solana: 501,
   ton: 607,
   tron: 195,
+  sui: 784,
+  aptos: 637,
+  linea: 59144,
+  blast: 81457,
+  pulsechain: 369,
+  cronos: 25,
+  fantom: 250,
 };
 
 export function buildTrustWalletSwapLinks(chainId: string, tokenAddress: string, pairUrl?: string): TrustWalletDexLinks {
@@ -111,6 +118,12 @@ export function buildTrustWalletSwapLinks(chainId: string, tokenAddress: string,
   } else if (c === 'polygon') {
     dexName = 'Uniswap (Polygon)';
     swapUrl = `https://app.uniswap.org/swap?chain=polygon&outputCurrency=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'optimism') {
+    dexName = 'Uniswap (Optimism)';
+    swapUrl = `https://app.uniswap.org/swap?chain=optimism&outputCurrency=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'avalanche') {
+    dexName = 'LFJ / TraderJoe (AVAX)';
+    swapUrl = `https://lfj.gg/avalanche/trade?outputCurrency=${encodeURIComponent(tokenAddress)}`;
   } else if (c === 'solana') {
     dexName = 'Jupiter (Solana)';
     swapUrl = `https://jup.ag/swap/SOL-${encodeURIComponent(tokenAddress)}`;
@@ -120,6 +133,24 @@ export function buildTrustWalletSwapLinks(chainId: string, tokenAddress: string,
   } else if (c === 'tron') {
     dexName = 'SunSwap (TRON)';
     swapUrl = `https://sunswap.com/#/home?tokenAddress=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'sui') {
+    dexName = 'Cetus (Sui)';
+    swapUrl = `https://app.cetus.zone/swap?from=0x2::sui::SUI&to=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'aptos') {
+    dexName = 'Liquidswap (Aptos)';
+    swapUrl = `https://liquidswap.com/#/`;
+  } else if (c === 'linea') {
+    dexName = 'Lynex (Linea)';
+    swapUrl = `https://app.lynex.finance/swap?outputCurrency=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'blast') {
+    dexName = 'Thruster (Blast)';
+    swapUrl = `https://app.thruster.finance/?token2=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'pulsechain') {
+    dexName = 'PulseX (PulseChain)';
+    swapUrl = `https://app.pulsex.com/swap?outputCurrency=${encodeURIComponent(tokenAddress)}`;
+  } else if (c === 'cronos') {
+    dexName = 'VVS Finance (Cronos)';
+    swapUrl = `https://vvs.finance/swap?outputCurrency=${encodeURIComponent(tokenAddress)}`;
   }
 
   const trustWalletDappUrl = `https://link.trustwallet.com/open_url?coin_id=${coinId}&url=${encodeURIComponent(swapUrl)}`;
@@ -221,6 +252,13 @@ const GECKO_NETWORK_MAP: Record<string, string> = {
   ton: 'ton',
   avax: 'avalanche',
   optimism: 'optimism',
+  'sui-network': 'sui',
+  aptos: 'aptos',
+  linea: 'linea',
+  blast: 'blast',
+  pulsechain: 'pulsechain',
+  cro: 'cronos',
+  tron: 'tron',
 };
 
 interface GeckoResponse {
@@ -343,15 +381,32 @@ async function fetchGeckoTerminalFallback(query?: string): Promise<DexTokenEnric
 export async function searchDexPairs(query: string): Promise<DexTokenEnriched[]> {
   const q = query.trim();
   if (!q) return [];
-  const data = await fetchJson<{ pairs?: DexPair[] }>(`/latest/dex/search?q=${encodeURIComponent(q)}`);
-  const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
-  const enriched = pairs
-    .filter((p) => p.baseToken?.symbol && Number(p.priceUsd || 0) > 0)
+  const [dexRes, geckoRes] = await Promise.allSettled([
+    fetchJson<{ pairs?: DexPair[] }>(`/latest/dex/search?q=${encodeURIComponent(q)}`),
+    fetchGeckoTerminalFallback(q),
+  ]);
+  const dexPairs = dexRes.status === 'fulfilled' && Array.isArray(dexRes.value?.pairs) ? dexRes.value.pairs : [];
+  const geckoPairs = geckoRes.status === 'fulfilled' && Array.isArray(geckoRes.value) ? geckoRes.value : [];
+
+  const seen = new Set<string>();
+  const combined: DexTokenEnriched[] = [];
+  for (const p of dexPairs) {
+    if (!p.baseToken?.symbol || Number(p.priceUsd || 0) <= 0) continue;
+    const key = `${String(p.chainId).toLowerCase()}:${String(p.pairAddress || p.baseToken.address).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    combined.push(enrichDexPair(p));
+  }
+  for (const gp of geckoPairs) {
+    const key = `${String(gp.chainId).toLowerCase()}:${String(gp.pairAddress || gp.baseToken?.address).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    combined.push(gp);
+  }
+
+  return combined
     .sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))
-    .slice(0, 30)
-    .map(enrichDexPair);
-  if (enriched.length > 0) return enriched;
-  return fetchGeckoTerminalFallback(q);
+    .slice(0, 48);
 }
 
 export async function getDexTokenPools(chainId: string, tokenAddress: string): Promise<DexTokenEnriched[]> {

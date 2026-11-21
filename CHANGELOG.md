@@ -1,5 +1,27 @@
 # Changelog
 
+## [9.8.1] - 2026-11-22
+### Added & Improved
+- **Rich Telegram & Social Link Preview (`apps/web/index.html`, `og-preview.jpg`)**:
+  - Generated bespoke `1200×630` Open Graph preview artwork (`/images/og-preview.jpg`, `209 KB`) and added full `og:title`, `og:description`, `og:image`, `og:site_name`, and `twitter:card` (`summary_large_image`) meta tags so sharing `https://dollarino.pages.dev/` in Telegram displays a crisp banner image and polished Persian description.
+- **Always-On 24/7 AI Signal Radar & Channel/Bot Intel Publisher (`apps/worker/src/engine/market-intel.ts`, `publisher.ts`, `index.ts`, `admin-menu.ts`)**:
+  - Added `runAlwaysOnSignalRadar` to Cloudflare Cron (`* * * * *`): continuously scans markets via Dorna V1, KBOS v11, and Central AI and broadcasts verified signals to both `@Dollarino_official` and verified bot users **even when users' auto-trading bots are STOPPED**.
+  - Added `runAlwaysOnAiIntel`: automatically publishes AI-generated **Market Analysis** (every 4h), **Crypto News Summaries** (every 6h), **Volatility / RSI Risk Alerts** (threshold-based + 2h cooldown), and **Platform Feature Spotlights / Promos** with brand banners (every 8h) to both the Telegram channel and bot users, with instant 1-tap triggers & toggles in the Telegram Admin Channel panel (`adm:channel`).
+
+## [9.8.0] - 2026-11-21
+### Added & Improved
+- **Visual Banners, Brand Logos & Exchange Integrations (`Toobit`, `Bitunix`, `KCEX`, `Paper`)**:
+  - Generated 4 high-resolution visual banners (`support-concierge.png`, `exchange-api-hub.png`, `my-ai-brain.png`, `vip-club-banner.png`) optimized for fast web/mobile delivery, plus `BrandLogos.tsx` (`ExchangeLogo`, `WalletLogo`, `ChainLogo`) covering exchanges, wallets, and 16+ blockchains.
+  - Enabled `Bitunix Futures` across Worker (`bitunix.ts` with `getPositions()`, `connections.ts`, `trading.ts`, Telegram `handler.ts`/`formatter.ts`) and Web (`CopyConnectPage.tsx`, `SetupWizardModal.tsx`, `LandingPage.tsx`, `SubscriptionPage.tsx`, `ServicesPage.tsx`), and made `KCEX` Signal-Mirror keys optional (passwordless activation).
+- **Redesigned Online Support (`SupportModal.tsx`)**:
+  - Upgraded header with `support-concierge.png`, live online pulse badge, smooth sliding AI vs. Human segmented switcher, 4 quick-topic cards, and animated typing indicator.
+- **Dual Telegram Mini App + Google/Browser PWA Login (`handler.ts`, `auth.ts`, `App.tsx`, `PwaInstallModal.tsx`)**:
+  - Updated `sendWebMagicLoginLink` to include both a Telegram `web_app` Mini App button and a Google/Browser button (`&install=1`), backed by a 10-minute reusable `web_magic_token` and automatic `PwaInstallModal` trigger.
+- **Multi-Chain Wallet Connect & All-Network DEX Radar (`migrations/0023_v98_multichain_wallets.sql`, `trustwallet.ts`, `screener.ts`, `DexTrustPage.tsx`)**:
+  - Added `trust_wallet_ton` D1 column, multi-chain injected discovery (`connectAllWalletChains` for EVM + Solana + TRON + TON), 1-click EVM network switching (Ethereum, BSC, Base, Arbitrum, Polygon, Optimism, Avalanche), live 9-network on-chain balance querying, and parallel DexScreener + GeckoTerminal pair discovery across 17+ chains.
+- **Service Worker (`sw.js`) & Full Audit Fixes**:
+  - Updated cache version to `dollarino-pwa-v9.8`, fixed `bitunix.ts` `markPrice` typing, synced `trust_wallet_ton` across `support.ts`, `admin.ts`, and `admin-menu.ts`, and added end-to-end Miniflare tests in `telegram-bot.test.ts`.
+
 ## [7.1.0] - 2026-11-20
 ### Added
 - `migrations/0012_telegram_bot_admin_suite.sql`: Added `wallet_balance_usdt`, `admin_panel_last_active_at`, `web_magic_token`, `web_magic_expires_at` on `users`, `code_type` / `credit_usdt` on `gift_codes`, and bot system defaults (`bot_help_text`, `bot_help_media_url`, `bot_private_admin_only`, `signal_channel_handle`, `default_margin_pct`, `default_max_leverage`, `usdt_to_toman_rate`).

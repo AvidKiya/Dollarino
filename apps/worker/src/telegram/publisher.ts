@@ -163,24 +163,28 @@ export async function publishSignalBroadcast(
     const subs = await env.DB.prepare(
       `SELECT DISTINCT u.telegram_id
        FROM users u
-       JOIN bot_configs bc ON bc.user_id = u.id
+       LEFT JOIN bot_configs bc ON bc.user_id = u.id
        WHERE u.telegram_id IS NOT NULL AND u.telegram_id != ''
-         AND (bc.telegram_notifications = 1 OR bc.bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE'))`
+         AND COALESCE(u.is_blocked, 0) = 0
+         AND COALESCE(bc.notifications_enabled, 1) != 0
+         AND (COALESCE(u.phone_verified, 0) = 1 OR bc.bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE'))
+       ORDER BY u.last_active_at DESC
+       LIMIT 100`
     ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
 
-    for (const s of subs.results) {
-      try {
-        await tg.sendMessage(s.telegram_id, formattedText, {
-          inlineKeyboard: channelSignalInlineButtons({
-            signalId,
-            botUsername: cfg.botUsername,
-            webAppUrl: cfg.webAppUrl,
-            forChannel: false,
-          }),
-        });
-        subscribersNotified++;
-      } catch {
-        // ignore unreachable chat
+    const inlineKb = channelSignalInlineButtons({
+      signalId,
+      botUsername: cfg.botUsername,
+      webAppUrl: cfg.webAppUrl,
+      forChannel: false,
+    });
+    for (let i = 0; i < subs.results.length; i += 10) {
+      const batch = subs.results.slice(i, i + 10);
+      const settled = await Promise.allSettled(
+        batch.map((s) => tg.sendMessage(s.telegram_id, formattedText, { inlineKeyboard: inlineKb }))
+      );
+      for (const r of settled) {
+        if (r.status === 'fulfilled') subscribersNotified++;
       }
     }
   }
@@ -289,12 +293,12 @@ export async function publishSignalClosedCard(
 
   // 1. Send card to user's private Telegram if notifications enabled
   const userRow = await env.DB.prepare(
-    `SELECT u.telegram_id, bc.telegram_notifications
+    `SELECT u.telegram_id, bc.notifications_enabled
      FROM users u LEFT JOIN bot_configs bc ON bc.user_id = u.id
      WHERE u.id = ? LIMIT 1`
-  ).bind(params.userId).first<{ telegram_id: string | null; telegram_notifications: number | null }>().catch(() => null);
+  ).bind(params.userId).first<{ telegram_id: string | null; notifications_enabled: number | null }>().catch(() => null);
 
-  if (userRow?.telegram_id && userRow.telegram_notifications !== 0) {
+  if (userRow?.telegram_id && userRow.notifications_enabled !== 0) {
     try {
       if (pngBytes) {
         await tg.sendPhotoBuffer(userRow.telegram_id, pngBytes, `dollarino-result-${params.symbol}.png`, caption);
@@ -392,25 +396,30 @@ export async function publishProfitCardToTelegram(
 export async function publishChannelNews(
   env: Env,
   params: {
-    category: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT';
+    category: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT' | 'ALERT' | 'PROMO';
     title: string;
     body: string;
     mediaUrl?: string;
     buttonLabel?: string;
     buttonUrl?: string;
     createdBy?: string;
+    notifyBotUsers?: boolean;
   }
-): Promise<{ id: string; channelMessageId?: number; error?: string }> {
+): Promise<{ id: string; channelMessageId?: number; usersNotified: number; error?: string }> {
   const cfg = await resolveChannelAndBotConfig(env);
   const id = randomId('news');
   const catBadge =
     params.category === 'ANALYSIS'
-      ? '📊 تحلیل اختصاصی دلارینو'
-      : params.category === 'ANNOUNCEMENT'
-        ? '📣 اطلاعیه رسمی دلارینو'
-        : params.category === 'SIGNAL_UPDATE'
-          ? '⚡️ به‌روزرسانی سیگنال'
-          : '📰 خبر فوری بازار';
+      ? '📊 تحلیل هوشمند بازار دلارینو'
+      : params.category === 'ALERT'
+        ? '⚠️ اخطار و هشدار مدیریت ریسک دلارینو'
+        : params.category === 'PROMO'
+          ? '🚀 معرفی قدرت و امکانات دلارینو'
+          : params.category === 'ANNOUNCEMENT'
+            ? '📣 اطلاعیه رسمی دلارینو'
+            : params.category === 'SIGNAL_UPDATE'
+              ? '⚡️ به‌روزرسانی سیگنال'
+              : '📰 خبر فوری و نبض بازار کریپتو';
 
   const text =
     `${catBadge}\n\n` +
@@ -436,7 +445,7 @@ export async function publishChannelNews(
   ).run().catch(() => {});
 
   if (!env.TELEGRAM_BOT_TOKEN) {
-    return { id, error: 'TELEGRAM_BOT_TOKEN not configured' };
+    return { id, usersNotified: 0, error: 'TELEGRAM_BOT_TOKEN not configured' };
   }
 
   const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
@@ -447,18 +456,49 @@ export async function publishChannelNews(
     customButtonUrl: params.buttonUrl,
   });
 
+  let channelMessageId: number | undefined;
+  let channelErr: string | undefined;
   try {
     const res = params.mediaUrl?.startsWith('http')
       ? await tg.sendPhoto(cfg.channelHandle, params.mediaUrl, text.slice(0, 1020), { inlineKeyboard: markup })
       : await tg.sendMessage(cfg.channelHandle, text, { inlineKeyboard: markup });
-
+    channelMessageId = res.message_id;
     await env.DB.prepare(`UPDATE channel_news SET channel_message_id = ? WHERE id = ?`)
       .bind(res.message_id, id).run().catch(() => {});
-    return { id, channelMessageId: res.message_id };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { id, error: msg };
+    channelErr = err instanceof Error ? err.message : String(err);
   }
+
+  let usersNotified = 0;
+  if (params.notifyBotUsers) {
+    const users = await env.DB.prepare(
+      `SELECT DISTINCT u.telegram_id
+       FROM users u
+       LEFT JOIN bot_configs bc ON bc.user_id = u.id
+       WHERE u.telegram_id IS NOT NULL AND u.telegram_id != ''
+         AND COALESCE(u.is_blocked, 0) = 0
+         AND COALESCE(bc.notifications_enabled, 1) != 0
+         AND COALESCE(u.phone_verified, 0) = 1
+       ORDER BY u.last_active_at DESC
+       LIMIT 80`
+    ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
+
+    for (let i = 0; i < users.results.length; i += 10) {
+      const batch = users.results.slice(i, i + 10);
+      const settled = await Promise.allSettled(
+        batch.map((u) =>
+          params.mediaUrl?.startsWith('http')
+            ? tg.sendPhoto(u.telegram_id, params.mediaUrl, text.slice(0, 1020), { inlineKeyboard: markup })
+            : tg.sendMessage(u.telegram_id, text, { inlineKeyboard: markup })
+        )
+      );
+      for (const r of settled) {
+        if (r.status === 'fulfilled') usersNotified++;
+      }
+    }
+  }
+
+  return { id, channelMessageId, usersNotified, error: channelErr };
 }
 
 export async function promptCopyTraderPublish(

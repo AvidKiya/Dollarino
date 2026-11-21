@@ -492,16 +492,16 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     const ent = await resolveUserEntitlement(c.env.DB, user);
     if (!ent.allowLiveTrading) {
       return c.json({
-        error: 'Active paid subscription required to switch to Live Trading (Toobit / KCEX).',
+        error: 'Active paid subscription required to switch to Live Trading (Toobit / Bitunix / KCEX).',
         code: 'SUBSCRIPTION_REQUIRED',
       }, 402);
     }
     const liveEx = await c.env.DB.prepare(
-      `SELECT id FROM exchange_connections WHERE user_id = ? AND provider IN ('toobit', 'kcex') LIMIT 1`
+      `SELECT id FROM exchange_connections WHERE user_id = ? AND provider IN ('toobit', 'bitunix', 'kcex') LIMIT 1`
     ).bind(user.id).first();
     if (!liveEx) {
       return c.json({
-        error: 'ابتدا در صفحه «صرافی»، حساب Toobit یا KCEX خود را متصل کنید تا بتوانید معامله واقعی را روشن کنید.',
+        error: 'ابتدا در صفحه «صرافی»، حساب Toobit، Bitunix یا KCEX خود را متصل کنید تا بتوانید معامله واقعی را روشن کنید.',
         code: 'NO_LIVE_EXCHANGE',
       }, 400);
     }

@@ -17,9 +17,16 @@ async function buildUserSupportContext(db: D1Database, user: AppVariables['user'
       .first<{ bot_state: string; trading_mode: string; strategy_key: string; symbol: string }>()
       .catch(() => null),
     resolveUserEntitlement(db, user).catch(() => null),
-    db.prepare(`SELECT trust_wallet_address, trust_wallet_verified, ui_mode FROM users WHERE id = ? LIMIT 1`)
+    db.prepare(`SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified, ui_mode FROM users WHERE id = ? LIMIT 1`)
       .bind(user.id)
-      .first<{ trust_wallet_address: string | null; trust_wallet_verified: number; ui_mode: string | null }>()
+      .first<{
+        trust_wallet_address: string | null;
+        trust_wallet_tron: string | null;
+        trust_wallet_solana: string | null;
+        trust_wallet_ton: string | null;
+        trust_wallet_verified: number;
+        ui_mode: string | null;
+      }>()
       .catch(() => null),
     db.prepare(`SELECT provider, is_active FROM exchange_connections WHERE user_id = ? AND is_active = 1`)
       .bind(user.id)
@@ -29,7 +36,13 @@ async function buildUserSupportContext(db: D1Database, user: AppVariables['user'
 
   const plan = ent ? `${ent.planNameFa}${ent.daysRemaining ? ` (${ent.daysRemaining}d left)` : ''}` : 'Standard';
   const exchanges = exRows.results.map((r) => r.provider).join(', ') || 'paper';
-  const tw = userRow?.trust_wallet_address ? `Connected (${userRow.trust_wallet_address.slice(0, 8)}...)` : 'Not linked';
+  const twChains = [
+    userRow?.trust_wallet_address ? `EVM(${userRow.trust_wallet_address.slice(0, 6)}..)` : '',
+    userRow?.trust_wallet_solana ? 'SOL' : '',
+    userRow?.trust_wallet_ton ? 'TON' : '',
+    userRow?.trust_wallet_tron ? 'TRON' : '',
+  ].filter(Boolean);
+  const tw = twChains.length ? `Connected [${twChains.join(', ')}]` : 'Not linked';
   return `Plan: ${plan} | Bot: ${cfg?.bot_state || 'STOPPED'} (${cfg?.trading_mode || 'PAPER'}, strategy: ${cfg?.strategy_key || 'dollarino_v01'}) | Exchanges: ${exchanges} | TrustWallet: ${tw}`;
 }
 

@@ -7,6 +7,7 @@ import worker from '../index.js';
 import type { Env } from '../env.js';
 import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/renderer.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
+import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-intel.js';
 import { formatTradeClosedCard } from '../telegram/formatter.js';
 import { handleTelegramUpdate } from '../telegram/handler.js';
 import { publishSignalBroadcast } from '../telegram/publisher.js';
@@ -188,30 +189,111 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
         });
       }
 
-      if (url.includes('bsc-dataseed.binance.org') || url.includes('llamarpc.com') || url.includes('mainnet.base.org')) {
+      if (
+        url.includes('bsc-dataseed.binance.org') ||
+        url.includes('llamarpc.com') ||
+        url.includes('publicnode.com') ||
+        url.includes('mainnet.base.org') ||
+        url.includes('arb1.arbitrum.io') ||
+        url.includes('polygon-rpc.com')
+      ) {
         return new Response(
           JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x0de0b6b3a7640000' }), // 1.0 native / token
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
       }
 
-      if (url.includes('hilinkup.com')) {
+      if (url.includes('api.mainnet-beta.solana.com')) {
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: 1, result: { value: 2500000000 } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('toncenter.com')) {
+        return new Response(
+          JSON.stringify({ ok: true, result: '5400000000' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('api.geckoterminal.com')) {
         return new Response(
           JSON.stringify({
-            choices: [
+            data: [
               {
-                message: {
-                  content: JSON.stringify({
-                    score: 82,
-                    verdict: 'STRONG_BUY',
-                    riskLevel: 'MEDIUM',
-                    summaryFa: 'نقدینگی مناسب و فشار خرید قوی روی PancakeSwap دیده می‌شود.',
-                    catalysts: ['رشد حجم ۲۴ ساعته', 'برتری خریداران'],
-                    warnings: ['نوسان میم‌کوین را با حد ضرر مدیریت کنید'],
-                  }),
+                id: 'ton_EQPairTon1',
+                attributes: {
+                  address: 'EQPairTon1',
+                  name: 'NOT / TON',
+                  base_token_price_usd: '0.012',
+                  reserve_in_usd: '420000',
+                  volume_usd: { h24: '980000', h1: '120000' },
+                  price_change_percentage: { h24: '18.5', h1: '2.1' },
+                  fdv_usd: '12000000',
+                  transactions: { h24: { buys: 950, sells: 400 } },
+                },
+                relationships: {
+                  dex: { data: { id: 'dedust' } },
+                  base_token: { data: { id: 'ton_EQAvlWFDxGF2lXm67y4yzC17wYKD9A0guwPkMs1gOsM__NOT' } },
+                  quote_token: { data: { id: 'ton_EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c' } },
                 },
               },
             ],
+            included: [],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('cryptocompare.com')) {
+        return new Response(
+          JSON.stringify({
+            Data: [
+              { title: 'Bitcoin Holds Key Support as Institutional Flows Rise', source: 'CoinDesk' },
+              { title: 'TON & Solana DEX Activity Hits New Weekly High', source: 'TheBlock' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('hilinkup.com')) {
+        let reqText = '';
+        try {
+          reqText = typeof init?.body === 'string' ? init.body : '';
+        } catch {
+          reqText = '';
+        }
+        const isProse =
+          reqText.includes('تحلیل') ||
+          reqText.includes('خبرنگار') ||
+          reqText.includes('مدیر ریسک') ||
+          reqText.includes('مارکتینگ') ||
+          reqText.includes('پشتیبانی');
+        const content = isProse
+          ? '📊 گزارش هوشمند دلارینو: روند بیت‌کوین و بازار آلت‌کوین‌ها با حمایت کلیدی همراه است. با ابزارهای هوش مصنوعی دلارینو، مدیریت ریسک ۳ تارگت و کپی‌ترید، معاملات خود را هوشمندانه مدیریت کنید.'
+          : JSON.stringify({
+              action: 'LONG',
+              confidence: 82,
+              entry: 92000,
+              stopLoss: 90200,
+              tp1: 93800,
+              tp2: 95600,
+              tp3: 97400,
+              leverage: 8,
+              thesis: 'روند صعودی مومنتوم و حمایت میانگین متحرک',
+              invalidation: 'شکست حمایت ۹۰۲۰۰',
+              score: 82,
+              verdict: 'STRONG_BUY',
+              riskLevel: 'MEDIUM',
+              summaryFa: 'نقدینگی مناسب و فشار خرید قوی روی PancakeSwap دیده می‌شود.',
+              catalysts: ['رشد حجم ۲۴ ساعته', 'برتری خریداران'],
+              warnings: ['نوسان میم‌کوین را با حد ضرر مدیریت کنید'],
+            });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content } }],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
@@ -236,6 +318,12 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
         if (url.includes('ticker/price') || url.includes('ticker/24hr') || url.includes('quote/v1/ticker')) {
           return new Response(
             JSON.stringify({ symbol: 'BTCUSDT', price: '92000', c: '92000', lastPrice: '92000', p: '92000' }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (url.includes('/api/v1/futures/account')) {
+          return new Response(
+            JSON.stringify({ code: 0, data: { available: '1250.50', margin: '100.00' } }),
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           );
         }
@@ -1238,5 +1326,166 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(tgCalls.some((c) => String(c.body.text).includes('tg_login='))).toBe(true);
     const refLink = await db.prepare(`SELECT status FROM referrals WHERE referred_user_id = 'usr_tg_ref_2'`).first<{ status: string }>();
     expect(refLink?.status).toBe('REGISTERED');
+  });
+
+  it('v9.8: sends dual Mini App + Google PWA install buttons with reusable tg_login token, connects TON/Bitunix/optional-KCEX, and discovers multi-chain DEX pairs', async () => {
+    const env = makeEnv();
+
+    // 1. Magic login message has BOTH web_app button and Google/browser install=1 button using same tg_login token
+    tgCalls = [];
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 950,
+      message: { message_id: 950, from: { id: 1001001, first_name: 'علی' }, chat: { id: 1001001, type: 'private' }, text: '/weblogin' },
+    });
+    const loginCall = tgCalls.find((c) => String(c.body.text).includes('tg_login='));
+    expect(loginCall).toBeTruthy();
+    const kbStr = JSON.stringify(loginCall?.body.reply_markup);
+    expect(kbStr).toContain('"web_app"');
+    expect(kbStr).toContain('install=1');
+
+    const tokenMatch = String(loginCall?.body.text).match(/tg_login=([A-Za-z0-9_-]+)/);
+    expect(tokenMatch?.[1]).toBeTruthy();
+    const tgToken = tokenMatch![1]!;
+
+    // Use the token once (e.g. Mini App) and then reuse it in Google/Chrome within 10m TTL
+    const firstAuth = await worker.fetch(
+      new Request('https://dollarino.local/api/auth/telegram-magic-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tgToken }),
+      }),
+      env
+    );
+    expect(firstAuth.status).toBe(200);
+    const firstAuthJson = (await firstAuth.json()) as { token: string; user: { id: string } };
+    expect(firstAuthJson.token).toBeTruthy();
+
+    const secondAuth = await worker.fetch(
+      new Request('https://dollarino.local/api/auth/telegram-magic-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tgToken }),
+      }),
+      env
+    );
+    expect(secondAuth.status).toBe(200);
+
+    const authHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${firstAuthJson.token}`,
+    };
+
+    // 2. Connect TON address + query multi-chain status & live balance (BSC, ETH, Base, Arbitrum, Polygon, Solana, TON)
+    const twConn = await worker.fetch(
+      new Request('https://dollarino.local/api/trustwallet/connect', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          evmAddress: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          solanaAddress: 'So11111111111111111111111111111111111111112',
+          tonAddress: 'UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ',
+        }),
+      }),
+      env
+    );
+    expect(twConn.status).toBe(200);
+
+    const twStatus = await worker.fetch(
+      new Request('https://dollarino.local/api/trustwallet/status', { headers: authHeaders }),
+      env
+    );
+    const twStatusJson = (await twStatus.json()) as { wallet: { tonAddress: string | null; solanaAddress: string | null } };
+    expect(twStatusJson.wallet.tonAddress).toBe('UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ');
+    expect(twStatusJson.wallet.solanaAddress).toBe('So11111111111111111111111111111111111111112');
+
+    const twBal = await worker.fetch(
+      new Request('https://dollarino.local/api/trustwallet/balance', { method: 'POST', headers: authHeaders }),
+      env
+    );
+    const twBalJson = (await twBal.json()) as { balances: { baseEth: number | null; sol: number | null; ton: number | null } };
+    expect(twBalJson.balances.baseEth).toBe(1);
+    expect(twBalJson.balances.sol).toBe(2.5);
+    expect(twBalJson.balances.ton).toBe(5.4);
+
+    // 3. Bitunix live connection & passwordless KCEX Signal-Mirror connection
+    const bitunixRes = await worker.fetch(
+      new Request('https://dollarino.local/api/connections/exchanges', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ provider: 'bitunix', apiKey: 'btx_key_123', apiSecret: 'btx_sec_456', label: 'My Bitunix' }),
+      }),
+      env
+    );
+    expect(bitunixRes.status).toBe(200);
+    const bitunixJson = (await bitunixRes.json()) as { test: { ok: boolean } };
+    expect(bitunixJson.test.ok).toBe(true);
+
+    const kcexOptRes = await worker.fetch(
+      new Request('https://dollarino.local/api/connections/exchanges', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ provider: 'kcex', label: 'KCEX Passwordless' }),
+      }),
+      env
+    );
+    expect(kcexOptRes.status).toBe(200);
+
+    // 4. Multi-chain DEX search fuses DexScreener + GeckoTerminal (including TON pools)
+    const dexSearchRes = await worker.fetch(
+      new Request('https://dollarino.local/api/dex/search?q=NOT', { headers: authHeaders }),
+      env
+    );
+    expect(dexSearchRes.status).toBe(200);
+    const dexSearchJson = (await dexSearchRes.json()) as {
+      pairs: Array<{ chainId: string; trustWallet: { trustWalletDappUrl: string; swapUrl: string } }>;
+    };
+    expect(dexSearchJson.pairs.some((p) => p.chainId === 'bsc')).toBe(true);
+    expect(dexSearchJson.pairs.some((p) => p.chainId === 'ton')).toBe(true);
+    expect(dexSearchJson.pairs.every((p) => p.trustWallet.trustWalletDappUrl.includes('trustwallet.com'))).toBe(true);
+  });
+
+  it('v9.8.1: delivers always-on 24/7 AI signals even when all users have bot STOPPED, plus AI analysis, news, alert, and platform promos to channel & bot', async () => {
+    const env = makeEnv();
+
+    // Ensure every user's trading bot is STOPPED (OFF)
+    await db.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', notifications_enabled = 1`).run();
+
+    tgCalls = [];
+    const sigRes = await runAlwaysOnSignalRadar(env, { force: true });
+    expect(sigRes.published).toBe(true);
+    expect(sigRes.signalId).toBeTruthy();
+    expect((sigRes.subscribersNotified ?? 0) > 0).toBe(true);
+
+    // Channel got the signal AND verified user with STOPPED bot got it in bot DM
+    expect(tgCalls.some((c) => String(c.body.chat_id) === '@Dollarino_official' && String(c.body.text).includes('signal'))).toBe(true);
+    expect(tgCalls.some((c) => String(c.body.chat_id) === '1001001' && String(c.body.text).includes('signal'))).toBe(true);
+
+    // AI Analysis -> Channel + Bot Users + channel_news DB
+    tgCalls = [];
+    const anaRes = await runAlwaysOnAiIntel(env, { forceKind: 'ANALYSIS' });
+    expect(anaRes.published).toBe(true);
+    expect(anaRes.kind).toBe('ANALYSIS');
+    expect((anaRes.usersNotified ?? 0) > 0).toBe(true);
+    expect(tgCalls.some((c) => String(c.body.chat_id) === '@Dollarino_official' && String(c.body.text).includes('تحلیل'))).toBe(true);
+
+    // AI News, Risk Alert & Platform Spotlight Promo
+    tgCalls = [];
+    const newsRes = await runAlwaysOnAiIntel(env, { forceKind: 'NEWS' });
+    expect(newsRes.published).toBe(true);
+    expect(newsRes.kind).toBe('NEWS');
+
+    tgCalls = [];
+    const alertRes = await runAlwaysOnAiIntel(env, { forceKind: 'ALERT' });
+    expect(alertRes.published).toBe(true);
+    expect(alertRes.kind).toBe('ALERT');
+
+    tgCalls = [];
+    const promoRes = await runAlwaysOnAiIntel(env, { forceKind: 'PROMO' });
+    expect(promoRes.published).toBe(true);
+    expect(promoRes.kind).toBe('PROMO');
+    expect(tgCalls.some((c) => c.method === 'sendPhoto' && String(c.body.photo).includes('/images/'))).toBe(true);
+
+    const storedRows = await db.prepare(`SELECT COUNT(*) as cnt FROM channel_news WHERE created_by = 'ai_intel_daemon'`).first<{ cnt: number }>();
+    expect((storedRows?.cnt ?? 0) >= 4).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { Layout, type UiMode } from './components/Layout';
+import { PwaInstallModal } from './components/PwaInstallModal';
 import { QuickLauncherModal } from './components/QuickWidgetsBar';
 import { SupportModal } from './components/SupportModal';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
@@ -57,6 +58,10 @@ export function App() {
   const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
   const [supportOpen, setSupportOpen] = useState(false);
+  const [installOpen, setInstallOpen] = useState(() => {
+    const qp = new URLSearchParams(window.location.search);
+    return qp.get('install') === '1' || qp.get('install') === 'true';
+  });
   const [globalNotice, setGlobalNotice] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
@@ -130,6 +135,7 @@ export function App() {
         });
         setStoredToken(magicRes.token);
         urlParams.delete('tg_login');
+        urlParams.delete('install');
         const nextQuery = urlParams.toString();
         window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
       } else if (tgWidgetHash && tgWidgetId) {
@@ -507,6 +513,20 @@ export function App() {
       authenticated
       onClose={() => setSupportOpen(false)}
     />
+    {installOpen && (
+      <PwaInstallModal
+        lang={lang}
+        onClose={() => {
+          setInstallOpen(false);
+          const qp = new URLSearchParams(window.location.search);
+          if (qp.has('install')) {
+            qp.delete('install');
+            const qs = qp.toString();
+            window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+          }
+        }}
+      />
+    )}
     <QuickLauncherModal
       action={quickAction}
       lang={lang}

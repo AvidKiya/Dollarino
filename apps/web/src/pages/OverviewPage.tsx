@@ -842,7 +842,7 @@ export function OverviewPage({
             </button>
             <button type="button" onClick={() => onNavigate('copy')} className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
               <KeyRound className="w-3.5 h-3.5 text-jade" />
-              <span>{isFa ? 'اتصال صرافی Toobit / KCEX' : 'Connect Exchange'}</span>
+              <span>{isFa ? 'اتصال صرافی Toobit / Bitunix / KCEX' : 'Connect Exchange'}</span>
             </button>
             <button type="button" onClick={() => onNavigate('dex')} className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 border border-amber-500/30">
               <Wallet className="w-3.5 h-3.5 text-amber-400" />

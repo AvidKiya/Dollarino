@@ -21,6 +21,7 @@ import {
   Users,
 } from 'lucide-react';
 import { formatDollarinoSignal } from '@dollarino/core';
+import { ExchangeLogo } from '../components/BrandLogos';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { DashboardPayload, EntitlementSummary, NavTab } from '../lib/types';
@@ -141,7 +142,7 @@ export function CopyConnectPage({
   const [proxyEdits, setProxyEdits] = useState<Record<string, string>>({});
   const [showAdvancedEx, setShowAdvancedEx] = useState(false);
   const [exForm, setExForm] = useState({
-    provider: 'toobit' as 'toobit' | 'kcex',
+    provider: 'toobit' as 'toobit' | 'bitunix' | 'kcex',
     label: '',
     apiKey: '',
     apiSecret: '',
@@ -189,7 +190,11 @@ export function CopyConnectPage({
         }>;
       }>('/api/copy-trade/traders').catch(() => ({ traders: [], pendingConfirmTrades: [] })),
     ]);
-    setExchanges(ex.connections.filter((c) => c.provider === 'toobit' || c.provider === 'kcex' || c.provider === 'paper'));
+    setExchanges(
+      ex.connections.filter(
+        (c) => c.provider === 'toobit' || c.provider === 'bitunix' || c.provider === 'kcex' || c.provider === 'paper'
+      )
+    );
     setPlatformAI(ai.platformAI);
     setTgBots(tg.bots);
     setTraders(ct.traders || []);
@@ -751,17 +756,30 @@ export function CopyConnectPage({
             </div>
 
             <div className="panel rounded-[26px] p-5 space-y-3">
-              <h3 className="font-display font-bold text-lg text-main">{isFa ? 'حساب‌های صرافی متصل شما' : 'Connected Exchange Accounts'}</h3>
+              <div className="flex items-center gap-3">
+                <img
+                  src="/images/exchange-api-hub.png"
+                  alt="Dollarino Exchange API Hub"
+                  className="w-20 h-14 rounded-2xl object-cover border hairline shrink-0"
+                />
+                <div>
+                  <h3 className="font-display font-bold text-lg text-main">{isFa ? 'حساب‌های صرافی متصل شما' : 'Connected Exchange Accounts'}</h3>
+                  <p className="text-[11px] text-dim">{isFa ? 'Toobit · Bitunix · KCEX Mirror · Paper' : 'Toobit · Bitunix · KCEX Mirror · Paper'}</p>
+                </div>
+              </div>
               <div className="space-y-3">
                 {exchanges.map((c) => (
                   <div key={c.id} className="surface-soft rounded-2xl p-4 space-y-2.5 text-xs">
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-main">{c.label || c.provider.toUpperCase()}</span>
-                          {c.is_active === 1 && <span className="px-2 py-0.5 rounded-full badge-signal text-[10px] font-black">{isFa ? 'فعال' : 'ACTIVE'}</span>}
+                      <div className="flex items-center gap-2.5">
+                        <ExchangeLogo provider={c.provider} size={30} />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-main">{c.label || c.provider.toUpperCase()}</span>
+                            {c.is_active === 1 && <span className="px-2 py-0.5 rounded-full badge-signal text-[10px] font-black">{isFa ? 'فعال' : 'ACTIVE'}</span>}
+                          </div>
+                          <p dir="ltr" className="font-mono text-[11px] text-dim mt-0.5">{c.api_key_masked} · {c.last_test_status}</p>
                         </div>
-                        <p dir="ltr" className="font-mono text-[11px] text-dim mt-0.5">{c.api_key_masked} · {c.last_test_status}</p>
                       </div>
                       <div className="flex items-center gap-1.5">
                         {c.is_active !== 1 && (
@@ -817,7 +835,7 @@ export function CopyConnectPage({
           <form onSubmit={addExchange} className="panel rounded-[26px] p-5 space-y-3 text-xs self-start">
             <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
               <KeyRound className="w-4 h-4" style={{ color: 'var(--gold)' }} />
-              <span>{isFa ? 'افزودن صرافی واقعی (Toobit / KCEX)' : 'Connect Exchange API'}</span>
+              <span>{isFa ? 'افزودن صرافی واقعی (Toobit · Bitunix · KCEX)' : 'Connect Exchange API'}</span>
             </h3>
             <p className="text-dim leading-relaxed">
               {isFa
@@ -825,15 +843,22 @@ export function CopyConnectPage({
                 : 'Use Trade-Only Futures API keys — never enable withdrawal permissions.'}
             </p>
 
-            <div className="grid grid-cols-2 gap-2">
-              {(['toobit', 'kcex'] as const).map((p) => (
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { id: 'toobit' as const, label: 'Toobit' },
+                { id: 'bitunix' as const, label: 'Bitunix' },
+                { id: 'kcex' as const, label: 'KCEX' },
+              ]).map((p) => (
                 <button
-                  key={p}
+                  key={p.id}
                   type="button"
-                  onClick={() => setExForm((f) => ({ ...f, provider: p }))}
-                  className={`py-2.5 rounded-xl font-black uppercase ${exForm.provider === p ? 'btn-gold' : 'btn-ghost text-dim'}`}
+                  onClick={() => setExForm((f) => ({ ...f, provider: p.id }))}
+                  className={`py-2 px-2 rounded-xl font-black uppercase inline-flex items-center justify-center gap-1.5 ${
+                    exForm.provider === p.id ? 'btn-gold' : 'btn-ghost text-dim'
+                  }`}
                 >
-                  {p === 'toobit' ? 'Toobit Futures' : 'KCEX (Signal Mirror)'}
+                  <ExchangeLogo provider={p.id} size={18} />
+                  <span>{p.label}</span>
                 </button>
               ))}
             </div>
@@ -843,15 +868,30 @@ export function CopyConnectPage({
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
                 <span>
                   {isFa
-                    ? 'شفافیت فنی: صرافی KCEX در حال حاضر کلید API رسمی برای ربات معامله‌گر خودکار ارائه نمی‌دهد (۰٪ میکر / ۰.۰۱٪ تیکر فقط در وب/اپ). در صورت انتخاب KCEX، دلارینو به صورت Signal-Mirror (محاسبه کارمزد واقعی ۰.۰۱٪ + لینک مستقیم باز کردن پوزیشن در KCEX) کار می‌کند.'
-                    : 'Verified Capability Notice: KCEX currently does not provide public automated trading API keys (0% Maker / 0.01% Taker on web/app only). Choosing KCEX activates verified Signal-Mirror mode (0.01% taker simulation + 1-tap KCEX deep-links).'}
+                    ? 'شفافیت فنی: صرافی KCEX در حال حاضر API عمومی معامله خودکار ارائه نمی‌دهد. می‌توانید بدون نیاز به API Key صرافی KCEX را در حالت Signal-Mirror (محاسبه کارمزد واقعی ۰.۰۱٪ + دکمه ۱-کلیکی باز کردن در KCEX) فعال کنید.'
+                    : 'KCEX operates in Signal-Mirror mode without requiring mandatory API keys (0.01% taker simulation + 1-tap KCEX deep links).'}
                 </span>
               </div>
             )}
 
             <input value={exForm.label} onChange={(e) => setExForm((f) => ({ ...f, label: e.target.value }))} placeholder={isFa ? 'نام دلخواه (مثلاً حساب اصلی)' : 'Account Label'} className="field" />
-            <input value={exForm.apiKey} onChange={(e) => setExForm((f) => ({ ...f, apiKey: e.target.value }))} required dir="ltr" placeholder="API Key" className="field font-mono" />
-            <input type="password" value={exForm.apiSecret} onChange={(e) => setExForm((f) => ({ ...f, apiSecret: e.target.value }))} required dir="ltr" placeholder="API Secret" className="field font-mono" />
+            <input
+              value={exForm.apiKey}
+              onChange={(e) => setExForm((f) => ({ ...f, apiKey: e.target.value }))}
+              required={exForm.provider !== 'kcex'}
+              dir="ltr"
+              placeholder={exForm.provider === 'kcex' ? 'API Key (Optional for KCEX Mirror)' : 'API Key'}
+              className="field font-mono"
+            />
+            <input
+              type="password"
+              value={exForm.apiSecret}
+              onChange={(e) => setExForm((f) => ({ ...f, apiSecret: e.target.value }))}
+              required={exForm.provider !== 'kcex'}
+              dir="ltr"
+              placeholder={exForm.provider === 'kcex' ? 'API Secret (Optional for KCEX Mirror)' : 'API Secret'}
+              className="field font-mono"
+            />
 
             <button type="button" onClick={() => setShowAdvancedEx((v) => !v)} className="inline-flex items-center gap-1 text-dim hover:text-main font-bold">
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAdvancedEx ? 'rotate-180' : ''}`} />

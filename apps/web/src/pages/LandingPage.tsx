@@ -28,6 +28,7 @@ import type { Lang } from '../lib/i18n';
 import { usePwaInstall } from '../lib/pwa';
 import type { LookId } from '../components/AppearanceModal';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
+import { ChainLogo, ExchangeLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { Sparkline } from '../components/DollarinoViz';
 import { PwaInstallModal } from '../components/PwaInstallModal';
@@ -195,7 +196,7 @@ export function LandingPage({
         ? 'دو راه در یک موتور: می‌توانید از استراتژی‌های آماده و تست‌شده دلارینو (دُرنا V1، KBOS و شکار نقدینگی SP2L) استفاده کنید، یا استراتژی Pine Script / Python شخصی خودتان را در آزمایشگاه بسازید و با بک‌تست ۹۰۰ کندلی ۲۴/۷ اجرا کنید.'
         : 'Two modes in one engine: trade Dollarino preset hunters (Dorna V1, KBOS, SP2L) OR write/paste your own Pine Script or Python strategy.',
       bullets: isFa
-        ? ['بخش ۱: استراتژی‌های آماده و غیرریپینت دُرنا V1، KBOS و SP2L', 'بخش ۲: ورود Pine Script، Python یا سازنده بصری شخصی', 'بک‌تست زنده ۹۰۰ کندلی و اجرای ۲۴/۷ روی Toobit و KCEX']
+        ? ['بخش ۱: استراتژی‌های آماده و غیرریپینت دُرنا V1، KBOS و SP2L', 'بخش ۲: ورود Pine Script، Python یا سازنده بصری شخصی', 'بک‌تست زنده ۹۰۰ کندلی و اجرای ۲۴/۷ روی Toobit، Bitunix و KCEX']
         : ['Mode 1: Preset Dorna V1, KBOS & SP2L hunters', 'Mode 2: Your own Pine Script, Python & Visual Builder', '24/7 live exchange execution'],
     },
   ];
@@ -439,9 +440,37 @@ export function LandingPage({
 
             <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
               {isFa
-                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ترید کاملاً خودکار با هوش مصنوعی گرفته تا آموزش هوش مصنوعی خام شخصی، کپی از تریدرهای تاییدشده یا استراتژی Pine Script و Python — متصل به صرافی‌های Toobit و KCEX، کیف‌پول غیرامانی Trust Wallet DApp، رادار DexScreener و ربات رسمی تلگرام @Dollarino_bot.'
-                : 'Trade the exact way you prefer: fully automated AI trading, chat-trainable personal AI, verified Copy Traders, or custom Pine Script & Python strategies — synced with Toobit, KCEX, Trust Wallet DApp, DexScreener Radar, and Telegram Bot @Dollarino_bot.'}
+                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ترید کاملاً خودکار با هوش مصنوعی گرفته تا آموزش هوش مصنوعی خام شخصی، کپی از تریدرهای تاییدشده یا استراتژی Pine Script و Python — متصل به صرافی‌های Toobit، Bitunix و KCEX، کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet، رادار DexScreener و ربات رسمی تلگرام @Dollarino_bot.'
+                : 'Trade the exact way you prefer: fully automated AI trading, chat-trainable personal AI, verified Copy Traders, or custom Pine Script & Python strategies — synced with Toobit, Bitunix, KCEX, multi-chain Trust Wallet, DexScreener Radar, and Telegram Bot @Dollarino_bot.'}
             </p>
+
+            {/* Brand Ecosystem Strip (Exchanges, Wallets & Blockchains) */}
+            <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 pt-1">
+              {[
+                { kind: 'ex' as const, id: 'toobit', label: 'Toobit' },
+                { kind: 'ex' as const, id: 'bitunix', label: 'Bitunix' },
+                { kind: 'ex' as const, id: 'kcex', label: 'KCEX' },
+                { kind: 'w' as const, id: 'trustwallet', label: 'Trust Wallet' },
+                { kind: 'w' as const, id: 'tonkeeper', label: 'TON' },
+                { kind: 'c' as const, id: 'solana', label: 'Solana' },
+                { kind: 'c' as const, id: 'bsc', label: 'BSC' },
+                { kind: 'c' as const, id: 'base', label: 'Base' },
+              ].map((item) => (
+                <span
+                  key={item.id}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full surface-soft border hairline text-[11px] font-bold text-main"
+                >
+                  {item.kind === 'ex' ? (
+                    <ExchangeLogo provider={item.id} size={16} />
+                  ) : item.kind === 'w' ? (
+                    <WalletLogo wallet={item.id === 'tonkeeper' ? 'ton' : 'trustwallet'} size={16} />
+                  ) : (
+                    <ChainLogo chain={item.id} size={16} />
+                  )}
+                  <span>{item.label}</span>
+                </span>
+              ))}
+            </div>
 
             <div className="flex flex-wrap justify-center lg:justify-start gap-3 pt-1">
               <button
@@ -472,7 +501,7 @@ export function LandingPage({
 
             <div className="flex flex-wrap justify-center lg:justify-start gap-x-5 gap-y-2 text-xs font-bold text-dim pt-1">
               {[
-                isFa ? 'ربات ۲۴ ساعته متصل به Toobit، KCEX و Trust Wallet' : '24/7 Toobit, KCEX & Trust Wallet Core',
+                isFa ? 'ربات ۲۴ ساعته متصل به Toobit، Bitunix، KCEX و Trust Wallet' : '24/7 Toobit, Bitunix, KCEX & Trust Wallet Core',
                 isFa ? 'رادار زنده DexScreener + اکستنشن کروم و ویجت موبایل' : 'DexScreener Radar, Extension & Mobile Widgets',
                 isFa ? 'ثبت‌نام و احراز هویت امن شماره تماس در @Dollarino_bot' : 'Phone-Verified Onboarding in @Dollarino_bot',
               ].map((x) => (
@@ -832,8 +861,8 @@ export function LandingPage({
             </h3>
             <p className="text-xs sm:text-sm text-dim leading-relaxed">
               {isFa
-                ? 'تمامی کلیدهای API صرافی‌های Toobit و KCEX با رمزنگاری AES-256 ذخیره می‌شوند و دسترسی برداشت کاملاً مسدود است. در تمام ساعات شبانه‌روز از طریق چت پشتیبانی آنلاین داخل سایت یا ربات تلگرام کنار شما هستیم.'
-                : 'Toobit & KCEX keys are AES-256 encrypted with zero withdrawal permission. Reach our support desk live inside the app or via Telegram anytime.'}
+                ? 'تمامی کلیدهای API صرافی‌های Toobit، Bitunix و KCEX با رمزنگاری AES-256 ذخیره می‌شوند و دسترسی برداشت کاملاً مسدود است. در تمام ساعات شبانه‌روز از طریق چت پشتیبانی آنلاین داخل سایت یا ربات تلگرام کنار شما هستیم.'
+                : 'Toobit, Bitunix & KCEX keys are AES-256 encrypted with zero withdrawal permission. Reach our support desk live inside the app or via Telegram anytime.'}
             </p>
             <div className="flex flex-wrap gap-2.5">
               {onOpenSupport && (

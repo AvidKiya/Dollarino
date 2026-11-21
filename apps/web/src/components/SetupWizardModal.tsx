@@ -15,6 +15,7 @@ import {
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { DollarinoBrandMark } from './BrandGraphics';
+import { ExchangeLogo } from './BrandLogos';
 
 export function SetupWizardModal({
   lang,
@@ -38,7 +39,7 @@ export function SetupWizardModal({
     'ai_autonomous_agent' | 'my_custom_ai' | 'dollarino_v01' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'
   >('ai_autonomous_agent');
 
-  const [exProvider, setExProvider] = useState<'toobit' | 'kcex'>('toobit');
+  const [exProvider, setExProvider] = useState<'toobit' | 'bitunix' | 'kcex'>('toobit');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [proxyUrl, setProxyUrl] = useState('');
@@ -441,20 +442,47 @@ export function SetupWizardModal({
           </>
         ) : (
           <div className="space-y-3 text-xs">
-            <div className="grid grid-cols-2 gap-2">
-              {(['toobit', 'kcex'] as const).map((p) => (
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { id: 'toobit' as const, label: 'Toobit' },
+                { id: 'bitunix' as const, label: 'Bitunix' },
+                { id: 'kcex' as const, label: 'KCEX' },
+              ]).map((p) => (
                 <button
-                  key={p}
+                  key={p.id}
                   type="button"
-                  onClick={() => setExProvider(p)}
-                  className={`py-2.5 rounded-xl font-black uppercase ${exProvider === p ? 'btn-gold' : 'btn-ghost text-dim'}`}
+                  onClick={() => setExProvider(p.id)}
+                  className={`py-2.5 px-2 rounded-xl font-black uppercase inline-flex items-center justify-center gap-1.5 ${
+                    exProvider === p.id ? 'btn-gold' : 'btn-ghost text-dim'
+                  }`}
                 >
-                  {p === 'toobit' ? 'Toobit Futures' : 'KCEX Futures'}
+                  <ExchangeLogo provider={p.id} size={18} />
+                  <span>{p.label}</span>
                 </button>
               ))}
             </div>
-            <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} dir="ltr" placeholder="API Key" className="field font-mono" />
-            <input type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} dir="ltr" placeholder="API Secret" className="field font-mono" />
+            {exProvider === 'kcex' && (
+              <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2.5 leading-relaxed">
+                {isFa
+                  ? 'صرافی KCEX در حالت Signal-Mirror بدون نیاز به کلید API اجباری کار می‌کند.'
+                  : 'KCEX works in Signal-Mirror mode — API keys are optional.'}
+              </p>
+            )}
+            <input
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              dir="ltr"
+              placeholder={exProvider === 'kcex' ? 'API Key (Optional)' : 'API Key'}
+              className="field font-mono"
+            />
+            <input
+              type="password"
+              value={apiSecret}
+              onChange={(e) => setApiSecret(e.target.value)}
+              dir="ltr"
+              placeholder={exProvider === 'kcex' ? 'API Secret (Optional)' : 'API Secret'}
+              className="field font-mono"
+            />
             {exProvider === 'kcex' && (
               <input value={kcexSession} onChange={(e) => setKcexSession(e.target.value)} dir="ltr" placeholder="KCEX Web Token (optional)" className="field font-mono" />
             )}

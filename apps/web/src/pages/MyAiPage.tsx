@@ -209,20 +209,27 @@ export function MyAiPage({
 
   return (
     <div className="space-y-6">
-      <div className="panel rounded-[28px] p-5 sm:p-7 flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1.5">
-          <span className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[11px] font-black">
-            <Brain className="w-3.5 h-3.5" />
-            <span>{isFa ? 'هوش مصنوعی خامِ اختصاصی شما (قابل آموزش)' : 'MY TRAINABLE RAW AI'}</span>
-          </span>
-          <h2 className="font-display font-bold text-2xl sm:text-3xl text-main">
-            {isFa ? 'هوش مصنوعی من — بهش یاد بده و بذار ترید کنه' : 'My AI — Teach Your Strategy, Let It Trade'}
-          </h2>
-          <p className="text-xs sm:text-sm text-dim max-w-2xl leading-relaxed">
-            {isFa
-              ? 'این هوش مصنوعی هیچ استراتژی از پیش‌تعیین‌شده‌ای ندارد! فقط با زبان ساده و چت فارسی استراتژی، تایم‌فریم، اندیکاتورها و مدیریت ریسک خودت را به او بگو تا یاد بگیرد و برایت ترید کند.'
-              : 'Starts completely blank. Chat in plain language to teach your exact strategy, indicators, timeframe, SL/TP, and coins — test live and activate.'}
-          </p>
+      <div className="panel rounded-[28px] p-5 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5 overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <img
+            src="/images/my-ai-brain.png"
+            alt="My Personal Trainable AI"
+            className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl object-cover border hairline shadow-lg shrink-0 mx-auto sm:mx-0"
+          />
+          <div className="space-y-1.5">
+            <span className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[11px] font-black">
+              <Brain className="w-3.5 h-3.5" />
+              <span>{isFa ? 'هوش مصنوعی خامِ اختصاصی شما (قابل آموزش)' : 'MY TRAINABLE RAW AI'}</span>
+            </span>
+            <h2 className="font-display font-bold text-2xl sm:text-3xl text-main">
+              {isFa ? 'هوش مصنوعی من — بهش یاد بده و بذار ترید کنه' : 'My AI — Teach Your Strategy, Let It Trade'}
+            </h2>
+            <p className="text-xs sm:text-sm text-dim max-w-2xl leading-relaxed">
+              {isFa
+                ? 'این هوش مصنوعی هیچ استراتژی از پیش‌تعیین‌شده‌ای ندارد! فقط با زبان ساده و چت فارسی استراتژی، تایم‌فریم، اندیکاتورها و مدیریت ریسک خودت را به او بگو تا یاد بگیرد و برایت ترید کند.'
+                : 'Starts completely blank. Chat in plain language to teach your exact strategy, indicators, timeframe, SL/TP, and coins — test live and activate.'}
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

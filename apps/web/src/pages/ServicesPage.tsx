@@ -575,7 +575,7 @@ export function ServicesPage({
             >
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
                 <KeyRound className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'اتصال صرافی‌ها (Toobit / KCEX)' : 'Exchange API Vault'}</span>
+                <span>{isFa ? 'اتصال صرافی‌ها (Toobit / Bitunix / KCEX)' : 'Exchange API Vault'}</span>
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-dim font-bold">
@@ -785,7 +785,7 @@ export function ServicesPage({
     },
     {
       tab: 'copy',
-      title: isFa ? 'کپی‌ترید تاییدشده و صرافی Toobit / KCEX' : 'Verified Copy Trade & Exchanges',
+      title: isFa ? 'کپی‌ترید تاییدشده و صرافی Toobit / Bitunix / KCEX' : 'Verified Copy Trade & Exchanges',
       subtitle: isFa ? 'تریدرهای تاییدشده ادمین + اتصال امن صرافی AES-256' : 'Admin-verified Copy Traders & AES-256 exchange vault',
       icon: Users,
       tileBg: 'bg-[#0EA5E9]/15',

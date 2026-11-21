@@ -1,4 +1,5 @@
 import { randomId } from '../crypto.js';
+import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-intel.js';
 import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { formatIranDateTime, formatToman, mainMenuKeyboard, settingsKeyboard } from './formatter.js';
@@ -217,7 +218,7 @@ export async function handleAdminCallback(
           SUM(CASE WHEN date(last_active_at) = date('now') THEN 1 ELSE 0 END) as active_today,
           SUM(CASE WHEN is_blocked = 1 THEN 1 ELSE 0 END) as blocked,
           SUM(CASE WHEN phone_verified = 1 THEN 1 ELSE 0 END) as kyc_cnt,
-          SUM(CASE WHEN trust_wallet_address IS NOT NULL OR trust_wallet_tron IS NOT NULL OR trust_wallet_solana IS NOT NULL THEN 1 ELSE 0 END) as tw_cnt
+          SUM(CASE WHEN trust_wallet_address IS NOT NULL OR trust_wallet_tron IS NOT NULL OR trust_wallet_solana IS NOT NULL OR trust_wallet_ton IS NOT NULL THEN 1 ELSE 0 END) as tw_cnt
          FROM users`
       ).first<{ total: number; new_today: number; active_today: number; blocked: number; kyc_cnt: number; tw_cnt: number }>(),
       env.DB.prepare(
@@ -1061,38 +1062,102 @@ export async function handleAdminCallback(
       return true;
     }
     const cfg = await resolveChannelAndBotConfig(env);
-    const [sigCnt, newsCnt, autoBroadcast, privOnly] = await Promise.all([
+    const [sigCnt, newsCnt, autoBroadcast, privOnly, alwaysOnSig, alwaysOnIntel] = await Promise.all([
       env.DB.prepare(`SELECT COUNT(*) as cnt FROM signals WHERE channel_message_id IS NOT NULL`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
       env.DB.prepare(`SELECT COUNT(*) as cnt FROM channel_news WHERE channel_message_id IS NOT NULL`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
       getSystemSetting(env.DB, 'auto_publish_signals_to_channel', 'true'),
       getSystemSetting(env.DB, 'bot_private_admin_only', 'false'),
+      getSystemSetting(env.DB, 'always_on_signals_enabled', 'true'),
+      getSystemSetting(env.DB, 'always_on_ai_broadcast_enabled', 'true'),
     ]);
 
     const text =
-      `📡 مرکز فرماندهی کانال و انتشار دلارینو\n\n` +
+      `📡 مرکز فرماندهی کانال و انتشار خودکار AI دلارینو\n\n` +
       `• کانال رسمی: ${cfg.channelHandle}\n` +
       `• ربات رسمی: @${cfg.botUsername}\n` +
-      `• انتشار خودکار سیگنال‌ها به کانال: ${autoBroadcast === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
+      `• سیگنال دائمی (حتی با ربات خاموش): ${alwaysOnSig === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
+      `• انتشار خودکار اخبار/تحلیل/اخطار/تبلیغ AI: ${alwaysOnIntel === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
+      `• ارسال سیگنال در کانال: ${autoBroadcast === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
       `• وضعیت دسترسی ربات: ${privOnly === 'true' ? '🔒 فقط مدیران' : '🌐 عمومی'}\n` +
-      `• سیگنال‌های منتشرشده در کانال: ${sigCnt?.cnt ?? 0}\n` +
-      `• اخبار و تحلیل‌های ارسالی: ${newsCnt?.cnt ?? 0}`;
+      `• سیگنال‌های کانال: ${sigCnt?.cnt ?? 0} | اخبار و تحلیل‌ها: ${newsCnt?.cnt ?? 0}`;
 
     await render(text, [
       [
-        { text: '📰 ارسال خبر بازار', callback_data: 'adm:chan_news:NEWS', style: 'primary' },
-        { text: '📊 ارسال تحلیل اختصاصی', callback_data: 'adm:chan_news:ANALYSIS', style: 'primary' },
+        { text: '⚡️ سیگنال فوری AI', callback_data: 'adm:chan_ai:SIG', style: 'success' },
+        { text: '📊 تحلیل فوری AI', callback_data: 'adm:chan_ai:ANALYSIS', style: 'primary' },
       ],
       [
-        { text: '📣 اطلاعیه رسمی', callback_data: 'adm:chan_news:ANNOUNCEMENT', style: 'success' },
-        { text: '⚡️ آپدیت سیگنال', callback_data: 'adm:chan_news:SIGNAL_UPDATE', style: 'success' },
+        { text: '📰 خبر فوری AI', callback_data: 'adm:chan_ai:NEWS', style: 'primary' },
+        { text: '🚀 تبلیغ و معرفی AI', callback_data: 'adm:chan_ai:PROMO', style: 'success' },
       ],
       [
-        { text: autoBroadcast === 'true' ? '🔴 توقف خودکار سیگنال کانال' : '🟢 روشن‌کردن خودکار سیگنال کانال', callback_data: 'adm:chan_toggle_auto' },
-        { text: '🧪 تست اتصال کانال', callback_data: 'adm:chan_ping' },
+        { text: '⚠️ اخطار نوسان AI', callback_data: 'adm:chan_ai:ALERT' },
+        { text: '✍️ ارسال دستی خبر', callback_data: 'adm:chan_news:NEWS' },
+      ],
+      [
+        { text: alwaysOnSig === 'true' ? '🟢 سیگنال دائمی: روشن' : '🔴 سیگنال دائمی: خاموش', callback_data: 'adm:chan_toggle_sig' },
+        { text: alwaysOnIntel === 'true' ? '🟢 هوش‌مصنوعی کانال: روشن' : '🔴 هوش‌مصنوعی کانال: خاموش', callback_data: 'adm:chan_toggle_intel' },
+      ],
+      [
+        { text: autoBroadcast === 'true' ? '🔴 توقف کانال' : '🟢 روشن‌کردن کانال', callback_data: 'adm:chan_toggle_auto' },
+        { text: '🧪 تست اتصال', callback_data: 'adm:chan_ping' },
       ],
       [{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }],
     ]);
     await bot.answerCallbackQuery(cqId);
+    return true;
+  }
+
+  if (data === 'adm:chan_toggle_sig') {
+    if (!hasPerm(actor, 'settings') && !hasPerm(actor, 'broadcast')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی', true);
+      return true;
+    }
+    const cur = await getSystemSetting(env.DB, 'always_on_signals_enabled', 'true');
+    const next = cur === 'true' ? 'false' : 'true';
+    await setSystemSetting(env.DB, 'always_on_signals_enabled', next);
+    await auditAdmin(env.DB, actor.id, `Toggled always_on_signals_enabled=${next}`);
+    await bot.answerCallbackQuery(cqId, next === 'true' ? 'سیگنال‌دهی دائمی ۲۴/۷ فعال شد 🟢' : 'سیگنال دائمی متوقف شد 🔴');
+    return handleAdminCallback(env, bot, actor, cqId, chatId, msgId, 'adm:channel');
+  }
+
+  if (data === 'adm:chan_toggle_intel') {
+    if (!hasPerm(actor, 'settings') && !hasPerm(actor, 'broadcast')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی', true);
+      return true;
+    }
+    const cur = await getSystemSetting(env.DB, 'always_on_ai_broadcast_enabled', 'true');
+    const next = cur === 'true' ? 'false' : 'true';
+    await setSystemSetting(env.DB, 'always_on_ai_broadcast_enabled', next);
+    await auditAdmin(env.DB, actor.id, `Toggled always_on_ai_broadcast_enabled=${next}`);
+    await bot.answerCallbackQuery(cqId, next === 'true' ? 'ارسال خودکار اخبار/تحلیل/تبلیغ AI فعال شد 🟢' : 'هوش مصنوعی کانال متوقف شد 🔴');
+    return handleAdminCallback(env, bot, actor, cqId, chatId, msgId, 'adm:channel');
+  }
+
+  if (data.startsWith('adm:chan_ai:')) {
+    if (!hasPerm(actor, 'broadcast') && !hasPerm(actor, 'settings')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی', true);
+      return true;
+    }
+    const kind = data.slice('adm:chan_ai:'.length);
+    await bot.answerCallbackQuery(cqId, '⏳ هوش مصنوعی در حال آماده‌سازی و ارسال...');
+    if (kind === 'SIG') {
+      const r = await runAlwaysOnSignalRadar(env, { force: true });
+      await bot.sendMessage(
+        chatId,
+        r.published
+          ? `✅ سیگنال فوری ${r.symbol} (${r.direction}) در کانال و برای ${r.subscribersNotified ?? 0} کاربر ربات ارسال شد!`
+          : `ℹ️ در این لحظه ستاپ با اطمینان بالا یافت نشد (${r.reason || 'wait'}).`
+      );
+    } else if (kind === 'ANALYSIS' || kind === 'NEWS' || kind === 'PROMO' || kind === 'ALERT') {
+      const r = await runAlwaysOnAiIntel(env, { forceKind: kind });
+      await bot.sendMessage(
+        chatId,
+        r.published
+          ? `✅ پست هوشمند (${kind}) تولید و در کانال + برای ${r.usersNotified ?? 0} کاربر ربات منتشر شد!`
+          : `⚠️ خطا یا محدودیت در ارسال (${r.reason || 'error'}).`
+      );
+    }
     return true;
   }
 

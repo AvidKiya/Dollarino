@@ -20,14 +20,18 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import { ChainLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import {
   buildTrustWalletDappOpenUrl,
-  connectTrustWalletEvm,
+  connectAllWalletChains,
+  EVM_NETWORKS,
   isTrustWalletEnvironment,
   signTrustWalletNonce,
+  switchEvmNetwork,
+  type EvmNetworkSpec,
 } from '../lib/trustwallet';
 import type { AuthUserInfo } from '../lib/types';
 
@@ -64,6 +68,7 @@ interface TrustWalletStatusRes {
     evmAddress: string | null;
     tronAddress: string | null;
     solanaAddress: string | null;
+    tonAddress: string | null;
     verified: boolean;
     connectedAt: string | null;
   };
@@ -114,7 +119,20 @@ function fmtTokenPrice(p?: string | number | null): string {
   return `$${n.toFixed(4)}`;
 }
 
-const CHAIN_FILTERS = ['all', 'bsc', 'ethereum', 'solana', 'base', 'arbitrum', 'polygon', 'ton', 'tron'];
+const BASE_CHAIN_FILTERS = [
+  'all',
+  'bsc',
+  'ethereum',
+  'solana',
+  'ton',
+  'tron',
+  'base',
+  'arbitrum',
+  'polygon',
+  'avalanche',
+  'optimism',
+  'sui',
+];
 
 export function DexTrustPage({
   lang,
@@ -143,13 +161,20 @@ export function DexTrustPage({
   const [balances, setBalances] = useState<{
     bnb: number | null;
     eth: number | null;
+    baseEth?: number | null;
+    arbEth?: number | null;
+    polygonPol?: number | null;
     bscUsdt: number | null;
+    sol?: number | null;
+    ton?: number | null;
     trx: number | null;
     trc20Usdt: number | null;
   } | null>(null);
   const [evmInput, setEvmInput] = useState(user.trust_wallet_address || '');
   const [tronInput, setTronInput] = useState(user.trust_wallet_tron || '');
   const [solInput, setSolInput] = useState(user.trust_wallet_solana || '');
+  const [tonInput, setTonInput] = useState(user.trust_wallet_ton || '');
+  const [activeEvmKey, setActiveEvmKey] = useState<EvmNetworkSpec['key']>('bsc');
   const [walletBusy, setWalletBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -358,6 +383,7 @@ export function DexTrustPage({
       if (st.wallet.evmAddress) setEvmInput(st.wallet.evmAddress);
       if (st.wallet.tronAddress) setTronInput(st.wallet.tronAddress);
       if (st.wallet.solanaAddress) setSolInput(st.wallet.solanaAddress);
+      if (st.wallet.tonAddress) setTonInput(st.wallet.tonAddress);
     } catch {
       // ignore
     }
@@ -373,22 +399,34 @@ export function DexTrustPage({
     setErr(null);
     setMsg(null);
     try {
-      const conn = await connectTrustWalletEvm();
+      const conn = await connectAllWalletChains();
       const nonceRes = await apiFetch<{ message: string }>('/api/trustwallet/nonce', { method: 'POST' });
-      const sig = await signTrustWalletNonce(conn.address, nonceRes.message).catch(() => undefined);
+      const sig = conn.evmAddress
+        ? await signTrustWalletNonce(conn.evmAddress, nonceRes.message).catch(() => undefined)
+        : undefined;
       await apiFetch('/api/trustwallet/connect', {
         method: 'POST',
         body: JSON.stringify({
-          evmAddress: conn.address,
+          evmAddress: conn.evmAddress || undefined,
+          solanaAddress: conn.solanaAddress || undefined,
+          tronAddress: conn.tronAddress || undefined,
+          tonAddress: conn.tonAddress || undefined,
           signature: sig,
           signedMessage: nonceRes.message,
         }),
       });
-      setEvmInput(conn.address);
+      if (conn.evmAddress) setEvmInput(conn.evmAddress);
+      if (conn.solanaAddress) setSolInput(conn.solanaAddress);
+      if (conn.tronAddress) setTronInput(conn.tronAddress);
+      if (conn.tonAddress) setTonInput(conn.tonAddress);
+      if (conn.activeEvmChainId) {
+        const matched = EVM_NETWORKS.find((n) => n.chainIdHex.toLowerCase() === conn.activeEvmChainId?.toLowerCase());
+        if (matched) setActiveEvmKey(matched.key);
+      }
       setMsg(
         isFa
-          ? `کیف‌پول Trust Wallet با موفقیت متصل و تایید امضا شد: ${conn.address.slice(0, 8)}...${conn.address.slice(-4)}`
-          : `Trust Wallet connected & verified: ${conn.address}`
+          ? `کیف‌پول چندزنجیره‌ای با موفقیت متصل شد: ${conn.connectedFamilies.join(' + ')}`
+          : `Multi-chain wallet connected: ${conn.connectedFamilies.join(' + ')}`
       );
       await loadWalletAndTrades();
       await onUserRefresh();
@@ -397,12 +435,38 @@ export function DexTrustPage({
       if (code === 'NO_INJECTED_WALLET') {
         setErr(
           isFa
-            ? 'در این مرورگر افزونه یا DApp تراست‌ولت تشخیص داده نشد. از دکمه «باز کردن در Trust Wallet DApp» استفاده کنید یا آدرس کیف‌پول را دستی ثبت کنید.'
-            : 'No injected Trust Wallet provider detected. Open inside Trust Wallet DApp Browser or enter your address manually.'
+            ? 'در این مرورگر افزونه کیف‌پول (Trust Wallet / MetaMask / Phantom / Tonkeeper) تشخیص داده نشد. از دکمه «باز کردن در اپ Trust Wallet» استفاده کنید یا در تب مدیریت کیف‌پول آدرس شبکه‌ها را ثبت کنید.'
+            : 'No injected wallet detected. Open inside Trust Wallet DApp Browser or enter addresses manually in the Wallet Manager tab.'
         );
       } else {
         setErr(code || 'Connection rejected');
       }
+    } finally {
+      setWalletBusy(false);
+    }
+  };
+
+  const handleSwitchEvmNetwork = async (netKey: EvmNetworkSpec['key']) => {
+    setErr(null);
+    setMsg(null);
+    setWalletBusy(true);
+    try {
+      const spec = await switchEvmNetwork(netKey);
+      setActiveEvmKey(spec.key);
+      setMsg(
+        isFa
+          ? `شبکه فعال کیف‌پول روی ${spec.chainName} (${spec.shortName}) تنظیم شد.`
+          : `Active wallet network switched to ${spec.chainName}.`
+      );
+    } catch (e) {
+      const code = e instanceof Error ? e.message : '';
+      setErr(
+        code === 'NO_INJECTED_WALLET'
+          ? isFa
+            ? 'برای تغییر شبکه خودکار، افزونه کیف‌پول را در مرورگر فعال کنید یا در اپ Trust Wallet باز کنید.'
+            : 'Enable a browser wallet extension to switch networks automatically.'
+          : code || 'Network switch failed'
+      );
     } finally {
       setWalletBusy(false);
     }
@@ -420,6 +484,7 @@ export function DexTrustPage({
           evmAddress: evmInput.trim() || undefined,
           tronAddress: tronInput.trim() || undefined,
           solanaAddress: solInput.trim() || undefined,
+          tonAddress: tonInput.trim() || undefined,
         }),
       });
       setMsg(res.message);
@@ -451,6 +516,7 @@ export function DexTrustPage({
       setEvmInput('');
       setTronInput('');
       setSolInput('');
+      setTonInput('');
       setBalances(null);
       await loadWalletAndTrades();
       await onUserRefresh();
@@ -519,70 +585,133 @@ export function DexTrustPage({
     await loadWalletAndTrades();
   };
 
+  const dynamicChainFilters = Array.from(
+    new Set([
+      ...BASE_CHAIN_FILTERS,
+      ...tokens.map((t) => t.chainId.toLowerCase()).filter(Boolean),
+    ])
+  );
   const visibleTokens = tokens.filter((t) => chainFilter === 'all' || t.chainId.toLowerCase() === chainFilter);
   const dappOpenSelf = buildTrustWalletDappOpenUrl(`${window.location.origin}/?tab=dex`);
 
   return (
     <div className="space-y-5">
       {/* Header Hero with Generated Web3 Banner */}
-      <section className="panel rounded-[28px] p-5 md:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-5 border border-amber-500/25 overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-1 min-w-0">
-          <img
-            src="/images/trust-dex-hub.png"
-            alt="Trust Wallet & DEX Hub"
-            className="w-full sm:w-44 h-28 rounded-2xl object-cover shrink-0 border hairline shadow-lg"
-          />
-          <div className="space-y-1.5 max-w-2xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="badge-signal text-[11px] font-black px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
-                <Flame className="w-3.5 h-3.5" />
-                {isFa ? 'رادار زنده DexScreener + Trust Wallet DApp' : 'DexScreener Live + Trust Wallet Core'}
-              </span>
-              {isTrustWalletEnvironment() && (
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/20 text-jade inline-flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'مرورگر Trust Wallet تشخیص داده شد' : 'Trust Wallet DApp Active'}</span>
+      <section className="panel rounded-[28px] p-5 md:p-6 space-y-4 border border-amber-500/25 overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-1 min-w-0">
+            <img
+              src="/images/trust-dex-hub.png"
+              alt="Trust Wallet & DEX Hub"
+              className="w-full sm:w-44 h-28 rounded-2xl object-cover shrink-0 border hairline shadow-lg"
+            />
+            <div className="space-y-1.5 max-w-2xl">
+              <div className="flex flex-wrap items-center gap-2">
+                <WalletLogo wallet="trustwallet" size={24} />
+                <span className="badge-signal text-[11px] font-black px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                  <Flame className="w-3.5 h-3.5" />
+                  {isFa ? 'رادار همه‌بستره DexScreener + کیف‌پول چندزنجیره‌ای' : 'Multi-Chain DexScreener + Wallet Hub'}
                 </span>
-              )}
+                {isTrustWalletEnvironment() && (
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/20 text-jade inline-flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'مرورگر Trust Wallet فعال' : 'Trust Wallet DApp Active'}</span>
+                  </span>
+                )}
+              </div>
+              <h2 className="font-display font-black text-xl md:text-2xl text-main">
+                {isFa
+                  ? 'اتصال همه شبکه‌ها (EVM · Solana · TON · TRON) و کشف تمام توکن‌های DEX'
+                  : 'Connect All Chains & Discover Tokens Across Every DEX'}
+              </h2>
+              <p className="text-xs text-dim leading-relaxed">
+                {isFa
+                  ? 'توکن‌ها و جفت‌ارزهای کل بسترها (Ethereum، BSC، Solana، TON، Base، Arbitrum، Polygon، Avalanche، Sui و ...) را پیدا کنید و یکجا به کیف‌پول متصل و سوآپ کنید.'
+                  : 'Discover pairs across Ethereum, BSC, Solana, TON, Base, Arbitrum, Polygon, Avalanche, Sui & more and swap non-custodially.'}
+              </p>
             </div>
-            <h2 className="font-display font-black text-xl md:text-2xl text-main">
-              {isFa
-                ? 'کشف توکن‌های جدید در DexScreener و ترید مستقیم با Trust Wallet'
-                : 'Discover Non-CEX Tokens on DexScreener & Swap Directly via Trust Wallet'}
-            </h2>
-            <p className="text-xs text-dim leading-relaxed">
-              {isFa
-                ? 'توکن‌هایی که هنوز در Toobit و KCEX لیست نشده‌اند را لحظه‌ای پیدا کنید، ریسک نقدینگی را با هوش مصنوعی بسنجید و مستقیماً از کیف‌پول غیرامانی خودتان در Trust Wallet DApp معامله و ردیابی کنید.'
-                : 'Spot trending on-chain pools before CEX listings, audit pool safety with Dollarino AI, and execute non-custodial swaps directly in Trust Wallet.'}
-            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleConnectInjectedTrust()}
+              disabled={walletBusy}
+              className="btn-gold px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-2"
+            >
+              <Wallet className="w-4 h-4" />
+              <span>
+                {twStatus?.connected
+                  ? isFa
+                    ? 'همگام‌سازی همه شبکه‌ها'
+                    : 'Sync All Chains'
+                  : isFa
+                    ? 'اتصال یکجای همه شبکه‌ها'
+                    : 'Connect All Chains'}
+              </span>
+            </button>
+            <a
+              href={dappOpenSelf}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-cobalt px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>{isFa ? 'باز کردن در اپ Trust Wallet' : 'Open in Trust Wallet App'}</span>
+            </a>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => void handleConnectInjectedTrust()}
-            disabled={walletBusy}
-            className="btn-gold px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-2"
-          >
-            <Wallet className="w-4 h-4" />
-            <span>
-              {twStatus?.wallet.evmAddress
-                ? `${twStatus.wallet.evmAddress.slice(0, 6)}...${twStatus.wallet.evmAddress.slice(-4)}`
-                : isFa
-                  ? 'اتصال فوری Trust Wallet'
-                  : 'Connect Trust Wallet'}
-            </span>
-          </button>
-          <a
-            href={dappOpenSelf}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-cobalt px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span>{isFa ? 'باز کردن در اپ Trust Wallet' : 'Open in Trust Wallet App'}</span>
-          </a>
+        {/* Multi-Chain Connection Status Bar + 1-Click EVM Network Switcher */}
+        <div className="pt-3 border-t hairline flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-dim font-bold">{isFa ? 'شبکه‌های متصل:' : 'Connected:'}</span>
+            {[
+              { id: 'evm', label: 'EVM (ETH·BSC·Base·Arb·Pol·Avax)', addr: twStatus?.wallet.evmAddress, chain: 'ethereum' },
+              { id: 'solana', label: 'Solana', addr: twStatus?.wallet.solanaAddress, chain: 'solana' },
+              { id: 'ton', label: 'TON', addr: twStatus?.wallet.tonAddress, chain: 'ton' },
+              { id: 'tron', label: 'TRON', addr: twStatus?.wallet.tronAddress, chain: 'tron' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSubTab('wallet')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-bold transition ${
+                  item.addr
+                    ? 'bg-emerald-500/12 border-emerald-500/35 text-jade'
+                    : 'surface-soft hairline text-dim hover:text-main'
+                }`}
+              >
+                <ChainLogo chain={item.chain} size={14} />
+                <span>{item.label}</span>
+                {item.addr ? (
+                  <span dir="ltr" className="opacity-85 font-mono">
+                    {item.addr.slice(0, 4)}..{item.addr.slice(-3)}
+                  </span>
+                ) : (
+                  <span className="opacity-65">{isFa ? '+ اتصال' : '+ Link'}</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-dim font-bold me-1">{isFa ? 'سوئیچ شبکه EVM:' : 'Switch EVM:'}</span>
+            {EVM_NETWORKS.map((net) => (
+              <button
+                key={net.key}
+                type="button"
+                disabled={walletBusy}
+                onClick={() => void handleSwitchEvmNetwork(net.key)}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black transition ${
+                  activeEvmKey === net.key ? 'btn-cobalt' : 'surface-soft text-dim hover:text-main'
+                }`}
+              >
+                <ChainLogo chain={net.key} size={13} />
+                <span>{net.shortName}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -652,16 +781,17 @@ export function DexTrustPage({
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap gap-1.5">
-                {CHAIN_FILTERS.map((c) => (
+                {dynamicChainFilters.map((c) => (
                   <button
                     key={c}
                     type="button"
                     onClick={() => setChainFilter(c)}
-                    className={`px-3 py-1 rounded-xl text-[11px] font-black uppercase transition ${
+                    className={`px-3 py-1 rounded-xl text-[11px] font-black uppercase transition inline-flex items-center gap-1.5 ${
                       chainFilter === c ? 'btn-cobalt' : 'surface-soft text-dim hover:text-main'
                     }`}
                   >
-                    {c === 'all' ? (isFa ? 'همه شبکه‌ها' : 'All') : c}
+                    {c !== 'all' && <ChainLogo chain={c} size={14} />}
+                    <span>{c === 'all' ? (isFa ? 'همه شبکه‌ها' : 'All') : c}</span>
                   </button>
                 ))}
               </div>
@@ -701,8 +831,9 @@ export function DexTrustPage({
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <strong className="font-display text-base text-main">{t.baseToken.symbol}</strong>
-                              <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 uppercase">
-                                {t.chainId} · {t.dexId}
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 uppercase inline-flex items-center gap-1">
+                                <ChainLogo chain={t.chainId} size={13} />
+                                <span>{t.chainId} · {t.dexId}</span>
                               </span>
                             </div>
                             <p className="text-[11px] text-dim truncate max-w-[180px]">{t.baseToken.name}</p>
@@ -854,14 +985,28 @@ export function DexTrustPage({
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-dim mb-1">
-                  {isFa ? 'آدرس Solana (شبکه SPL / میم‌کوین‌ها)' : 'Solana Address'}
+                <label className="block text-xs font-bold text-dim mb-1 flex items-center gap-1.5">
+                  <ChainLogo chain="solana" size={14} />
+                  <span>{isFa ? 'آدرس Solana (شبکه SPL / میم‌کوین‌ها)' : 'Solana Address'}</span>
                 </label>
                 <input
                   value={solInput}
                   onChange={(e) => setSolInput(e.target.value)}
                   dir="ltr"
                   placeholder="..."
+                  className="input-field w-full py-2.5 px-3 rounded-2xl text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-dim mb-1 flex items-center gap-1.5">
+                  <ChainLogo chain="ton" size={14} />
+                  <span>{isFa ? 'آدرس TON (شبکه تلگرام / Jetton)' : 'TON Address (EQ... / UQ...)'}</span>
+                </label>
+                <input
+                  value={tonInput}
+                  onChange={(e) => setTonInput(e.target.value)}
+                  dir="ltr"
+                  placeholder="UQ... or EQ..."
                   className="input-field w-full py-2.5 px-3 rounded-2xl text-xs font-mono"
                 />
               </div>
@@ -888,15 +1033,23 @@ export function DexTrustPage({
               {isFa ? 'موجودی زنده بلاکچین و آدرس‌های دریافت پلتفرم' : 'On-Chain Balances & Official Receivers'}
             </h3>
             {balances ? (
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 {[
-                  { label: 'BSC USDT (BEP20)', val: balances.bscUsdt !== null ? `${balances.bscUsdt.toFixed(2)} USDT` : '—' },
-                  { label: 'BNB (BSC Gas)', val: balances.bnb !== null ? `${balances.bnb.toFixed(4)} BNB` : '—' },
-                  { label: 'Ethereum (ETH)', val: balances.eth !== null ? `${balances.eth.toFixed(4)} ETH` : '—' },
-                  { label: 'TRON USDT (TRC20)', val: balances.trc20Usdt !== null ? `${balances.trc20Usdt.toFixed(2)} USDT` : '—' },
+                  { chain: 'bsc', label: 'BSC USDT (BEP20)', val: balances.bscUsdt !== null ? `${balances.bscUsdt.toFixed(2)} USDT` : '—' },
+                  { chain: 'bsc', label: 'BNB (BSC Gas)', val: balances.bnb !== null ? `${balances.bnb.toFixed(4)} BNB` : '—' },
+                  { chain: 'ethereum', label: 'Ethereum (ETH)', val: balances.eth !== null ? `${balances.eth.toFixed(4)} ETH` : '—' },
+                  { chain: 'base', label: 'Base (ETH)', val: balances.baseEth != null ? `${balances.baseEth.toFixed(4)} ETH` : '—' },
+                  { chain: 'arbitrum', label: 'Arbitrum (ETH)', val: balances.arbEth != null ? `${balances.arbEth.toFixed(4)} ETH` : '—' },
+                  { chain: 'polygon', label: 'Polygon (POL)', val: balances.polygonPol != null ? `${balances.polygonPol.toFixed(4)} POL` : '—' },
+                  { chain: 'solana', label: 'Solana (SOL)', val: balances.sol != null ? `${balances.sol.toFixed(4)} SOL` : '—' },
+                  { chain: 'ton', label: 'TON Network', val: balances.ton != null ? `${balances.ton.toFixed(4)} TON` : '—' },
+                  { chain: 'tron', label: 'TRON USDT (TRC20)', val: balances.trc20Usdt !== null ? `${balances.trc20Usdt.toFixed(2)} USDT` : '—' },
                 ].map((b) => (
                   <div key={b.label} className="surface-soft rounded-2xl p-3">
-                    <span className="block text-[11px] text-dim">{b.label}</span>
+                    <span className="flex items-center gap-1.5 text-[11px] text-dim mb-1">
+                      <ChainLogo chain={b.chain} size={14} />
+                      <span>{b.label}</span>
+                    </span>
                     <strong dir="ltr" className="text-sm font-num text-main">
                       {b.val}
                     </strong>
@@ -906,8 +1059,8 @@ export function DexTrustPage({
             ) : (
               <p className="text-xs text-dim surface-soft rounded-2xl p-4">
                 {isFa
-                  ? 'پس از ثبت آدرس EVM یا TRON، دکمه «استعلام موجودی آن‌چین» را بزنید تا دارایی لحظه‌ای شما مستقیماً از نودهای BSC/ETH/Tronscan خوانده شود.'
-                  : 'Click Fetch On-Chain Balances after saving your wallet addresses.'}
+                  ? 'پس از اتصال یا ثبت آدرس‌های EVM، Solana، TON یا TRON، دکمه «استعلام موجودی آن‌چین» را بزنید تا دارایی شما همزمان از همه شبکه‌ها خوانده شود.'
+                  : 'Click Fetch On-Chain Balances to query BSC, ETH, Base, Arbitrum, Polygon, Solana, TON & TRON live.'}
               </p>
             )}
 
