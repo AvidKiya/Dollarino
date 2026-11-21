@@ -439,8 +439,8 @@ export function LandingPage({
 
             <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
               {isFa
-                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ترید کاملاً خودکار با هوش مصنوعی گرفته تا آموزش هوش مصنوعی خام شخصی خودتان، کپی از تریدرهای تاییدشده یا اجرای استراتژی Pine Script و Python — متصل به صرافی‌های Toobit و KCEX و ربات شیشه‌ای تلگرام.'
-                : 'Trade the exact way you prefer: fully automated AI trading in Simple Mode, chat-trainable personal AI, verified Copy Traders, or custom Pine Script & Python strategies synced with Toobit, KCEX, and Telegram.'}
+                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ترید کاملاً خودکار با هوش مصنوعی گرفته تا آموزش هوش مصنوعی خام شخصی، کپی از تریدرهای تاییدشده یا استراتژی Pine Script و Python — متصل به صرافی‌های Toobit و KCEX، کیف‌پول غیرامانی Trust Wallet DApp، رادار DexScreener و ربات رسمی تلگرام @Dollarino_bot.'
+                : 'Trade the exact way you prefer: fully automated AI trading, chat-trainable personal AI, verified Copy Traders, or custom Pine Script & Python strategies — synced with Toobit, KCEX, Trust Wallet DApp, DexScreener Radar, and Telegram Bot @Dollarino_bot.'}
             </p>
 
             <div className="flex flex-wrap justify-center lg:justify-start gap-3 pt-1">
@@ -472,9 +472,9 @@ export function LandingPage({
 
             <div className="flex flex-wrap justify-center lg:justify-start gap-x-5 gap-y-2 text-xs font-bold text-dim pt-1">
               {[
-                isFa ? 'ربات ۲۴ ساعته متصل به Toobit و KCEX' : '24/7 Toobit & KCEX execution',
-                isFa ? 'مینی‌اپ و ربات تلگرام با دکمه‌های شیشه‌ای' : 'Glass Telegram Bot & Mini App',
-                isFa ? 'پشتیبانی آنلاین واقعی در سایت و تلگرام' : 'Real Online Support Desk',
+                isFa ? 'ربات ۲۴ ساعته متصل به Toobit، KCEX و Trust Wallet' : '24/7 Toobit, KCEX & Trust Wallet Core',
+                isFa ? 'رادار زنده DexScreener + اکستنشن کروم و ویجت موبایل' : 'DexScreener Radar, Extension & Mobile Widgets',
+                isFa ? 'ثبت‌نام و احراز هویت امن شماره تماس در @Dollarino_bot' : 'Phone-Verified Onboarding in @Dollarino_bot',
               ].map((x) => (
                 <span key={x} className="inline-flex items-center gap-1.5">
                   <Check className="h-4 w-4 text-jade" />

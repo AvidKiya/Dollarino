@@ -70,15 +70,59 @@ interface AdminOverview {
     is_blocked: number;
     telegram_id: string | null;
     telegram_username: string | null;
+    phone_number?: string | null;
+    phone_verified?: number;
+    trust_wallet_address?: string | null;
+    trust_wallet_tron?: string | null;
+    trust_wallet_solana?: string | null;
+    trust_wallet_verified?: number;
+    ui_mode?: string | null;
+    activePlan?: string | null;
     created_at: string;
   }>;
   stats: {
     totalUsers: number;
+    phoneVerifiedCount?: number;
+    trustWalletConnectedCount?: number;
+    activeSubscriptions?: number;
+    totalRevenueUsd?: number;
+    openSupportTickets?: number;
+    dexTradesTotal?: number;
+    dexTradesOpen?: number;
     signalsCount: number;
     botsCount: number;
     trades: { total: number; open_count: number; total_pnl: number } | null;
   };
   settings: Record<string, string>;
+}
+
+interface AdminDexTrade {
+  id: string;
+  user_id: string;
+  username?: string;
+  email?: string;
+  chain_id: string;
+  token_symbol: string;
+  token_address: string;
+  side: string;
+  amount_usd: number;
+  entry_price_usd: number;
+  current_price_usd: number;
+  pnl_usd: number;
+  status: string;
+  tx_hash: string | null;
+  opened_at: string;
+}
+
+interface AdminAuditLog {
+  id: string;
+  user_id: string | null;
+  username?: string | null;
+  email?: string | null;
+  category: string;
+  level: string;
+  message: string;
+  created_at: string;
 }
 
 interface SubOrder {
@@ -187,6 +231,18 @@ export function AdminPage({
     vipPriceToman: 3950000,
   });
 
+  const [adminSection, setAdminSection] = useState<'all' | 'overview' | 'users' | 'payments' | 'ops' | 'dex_logs'>('all');
+  const [userSearch, setUserSearch] = useState('');
+  const [userFilter, setUserFilter] = useState<'all' | 'kyc_verified' | 'trust_wallet' | 'unverified'>('all');
+  const [requirePhoneKyc, setRequirePhoneKyc] = useState(true);
+  const [trustReceivers, setTrustReceivers] = useState({
+    evm: '',
+    sol: '',
+    ton: '',
+  });
+  const [dexTrades, setDexTrades] = useState<AdminDexTrade[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+
   // Channel (@Dollarino_official) Management State
   const [channelCheck, setChannelCheck] = useState<{
     ok?: boolean;
@@ -287,7 +343,7 @@ export function AdminPage({
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -301,11 +357,21 @@ export function AdminPage({
       apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
       apiFetch<{ plans: PlanRow[] }>('/api/admin/plans').catch(() => ({ plans: [] })),
       apiFetch<{ news: Array<{ id: string; title: string; category: string; impact: string; created_at: string }> }>('/api/admin/channel/news').catch(() => ({ news: [] })),
+      apiFetch<{ trades: AdminDexTrade[] }>('/api/admin/dex-trades').catch(() => ({ trades: [] })),
+      apiFetch<{ logs: AdminAuditLog[] }>('/api/admin/audit-logs').catch(() => ({ logs: [] })),
     ]);
     setData(ov);
     setOrders(ordRes.orders);
     setAdminPlans(plansRes.plans || []);
     setChannelNewsList(newsRes.news || []);
+    setDexTrades(dexRes.trades || []);
+    setAuditLogs(logRes.logs || []);
+    setRequirePhoneKyc((ov.settings.require_telegram_phone_kyc ?? 'true') !== 'false');
+    setTrustReceivers({
+      evm: ov.settings.trust_wallet_evm_receiver || '',
+      sol: ov.settings.trust_wallet_sol_receiver || '',
+      ton: ov.settings.trust_wallet_ton_receiver || '',
+    });
     const tradesMap = new Map<string, AdminCopyTrader['trades']>();
     for (const td of ctRes.trades || []) {
       const arr = tradesMap.get(td.trader_id) ?? [];
@@ -440,11 +506,22 @@ export function AdminPage({
     e.preventDefault();
     setMsg(null);
     try {
-      await apiFetch('/api/subscriptions/admin/config', {
-        method: 'PATCH',
-        body: JSON.stringify(payCfg),
-      });
-      setMsg(isFa ? 'تنظیمات پرداخت و تعرفه اشتراک‌ها ذخیره شد.' : 'Subscription payment & pricing settings saved.');
+      await Promise.all([
+        apiFetch('/api/subscriptions/admin/config', {
+          method: 'PATCH',
+          body: JSON.stringify(payCfg),
+        }),
+        apiFetch('/api/admin/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            trust_wallet_evm_receiver: trustReceivers.evm.trim(),
+            trust_wallet_sol_receiver: trustReceivers.sol.trim(),
+            trust_wallet_ton_receiver: trustReceivers.ton.trim(),
+            require_telegram_phone_kyc: requirePhoneKyc ? 'true' : 'false',
+          }),
+        }),
+      ]);
+      setMsg(isFa ? 'تنظیمات پرداخت، کیف‌پول Trust Wallet و احراز شماره تماس ذخیره شد.' : 'Payment, Trust Wallet receivers & KYC settings saved.');
       await load();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Failed to save payment config');
@@ -558,27 +635,87 @@ export function AdminPage({
 
       {isOwnerOrAdmin && data && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="surface-card p-4">
-              <div className="text-xs text-sub">{isFa ? 'کل کاربران' : 'Total Users'}</div>
-              <div className="text-xl font-black font-mono-num text-main mt-1">{data.stats.totalUsers}</div>
-            </div>
-            <div className="surface-card p-4">
-              <div className="text-xs text-sub">{isFa ? 'سفارش اشتراک در انتظار' : 'Pending Orders'}</div>
-              <div className="text-xl font-black font-mono-num text-flame mt-1">
-                {orders.filter((o) => o.status === 'PENDING_REVIEW').length}
+          {/* Organized Admin Command Bar */}
+          <div className="panel rounded-3xl p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-brand" />
+                <div>
+                  <h2 className="text-sm sm:text-base font-black text-main">
+                    {isFa ? 'مرکز فرماندهی و مدیریت کل دلارینو' : 'Dollarino Master Admin Desk'}
+                  </h2>
+                  <p className="text-[11px] text-dim">
+                    {isFa
+                      ? 'مدیریت یکپارچه کاربران، احراز هویت تلگرام، کیف‌پول‌های Trust Wallet، موتور AI، معاملات DEX و کانال رسمی'
+                      : 'Unified control over users, Telegram phone KYC, Trust Wallet receivers, AI engines, DEX trades, and official channel'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {[
+                  { id: 'all', fa: 'همه بخش‌ها', en: 'All' },
+                  { id: 'overview', fa: '🧠 هوش مصنوعی و آمار', en: 'AI & KPIs' },
+                  { id: 'users', fa: '👥 کاربران و KYC', en: 'Users & KYC' },
+                  { id: 'payments', fa: '💳 مالی و Trust Wallet', en: 'Payments & Wallets' },
+                  { id: 'ops', fa: '📢 کانال، کپی‌ترید و پشتیبانی', en: 'Channel & Support' },
+                  { id: 'dex_logs', fa: '🔥 DEX و لاگ‌ها', en: 'DEX & Audit Logs' },
+                ].map((sec) => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => setAdminSection(sec.id as typeof adminSection)}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition ${
+                      adminSection === sec.id ? 'btn-cobalt' : 'surface-soft text-dim hover:text-main'
+                    }`}
+                  >
+                    {isFa ? sec.fa : sec.en}
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="surface-card p-4">
-              <div className="text-xs text-sub">{isFa ? 'کل معاملات' : 'Total Trades'}</div>
-              <div className="text-xl font-black font-mono-num text-main mt-1">{data.stats.trades?.total ?? 0}</div>
-            </div>
-            <div className="surface-card p-4">
-              <div className="text-xs text-sub">{isFa ? 'سیگنال‌ها' : 'Signals Logged'}</div>
-              <div className="text-xl font-black font-mono-num text-main mt-1">{data.stats.signalsCount}</div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              <div className="surface-soft rounded-2xl p-3.5">
+                <div className="text-[11px] text-sub">{isFa ? 'کل کاربران / تایید KYC' : 'Users / Phone KYC'}</div>
+                <div className="text-lg font-black font-mono-num text-main mt-1">
+                  {data.stats.totalUsers} <span className="text-xs text-jade">/ {data.stats.phoneVerifiedCount ?? 0}📱</span>
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3.5">
+                <div className="text-[11px] text-sub">{isFa ? 'کیف‌پول Trust Wallet' : 'Trust Wallets'}</div>
+                <div className="text-lg font-black font-mono-num text-amber-400 mt-1">
+                  {data.stats.trustWalletConnectedCount ?? 0} 🦊
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3.5">
+                <div className="text-[11px] text-sub">{isFa ? 'اشتراک فعال / درآمد' : 'Subs / Revenue'}</div>
+                <div className="text-lg font-black font-mono-num text-jade mt-1">
+                  {data.stats.activeSubscriptions ?? 0} <span className="text-xs">(${Math.round(data.stats.totalRevenueUsd ?? 0)})</span>
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3.5">
+                <div className="text-[11px] text-sub">{isFa ? 'سفارش در انتظار' : 'Pending Orders'}</div>
+                <div className="text-lg font-black font-mono-num text-flame mt-1">
+                  {orders.filter((o) => o.status === 'PENDING_REVIEW').length}
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3.5">
+                <div className="text-[11px] text-sub">{isFa ? 'معاملات CEX / DEX' : 'CEX / DEX Trades'}</div>
+                <div className="text-lg font-black font-mono-num text-main mt-1">
+                  {data.stats.trades?.total ?? 0} <span className="text-xs text-brand">/ {data.stats.dexTradesTotal ?? dexTrades.length}</span>
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3.5">
+                <div className="text-[11px] text-sub">{isFa ? 'سیگنال / تیکت باز' : 'Signals / Tickets'}</div>
+                <div className="text-lg font-black font-mono-num text-main mt-1">
+                  {data.stats.signalsCount} <span className="text-xs text-rose-400">/ {data.stats.openSupportTickets ?? 0}</span>
+                </div>
+              </div>
             </div>
           </div>
 
+          {(adminSection === 'all' || adminSection === 'overview') && (
+          <>
           {/* Centralized Owner Multi-AI Engine (1 to 3 Combined Models) */}
           <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-5 border-[#1464F6]/35">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -907,7 +1044,11 @@ export function AdminPage({
               </div>
             )}
           </div>
+          </>
+          )}
 
+          {(adminSection === 'all' || adminSection === 'payments') && (
+          <>
           <div className="surface-card p-5 space-y-3 overflow-x-auto">
             <h3 className="text-sm font-black text-main flex items-center gap-2">
               <Crown className="w-4 h-4 text-flame" />
@@ -1077,8 +1218,48 @@ export function AdminPage({
                 <input type="number" value={payCfg.vipPriceUsd} onChange={(e) => setPayCfg({ ...payCfg, vipPriceUsd: Number(e.target.value) })} placeholder="VIP $" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
                 <input type="number" value={payCfg.vipPriceToman} onChange={(e) => setPayCfg({ ...payCfg, vipPriceToman: Number(e.target.value) })} placeholder="VIP T" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
               </div>
+
+              <div className="pt-2 border-t hairline space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black text-amber-400">
+                    {isFa ? '🦊 آدرس‌های دریافت Trust Wallet و امنیت ربات:' : '🦊 Trust Wallet Receivers & KYC Gate:'}
+                  </span>
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-main">
+                    <input
+                      type="checkbox"
+                      checked={requirePhoneKyc}
+                      onChange={(e) => setRequirePhoneKyc(e.target.checked)}
+                    />
+                    <span>{isFa ? 'اجبار احراز شماره تماس تلگرام' : 'Require Telegram Phone KYC'}</span>
+                  </label>
+                </div>
+                <input
+                  dir="ltr"
+                  value={trustReceivers.evm}
+                  onChange={(e) => setTrustReceivers({ ...trustReceivers, evm: e.target.value })}
+                  placeholder="Trust Wallet EVM / BEP20 Receiver (0x...)"
+                  className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    dir="ltr"
+                    value={trustReceivers.sol}
+                    onChange={(e) => setTrustReceivers({ ...trustReceivers, sol: e.target.value })}
+                    placeholder="Solana Receiver (optional)"
+                    className="surface-input rounded-xl px-3 py-2 font-mono-num"
+                  />
+                  <input
+                    dir="ltr"
+                    value={trustReceivers.ton}
+                    onChange={(e) => setTrustReceivers({ ...trustReceivers, ton: e.target.value })}
+                    placeholder="TON Receiver (optional)"
+                    className="surface-input rounded-xl px-3 py-2 font-mono-num"
+                  />
+                </div>
+              </div>
+
               <button type="submit" className="w-full py-2.5 rounded-xl btn-cobalt font-extrabold">
-                {isFa ? 'ذخیره تنظیمات مالی و پلن‌ها' : 'Save Pricing & Payment Info'}
+                {isFa ? 'ذخیره تنظیمات مالی، Trust Wallet و KYC' : 'Save Pricing, Trust Wallet & KYC'}
               </button>
             </form>
           </div>
@@ -1206,32 +1387,108 @@ export function AdminPage({
               </button>
             </form>
           </div>
+          </>
+          )}
 
-          <div className="surface-card p-5 overflow-x-auto">
-            <h3 className="text-sm font-black mb-3 flex items-center gap-2 text-main">
-              <Users className="w-4 h-4 text-brand" />
-              <span>{isFa ? 'مدیریت کاربران و ادمین‌ها' : 'Instance Users & Admin Controls'}</span>
-            </h3>
+          {(adminSection === 'all' || adminSection === 'users') && (
+          <div className="surface-card p-5 space-y-3 overflow-x-auto">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-black flex items-center gap-2 text-main">
+                <Users className="w-4 h-4 text-brand" />
+                <span>{isFa ? 'مدیریت کاربران، احراز هویت شماره و Trust Wallet' : 'Users, Phone KYC & Trust Wallets'}</span>
+              </h3>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <input
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder={isFa ? 'جستجو نام، ایمیل، تلفن، آدرس...' : 'Search user / phone / wallet...'}
+                  className="surface-input rounded-xl px-3 py-1.5 text-xs"
+                />
+                {[
+                  { id: 'all', label: isFa ? 'همه' : 'All' },
+                  { id: 'kyc_verified', label: isFa ? '📱 KYC تایید' : 'Verified' },
+                  { id: 'trust_wallet', label: isFa ? '🦊 Trust Wallet' : 'Trust Wallet' },
+                  { id: 'unverified', label: isFa ? '⏳ بدون KYC' : 'Pending KYC' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setUserFilter(f.id as typeof userFilter)}
+                    className={`px-2.5 py-1 rounded-lg font-bold ${userFilter === f.id ? 'btn-cobalt' : 'surface-soft text-dim'}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <table className="w-full text-xs">
               <thead className="text-dim border-b">
                 <tr>
                   <th className="py-2 px-2 text-start">User</th>
-                  <th className="py-2 px-2 text-start">Telegram</th>
-                  <th className="py-2 px-2 text-start">Role</th>
+                  <th className="py-2 px-2 text-start">{isFa ? 'تلگرام و تلفن KYC' : 'Telegram & KYC'}</th>
+                  <th className="py-2 px-2 text-start">{isFa ? 'کیف‌پول Trust Wallet' : 'Trust Wallet'}</th>
+                  <th className="py-2 px-2 text-start">{isFa ? 'نقش / پلن / حالت' : 'Role / Plan / UI'}</th>
                   <th className="py-2 px-2 text-end">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {data.users.map((u) => (
+                {data.users
+                  .filter((u) => {
+                    if (userFilter === 'kyc_verified' && u.phone_verified !== 1) return false;
+                    if (userFilter === 'trust_wallet' && !u.trust_wallet_address && !u.trust_wallet_tron) return false;
+                    if (userFilter === 'unverified' && u.phone_verified === 1) return false;
+                    const q = userSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return [u.username, u.email, u.telegram_id, u.telegram_username, u.phone_number, u.trust_wallet_address]
+                      .filter(Boolean)
+                      .some((v) => String(v).toLowerCase().includes(q));
+                  })
+                  .map((u) => (
                   <tr key={u.id}>
                     <td className="py-2.5 px-2 text-main font-semibold">
-                      {u.username} <span className="text-dim">({u.email})</span>
+                      <div>{u.username}</div>
+                      <div className="text-[11px] text-dim">{u.email}</div>
                     </td>
-                    <td className="py-2.5 px-2 font-mono-num text-sub">{u.telegram_id || '-'}</td>
+                    <td className="py-2.5 px-2 font-mono-num text-sub">
+                      <div>{u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '-'}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}>
+                          {u.phone_verified === 1 ? `✅ ${u.phone_number || 'Verified'}` : '⏳ Unverified'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-2 font-mono-num text-[11px] text-sub" dir="ltr">
+                      {u.trust_wallet_address ? (
+                        <span className="badge-signal px-2 py-0.5 rounded-full">
+                          🦊 {u.trust_wallet_address.slice(0, 6)}...{u.trust_wallet_address.slice(-4)}
+                        </span>
+                      ) : (
+                        <span className="text-dim">—</span>
+                      )}
+                    </td>
                     <td className="py-2.5 px-2">
-                      <span className="px-2 py-0.5 rounded surface-soft text-main font-bold">{u.role}</span>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="px-2 py-0.5 rounded surface-soft text-main font-bold">{u.role}</span>
+                        {u.activePlan && <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-jade font-bold">{u.activePlan}</span>}
+                        <span className="px-2 py-0.5 rounded bg-white/5 text-dim">{u.ui_mode || 'simple'}</span>
+                      </div>
                     </td>
-                    <td className="py-2.5 px-2 text-end space-x-2">
+                    <td className="py-2.5 px-2 text-end space-x-1 space-y-1">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await apiFetch(`/api/admin/users/${u.id}/kyc`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ phoneVerified: u.phone_verified !== 1 }),
+                          });
+                          setMsg(isFa ? `وضعیت KYC کاربر ${u.username} بروزرسانی شد.` : 'User KYC updated.');
+                          void load();
+                        }}
+                        className="px-2 py-1 rounded-lg bg-emerald-500/15 text-jade font-bold"
+                      >
+                        {u.phone_verified === 1 ? (isFa ? 'لغو KYC' : 'Revoke KYC') : (isFa ? 'تایید KYC' : 'Approve KYC')}
+                      </button>
                       {u.role !== 'owner' && (
                         <>
                           {currentUser.role === 'owner' && (
@@ -1268,7 +1525,10 @@ export function AdminPage({
               </tbody>
             </table>
           </div>
+          )}
 
+          {(adminSection === 'all' || adminSection === 'ops') && (
+          <>
           {/* Admin Copy Traders Manager + Online Support Inbox */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
             {/* Copy Traders Management */}
@@ -1547,7 +1807,7 @@ export function AdminPage({
                 </h3>
                 <p className="text-xs text-sub mt-1">
                   {isFa
-                    ? 'بررسی وضعیت ادمین بودن ربات @Dollarino_bot در کانال، انتشار سیگنال با دکمه‌های شیشه‌ای، و انتشار اخبار و تحلیل فاندامنتال.'
+                    ? 'بررسی وضعیت ادمین بودن ربات @Dollarino_bot در کانال، انتشار سیگنال با دکمه‌های تعاملی، و انتشار اخبار و تحلیل فاندامنتال.'
                     : 'Verify channel admin status, broadcast signals with inline execution buttons, and post breaking fundamental news.'}
                 </p>
               </div>
@@ -1599,7 +1859,7 @@ export function AdminPage({
                         note: channelSignalForm.note || undefined,
                       }),
                     });
-                    setMsg(isFa ? 'سیگنال با دکمه‌های شیشه‌ای در کانال @Dollarino_official منتشر شد ✅' : 'Signal published to channel ✅');
+                    setMsg(isFa ? 'سیگنال با دکمه‌های تعاملی در کانال @Dollarino_official منتشر شد ✅' : 'Signal published to channel ✅');
                   } catch (err) {
                     setMsg(err instanceof Error ? err.message : 'Publish signal failed');
                   }
@@ -1608,7 +1868,7 @@ export function AdminPage({
               >
                 <h4 className="font-black text-main flex items-center gap-1.5">
                   <Megaphone className="w-4 h-4 text-brand" />
-                  <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های شیشه‌ای' : 'Publish Signal to @Dollarino_official'}</span>
+                  <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های تعاملی' : 'Publish Signal to @Dollarino_official'}</span>
                 </h4>
                 <div className="grid grid-cols-3 gap-2">
                   <input dir="ltr" required value={channelSignalForm.symbol} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, symbol: e.target.value.toUpperCase() })} placeholder="BTCUSDT" className="surface-input rounded-xl px-2.5 py-2 font-mono" />
@@ -1739,6 +1999,80 @@ export function AdminPage({
               </button>
             </div>
           </div>
+          </>
+          )}
+
+          {(adminSection === 'all' || adminSection === 'dex_logs') && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+              <div className="surface-card p-5 space-y-3 overflow-x-auto">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-sm text-main">
+                    {isFa ? '🔥 معاملات غیرمتمرکز DEX و Trust Wallet کاربران' : '🔥 User DEX & Trust Wallet Trades'}
+                  </h3>
+                  <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{dexTrades.length}</span>
+                </div>
+                {dexTrades.length === 0 ? (
+                  <p className="text-dim py-4 text-center">{isFa ? 'هنوز معامله DEX ثبت نشده است.' : 'No DEX trades logged yet.'}</p>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="text-dim border-b">
+                      <tr>
+                        <th className="py-2 text-start">User</th>
+                        <th className="py-2 text-start">Token / Chain</th>
+                        <th className="py-2 text-start">Side / Amount</th>
+                        <th className="py-2 text-end">PnL / Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {dexTrades.slice(0, 25).map((dt) => (
+                        <tr key={dt.id}>
+                          <td className="py-2 font-semibold text-main">{dt.username || dt.email || dt.user_id}</td>
+                          <td className="py-2 font-mono-num" dir="ltr">
+                            <span className="font-bold text-main">{dt.token_symbol}</span>{' '}
+                            <span className="text-dim">({dt.chain_id})</span>
+                          </td>
+                          <td className="py-2 font-mono-num" dir="ltr">
+                            {dt.side} · ${Number(dt.amount_usd || 0).toFixed(2)}
+                          </td>
+                          <td className="py-2 text-end font-mono-num">
+                            <span className={Number(dt.pnl_usd || 0) >= 0 ? 'text-jade' : 'text-loss'}>
+                              ${Number(dt.pnl_usd || 0).toFixed(2)}
+                            </span>{' '}
+                            <span className="text-dim">({dt.status})</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="surface-card p-5 space-y-3 overflow-x-auto">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-sm text-main">
+                    {isFa ? '📜 لاگ‌های حسابرسی و امنیت سیستم (Audit Logs)' : '📜 System & Security Audit Logs'}
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full surface-soft text-[10px] font-black">{auditLogs.length}</span>
+                </div>
+                <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                  {auditLogs.slice(0, 40).map((lg) => (
+                    <div key={lg.id} className="surface-soft rounded-xl p-2.5 flex items-start justify-between gap-2 text-[11px]">
+                      <div className="min-w-0">
+                        <span className="font-black text-brand">[{lg.category}]</span>{' '}
+                        <span className="text-main">{lg.message}</span>
+                        {(lg.username || lg.email) && (
+                          <div className="text-[10px] text-dim">{lg.username || lg.email}</div>
+                        )}
+                      </div>
+                      <span dir="ltr" className="text-[10px] font-mono-num text-dim shrink-0">
+                        {lg.created_at?.slice(5, 16)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

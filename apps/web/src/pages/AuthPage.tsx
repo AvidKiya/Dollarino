@@ -128,13 +128,19 @@ export function AuthPage({
             <span>
               {isFa ? (
                 <>
-                  ورود و ثبت‌نام ۱-کلیکی با ربات تلگرام (<span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>)
+                  ثبت‌نام، ورود و احراز هویت امن در ربات (<span dir="ltr" className="inline-block font-mono-num">@Dollarino_bot</span>)
                 </>
               ) : (
-                '1-Click Sign In via @Dollarino_bot'
+                'Register, Sign In & Phone KYC via @Dollarino_bot'
               )}
             </span>
           </a>
+
+          <p className="text-[11px] text-dim leading-relaxed text-center surface-soft rounded-2xl p-2.5">
+            {isFa
+              ? 'در ربات تلگرام @Dollarino_bot پس از لمس «اشتراک‌گذاری شماره تماس اکانت من»، حساب شما با احراز هویت امن ساخته شده و دسترسی کامل به ربات، مینی‌اپ، Trust Wallet DApp و اکستنشن کروم فعال می‌شود.'
+              : 'Open @Dollarino_bot and share your own Telegram contact phone number for instant account registration, verification, and 1-click web/extension sync.'}
+          </p>
 
           <div className="flex items-center gap-2 text-[11px] text-dim">
             <div className="h-px flex-1 bg-white/10" />

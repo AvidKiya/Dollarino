@@ -2,6 +2,7 @@ import { formatDollarinoSignal, parseDollarinoSignal, resolveEngineDisplayLabel 
 import { getPlatformAISummary } from '../ai/providers.js';
 import { ensureUserDefaults } from '../auth.js';
 import { encryptVaultJson, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
+import { fetchDexTrendingOverview, searchDexPairs, type DexTokenEnriched } from '../dex/screener.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
@@ -9,6 +10,14 @@ import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { DEFAULT_TRAINED_RULES, extractRulesFromConversation, type TrainedAIRules } from '../routes/my-ai.js';
 import { buildVerifiedCardCanonicalPayload } from '../routes/trading.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
+import {
+  fetchBscUsdtBalance,
+  fetchEvmNativeBalance,
+  fetchTronBalances,
+  isValidEvm,
+  isValidSolana,
+  isValidTron,
+} from '../routes/trustwallet.js';
 import {
   getSystemSetting,
   handleAdminCallback,
@@ -23,6 +32,7 @@ import {
   ANTI_SCAM_WARNING_FA,
   channelSignalInlineButtons,
   type CollapsibleMenuSection,
+  contactVerificationKeyboard,
   exchangeSelectionKeyboard,
   formatAccountCard,
   formatBalanceCard,
@@ -30,6 +40,8 @@ import {
   mainMenuKeyboard,
   miniAppInlineKeyboard,
   OFFICIAL_BOT_HANDLE,
+  preAuthIntroInlineButtons,
+  preAuthIntroMessage,
   settingsKeyboard,
   welcomeMessage,
 } from './formatter.js';
@@ -49,6 +61,12 @@ interface TelegramUpdate {
     text?: string;
     caption?: string;
     photo?: Array<{ file_id: string }>;
+    contact?: {
+      phone_number: string;
+      first_name?: string;
+      last_name?: string;
+      user_id?: number;
+    };
   };
   callback_query?: {
     id: string;
@@ -72,6 +90,10 @@ interface TelegramStepState extends Partial<AdminStepState> {
   provider?: 'toobit' | 'kcex';
   apiKey?: string;
   subId?: string;
+  pendingStartArg?: string;
+  wizMarginPct?: number;
+  wizLev?: number;
+  wizEngine?: string;
 }
 
 interface ProvisionedUserRow {
@@ -84,6 +106,17 @@ interface ProvisionedUserRow {
   telegram_admin_perms: string | null;
   admin_panel_last_active_at?: string | null;
   wallet_balance_usdt?: number;
+  phone_number?: string | null;
+  phone_verified?: number;
+  trust_wallet_address?: string | null;
+  trust_wallet_tron?: string | null;
+  trust_wallet_solana?: string | null;
+  ui_mode?: string | null;
+  extension_api_key?: string | null;
+}
+
+function getUserUiMode(user: ProvisionedUserRow): 'simple' | 'pro' {
+  return user.ui_mode === 'pro' ? 'pro' : 'simple';
 }
 
 function isSuperAdminUser(telegramId: string, role: string, env: Env): boolean {
@@ -103,7 +136,9 @@ async function getOrProvisionTelegramUser(
   const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
 
   let row = await env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_state, telegram_admin_perms, admin_panel_last_active_at, wallet_balance_usdt
+    `SELECT id, email, username, role, is_blocked, telegram_state, telegram_admin_perms, admin_panel_last_active_at,
+            wallet_balance_usdt, phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana,
+            ui_mode, extension_api_key
      FROM users WHERE telegram_id = ?`
   ).bind(tgId).first<ProvisionedUserRow>();
 
@@ -115,9 +150,9 @@ async function getOrProvisionTelegramUser(
     const pwd = await hashPassword(randomId('pwd'));
 
     await env.DB.prepare(
-      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, pseudoEmail, username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null).run();
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, ui_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'simple')`
+    ).bind(id, pseudoEmail, username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, tgId === ownerId ? 1 : 0).run();
 
     await ensureUserDefaults(env.DB, id);
     row = {
@@ -130,11 +165,19 @@ async function getOrProvisionTelegramUser(
       telegram_admin_perms: '{}',
       admin_panel_last_active_at: null,
       wallet_balance_usdt: 0,
+      phone_number: null,
+      phone_verified: tgId === ownerId ? 1 : 0,
+      trust_wallet_address: null,
+      trust_wallet_tron: null,
+      trust_wallet_solana: null,
+      ui_mode: 'simple',
+      extension_api_key: null,
     };
   } else {
     if (tgId === ownerId && row.role !== 'owner') {
-      await env.DB.prepare(`UPDATE users SET role = 'owner' WHERE id = ?`).bind(row.id).run();
+      await env.DB.prepare(`UPDATE users SET role = 'owner', phone_verified = 1 WHERE id = ?`).bind(row.id).run();
       row.role = 'owner';
+      row.phone_verified = 1;
     }
     await env.DB.prepare(
       `UPDATE users SET last_active_at = datetime('now'), telegram_username = COALESCE(?, telegram_username), telegram_first_name = COALESCE(?, telegram_first_name) WHERE id = ?`
@@ -176,10 +219,27 @@ async function applyLinkCodeForUser(
   }
 
   if (webUser.id !== currentUserId) {
+    const oldRow = await env.DB.prepare(
+      `SELECT phone_number, phone_verified, phone_verified_at FROM users WHERE id = ?`
+    ).bind(currentUserId).first<{ phone_number: string | null; phone_verified: number; phone_verified_at: string | null }>();
     await env.DB.prepare(`UPDATE users SET telegram_id = NULL WHERE id = ?`).bind(currentUserId).run();
     await env.DB.prepare(
-      `UPDATE users SET telegram_id = ?, telegram_username = ?, telegram_first_name = ?, telegram_link_code = NULL, telegram_link_expires_at = NULL WHERE id = ?`
-    ).bind(String(tgUser.id), tgUser.username ?? null, tgUser.first_name ?? null, webUser.id).run();
+      `UPDATE users
+       SET telegram_id = ?, telegram_username = ?, telegram_first_name = ?,
+           phone_number = COALESCE(phone_number, ?),
+           phone_verified = CASE WHEN phone_verified = 1 OR ? = 1 THEN 1 ELSE 0 END,
+           phone_verified_at = COALESCE(phone_verified_at, ?),
+           telegram_link_code = NULL, telegram_link_expires_at = NULL
+       WHERE id = ?`
+    ).bind(
+      String(tgUser.id),
+      tgUser.username ?? null,
+      tgUser.first_name ?? null,
+      oldRow?.phone_number ?? null,
+      oldRow?.phone_verified ?? 0,
+      oldRow?.phone_verified_at ?? null,
+      webUser.id
+    ).run();
   } else {
     await env.DB.prepare(`UPDATE users SET telegram_link_code = NULL, telegram_link_expires_at = NULL WHERE id = ?`).bind(webUser.id).run();
   }
@@ -231,6 +291,10 @@ async function showAccountCard(env: Env, bot: TelegramBotClient, chatId: string 
     telegramId: tgId,
     username: user.username,
     email: user.email,
+    phoneNumber: user.phone_number,
+    phoneVerified: Boolean(user.phone_verified),
+    trustWalletAddress: user.trust_wallet_address || user.trust_wallet_tron || user.trust_wallet_solana,
+    uiMode: getUserUiMode(user),
     walletUsdt: Number(user.wallet_balance_usdt ?? 0),
     tomanRate: Number(rateStr) || 70000,
     planNameFa: ent.planNameFa,
@@ -250,13 +314,325 @@ async function showAccountCard(env: Env, bot: TelegramBotClient, chatId: string 
       { text: 'افزایش موجودی 💰', callback_data: 'sub_topup' },
       { text: 'خرید اشتراک 💎', callback_data: 'sub_menu' },
     ],
-    [{ text: '🌐 ورود مستقیم به وب', callback_data: 'tg_web_login' }],
+    [
+      { text: '🦊 کیف‌پول Trust Wallet', callback_data: 'tg_tw_menu', style: 'primary' },
+      { text: '🧩 اکستنشن و ویجت موبایل', callback_data: 'tg_ext_widgets' },
+    ],
+    [
+      {
+        text: getUserUiMode(user) === 'simple' ? '⚡ ارتقا به حالت حرفه‌ای' : '🌱 رفتن به حالت ساده',
+        callback_data: 'tg_toggle_ui_mode',
+      },
+      { text: '🌐 ورود مستقیم به وب', callback_data: 'tg_web_login' },
+    ],
   ];
   if (webAppUrl.startsWith('https://')) {
     kb.push([{ text: '🚀 باز کردن حساب در مینی‌اپ', web_app: { url: `${webAppUrl}/services` } }]);
   }
 
   await bot.sendMessage(chatId, card, { inlineKeyboard: kb });
+}
+
+async function isPhoneKycRequiredForUser(env: Env, user: ProvisionedUserRow, tgId: string): Promise<boolean> {
+  if (isUserAdmin(tgId, user.role, env)) return false;
+  if (Number(user.phone_verified ?? 0) === 1) return false;
+  const kycSetting = await getSystemSetting(env.DB, 'require_telegram_phone_kyc', 'true');
+  return kycSetting !== 'false';
+}
+
+function normalizePhoneNumber(raw: string): string {
+  const digits = raw.replace(/[^\d+]/g, '');
+  if (!digits) return raw.trim();
+  if (digits.startsWith('00')) return `+${digits.slice(2)}`;
+  return digits.startsWith('+') ? digits : `+${digits}`;
+}
+
+async function sendPreAuthIntro(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  firstName: string,
+  pendingStartArg?: string
+) {
+  if (pendingStartArg) {
+    await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
+      .bind(JSON.stringify({ step: 'PENDING_CONTACT_KYC', pendingStartArg } satisfies TelegramStepState), user.id)
+      .run()
+      .catch(() => {});
+  }
+  await bot.sendMessage(chatId, preAuthIntroMessage(firstName), {
+    inlineKeyboard: preAuthIntroInlineButtons(),
+  });
+  await bot.sendMessage(
+    chatId,
+    `🔐 **تکمیل ثبت‌نام و ورود امن (مرحله احراز هویت)**\n` +
+      `برای حفاظت از حساب‌ها، جلوگیری از اسپم و فعال‌شدن منوهای ربات و اتصال وب/اکستنشن، لطفاً دکمه‌ی پایین صفحه (**«📱 اشتراک‌گذاری شماره تماس اکانت من»**) را لمس کنید.\n\n` +
+      `⚠️ توجه: تنها شماره تماس اکانت تلگرامِ خودتان پذیرفته می‌شود و فوروارد شماره دیگران مسدود است.`,
+    { replyKeyboard: contactVerificationKeyboard() }
+  );
+}
+
+async function showTrustWalletMenu(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  webAppUrl: string,
+  editMsgId?: number,
+  includeLiveBalances = false
+) {
+  const [bep20Recv, trc20Recv, dexPref, walletEnabled] = await Promise.all([
+    getSystemSetting(env.DB, 'trust_wallet_evm_receiver', 'تنظیم‌نشده توسط ادمین'),
+    getSystemSetting(env.DB, 'usdt_trc20_wallet', 'تنظیم‌نشده توسط ادمین'),
+    getSystemSetting(env.DB, 'trust_wallet_default_dex', 'pancakeswap'),
+    getSystemSetting(env.DB, 'trust_wallet_dapp_enabled', 'true'),
+  ]);
+
+  let balLines = '';
+  if (includeLiveBalances) {
+    const parts: string[] = [];
+    if (user.trust_wallet_address) {
+      const [bnb, usdtBep20, eth] = await Promise.all([
+        fetchEvmNativeBalance('https://bsc-dataseed.binance.org', user.trust_wallet_address),
+        fetchBscUsdtBalance(user.trust_wallet_address),
+        fetchEvmNativeBalance('https://ethereum-rpc.publicnode.com', user.trust_wallet_address),
+      ]);
+      parts.push(
+        `• موجودی BSC: ${bnb !== null ? bnb.toFixed(4) : '—'} BNB | ${usdtBep20 !== null ? usdtBep20.toFixed(2) : '—'} USDT (BEP20)`
+      );
+      parts.push(`• موجودی ETH: ${eth !== null ? eth.toFixed(4) : '—'} ETH`);
+    }
+    if (user.trust_wallet_tron) {
+      const tr = await fetchTronBalances(user.trust_wallet_tron);
+      if (tr) parts.push(`• موجودی TRON: ${tr.trx.toFixed(2)} TRX | ${tr.usdt.toFixed(2)} USDT (TRC20)`);
+    }
+    if (parts.length) {
+      balLines = `\n💰 **استعلام لحظه‌ای آن‌چین:**\n${parts.join('\n')}\n`;
+    }
+  }
+
+  const twDappDeepLink = `https://link.trustwallet.com/open_url?coin_id=20000714&url=${encodeURIComponent(
+    `${webAppUrl.startsWith('https://') ? webAppUrl : 'https://dollarino.pages.dev'}/?tab=trustwallet`
+  )}`;
+
+  const msgText =
+    `🦊 **هسته مرکزی Trust Wallet DApp و ترید غیرمتمرکز**\n` +
+    `وضعیت سرویس DApp: ${walletEnabled === 'true' ? '🟢 فعال' : '🔴 غیرفعال'}\n\n` +
+    `🔐 **کیف‌پول‌های متصل شما (غیرامانی / کنترل کامل نزد خودتان):**\n` +
+    `• شبکه EVM (BSC / ETH / Base / Arbitrum): \`${user.trust_wallet_address || 'ثبت‌نشده'}\`\n` +
+    `• شبکه TRON (TRC20): \`${user.trust_wallet_tron || 'ثبت‌نشده'}\`\n` +
+    `• شبکه Solana (SPL): \`${user.trust_wallet_solana || 'ثبت‌نشده'}\`\n` +
+    balLines +
+    `\n📡 **ترید مستقیم بدون نیاز به صرافی متمرکز (Toobit/KCEX):**\n` +
+    `با دکمه‌های زیر می‌توانید توکن‌های **DexScreener** را مستقیماً از طریق مرورگر DApp در Trust Wallet (${dexPref}) سوآپ و مدیریت کنید یا اشتراک خود را با BEP20 / TRC20 بپردازید.\n` +
+    `\n🏦 آدرس دریافت پلتفرم BEP20: \`${bep20Recv}\`\n` +
+    `🏦 آدرس دریافت پلتفرم TRC20: \`${trc20Recv}\``;
+
+  const kb: InlineKeyboardButton[][] = [
+    [{ text: '🌐 باز کردن دلارینو در مرورگر Trust Wallet', url: twDappDeepLink, style: 'success' }],
+    [
+      { text: '✏️ ثبت/ویرایش آدرس EVM (0x)', callback_data: 'tg_tw_set:evm', style: 'primary' },
+      { text: '✏️ ثبت آدرس TRON (T...)', callback_data: 'tg_tw_set:tron' },
+    ],
+    [
+      { text: '✏️ ثبت آدرس Solana', callback_data: 'tg_tw_set:solana' },
+      { text: '💰 استعلام موجودی آن‌چین', callback_data: 'tg_tw_bal', style: 'success' },
+    ],
+    [
+      { text: '🔍 اسکن توکن داغ DexScreener', callback_data: 'tg_dex_trending', style: 'primary' },
+      { text: '💳 پرداخت اشتراک با تراست‌ولت', callback_data: 'tg_open_sub' },
+    ],
+    [{ text: '🔙 بازگشت به منوی سریع', callback_data: 'tg_acc:trust' }],
+  ];
+
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, msgText, kb).catch(() => bot.sendMessage(chatId, msgText, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, msgText, { inlineKeyboard: kb });
+  }
+}
+
+function formatUsdCompact(n?: number | null): string {
+  const val = Number(n ?? 0);
+  if (!Number.isFinite(val) || val <= 0) return '$0';
+  if (val >= 1_000_000_000) return `$${(val / 1_000_000_000).toFixed(2)}B`;
+  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)}M`;
+  if (val >= 1_000) return `$${(val / 1_000).toFixed(1)}K`;
+  return `$${val.toFixed(0)}`;
+}
+
+async function showDexTrendingMenu(
+  bot: TelegramBotClient,
+  chatId: string | number,
+  customTokens?: DexTokenEnriched[],
+  queryLabel?: string,
+  editMsgId?: number
+) {
+  let tokens: DexTokenEnriched[] = customTokens || [];
+  if (!customTokens) {
+    const overview = await fetchDexTrendingOverview().catch(() => ({ pairs: [] as DexTokenEnriched[], metas: [] }));
+    tokens = overview.pairs;
+  }
+  const top = tokens.slice(0, 6);
+  if (!top.length) {
+    const emptyMsg = queryLabel
+      ? `🔍 هیچ جفت‌ارزی برای «${queryLabel}» در DexScreener پیدا نشد.\nنام توکن یا آدرس کانترکت (Contract Address) را دوباره ارسال کنید.`
+      : '⚠️ دریافت اطلاعات لحظه‌ای از DexScreener با تاخیر موقت روبرو شد. چند ثانیه دیگر دوباره تلاش کنید.';
+    const kb: InlineKeyboardButton[][] = [
+      [{ text: '🔎 جستجوی توکن دیگر', callback_data: 'tg_dex_search', style: 'primary' }],
+      [{ text: '🔄 تلاش مجدد داغ‌ترین‌ها', callback_data: 'tg_dex_trending' }],
+    ];
+    if (editMsgId) await bot.editMessageText(chatId, editMsgId, emptyMsg, kb).catch(() => bot.sendMessage(chatId, emptyMsg, { inlineKeyboard: kb }));
+    else await bot.sendMessage(chatId, emptyMsg, { inlineKeyboard: kb });
+    return;
+  }
+
+  const lines = top.map((t, idx) => {
+    const price = t.priceUsd ? `$${Number(t.priceUsd) < 0.01 ? Number(t.priceUsd).toPrecision(4) : Number(t.priceUsd).toFixed(4)}` : '—';
+    const chg24 = Number(t.priceChange?.h24 ?? 0);
+    const chgSign = chg24 >= 0 ? '🟢 +' : '🔴 ';
+    const cexBadge = t.isOnCentralizedHint ? '🏦 در صرافی‌ها هم هست' : '🆕 ویژه DEX (ناموجود در Toobit/KCEX)';
+    const safetyBadge = t.safetyScore >= 70 ? '🛡 ایمن' : t.safetyScore >= 45 ? '⚠️ متوسط' : '🚨 پرریسک';
+    return (
+      `${idx + 1}. **${t.baseToken.symbol}** (${t.chainId.toUpperCase()} · ${t.dexId})\n` +
+      `   قیمت: ${price} | ۲۴س: ${chgSign}${chg24.toFixed(1)}%\n` +
+      `   نقدینگی: ${formatUsdCompact(t.liquidity?.usd)} | حجم۲۴س: ${formatUsdCompact(t.volume?.h24)} | ${safetyBadge} (${t.safetyScore}/100)\n` +
+      `   ${cexBadge}`
+    );
+  });
+
+  const kb: InlineKeyboardButton[][] = [];
+  for (const t of top.slice(0, 4)) {
+    kb.push([
+      { text: `🦊 سوآپ ${t.baseToken.symbol} در Trust Wallet`, url: t.trustWallet.trustWalletDappUrl, style: 'success' },
+      { text: `📊 چارت ${t.baseToken.symbol}`, url: t.trustWallet.dexScreenerUrl, style: 'primary' },
+    ]);
+  }
+  kb.push([
+    { text: '🔎 جستجوی توکن با اسم/کانترکت', callback_data: 'tg_dex_search', style: 'primary' },
+    { text: '🔄 بروزرسانی لحظه‌ای', callback_data: 'tg_dex_trending' },
+  ]);
+  kb.push([{ text: '🦊 مدیریت کیف‌پول Trust Wallet', callback_data: 'tg_tw_menu' }]);
+
+  const title = queryLabel
+    ? `🔎 **نتایج رادار DexScreener برای «${queryLabel}»**\n`
+    : `🔍 **توکن‌های داغ و ترند زنده DexScreener**\n(مناسب کشف ارزهایی که هنوز در Toobit/KCEX لیست نشده‌اند)\n`;
+
+  const fullText = `${title}\n${lines.join('\n\n')}`;
+  if (editMsgId) await bot.editMessageText(chatId, editMsgId, fullText, kb).catch(() => bot.sendMessage(chatId, fullText, { inlineKeyboard: kb }));
+  else await bot.sendMessage(chatId, fullText, { inlineKeyboard: kb });
+}
+
+async function showSimpleWizardStep(
+  bot: TelegramBotClient,
+  chatId: string | number,
+  stepNum: 1 | 2 | 3 | 4,
+  state?: TelegramStepState,
+  editMsgId?: number
+) {
+  let msg = '';
+  let kb: InlineKeyboardButton[][] = [];
+
+  if (stepNum === 1) {
+    msg =
+      `🚀 **راه‌اندازی گام‌به‌گام ربات (مرحله ۱ از ۴ — میزان سرمایه در هر معامله)**\n\n` +
+      `در هر سیگنال، ربات چه درصدی از موجودی آزاد شما را وارد معامله کند؟ (توصیه برای شروع امن: ۵٪ یا ۱۰٪)`;
+    kb = [
+      [
+        { text: '🛡 ۵٪ سرمایه (بسیار ایمن)', callback_data: 'tg_wiz_m:5', style: 'success' },
+        { text: '⚖️ ۱۰٪ سرمایه (متعادل)', callback_data: 'tg_wiz_m:10', style: 'primary' },
+      ],
+      [{ text: '🔥 ۲۰٪ سرمایه (تهاجمی)', callback_data: 'tg_wiz_m:20' }],
+      [{ text: '🔙 انصراف', callback_data: 'tg_acc:none' }],
+    ];
+  } else if (stepNum === 2) {
+    msg =
+      `🚀 **مرحله ۲ از ۴ — سطح ریسک و اهرم (Leverage)**\n` +
+      `• مارجین انتخابی شما: ${state?.wizMarginPct ?? 10}%\n\n` +
+      `میزان اهرم معاملاتی خود را انتخاب کنید:`;
+    kb = [
+      [
+        { text: '🟢 کم‌ریسک (3x)', callback_data: 'tg_wiz_l:3', style: 'success' },
+        { text: '🟡 متعادل (10x)', callback_data: 'tg_wiz_l:10', style: 'primary' },
+      ],
+      [{ text: '🔴 حرفه‌ای (20x)', callback_data: 'tg_wiz_l:20' }],
+      [{ text: '⬅️ بازگشت به مرحله ۱', callback_data: 'tg_simple_wizard:1' }],
+    ];
+  } else if (stepNum === 3) {
+    msg =
+      `🚀 **مرحله ۳ از ۴ — انتخاب مغز متفکر (۴ موتور دلارینو)**\n` +
+      `• مارجین: ${state?.wizMarginPct ?? 10}% | اهرم: ${state?.wizLev ?? 10}x\n\n` +
+      `کدام موتور سیگنال‌ها را برای شما پیدا و مدیریت کند؟`;
+    kb = [
+      [{ text: '🧠 موتور ۱: هوش مصنوعی خودکار دلارینو', callback_data: 'tg_wiz_e:ai_autonomous_agent', style: 'success' }],
+      [{ text: '🤖 موتور ۲: هوش مصنوعی شخصی من', callback_data: 'tg_wiz_e:my_custom_ai', style: 'primary' }],
+      [{ text: '🎯 موتور ۳: استراتژی شکار دُرنا V1', callback_data: 'tg_wiz_e:dollarino_v01', style: 'primary' }],
+      [{ text: '🏆 موتور ۴: کپی‌ترید تاییدشده', callback_data: 'tg_wiz_e:copy_trade', style: 'success' }],
+      [{ text: '⬅️ بازگشت به مرحله ۲', callback_data: 'tg_simple_wizard:2' }],
+    ];
+  } else {
+    const engineName = resolveEngineDisplayLabel(state?.wizEngine || 'ai_autonomous_agent');
+    msg =
+      `🚀 **مرحله ۴ از ۴ — مسیر اجرا و شروع ترید**\n` +
+      `• سرمایه در هر معامله: ${state?.wizMarginPct ?? 10}%\n` +
+      `• حداکثر اهرم: ${state?.wizLev ?? 10}x\n` +
+      `• موتور انتخاب‌شده: ${engineName}\n\n` +
+      `حساب معاملاتی مقصد را انتخاب کنید یا همین حالا ربات را روشن کنید:`;
+    kb = [
+      [{ text: '🟢 تایید و شروع فوری ربات اتومات', callback_data: 'tg_wiz_go:auto', style: 'success' }],
+      [
+        { text: '🦊 اتصال Trust Wallet و DEX', callback_data: 'tg_tw_menu', style: 'primary' },
+        { text: '🧪 اجرای آزمایشی (Paper)', callback_data: 'tg_wiz_go:paper' },
+      ],
+      [{ text: '⬅️ بازگشت به مرحله ۳', callback_data: 'tg_simple_wizard:3' }],
+    ];
+  }
+
+  if (editMsgId) await bot.editMessageText(chatId, editMsgId, msg, kb).catch(() => bot.sendMessage(chatId, msg, { inlineKeyboard: kb }));
+  else await bot.sendMessage(chatId, msg, { inlineKeyboard: kb });
+}
+
+async function showExtensionWidgetsMenu(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  webAppUrl: string,
+  editMsgId?: number,
+  rotate = false
+) {
+  let extKey = user.extension_api_key || '';
+  if (!extKey || rotate) {
+    extKey = `dlr_ext_${randomId('').replace(/_/g, '')}${Math.random().toString(36).slice(2, 10)}`;
+    await env.DB.prepare(`UPDATE users SET extension_api_key = ? WHERE id = ?`).bind(extKey, user.id).run();
+    user.extension_api_key = extKey;
+  }
+  const base = webAppUrl.startsWith('https://') ? webAppUrl : 'https://dollarino.pages.dev';
+  const msg =
+    `🧩 **اکستنشن مرورگر و ویجت‌های سریع موبایل دلارینو**\n\n` +
+    `🔑 **کلید اتصال امن اکستنشن کروم/اج شما:**\n` +
+    `\`${extKey}\`\n` +
+    `(این کلید را در افزونه Dollarino Companion وارد کنید تا ربات را از هر تب مرورگر روشن/خاموش کنید، توکن‌های داغ DexScreener را ببینید و Kill Switch بزنید.)\n\n` +
+    `📱 **لینک ویجت‌های سریع موبایل (PWA Add to Home Screen):**\n` +
+    `• کنترل سریع روشن/خاموش ربات: ${base}/?quick=bot-toggle\n` +
+    `• گزارش لحظه‌ای سود و موجودی: ${base}/?quick=report\n` +
+    `• رادار توکن داغ DexScreener: ${base}/?quick=dex\n` +
+    `• دکمه توقف اضطراری (Kill Switch): ${base}/?quick=kill-switch`;
+
+  const kb: InlineKeyboardButton[][] = [
+    [{ text: '🔄 تولید کلید جدید اکستنشن', callback_data: 'tg_ext_rotate', style: 'primary' }],
+    ...(webAppUrl.startsWith('https://')
+      ? [
+          [{ text: '📱 باز کردن داشبورد ویجت‌های موبایل', web_app: { url: `${base}/?quick=bot-toggle` }, style: 'success' as const }],
+          [{ text: '📦 دانلود فایل اکستنشن کروم (ZIP)', url: `${base}/downloads/dollarino-extension.zip` }],
+        ]
+      : []),
+    [{ text: '🔙 بازگشت به منوی سریع', callback_data: 'tg_acc:tools' }],
+  ];
+
+  if (editMsgId) await bot.editMessageText(chatId, editMsgId, msg, kb).catch(() => bot.sendMessage(chatId, msg, { inlineKeyboard: kb }));
+  else await bot.sendMessage(chatId, msg, { inlineKeyboard: kb });
 }
 
 async function showSubscriptionMenu(env: Env, bot: TelegramBotClient, chatId: string | number, user: ProvisionedUserRow, tgId: string, editMsgId?: number) {
@@ -456,6 +832,50 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    // Pre-registration information callbacks (always accessible before phone KYC)
+    if (data.startsWith('pre_info:')) {
+      const topic = data.slice('pre_info:'.length);
+      await bot.answerCallbackQuery(cq.id);
+      const infoMap: Record<string, string> = {
+        engines:
+          `🧠 **آشنایی با ۴ موتور معاملاتی دلارینو:**\n\n` +
+          `۱. **هوش مصنوعی دلارینو:** تحلیل لحظه‌ای چارت، اخبار و حجم با مدل‌های هوشمند برای شکار دقیق نقطه ورود.\n` +
+          `۲. **هوش مصنوعی شخصی (خام):** با زبان ساده فارسی استراتژی خود را آموزش دهید تا همان قانون را ۲۴ ساعته اجرا کند.\n` +
+          `۳. **استراتژی شکار (دُرنا V1 + کدنویسی شخصی):** شکار نقدینگی و شکست‌های معتبر یا ساخت اندیکاتور اختصاصی با بک‌تست ۹۰۰ کندلی.\n` +
+          `۴. **کپی‌ترید تاییدشده:** دنبال کردن خودکار تریدرهای ارزیابی‌شده بدون نیاز به تحلیل شخصی.\n\n` +
+          `📱 برای ساخت حساب و شروع، دکمه **«اشتراک‌گذاری شماره تماس اکانت من»** در پایین صفحه را لمس کنید.`,
+        trust:
+          `🦊 **راهنمای Trust Wallet DApp و رادار DexScreener:**\n\n` +
+          `• بدون نیاز به صرافی متمرکز (یا در کنار Toobit و KCEX) می‌توانید مستقیماً با کیف‌پول غیرامانی **Trust Wallet** متصل شوید.\n` +
+          `• **رادار DexScreener:** کشف لحظه‌ای توکن‌های ترند و پرپتانسیل در شبکه‌های BSC، Ethereum، Base، Solana، TRON و Arbitrum که هنوز در Toobit/KCEX لیست نشده‌اند.\n` +
+          `• با یک کلیک لینک سوآپ امن داخل مرورگر Trust Wallet برای شما باز می‌شود و دارایی همیشه در کیف‌پول خودتان می‌ماند.\n\n` +
+          `📱 برای فعال‌سازی حساب، شماره تماس تلگرام خود را به اشتراک بگذارید.`,
+        plans:
+          `💎 **تعرفه و اشتراک‌های دلارینو:**\n\n` +
+          `• **حساب رایگان (تازه وارد):** مشاهده معرفی، وضعیت حساب، رادار پایه و تست محیط.\n` +
+          `• **اشتراک ماهانه / ۳ ماهه / ۶ ماهه / سالانه:** دسترسی کامل به ترید خودکار ۴ موتور، شبیه‌ساز Paper، کپی‌ترید تاییدشده، صدور کارت سود رسمی و اتصال اکستنشن کروم.\n` +
+          `• پرداخت آنی با **Trust Wallet (USDT BEP20 / TRC20)** با تایید خودکار بلاکچینی یا از کیف‌پول حساب.\n\n` +
+          `📱 پس از تایید شماره تماس، فاکتور و منوی کامل اشتراک برایتان باز می‌شود.`,
+        security:
+          `🛡 **امنیت، احراز هویت و قوانین ضدکلاهبرداری دلارینو:**\n\n` +
+          `• تایید هویت فقط از طریق اشتراک شماره تماس اکانت تلگرامِ خودتان داخل ربات رسمی (${OFFICIAL_BOT_HANDLE}) انجام می‌شود.\n` +
+          `• برای صرافی‌ها فقط کلید Trade-Only (بدون دسترسی Withdraw) دریافت و رمزنگاری AES-GCM می‌شود.\n` +
+          `• در Trust Wallet هیچ‌گاه Seed Phrase از شما خواسته نمی‌شود و کلید خصوصی همیشه دست خودتان است.\n` +
+          `${ANTI_SCAM_WARNING_FA}`,
+      };
+      await bot.sendMessage(chatId, infoMap[topic] || preAuthIntroMessage(cq.from.first_name || user.username), {
+        inlineKeyboard: preAuthIntroInlineButtons(),
+      });
+      return { ok: true };
+    }
+
+    // Hard Phone-KYC Gate on all callbacks before account verification
+    if (await isPhoneKycRequiredForUser(env, user, tgId)) {
+      await bot.answerCallbackQuery(cq.id, '🔐 ابتدا شماره تماس اکانت خود را به اشتراک بگذارید.', true);
+      await sendPreAuthIntro(env, bot, chatId, user, cq.from.first_name || user.username);
+      return { ok: true };
+    }
+
     if (data.startsWith('adm:')) {
       if (!admin) {
         await bot.answerCallbackQuery(cq.id, '⛔️ دسترسی مدیریتی ندارید.', true);
@@ -519,19 +939,25 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
       const rate = Number(rateStr) || 70000;
       const canWalletPay = Number(user.wallet_balance_usdt ?? 0) >= plan.price_usd;
+      const bep20Addr = await getSystemSetting(env.DB, 'trust_wallet_evm_receiver', '');
       const text =
         `🧾 فاکتور خرید ${plan.name_fa}\n\n` +
         `🔢 شماره فاکتور: ${subId}\n` +
         `💵 مبلغ قابل پرداخت: ${plan.price_usd} USDT (${formatToman(plan.price_usd, rate)} تومان)\n` +
         `⏳ مدت اعتبار: ${plan.duration_days} روز\n\n` +
-        `💳 آدرس کیف پول USDT (شبکه TRC20):\n${walletAddr}\n\n` +
-        `پس از انتقال وجه، روی «✅ بررسی پرداخت» بزنید تا کد پیگیری (TXID) ثبت و اشتراک فوراً فعال شود:`;
+        `💳 آدرس دریافت USDT (شبکه TRC20):\n\`${walletAddr}\`\n` +
+        (bep20Addr ? `🦊 آدرس دریافت USDT در Trust Wallet (شبکه BEP20):\n\`${bep20Addr}\`\n` : '') +
+        `\nپس از انتقال وجه، روی «✅ بررسی پرداخت» بزنید تا کد پیگیری (TXID) ثبت و اشتراک با تایید خودکار بلاکچینی فعال شود:`;
 
+      const twPayDeepLink = `https://link.trustwallet.com/open_url?coin_id=20000714&url=${encodeURIComponent(
+        `${webAppUrl.startsWith('https://') ? webAppUrl : 'https://dollarino.pages.dev'}/subscription`
+      )}`;
       const kb: InlineKeyboardButton[][] = [
         [
-          { text: '✅ بررسی پرداخت / ثبت TXID', callback_data: `sub_verify:${subId}` },
-          { text: '❌ انصراف', callback_data: `sub_cancel:${subId}` },
+          { text: '✅ بررسی پرداخت / ثبت TXID', callback_data: `sub_verify:${subId}`, style: 'success' },
+          { text: '❌ انصراف', callback_data: `sub_cancel:${subId}`, style: 'danger' },
         ],
+        [{ text: '🦊 پرداخت سریع با Trust Wallet DApp', url: twPayDeepLink, style: 'primary' }],
         ...(canWalletPay ? [[{ text: `💰 پرداخت فوری از کیف پول (${plan.price_usd}$)`, callback_data: `sub_pay_wallet:${subId}` }]] : []),
         [{ text: '🎁 اعمال کد هدیه', callback_data: 'sub_gift' }],
       ];
@@ -795,15 +1221,180 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const sec = (data.slice('tg_acc:'.length) || 'none') as CollapsibleMenuSection;
       const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
       const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+      const uiMode = getUserUiMode(user);
       await bot.answerCallbackQuery(cq.id);
       if (msgId) {
         await bot.editMessageText(
           chatId,
           msgId,
-          `🎛 منوی شیشه‌ای سریع دلارینو:\nبخش دلخواه را باز یا بسته کنید:`,
-          miniAppInlineKeyboard(webAppUrl, '', sec, isRunning)
+          `🎛 کنترل پنل سریع دلارینو (${uiMode === 'simple' ? 'حالت ساده 🌱' : 'حالت حرفه‌ای ⚡'}):\nبخش دلخواه را باز یا بسته کنید:`,
+          miniAppInlineKeyboard(webAppUrl, '', sec, isRunning, uiMode)
         ).catch(() => {});
       }
+      return { ok: true };
+    }
+
+    if (data === 'tg_toggle_ui_mode') {
+      const nextMode: 'simple' | 'pro' = getUserUiMode(user) === 'simple' ? 'pro' : 'simple';
+      await env.DB.prepare(`UPDATE users SET ui_mode = ? WHERE id = ?`).bind(nextMode, user.id).run();
+      user.ui_mode = nextMode;
+      const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
+      const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+      await bot.answerCallbackQuery(cq.id, nextMode === 'pro' ? 'حالت حرفه‌ای فعال شد ⚡' : 'حالت ساده فعال شد 🌱');
+      if (msgId) {
+        await bot.editMessageText(
+          chatId,
+          msgId,
+          `🎛 حالت رابط کاربری روی **${nextMode === 'pro' ? 'حرفه‌ای (Quant Pro ⚡)' : 'ساده (۴ گامه 🌱)'}** تنظیم شد (همگام با وب و موبایل):`,
+          miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, nextMode)
+        ).catch(() => {});
+      }
+      await bot.sendMessage(chatId, nextMode === 'pro' ? '⚡ منوی کامل حالت حرفه‌ای فعال شد:' : '🌱 منوی سریع حالت ساده فعال شد:', {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode),
+      });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_simple_wizard:')) {
+      const stepNum = Math.min(4, Math.max(1, Number(data.split(':')[1] || 1))) as 1 | 2 | 3 | 4;
+      let st: TelegramStepState | undefined;
+      try { st = user.telegram_state ? (JSON.parse(user.telegram_state) as TelegramStepState) : undefined; } catch { /* ignore */ }
+      await bot.answerCallbackQuery(cq.id);
+      await showSimpleWizardStep(bot, chatId, stepNum, st, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_wiz_m:')) {
+      const margin = Number(data.split(':')[1] || 10);
+      let st: TelegramStepState = { step: 'WIZARD' };
+      try { if (user.telegram_state) st = { ...st, ...(JSON.parse(user.telegram_state) as TelegramStepState) }; } catch { /* ignore */ }
+      st.wizMarginPct = margin;
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify(st), user.id).run();
+      await bot.answerCallbackQuery(cq.id, `مارجین ${margin}% انتخاب شد`);
+      await showSimpleWizardStep(bot, chatId, 2, st, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_wiz_l:')) {
+      const lev = Number(data.split(':')[1] || 10);
+      let st: TelegramStepState = { step: 'WIZARD' };
+      try { if (user.telegram_state) st = { ...st, ...(JSON.parse(user.telegram_state) as TelegramStepState) }; } catch { /* ignore */ }
+      st.wizLev = lev;
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify(st), user.id).run();
+      await bot.answerCallbackQuery(cq.id, `اهرم ${lev}x انتخاب شد`);
+      await showSimpleWizardStep(bot, chatId, 3, st, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_wiz_e:')) {
+      const eng = data.slice('tg_wiz_e:'.length) || 'ai_autonomous_agent';
+      let st: TelegramStepState = { step: 'WIZARD' };
+      try { if (user.telegram_state) st = { ...st, ...(JSON.parse(user.telegram_state) as TelegramStepState) }; } catch { /* ignore */ }
+      st.wizEngine = eng;
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify(st), user.id).run();
+      await bot.answerCallbackQuery(cq.id, 'موتور انتخاب شد ✅');
+      await showSimpleWizardStep(bot, chatId, 4, st, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_wiz_go:')) {
+      const modeChoice = data.split(':')[1] || 'auto';
+      let st: TelegramStepState = { step: 'WIZARD' };
+      try { if (user.telegram_state) st = { ...st, ...(JSON.parse(user.telegram_state) as TelegramStepState) }; } catch { /* ignore */ }
+      const marginPct = st.wizMarginPct ?? 10;
+      const maxLev = st.wizLev ?? 10;
+      const stratKey = st.wizEngine || 'ai_autonomous_agent';
+
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: (user.role as AuthUser['role']) || 'user',
+        telegramId: tgId,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        await bot.answerCallbackQuery(cq.id, '💎 برای روشن کردن خودکار ربات اشتراک فعال لازم است.', true);
+        await showSubscriptionMenu(env, bot, chatId, user, tgId);
+        return { ok: true };
+      }
+
+      const cfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
+      const nextTradingMode = modeChoice === 'paper' ? 'PAPER' : (cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER');
+      const nextBotState = nextTradingMode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+
+      await env.DB.prepare(
+        `UPDATE bot_configs
+         SET margin_pct = ?, max_leverage = ?, strategy_key = ?, trading_mode = ?, trade_execution_mode = 'AUTO', bot_state = ?, updated_at = datetime('now')
+         WHERE user_id = ?`
+      ).bind(marginPct, maxLev, stratKey, nextTradingMode, nextBotState, user.id).run();
+      await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(user.id).run();
+
+      const doStub = env.TRADING_BOT_DO.get(env.TRADING_BOT_DO.idFromName('global-coordinator'));
+      await doStub.fetch('https://do/start').catch(() => {});
+      await doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
+
+      await bot.answerCallbackQuery(cq.id, 'ربات با تنظیمات ۴ مرحله‌ای روشن شد 🚀');
+      const doneText =
+        `✅ **تنظیمات ۴ مرحله‌ای ذخیره و ربات روشن شد!**\n\n` +
+        `• سرمایه هر معامله: ${marginPct}%\n` +
+        `• حداکثر اهرم: ${maxLev}x\n` +
+        `• موتور فعال: ${resolveEngineDisplayLabel(stratKey)}\n` +
+        `• وضعیت: 🟢 در حال رصد بازار (${nextTradingMode})`;
+      if (msgId) await bot.editMessageText(chatId, msgId, doneText).catch(() => bot.sendMessage(chatId, doneText));
+      else await bot.sendMessage(chatId, doneText);
+      return { ok: true };
+    }
+
+    if (data === 'tg_tw_menu' || data === 'tg_tw_bal') {
+      await bot.answerCallbackQuery(cq.id, data === 'tg_tw_bal' ? 'در حال استعلام از شبکه بلاکچین... 🔍' : undefined);
+      await showTrustWalletMenu(env, bot, chatId, user, webAppUrl, msgId, data === 'tg_tw_bal');
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_tw_set:')) {
+      const chainKind = data.slice('tg_tw_set:'.length);
+      const stepMap: Record<string, { step: string; prompt: string }> = {
+        evm: {
+          step: 'AWAIT_TW_EVM',
+          prompt: '🦊 لطفاً آدرس کیف‌پول **Trust Wallet شبکه EVM (BSC / ETH / Base / Arbitrum)** خود را که با `0x` شروع می‌شود ارسال کنید:',
+        },
+        tron: {
+          step: 'AWAIT_TW_TRON',
+          prompt: '🦊 لطفاً آدرس کیف‌پول **Trust Wallet شبکه TRON (TRC20)** خود را که با `T` شروع می‌شود ارسال کنید:',
+        },
+        solana: {
+          step: 'AWAIT_TW_SOLANA',
+          prompt: '🦊 لطفاً آدرس کیف‌پول **Trust Wallet شبکه Solana (SPL)** خود را ارسال کنید:',
+        },
+      };
+      const item = stepMap[chainKind];
+      if (item) {
+        await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify({ step: item.step }), user.id).run();
+        await bot.answerCallbackQuery(cq.id);
+        await bot.sendMessage(chatId, item.prompt);
+      }
+      return { ok: true };
+    }
+
+    if (data === 'tg_dex_trending') {
+      await bot.answerCallbackQuery(cq.id, 'در حال دریافت توکن‌های داغ DexScreener... 🔍');
+      await showDexTrendingMenu(bot, chatId, undefined, undefined, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_dex_search') {
+      await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify({ step: 'AWAIT_DEX_SEARCH' }), user.id).run();
+      await bot.answerCallbackQuery(cq.id);
+      await bot.sendMessage(
+        chatId,
+        '🔎 نام توکن، نماد (مثل PEPE یا AERO) یا آدرس کامل کانترکت (Contract Address) مورد نظر را بنویسید تا در لحظه در DexScreener بررسی شود و لینک سوآپ Trust Wallet بسازیم:'
+      );
+      return { ok: true };
+    }
+
+    if (data === 'tg_ext_widgets' || data === 'tg_ext_rotate') {
+      await bot.answerCallbackQuery(cq.id, data === 'tg_ext_rotate' ? 'کلید جدید اکستنشن ساخته شد 🔑' : undefined);
+      await showExtensionWidgetsMenu(env, bot, chatId, user, webAppUrl, msgId, data === 'tg_ext_rotate');
       return { ok: true };
     }
 
@@ -857,7 +1448,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const kb: InlineKeyboardButton[][] = [
         [{ text: '✍️ آموزش جدید به هوش مصنوعی من', callback_data: 'tg_myai_train', style: 'primary' }],
         [{ text: '🚀 فعال‌سازی ترید خودکار با هوش مصنوعی من', callback_data: 'tg_myai_activate', style: 'success' }],
-        [{ text: '🔙 بازگشت به منوی شیشه‌ای', callback_data: 'tg_acc:ai' }],
+        [{ text: '🔙 بازگشت به پنل کنترل', callback_data: 'tg_acc:ai' }],
       ];
       if (msgId) await bot.editMessageText(chatId, msgId, summary, kb).catch(() => bot.sendMessage(chatId, summary, { inlineKeyboard: kb }));
       else await bot.sendMessage(chatId, summary, { inlineKeyboard: kb });
@@ -1011,7 +1602,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
             { text: '🌊 شکار نقدینگی SP2L', callback_data: 'tg_set_strat:sp2l' },
             { text: '📈 روند EMA Pullback', callback_data: 'tg_set_strat:ema_trend_pullback' },
           ],
-          [{ text: '🔙 بازگشت به منوی شیشه‌ای', callback_data: 'tg_acc:hunt' }],
+          [{ text: '🔙 بازگشت به پنل کنترل', callback_data: 'tg_acc:hunt' }],
         ];
         await bot.sendMessage(
           chatId,
@@ -1228,7 +1819,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           chatId,
           msgId,
           `🤖 وضعیت ربات دلارینو: ${isRunning ? '🔴 متوقف' : `🟢 فعال (${cfg?.trading_mode ?? 'PAPER'})`}`,
-          miniAppInlineKeyboard(webAppUrl, '', 'ai', !isRunning)
+          miniAppInlineKeyboard(webAppUrl, '', 'ai', !isRunning, getUserUiMode(user))
         );
       }
       return { ok: true };
@@ -1418,7 +2009,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   // 3. Handle Normal Messages & Menu Navigation
   const msg = update.message;
   const msgBodyText = (msg?.text ?? msg?.caption ?? '').trim();
-  if (!msg?.from || (!msgBodyText && !msg.photo?.length)) return { ok: true };
+  if (!msg?.from || (!msgBodyText && !msg.photo?.length && !msg.contact)) return { ok: true };
 
   const text = msgBodyText;
   const chatId = msg.chat.id;
@@ -1426,6 +2017,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   const user = await getOrProvisionTelegramUser(env, msg.from);
   const superAdmin = isSuperAdminUser(tgId, user.role, env);
   const admin = isUserAdmin(tgId, user.role, env);
+  const uiMode = getUserUiMode(user);
 
   if (user.is_blocked) {
     await bot.sendMessage(chatId, '⛔️ دسترسی حساب شما موقتاً توسط مدیر محدود شده است.');
@@ -1445,13 +2037,66 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   const setState = (s: TelegramStepState) =>
     env.DB.prepare('UPDATE users SET telegram_state = ? WHERE id = ?').bind(JSON.stringify(s), user.id).run();
 
+  // 3A. Handle Native Telegram Contact Sharing (Mandatory Phone KYC)
+  if (msg.contact) {
+    if (msg.contact.user_id !== undefined && String(msg.contact.user_id) !== tgId) {
+      await bot.sendMessage(
+        chatId,
+        `⛔️ لطفاً فقط شماره تماس **اکانت تلگرام خودتان** را از طریق دکمه‌ی زیر به اشتراک بگذارید (ارسال یا فوروارد شماره افراد دیگر پذیرفته نمی‌شود).`,
+        { replyKeyboard: contactVerificationKeyboard() }
+      );
+      return { ok: true };
+    }
+    const normalizedPhone = normalizePhoneNumber(msg.contact.phone_number);
+    let pendingStartArg: string | undefined;
+    if (user.telegram_state) {
+      try {
+        const st = JSON.parse(user.telegram_state) as TelegramStepState;
+        if (st.pendingStartArg) pendingStartArg = st.pendingStartArg;
+      } catch { /* ignore */ }
+    }
+    await env.DB.prepare(
+      `UPDATE users
+       SET phone_number = ?, phone_verified = 1, phone_verified_at = datetime('now'), telegram_state = NULL
+       WHERE id = ?`
+    ).bind(normalizedPhone, user.id).run();
+    user.phone_number = normalizedPhone;
+    user.phone_verified = 1;
+
+    await bot.sendMessage(
+      chatId,
+      `✅ احراز هویت شماره تماس شما با موفقیت انجام شد (${normalizedPhone})!\nحساب شما اکنون آماده استفاده در ربات تلگرام، وب، مینی‌اپ و اکستنشن است.`
+    );
+
+    if (pendingStartArg && pendingStartArg.toUpperCase().startsWith('LINK-')) {
+      const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, pendingStartArg);
+      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
+      return { ok: true };
+    }
+
+    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
+      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+    });
+    await bot.sendMessage(chatId, '🚀 پنل کنترل سریع، راه‌اندازی ۴ مرحله‌ای و ابزارهای دلارینو:', {
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
+    });
+    return { ok: true };
+  }
+
+  // 3B. Mandatory Pre-Auth Landing & Phone-KYC Gate (Never show bot menus before account verification!)
+  if (await isPhoneKycRequiredForUser(env, user, tgId)) {
+    const startArg = text.startsWith('/start ') ? text.slice(7).trim() : undefined;
+    await sendPreAuthIntro(env, bot, chatId, user, msg.from.first_name ?? user.username, startArg);
+    return { ok: true };
+  }
+
   // Deep-link `/start PAYLOAD` (e.g. `/start LINK-XXXXXX`, `/start sig_<id>`, `/start exec_<id>`, `/start web_auth`)
   if (text.startsWith('/start ')) {
     await clearState();
     const payload = text.slice(7).trim();
     if (payload.toUpperCase().startsWith('LINK-')) {
       const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, payload);
-      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl) });
+      await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
       return { ok: true };
     }
     if (payload.startsWith('sig_') || payload.startsWith('exec_') || payload.startsWith('open_')) {
@@ -1472,7 +2117,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       }>();
       if (!sigRow) {
         await bot.sendMessage(chatId, '⚠️ سیگنال درخواستی یافت نشد یا منقضی شده است.', {
-          replyKeyboard: mainMenuKeyboard(webAppUrl),
+          replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
         });
         return { ok: true };
       }
@@ -1515,17 +2160,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           `INSERT OR IGNORE INTO referrals (id, referrer_user_id, referred_user_id, referral_code, reward_days, status) VALUES (?, ?, ?, ?, 7, 'REGISTERED')`
         ).bind(randomId('ref'), referrerId.id, user.id, refCode).run().catch(() => {});
       }
-      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username), {
-        replyKeyboard: mainMenuKeyboard(webAppUrl),
+      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
       });
       await bot.sendMessage(chatId, '🎁 شما از طریق لینک دعوت دوستتان وارد شدید! با فعال‌سازی اشتراک، ۷ روز هدیه برای دعوت‌کننده ثبت می‌شود.', {
-        inlineKeyboard: miniAppInlineKeyboard(webAppUrl),
+        inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
       });
       return { ok: true };
     }
     if (payload === 'web_auth') {
-      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username), {
-        replyKeyboard: mainMenuKeyboard(webAppUrl),
+      await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
       });
       await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
       return { ok: true };
@@ -1534,11 +2179,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text === '/start' || text === 'بازگشت به صفحه قبل 🔙') {
     await clearState();
-    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username), {
-      replyKeyboard: mainMenuKeyboard(webAppUrl),
+    const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
+    const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode), {
+      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
     });
-    await bot.sendMessage(chatId, '🚀 دسترسی سریع به پنل معاملاتی، سایت و کنترل ربات:', {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl),
+    await bot.sendMessage(chatId, '🚀 دسترسی سریع به پنل معاملاتی، راه‌اندازی ۴ مرحله‌ای، Trust Wallet و کنترل ربات:', {
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, uiMode),
     });
     return { ok: true };
   }
@@ -1550,18 +2197,18 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text === '/app' || text === '🚀 مینی‌اپ دلارینو') {
     await bot.sendMessage(chatId, '📱 برای ورود مستقیم و بدون نیاز به لاگین به مینی‌اپ دلارینو روی دکمه زیر بزنید:', {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl),
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
     });
     return { ok: true };
   }
 
   if (text.startsWith('/link ')) {
     const linkRes = await applyLinkCodeForUser(env, user.id, msg.from, text.slice(6));
-    await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl) });
+    await bot.sendMessage(chatId, linkRes.message, { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) });
     return { ok: true };
   }
 
-  const SLASH_OVERRIDE = new Set(['/card', '/copy', '/support', '/positions', '/balance', '/settings', '/help', '/menu']);
+  const SLASH_OVERRIDE = new Set(['/card', '/copy', '/support', '/positions', '/balance', '/settings', '/help', '/menu', '/dex', '/wallet']);
   if (SLASH_OVERRIDE.has(text) && user.telegram_state) {
     await clearState();
     user.telegram_state = null;
@@ -1629,20 +2276,20 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await bot.sendMessage(
           chatId,
           `🔐 کلید ${state.provider.toUpperCase()} با رمزنگاری AES-256 ذخیره شد (در حالت Standby).\n\nبرای فعال‌سازی معاملات واقعی روی Toobit یا KCEX لطفاً اشتراک تهیه کنید.`,
-          { replyKeyboard: mainMenuKeyboard(webAppUrl) }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
         );
       } else if (test.ok && test.balance) {
         await env.DB.prepare(`UPDATE bot_configs SET trading_mode = 'LIVE' WHERE user_id = ?`).bind(user.id).run();
         await bot.sendMessage(
           chatId,
           `✅ اتصال به ${state.provider.toUpperCase()} با موفقیت برقرار شد!\n\n${formatBalanceCard(state.provider, test.balance)}`,
-          { replyKeyboard: mainMenuKeyboard(webAppUrl) }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
         );
       } else {
         await bot.sendMessage(
           chatId,
           `⚠️ کلیدها به‌صورت رمزنگاری‌شده ذخیره شدند اما تست اتصال صرافی پیام داد:\n${test.message}`,
-          { replyKeyboard: mainMenuKeyboard(webAppUrl) }
+          { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
         );
       }
       return { ok: true };
@@ -1797,8 +2444,70 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await bot.sendMessage(
         chatId,
         `✅ پیام شما به تیکت #${ticketId} ارسال شد. پاسخ تیم پشتیبانی در همین‌جا برایتان پیام می‌شود.\n\n${ANTI_SCAM_WARNING_FA}`,
-        { replyKeyboard: mainMenuKeyboard(webAppUrl) }
+        { replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode) }
       );
+      return { ok: true };
+    }
+
+    if (state.step === 'AWAIT_TW_EVM') {
+      const addr = text.trim();
+      if (!isValidEvm(addr)) {
+        await bot.sendMessage(chatId, '❌ فرمت آدرس EVM نامعتبر است! آدرس شبکه BSC/ETH باید با `0x` شروع شده و ۴۲ کاراکتر هگز باشد:');
+        return { ok: true };
+      }
+      await env.DB.prepare(
+        `UPDATE users SET trust_wallet_address = ?, trust_wallet_verified = 1, trust_wallet_connected_at = datetime('now') WHERE id = ?`
+      ).bind(addr, user.id).run();
+      user.trust_wallet_address = addr;
+      await clearState();
+      await bot.sendMessage(chatId, `✅ آدرس EVM تراست‌ولت شما ثبت و تایید شد:\n\`${addr}\``, {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      });
+      await showTrustWalletMenu(env, bot, chatId, user, webAppUrl, undefined, true);
+      return { ok: true };
+    }
+
+    if (state.step === 'AWAIT_TW_TRON') {
+      const addr = text.trim();
+      if (!isValidTron(addr)) {
+        await bot.sendMessage(chatId, '❌ فرمت آدرس TRON نامعتبر است! آدرس TRC20 باید با `T` شروع شده و ۳۴ کاراکتر باشد:');
+        return { ok: true };
+      }
+      await env.DB.prepare(
+        `UPDATE users SET trust_wallet_tron = ?, trust_wallet_verified = 1, trust_wallet_connected_at = datetime('now') WHERE id = ?`
+      ).bind(addr, user.id).run();
+      user.trust_wallet_tron = addr;
+      await clearState();
+      await bot.sendMessage(chatId, `✅ آدرس TRON (TRC20) تراست‌ولت شما ثبت شد:\n\`${addr}\``, {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      });
+      await showTrustWalletMenu(env, bot, chatId, user, webAppUrl, undefined, true);
+      return { ok: true };
+    }
+
+    if (state.step === 'AWAIT_TW_SOLANA') {
+      const addr = text.trim();
+      if (!isValidSolana(addr)) {
+        await bot.sendMessage(chatId, '❌ فرمت آدرس Solana نامعتبر است! لطفاً آدرس معتبر SPL ارسال کنید:');
+        return { ok: true };
+      }
+      await env.DB.prepare(
+        `UPDATE users SET trust_wallet_solana = ?, trust_wallet_verified = 1, trust_wallet_connected_at = datetime('now') WHERE id = ?`
+      ).bind(addr, user.id).run();
+      user.trust_wallet_solana = addr;
+      await clearState();
+      await bot.sendMessage(chatId, `✅ آدرس Solana تراست‌ولت شما ثبت شد:\n\`${addr}\``, {
+        replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
+      });
+      await showTrustWalletMenu(env, bot, chatId, user, webAppUrl);
+      return { ok: true };
+    }
+
+    if (state.step === 'AWAIT_DEX_SEARCH') {
+      const q = text.trim();
+      await clearState();
+      const results = await searchDexPairs(q).catch(() => []);
+      await showDexTrendingMenu(bot, chatId, results, q);
       return { ok: true };
     }
 
@@ -1868,14 +2577,45 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   // Main Menu Handlers
+  if (text === '🚀 راه‌اندازی ۴ مرحله‌ای ربات') {
+    await showSimpleWizardStep(bot, chatId, 1);
+    return { ok: true };
+  }
+
+  if (text === '⚡ رفتن به حالت حرفه‌ای' || text === '🌱 رفتن به حالت ساده') {
+    const nextMode: 'simple' | 'pro' = text.includes('حرفه‌ای') ? 'pro' : 'simple';
+    await env.DB.prepare(`UPDATE users SET ui_mode = ? WHERE id = ?`).bind(nextMode, user.id).run();
+    user.ui_mode = nextMode;
+    await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, nextMode), {
+      replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode),
+    });
+    return { ok: true };
+  }
+
+  if (text.startsWith('🦊 کیف‌پول Trust Wallet') || text === '/wallet') {
+    await showTrustWalletMenu(env, bot, chatId, user, webAppUrl);
+    return { ok: true };
+  }
+
+  if (text === '🔍 رادار DexScreener و توکن داغ' || text === '/dex') {
+    await showDexTrendingMenu(bot, chatId);
+    return { ok: true };
+  }
+
+  if (text === '🧩 اکستنشن و ویجت موبایل') {
+    await showExtensionWidgetsMenu(env, bot, chatId, user, webAppUrl);
+    return { ok: true };
+  }
+
   if (text === 'اتصال به صرافی 🔗' || text === 'تغییر API صرافی 📡') {
     await bot.sendMessage(
       chatId,
-      `🔗 اتصال صرافی دلارینو\n\n` +
-      `• Toobit (توبیت): اتصال مستقیم API فیوچرز با اجرای سریع\n` +
-      `• KCEX (کی‌سی‌ای‌ایکس): ۰٪ کارمزد میرر و همگام‌سازی خودکار\n` +
-      `• Paper Mode: شبیه‌ساز آزمایشی (نیازمند اشتراک فعال)\n\n` +
-      `صرافی مورد نظر خود را انتخاب کنید:`,
+      `🔗 انتخاب بستر معاملاتی دلارینو\n\n` +
+      `• 🦊 Trust Wallet DApp: ترید مستقیم روی شبکه بلاکچین و توکن‌های DexScreener (بدون نیاز به صرافی متمرکز)\n` +
+      `• 🟢 Toobit (توبیت): اتصال مستقیم API فیوچرز با اجرای سریع\n` +
+      `• 🔵 KCEX (کی‌سی‌ای‌ایکس): ۰٪ کارمزد میرر و همگام‌سازی خودکار\n` +
+      `• 🧪 Paper Mode: شبیه‌ساز آزمایشی (نیازمند اشتراک فعال)\n\n` +
+      `گزینه مورد نظر خود را انتخاب کنید:`,
       { replyKeyboard: exchangeSelectionKeyboard() }
     );
     return { ok: true };
@@ -1993,7 +2733,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const { adapter } = await resolveUserExchangeAdapter(env, user.id, 'paper');
     const bal = await adapter.getBalance();
     await bot.sendMessage(chatId, `✅ حالت شبیه‌ساز حساب فعال شد:\n\n${formatBalanceCard('PAPER', bal)}`, {
-      replyKeyboard: mainMenuKeyboard(webAppUrl),
+      replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
     });
     return { ok: true };
   }
@@ -2234,7 +2974,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   await bot.sendMessage(chatId, 'لطفاً یکی از گزینه‌های منو را انتخاب کنید یا سیگنال را برای بررسی ارسال کنید:', {
-    replyKeyboard: mainMenuKeyboard(webAppUrl),
+    replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode),
   });
   return { ok: true };
 }

@@ -211,9 +211,11 @@ export async function handleAdminCallback(
           COUNT(*) as total,
           SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END) as new_today,
           SUM(CASE WHEN date(last_active_at) = date('now') THEN 1 ELSE 0 END) as active_today,
-          SUM(CASE WHEN is_blocked = 1 THEN 1 ELSE 0 END) as blocked
+          SUM(CASE WHEN is_blocked = 1 THEN 1 ELSE 0 END) as blocked,
+          SUM(CASE WHEN phone_verified = 1 THEN 1 ELSE 0 END) as kyc_cnt,
+          SUM(CASE WHEN trust_wallet_address IS NOT NULL OR trust_wallet_tron IS NOT NULL OR trust_wallet_solana IS NOT NULL THEN 1 ELSE 0 END) as tw_cnt
          FROM users`
-      ).first<{ total: number; new_today: number; active_today: number; blocked: number }>(),
+      ).first<{ total: number; new_today: number; active_today: number; blocked: number; kyc_cnt: number; tw_cnt: number }>(),
       env.DB.prepare(
         `SELECT
           COUNT(*) as total,
@@ -227,8 +229,9 @@ export async function handleAdminCallback(
         `SELECT
           (SELECT COUNT(DISTINCT user_id) FROM user_subscriptions WHERE status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > datetime('now'))) as vip_cnt,
           (SELECT COUNT(*) FROM trades) as trades_total,
-          (SELECT COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) FROM trades WHERE status = 'CLOSED') as total_pnl`
-      ).first<{ vip_cnt: number; trades_total: number; total_pnl: number }>(),
+          (SELECT COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) FROM trades WHERE status = 'CLOSED') as total_pnl,
+          (SELECT COUNT(*) FROM dex_trades) as dex_total`
+      ).first<{ vip_cnt: number; trades_total: number; total_pnl: number; dex_total: number }>(),
     ]);
 
     const rev = revRow ?? { today: 0, week: 0, month: 0, year: 0, total: 0 };
@@ -241,14 +244,14 @@ export async function handleAdminCallback(
       `• سال اخیر: ${rev.year.toFixed(2)}$\n` +
       `• مجموع کل: ${rev.total.toFixed(2)}$ (${formatToman(rev.total, rate)} ت)\n\n` +
       `👥 آمار کاربران:\n` +
-      `• کل کاربران: ${userRow?.total ?? 0}\n` +
-      `• کاربران VIP فعال: ${tradeRow?.vip_cnt ?? 0}\n` +
+      `• کل کاربران: ${userRow?.total ?? 0} | احراز تلفن: ${userRow?.kyc_cnt ?? 0}\n` +
+      `• کیف‌پول Trust Wallet متصل: ${userRow?.tw_cnt ?? 0} | VIP فعال: ${tradeRow?.vip_cnt ?? 0}\n` +
       `• ثبت‌نام امروز: ${userRow?.new_today ?? 0} | فعال امروز: ${userRow?.active_today ?? 0}\n` +
       `• مسدود شده: ${userRow?.blocked ?? 0}\n\n` +
       `💳 تراکنش‌ها و معاملات:\n` +
       `• کل سفارش‌ها: ${txRow?.total ?? 0} (موفق: ${txRow?.ok_cnt ?? 0} | در انتظار: ${txRow?.pending_cnt ?? 0} | رد/لغو: ${txRow?.fail_cnt ?? 0})\n` +
       `• میانگین هر خرید: ${(txRow?.avg_usd ?? 0).toFixed(2)} USDT\n` +
-      `• کل معاملات ثبت‌شده: ${tradeRow?.trades_total ?? 0} (PnL کل: ${(tradeRow?.total_pnl ?? 0).toFixed(2)}$)`;
+      `• کل معاملات ثبت‌شده: ${tradeRow?.trades_total ?? 0} (DEX: ${tradeRow?.dex_total ?? 0} | PnL کل: ${(tradeRow?.total_pnl ?? 0).toFixed(2)}$)`;
 
     await render(text, [
       [{ text: '🔄 بروزرسانی آمار', callback_data: 'adm:dash' }],
@@ -674,15 +677,17 @@ export async function handleAdminCallback(
       await bot.answerCallbackQuery(cqId, 'عدم دسترسی به تنظیمات سیستم', true);
       return true;
     }
-    const [plans, margin, lev, chan, sup, wallet, rate, privOnly] = await Promise.all([
+    const [plans, margin, lev, chan, sup, wallet, bep20Recv, rate, privOnly, kycReq] = await Promise.all([
       env.DB.prepare(`SELECT code, price_usd FROM subscription_plans WHERE price_usd > 0`).all<{ code: string; price_usd: number }>(),
       getSystemSetting(env.DB, 'default_margin_pct', '10'),
       getSystemSetting(env.DB, 'default_max_leverage', '20'),
       getSystemSetting(env.DB, 'official_channel', '@Dollarino_official'),
       getSystemSetting(env.DB, 'telegram_support', '@Dollarino_bot'),
       getSystemSetting(env.DB, 'usdt_trc20_wallet', 'تنظیم نشده'),
+      getSystemSetting(env.DB, 'trust_wallet_evm_receiver', 'تنظیم نشده'),
       getSystemSetting(env.DB, 'usdt_to_toman_rate', '70000'),
       getSystemSetting(env.DB, 'bot_private_admin_only', 'false'),
+      getSystemSetting(env.DB, 'require_telegram_phone_kyc', 'true'),
     ]);
     const pMap: Record<string, number> = {};
     for (const p of plans.results) pMap[p.code] = p.price_usd;
@@ -693,7 +698,9 @@ export async function handleAdminCallback(
       `• مارجین پیش‌فرض: ${margin}% | حداکثر لوریج: ${lev}x\n` +
       `• کانال سیگنال: ${chan} | پشتیبانی: ${sup}\n` +
       `• ولت TRC20: ${wallet}\n` +
+      `• ولت BEP20 (Trust Wallet): ${bep20Recv}\n` +
       `• نرخ تتر: ${Number(rate).toLocaleString('en-US')} تومان\n` +
+      `• 📱 احراز اجباری شماره تماس: ${kycReq === 'true' ? 'روشن ✅' : 'خاموش ⚪️'}\n` +
       `• 🔐 حالت دسترسی ربات: ${privOnly === 'true' ? 'فقط مدیران تاییدشده 🔒' : 'عمومی (همه کاربران) 🌐'}`;
 
     await render(text, [
@@ -715,11 +722,15 @@ export async function handleAdminCallback(
       ],
       [
         { text: '💳 ولت TRC20', callback_data: 'adm:set:key:usdt_trc20_wallet' },
-        { text: '💱 نرخ تتر (تومان)', callback_data: 'adm:set:key:usdt_to_toman_rate' },
+        { text: '🦊 ولت BEP20 (TW)', callback_data: 'adm:set:key:trust_wallet_evm_receiver' },
       ],
       [
+        { text: '💱 نرخ تتر (تومان)', callback_data: 'adm:set:key:usdt_to_toman_rate' },
         { text: '📚 متن راهنما', callback_data: 'adm:set:key:bot_help_text' },
+      ],
+      [
         { text: '🖼 مدیا راهنما (URL)', callback_data: 'adm:set:key:bot_help_media_url' },
+        { text: `📱 احراز تلفن (${kycReq === 'true' ? 'اجباری ✅' : 'آزاد'})`, callback_data: 'adm:toggle_phone_kyc' },
       ],
       [
         {
@@ -731,6 +742,15 @@ export async function handleAdminCallback(
     ]);
     await bot.answerCallbackQuery(cqId);
     return true;
+  }
+
+  if (data === 'adm:toggle_phone_kyc') {
+    const cur = await getSystemSetting(env.DB, 'require_telegram_phone_kyc', 'true');
+    const next = cur === 'true' ? 'false' : 'true';
+    await setSystemSetting(env.DB, 'require_telegram_phone_kyc', next);
+    await auditAdmin(env.DB, actor.id, `Set require_telegram_phone_kyc=${next}`);
+    await bot.answerCallbackQuery(cqId, next === 'true' ? 'احراز اجباری شماره تماس روشن شد ✅' : 'احراز اجباری خاموش شد');
+    return handleAdminCallback(env, bot, actor, cqId, chatId, msgId, 'adm:settings');
   }
 
   if (data === 'adm:toggle_private_mode') {
@@ -1108,7 +1128,7 @@ export async function handleAdminCallback(
     await bot.sendMessage(
       chatId,
       `📡 ارسال محتوا به کانال رسمی دلارینو (دسته: ${category}):\n\n` +
-      `خط اول پیام به عنوان «تیتر» و بقیه خطوط به عنوان «متن کامل خبر/تحلیل» با دکمه‌های شیشه‌ای در کانال منتشر می‌شوند.\n` +
+      `خط اول پیام به عنوان «تیتر» و بقیه خطوط به عنوان «متن کامل خبر/تحلیل» با دکمه‌های تعاملی و لینک ترید مستقیم در کانال منتشر می‌شوند.\n` +
       `(حتی می‌توانید عکس + کپشن بفرستید!)`,
       { inlineKeyboard: [[{ text: '🔙 انصراف', callback_data: 'adm:channel' }]] }
     );
@@ -1128,7 +1148,9 @@ async function renderAdminUserCard(
 ) {
   const [u, sub, cfg, rateStr] = await Promise.all([
     env.DB.prepare(
-      `SELECT id, username, email, role, is_blocked, telegram_id, telegram_username, wallet_balance_usdt, created_at, last_active_at FROM users WHERE id = ?`
+      `SELECT id, username, email, role, is_blocked, telegram_id, telegram_username, wallet_balance_usdt,
+              phone_number, phone_verified, trust_wallet_address, ui_mode, created_at, last_active_at
+       FROM users WHERE id = ?`
     ).bind(uid).first<{
       id: string;
       username: string;
@@ -1138,6 +1160,10 @@ async function renderAdminUserCard(
       telegram_id: string | null;
       telegram_username: string | null;
       wallet_balance_usdt?: number;
+      phone_number?: string | null;
+      phone_verified?: number;
+      trust_wallet_address?: string | null;
+      ui_mode?: string | null;
       created_at: string;
       last_active_at: string;
     }>(),
@@ -1156,7 +1182,9 @@ async function renderAdminUserCard(
   const text =
     `👤 پروفایل کاربر:\n\n` +
     `• نام: ${u.username} (${u.telegram_username ? '@' + u.telegram_username : 'بدون یوزرنیم'})\n` +
-    `• آیدی تلگرام: ${u.telegram_id ?? '—'}\n` +
+    `• آیدی تلگرام: ${u.telegram_id ?? '—'} | رابط: ${u.ui_mode === 'pro' ? 'حرفه‌ای ⚡' : 'ساده 🌱'}\n` +
+    `• 📱 موبایل (KYC): ${u.phone_verified ? `✅ تاییدشده (${u.phone_number || '—'})` : '⏳ احرازنشده'}\n` +
+    `• 🦊 Trust Wallet: ${u.trust_wallet_address || 'متصل‌نشده'}\n` +
     `• نقش: ${u.role} | وضعیت: ${u.is_blocked ? '🔒 مسدود' : '🟢 فعال'}\n` +
     `• اشتراک: ${sub ? `💎 ${sub.plan_code} (تا ${formatIranDateTime(sub.expires_at)})` : 'بدون اشتراک فعال'}\n` +
     `• کیف پول: ${walletUsdt.toFixed(2)} USDT (${formatToman(walletUsdt, rate)} ت)\n` +

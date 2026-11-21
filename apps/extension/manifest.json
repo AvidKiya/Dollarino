@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Dollarino Companion — ربات تریدر و رادار DEX دلارینو",
+  "short_name": "Dollarino",
+  "version": "9.0.0",
+  "description": "Quick Bot On/Off, Emergency Kill Switch, Live Profit/Balance Monitor, Trust Wallet DApp Swap & DexScreener Scanner for Dollarino.",
+  "icons": {
+    "48": "icons/icon-192.png",
+    "128": "icons/icon-192.png",
+    "192": "icons/icon-192.png",
+    "512": "icons/icon-512.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dollarino Quick Terminal",
+    "default_icon": {
+      "48": "icons/icon-192.png",
+      "128": "icons/icon-192.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://*.pages.dev/*",
+    "https://*.workers.dev/*",
+    "https://api.dexscreener.com/*"
+  ]
+}

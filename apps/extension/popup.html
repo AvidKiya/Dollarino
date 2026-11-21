@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dollarino Companion</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top-bar">
+        <div class="brand">
+          <img src="icons/icon-192.png" alt="Dollarino" class="brand-logo" />
+          <div>
+            <h1>دلارینو <span class="badge-v">v9.0</span></h1>
+            <p id="userMeta" class="sub">اکستنشن کنترل سریع ترید</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="refreshBtn" class="icon-btn" title="بروزرسانی">⟳</button>
+          <button id="settingsToggleBtn" class="icon-btn" title="تنظیمات اتصال">⚙️</button>
+        </div>
+      </header>
+
+      <section id="setupCard" class="card setup-card hidden">
+        <h2>🔑 اتصال به حساب دلارینو</h2>
+        <p class="hint">
+          در ربات تلگرام <b>@Dollarino_bot</b> دکمه «🧩 اکستنشن و ویجت موبایل» یا در پنل وب بخش ابزارها را بزنید و کلید اختصاصی خود (<code>dlr_ext_...</code>) را کپی کنید.
+        </p>
+        <label class="field">
+          <span>آدرس سرور وب دلارینو</span>
+          <input id="apiBaseInput" type="url" dir="ltr" placeholder="https://dollarino.pages.dev" />
+        </label>
+        <label class="field">
+          <span>کلید اتصال اکستنشن</span>
+          <input id="extKeyInput" type="password" dir="ltr" placeholder="dlr_ext_..." />
+        </label>
+        <button id="saveConfigBtn" class="btn btn-primary w-full">ذخیره و اتصال فوری</button>
+      </section>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="bot">🤖 کنترل ربات</button>
+        <button class="tab" data-tab="dex">🔍 رادار DEX</button>
+      </nav>
+
+      <main id="tab-bot" class="tab-panel active">
+        <div id="statusCard" class="card">
+          <div class="status-row">
+            <div>
+              <span class="label">وضعیت ربات</span>
+              <div id="botStateLabel" class="state-pill stopped">در انتظار اتصال</div>
+            </div>
+            <div class="text-end">
+              <span class="label">حالت بازار</span>
+              <div id="botModeLabel" class="mode-tag">—</div>
+            </div>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric">
+              <span class="label">موجودی کل</span>
+              <strong id="balanceTotal" dir="ltr">—</strong>
+            </div>
+            <div class="metric">
+              <span class="label">سود باز (PnL)</span>
+              <strong id="openPnl" dir="ltr">—</strong>
+            </div>
+            <div class="metric">
+              <span class="label">پوزیشن باز</span>
+              <strong id="openCount" dir="ltr">—</strong>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button id="toggleBotBtn" class="btn btn-success flex-1">🟢 روشن کردن ربات</button>
+            <button id="killSwitchBtn" class="btn btn-danger" title="توقف کامل و تسویه معاملات باز">🛑 توقف اضطراری</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span>📈 پوزیشن‌های فعال</span>
+            <a id="openWebLink" href="https://dollarino.pages.dev" target="_blank" class="link">باز کردن پنل کامل ↗</a>
+          </div>
+          <div id="positionsList" class="list-box">
+            <p class="empty">برای مشاهده معاملات، کلید اکستنشن را متصل کنید.</p>
+          </div>
+        </div>
+      </main>
+
+      <main id="tab-dex" class="tab-panel">
+        <div class="card">
+          <div class="search-row">
+            <input id="dexSearchInput" type="text" placeholder="جستجو نماد یا کانترکت (مثلاً PEPE)" />
+            <button id="dexSearchBtn" class="btn btn-primary btn-sm">جستجو</button>
+          </div>
+          <div id="dexList" class="list-box">
+            <p class="empty">در حال بارگذاری توکن‌های داغ DexScreener...</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="foot">
+        <span id="toastText">آماده به کار</span>
+        <a href="https://t.me/Dollarino_bot" target="_blank" class="link">@Dollarino_bot</a>
+      </footer>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

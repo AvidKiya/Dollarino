@@ -7,8 +7,6 @@ import { TelegramBotClient } from '../telegram/client.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter.js';
 import { notifyAllAdmins } from '../telegram/publisher.js';
 
-const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
-
 export interface SubscriptionPlanRow {
   code: string;
   name_fa: string;
@@ -192,6 +190,57 @@ export async function rewardReferrerIfEligible(env: Env, referredUserId: string)
   }
 }
 
+const USDT_TRC20_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+const USDT_BEP20_CONTRACT = '0x55d398326f99059ff775485246999027b3197955';
+const TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+async function verifyBscUsdtBep20(
+  txHash: string,
+  expectedWallet: string,
+  minAmountUsd: number
+): Promise<{ verified: boolean; amountUsd?: number; note: string }> {
+  const cleanHash = txHash.trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(cleanHash) || !/^0x[a-fA-F0-9]{40}$/.test(expectedWallet.trim())) {
+    return { verified: false, note: 'Pending manual review (non-EVM hash or Trust Wallet receiver not set)' };
+  }
+  try {
+    const res = await fetch('https://bsc-dataseed.binance.org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getTransactionReceipt', params: [cleanHash] }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { verified: false, note: `BSC RPC HTTP ${res.status}` };
+    const rpc = (await res.json()) as {
+      result?: {
+        status?: string;
+        logs?: Array<{ address?: string; topics?: string[]; data?: string }>;
+      } | null;
+    };
+    const receipt = rpc.result;
+    if (!receipt || receipt.status !== '0x1') {
+      return { verified: false, note: 'BSC transaction not yet confirmed' };
+    }
+    const targetTopic = '0x' + expectedWallet.trim().toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+    const match = logs.find((l) => {
+      const sameContract = (l.address || '').toLowerCase() === USDT_BEP20_CONTRACT;
+      const isTransfer = (l.topics?.[0] || '').toLowerCase() === TRANSFER_EVENT_TOPIC;
+      const sameTo = (l.topics?.[2] || '').toLowerCase() === targetTopic;
+      if (!sameContract || !isTransfer || !sameTo || !l.data) return false;
+      const amt = Number(BigInt(l.data)) / 1e18;
+      return amt >= Math.max(0.5, minAmountUsd - 0.5);
+    });
+    if (!match || !match.data) {
+      return { verified: false, note: 'BSC BEP20 USDT transfer to platform Trust Wallet did not match' };
+    }
+    const amt = Number(BigInt(match.data)) / 1e18;
+    return { verified: true, amountUsd: amt, note: `Auto-verified $${amt.toFixed(2)} USDT BEP20 via Trust Wallet / BSC` };
+  } catch (err) {
+    return { verified: false, note: err instanceof Error ? err.message : 'BSC verification unavailable' };
+  }
+}
+
 async function verifyTronscanUsdtTrc20(
   txid: string,
   expectedWallet: string,
@@ -254,7 +303,11 @@ subscriptionRoutes.get('/me', async (c) => {
     ).bind(user.id).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(
       `SELECT key, value FROM system_settings
-       WHERE key IN ('subscription_required', 'usdt_trc20_wallet', 'iran_card_number', 'iran_card_holder', 'telegram_support', 'anti_scam_notice_fa')`
+       WHERE key IN (
+         'subscription_required', 'usdt_trc20_wallet', 'trust_wallet_evm_receiver',
+         'trust_wallet_sol_receiver', 'trust_wallet_ton_receiver',
+         'iran_card_number', 'iran_card_holder', 'telegram_support', 'anti_scam_notice_fa'
+       )`
     ).all<{ key: string; value: string }>().catch(() => ({ results: [] })),
   ]);
 
@@ -279,7 +332,7 @@ subscriptionRoutes.post('/checkout', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<{
     planCode?: string;
-    paymentMethod?: 'USDT_TRC20' | 'CARD_TO_CARD';
+    paymentMethod?: 'USDT_TRC20' | 'TRUST_WALLET_BEP20' | 'TRUST_WALLET_TRC20' | 'CARD_TO_CARD';
     paymentReference?: string;
     payerNote?: string;
   }>().catch(() => ({} as Record<string, string>));
@@ -306,17 +359,33 @@ subscriptionRoutes.post('/checkout', async (c) => {
     return c.json({ error: 'این کد پیگیری یا TXID قبلاً ثبت شده است.' }, 409);
   }
 
-  const method = body.paymentMethod === 'CARD_TO_CARD' ? 'CARD_TO_CARD' : 'USDT_TRC20';
+  const method =
+    body.paymentMethod === 'CARD_TO_CARD'
+      ? 'CARD_TO_CARD'
+      : body.paymentMethod === 'TRUST_WALLET_BEP20'
+        ? 'TRUST_WALLET_BEP20'
+        : body.paymentMethod === 'TRUST_WALLET_TRC20'
+          ? 'TRUST_WALLET_TRC20'
+          : 'USDT_TRC20';
   const id = randomId('sub');
 
-  // Auto-verify USDT TRC20 TXID via Tronscan when applicable
+  // Auto-verify USDT TRC20 (Tronscan) or Trust Wallet BEP20 (BSC RPC) TXID when applicable
   let autoActivated = false;
   let autoNote = '';
-  if (method === 'USDT_TRC20') {
+  if (method === 'USDT_TRC20' || method === 'TRUST_WALLET_TRC20') {
     const walletSetting = await c.env.DB.prepare(
       `SELECT value FROM system_settings WHERE key = 'usdt_trc20_wallet'`
     ).first<{ value: string }>().catch(() => null);
     const check = await verifyTronscanUsdtTrc20(ref, walletSetting?.value || '', plan.price_usd);
+    if (check.verified) {
+      autoActivated = true;
+      autoNote = check.note;
+    }
+  } else if (method === 'TRUST_WALLET_BEP20') {
+    const evmReceiver = await c.env.DB.prepare(
+      `SELECT value FROM system_settings WHERE key = 'trust_wallet_evm_receiver'`
+    ).first<{ value: string }>().catch(() => null);
+    const check = await verifyBscUsdtBep20(ref, evmReceiver?.value || '', plan.price_usd);
     if (check.verified) {
       autoActivated = true;
       autoNote = check.note;

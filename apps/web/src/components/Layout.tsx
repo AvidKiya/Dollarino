@@ -54,6 +54,7 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'ترید هوشمند اتومات AI', labelEn: 'Automated AI Trading', icon: Home },
+  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'copy', labelFa: 'کپی‌ترید تاییدشده', labelEn: 'Copy Trade', icon: Users },
   { id: 'portfolio', labelFa: 'کیف پول و سودها', labelEn: 'Wallet & Profit', icon: Wallet },
@@ -64,6 +65,7 @@ const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: 
 
 const MAIN_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', labelFa: 'نمای کلی', labelEn: 'Overview', icon: LayoutDashboard },
+  { id: 'dex', labelFa: 'Trust Wallet و رادار DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'terminal', labelFa: 'پایانه و چارت AI', labelEn: 'Terminal & Chart AI', icon: CandlestickChart },
   { id: 'markets', labelFa: 'بازارهای فیوچرز', labelEn: 'Markets', icon: Globe },
@@ -80,6 +82,7 @@ const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon:
 
 export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
+  if (id === 'dex') return isFa ? 'Trust Wallet و DEX' : 'Trust Wallet & DEX';
   if (id === 'myai') return isFa ? 'هوش مصنوعی من' : 'My AI Agent';
   if (id === 'services') return isFa ? 'خدمات' : 'Services';
   if (id === 'card') return isFa ? 'کارت سود' : 'Profit Card';

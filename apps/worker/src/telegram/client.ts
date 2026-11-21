@@ -1,4 +1,8 @@
-export type ReplyKeyboardButton = { text: string; web_app?: { url: string } };
+export type ReplyKeyboardButton = {
+  text: string;
+  web_app?: { url: string };
+  request_contact?: boolean;
+};
 export type InlineKeyboardButton = {
   text: string;
   callback_data?: string;

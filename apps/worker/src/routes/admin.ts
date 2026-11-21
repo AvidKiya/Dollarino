@@ -29,10 +29,12 @@ adminRoutes.use('*', async (c, next) => {
 });
 
 adminRoutes.get('/overview', async (c) => {
-  const [users, trades, signals, bots, settings, aiSummary, plans, subs, openSupport, copyTraders] = await Promise.all([
+  const [users, trades, signals, bots, settings, aiSummary, plans, subs, openSupport, copyTraders, dexStats, revRow] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, wallet_balance_usdt, created_at, last_active_at
-       FROM users ORDER BY created_at DESC LIMIT 200`
+      `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username,
+              phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified, ui_mode,
+              wallet_balance_usdt, created_at, last_active_at
+       FROM users ORDER BY created_at DESC LIMIT 250`
     ).all<{
       id: string;
       email: string;
@@ -41,6 +43,13 @@ adminRoutes.get('/overview', async (c) => {
       is_blocked: number;
       telegram_id: string | null;
       telegram_username: string | null;
+      phone_number: string | null;
+      phone_verified: number;
+      trust_wallet_address: string | null;
+      trust_wallet_tron: string | null;
+      trust_wallet_solana: string | null;
+      trust_wallet_verified: number;
+      ui_mode: string | null;
       wallet_balance_usdt: number;
       created_at: string;
       last_active_at: string | null;
@@ -60,6 +69,8 @@ adminRoutes.get('/overview', async (c) => {
     ).all<{ user_id: string; plan_code: string; expires_at: string | null }>().catch(() => ({ results: [] })),
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM support_tickets WHERE status = 'OPEN'`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM copy_traders WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as total, SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count FROM dex_trades`).first<{ total: number; open_count: number }>().catch(() => ({ total: 0, open_count: 0 })),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(amount_usd), 0) as total_usd FROM user_subscriptions WHERE status = 'ACTIVE'`).first<{ total_usd: number }>().catch(() => ({ total_usd: 0 })),
   ]);
 
   const settingsMap: Record<string, string> = {};
@@ -79,13 +90,21 @@ adminRoutes.get('/overview', async (c) => {
     };
   });
 
+  const phoneVerifiedCount = enrichedUsers.filter((u) => u.phone_verified === 1).length;
+  const trustWalletConnectedCount = enrichedUsers.filter((u) => Boolean(u.trust_wallet_address || u.trust_wallet_tron || u.trust_wallet_solana)).length;
+
   return c.json({
     users: enrichedUsers,
     stats: {
       totalUsers: enrichedUsers.length,
+      phoneVerifiedCount,
+      trustWalletConnectedCount,
       activeSubscriptions: activeSubByUser.size,
+      totalRevenueUsd: Number(revRow?.total_usd || 0),
       openSupportTickets: openSupport?.cnt ?? 0,
       copyTradersCount: copyTraders?.cnt ?? 0,
+      dexTradesTotal: dexStats?.total ?? 0,
+      dexTradesOpen: dexStats?.open_count ?? 0,
       trades,
       signalsCount: (signals as { total: number } | null)?.total ?? 0,
       botsCount: (bots as { total: number } | null)?.total ?? 0,
@@ -825,4 +844,51 @@ adminRoutes.post('/channel/publish-news', async (c) => {
   });
 
   return c.json({ ok: !res.error, ...res });
+});
+
+adminRoutes.get('/audit-logs', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT a.*, u.username, u.email
+     FROM audit_logs a
+     LEFT JOIN users u ON u.id = a.user_id
+     ORDER BY a.created_at DESC LIMIT 120`
+  ).all().catch(() => ({ results: [] }));
+  return c.json({ logs: rows.results });
+});
+
+adminRoutes.get('/dex-trades', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT d.*, u.username, u.email
+     FROM dex_trades d
+     JOIN users u ON u.id = d.user_id
+     ORDER BY d.opened_at DESC LIMIT 80`
+  ).all().catch(() => ({ results: [] }));
+  return c.json({ trades: rows.results });
+});
+
+adminRoutes.patch('/users/:id/kyc', async (c) => {
+  const uid = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    phoneNumber?: string;
+    phoneVerified?: boolean;
+    trustWalletAddress?: string;
+    trustWalletVerified?: boolean;
+  };
+  await c.env.DB.prepare(
+    `UPDATE users SET
+       phone_number = COALESCE(?, phone_number),
+       phone_verified = COALESCE(?, phone_verified),
+       phone_verified_at = CASE WHEN ? = 1 THEN datetime('now') ELSE phone_verified_at END,
+       trust_wallet_address = COALESCE(?, trust_wallet_address),
+       trust_wallet_verified = COALESCE(?, trust_wallet_verified)
+     WHERE id = ?`
+  ).bind(
+    body.phoneNumber?.trim() || null,
+    typeof body.phoneVerified === 'boolean' ? (body.phoneVerified ? 1 : 0) : null,
+    body.phoneVerified ? 1 : 0,
+    body.trustWalletAddress?.trim() || null,
+    typeof body.trustWalletVerified === 'boolean' ? (body.trustWalletVerified ? 1 : 0) : null,
+    uid
+  ).run();
+  return c.json({ ok: true });
 });

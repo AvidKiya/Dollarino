@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { buildTrustWalletDappOpenUrl, sendBep20UsdtViaTrustWallet } from '../lib/trustwallet';
 
 export interface UserEntitlement {
   hasPaidPlan: boolean;
@@ -70,7 +71,7 @@ export function SubscriptionPage({
   const [orders, setOrders] = useState<SubOrder[]>([]);
   const [payCfg, setPayCfg] = useState<Record<string, string>>({});
   const [selectedPlan, setSelectedPlan] = useState<PlanRow | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'USDT_TRC20' | 'CARD_TO_CARD'>('USDT_TRC20');
+  const [paymentMethod, setPaymentMethod] = useState<'TRUST_WALLET_BEP20' | 'USDT_TRC20' | 'CARD_TO_CARD'>('TRUST_WALLET_BEP20');
   const [paymentRef, setPaymentRef] = useState('');
   const [payerNote, setPayerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -166,8 +167,8 @@ export function SubscriptionPage({
       setMsg(
         res.autoVerified
           ? isFa
-            ? '✅ تراکنش تتر (TRC20) روی شبکه بلاک‌چین تایید خودکار شد و اشتراک شما هم‌اکنون فعال گردید!'
-            : '✅ USDT TRC20 transaction auto-verified on-chain! Your subscription is now ACTIVE.'
+            ? '✅ تراکنش بلاک‌چین تایید خودکار شد و اشتراک شما هم‌اکنون فعال گردید!'
+            : '✅ Blockchain transaction auto-verified! Your subscription is now ACTIVE.'
           : res.message ||
             (isFa
               ? 'سفارش اشتراک با موفقیت ثبت شد! پس از بررسی و تایید مدیر، اشتراک شما فوراً فعال می‌شود.'
@@ -177,6 +178,60 @@ export function SubscriptionPage({
       await onRefreshDashboard();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Checkout failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleInstantTrustWalletPay = async () => {
+    if (!selectedPlan || selectedPlan.price_usd <= 0) return;
+    const toAddr = (payCfg.trust_wallet_evm_receiver || '').trim();
+    if (!toAddr || !toAddr.startsWith('0x')) {
+      setMsg(
+        isFa
+          ? 'آدرس دریافت BEP20 در پنل ادمین تنظیم نشده است. لطفاً روش TRC20 یا کارت به کارت را انتخاب کنید.'
+          : 'Platform BEP20 receiver address is not configured yet.'
+      );
+      return;
+    }
+    setSubmitting(true);
+    setMsg(null);
+    try {
+      const txHash = await sendBep20UsdtViaTrustWallet({ toAddress: toAddr, amountUsdt: selectedPlan.price_usd });
+      setPaymentRef(txHash);
+      const res = await apiFetch<{ ok?: boolean; autoVerified?: boolean; message?: string }>('/api/subscriptions/checkout', {
+        method: 'POST',
+        body: JSON.stringify({
+          planCode: selectedPlan.code,
+          paymentMethod: 'TRUST_WALLET_BEP20',
+          paymentReference: txHash,
+          payerNote: 'Instant Trust Wallet DApp Pay',
+        }),
+      });
+      setMsg(
+        res.autoVerified
+          ? isFa
+            ? `✅ پرداخت Trust Wallet با TX ${txHash.slice(0, 12)}... تایید آن‌چین شد و اشتراک فعال گردید!`
+            : `✅ Trust Wallet payment verified on-chain (${txHash.slice(0, 12)}...)!`
+          : res.message ||
+            (isFa
+              ? `✅ تراکنش ${txHash.slice(0, 12)}... ارسال و ثبت شد! پس از تایید بلاک BSC اشتراک فوراً فعال می‌شود.`
+              : `Transaction submitted (${txHash.slice(0, 12)}...).`)
+      );
+      await loadData();
+      await onRefreshDashboard();
+    } catch (err) {
+      const code = err instanceof Error ? err.message : '';
+      if (code === 'NO_INJECTED_WALLET') {
+        window.open(buildTrustWalletDappOpenUrl(`${window.location.origin}/?tab=pricing`), '_blank', 'noopener,noreferrer');
+        setMsg(
+          isFa
+            ? 'در مرورگر فعلی افزونه کیف‌پول یافت نشد؛ صفحه در اپلیکیشن Trust Wallet DApp باز می‌شود یا پس از واریز، هش تراکنش (TXID) را ثبت کنید.'
+            : 'Opening inside Trust Wallet DApp Browser...'
+        );
+      } else {
+        setMsg(code || 'Trust Wallet payment cancelled');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -431,7 +486,21 @@ export function SubscriptionPage({
               : '⚠️ Security Notice: Dollarino has NO personal DM support account. Only pay to addresses shown here and contact us via Online Support or @Dollarino_bot.'}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <button
+              type="button"
+              onClick={() => setPaymentMethod('TRUST_WALLET_BEP20')}
+              className={`p-4 rounded-2xl border text-start flex items-center gap-3 transition ${
+                paymentMethod === 'TRUST_WALLET_BEP20' ? 'btn-gold' : 'surface-soft text-sub'
+              }`}
+            >
+              <Wallet className="w-5 h-5 shrink-0" />
+              <div>
+                <div className="font-extrabold">{isFa ? '🦊 Trust Wallet (BEP20)' : 'Trust Wallet (BEP20)'}</div>
+                <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT · کارمزد ناچیز</div>
+              </div>
+            </button>
+
             <button
               type="button"
               onClick={() => setPaymentMethod('USDT_TRC20')}
@@ -462,10 +531,17 @@ export function SubscriptionPage({
           </div>
 
           <div className="p-4 rounded-2xl surface-soft border flex flex-wrap items-center justify-between gap-3 text-xs">
-            {paymentMethod === 'USDT_TRC20' ? (
+            {paymentMethod === 'TRUST_WALLET_BEP20' ? (
+              <div className="space-y-1 min-w-0">
+                <div className="text-sub">{isFa ? 'آدرس کیف‌پول دریافت Trust Wallet (شبکه BSC / BEP20):' : 'Trust Wallet USDT BEP20 Address:'}</div>
+                <div className="font-mono-num text-sm font-black text-main break-all" dir="ltr">
+                  {payCfg.trust_wallet_evm_receiver || (isFa ? 'هنوز در پنل ادمین تنظیم نشده' : 'Set trust_wallet_evm_receiver in Admin')}
+                </div>
+              </div>
+            ) : paymentMethod === 'USDT_TRC20' ? (
               <div className="space-y-1 min-w-0">
                 <div className="text-sub">{isFa ? 'آدرس کیف‌پول تتر (TRC20):' : 'USDT TRC20 Address:'}</div>
-                <div className="font-mono-num text-sm font-black text-main break-all">
+                <div className="font-mono-num text-sm font-black text-main break-all" dir="ltr">
                   {payCfg.usdt_trc20_wallet || 'Set USDT wallet in Admin Panel'}
                 </div>
               </div>
@@ -479,19 +555,36 @@ export function SubscriptionPage({
                 </div>
               </div>
             )}
-            <button
-              type="button"
-              onClick={() =>
-                copyText(
-                  paymentMethod === 'USDT_TRC20' ? payCfg.usdt_trc20_wallet || '' : payCfg.iran_card_number || '',
-                  'addr'
-                )
-              }
-              className="px-3.5 py-2 rounded-xl surface-card border text-main font-bold inline-flex items-center gap-1.5 shrink-0"
-            >
-              <Copy className="w-3.5 h-3.5 text-brand" />
-              <span>{copied === 'addr' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'کپی' : 'Copy'}</span>
-            </button>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              {paymentMethod === 'TRUST_WALLET_BEP20' && (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => void handleInstantTrustWalletPay()}
+                  className="px-4 py-2 rounded-xl btn-gold font-black inline-flex items-center gap-1.5"
+                >
+                  <Wallet className="w-3.5 h-3.5" />
+                  <span>{isFa ? '🦊 پرداخت مستقیم از Trust Wallet' : 'Instant Pay in Trust Wallet'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  copyText(
+                    paymentMethod === 'TRUST_WALLET_BEP20'
+                      ? payCfg.trust_wallet_evm_receiver || ''
+                      : paymentMethod === 'USDT_TRC20'
+                        ? payCfg.usdt_trc20_wallet || ''
+                        : payCfg.iran_card_number || '',
+                    'addr'
+                  )
+                }
+                className="px-3.5 py-2 rounded-xl surface-card border text-main font-bold inline-flex items-center gap-1.5"
+              >
+                <Copy className="w-3.5 h-3.5 text-brand" />
+                <span>{copied === 'addr' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'کپی' : 'Copy'}</span>
+              </button>
+            </div>
           </div>
 
           <form onSubmit={submitCheckout} className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -500,9 +593,17 @@ export function SubscriptionPage({
               value={paymentRef}
               onChange={(e) => setPaymentRef(e.target.value)}
               placeholder={
-                paymentMethod === 'USDT_TRC20'
-                  ? isFa ? 'هش تراکنش (TXID)...' : 'Paste USDT TRC20 TXID...'
-                  : isFa ? 'شماره پیگیری / ۴ رقم آخر کارت...' : 'Paste tracking code...'
+                paymentMethod === 'TRUST_WALLET_BEP20'
+                  ? isFa
+                    ? 'هش تراکنش BEP20 (0x...)...'
+                    : 'Paste BSC BEP20 TX Hash (0x...)...'
+                  : paymentMethod === 'USDT_TRC20'
+                    ? isFa
+                      ? 'هش تراکنش (TXID)...'
+                      : 'Paste USDT TRC20 TXID...'
+                    : isFa
+                      ? 'شماره پیگیری / ۴ رقم آخر کارت...'
+                      : 'Paste tracking code...'
               }
               className="surface-input rounded-xl px-3.5 py-2.5 font-mono-num"
             />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { Layout, type UiMode } from './components/Layout';
+import { QuickLauncherModal } from './components/QuickWidgetsBar';
 import { SupportModal } from './components/SupportModal';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
 import { apiFetch, ApiError, setStoredToken } from './lib/api';
@@ -11,6 +12,7 @@ import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
 import { AdminPage } from './pages/AdminPage';
 import { AuthPage } from './pages/AuthPage';
 import { CopyConnectPage } from './pages/CopyConnectPage';
+import { DexTrustPage } from './pages/DexTrustPage';
 import { FaqPage } from './pages/FaqPage';
 import { LandingPage } from './pages/LandingPage';
 import { MarketsPage } from './pages/MarketsPage';
@@ -57,7 +59,21 @@ export function App() {
   const [supportOpen, setSupportOpen] = useState(false);
   const [globalNotice, setGlobalNotice] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<NavTab>('overview');
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    const qp = new URLSearchParams(window.location.search);
+    const tab = qp.get('tab') as NavTab | null;
+    const quick = qp.get('quick');
+    if (quick === 'dex' || tab === 'dex') return 'dex';
+    if (quick === 'report') return 'portfolio';
+    if (tab && ['overview', 'myai', 'terminal', 'markets', 'dex', 'radar', 'copy', 'portfolio', 'services', 'card', 'pricing', 'faq', 'admin'].includes(tab)) {
+      return tab;
+    }
+    return 'overview';
+  });
+  const [quickAction, setQuickAction] = useState<string | null>(() => {
+    const q = new URLSearchParams(window.location.search).get('quick');
+    return q === 'bot-toggle' || q === 'kill-switch' ? q : null;
+  });
   const [marketType, setMarketType] = useState<'SPOT' | 'FUTURES'>('FUTURES');
   const [terminalSymbol, setTerminalSymbol] = useState('BTCUSDT');
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
@@ -83,6 +99,12 @@ export function App() {
   const handleSetUiMode = (next: UiMode) => {
     setUiMode(next);
     localStorage.setItem('dollarino_ui_mode', next);
+    if (user) {
+      void apiFetch('/api/auth/ui-preferences', {
+        method: 'PATCH',
+        body: JSON.stringify({ uiMode: next }),
+      }).catch(() => {});
+    }
   };
 
   const handleSelectLook = (next: LookId) => {
@@ -131,6 +153,10 @@ export function App() {
         return;
       }
       setUser(me.user);
+      if (me.user.ui_mode === 'simple' || me.user.ui_mode === 'pro') {
+        setUiMode(me.user.ui_mode);
+        localStorage.setItem('dollarino_ui_mode', me.user.ui_mode);
+      }
       const dash = await apiFetch<DashboardPayload>('/api/trading/dashboard');
       const activeMkt: 'SPOT' | 'FUTURES' = dash.config?.market_type === 'SPOT' ? 'SPOT' : 'FUTURES';
       setMarketType(activeMkt);
@@ -370,6 +396,13 @@ export function App() {
           onRefresh={loadSessionAndDashboard}
         />
       )}
+      {activeTab === 'dex' && (
+        <DexTrustPage
+          lang={lang}
+          user={user}
+          onUserRefresh={loadSessionAndDashboard}
+        />
+      )}
       {activeTab === 'terminal' && (
         <TerminalPage
           lang={lang}
@@ -455,6 +488,23 @@ export function App() {
       lang={lang}
       authenticated
       onClose={() => setSupportOpen(false)}
+    />
+    <QuickLauncherModal
+      action={quickAction}
+      lang={lang}
+      dashboard={dashboard}
+      onToggleBot={handleTopbarStartStop}
+      onKillSwitch={handleKillSwitch}
+      onNavigate={(t) => setActiveTab(t)}
+      onClose={() => {
+        setQuickAction(null);
+        const qp = new URLSearchParams(window.location.search);
+        if (qp.has('quick')) {
+          qp.delete('quick');
+          const qs = qp.toString();
+          window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+        }
+      }}
     />
     </>
   );

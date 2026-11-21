@@ -11,10 +11,12 @@ import { buildProfitCardSvg, renderProfitCardPng } from './cards/renderer.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
 import { connectionRoutes } from './routes/connections.js';
 import { copyTradeRoutes } from './routes/copy-trade.js';
+import { dexRoutes } from './routes/dex.js';
 import { myAiRoutes } from './routes/my-ai.js';
 import { getPublicPlans, subscriptionRoutes } from './routes/subscriptions.js';
 import { supportRoutes } from './routes/support.js';
 import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/trading.js';
+import { trustWalletRoutes } from './routes/trustwallet.js';
 import { webhookRoutes } from './routes/webhooks.js';
 
 export { TradingBotCoordinator };
@@ -23,7 +25,7 @@ const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 app.use('*', cors({
   origin: (origin) => origin || '*',
-  allowHeaders: ['Content-Type', 'Authorization', 'X-Dollarino-Token'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Dollarino-Token', 'X-Dollarino-Extension-Key'],
   credentials: true,
 }));
 
@@ -279,6 +281,8 @@ app.route('/api/trading', tradingRoutes);
 app.route('/api/chart-ai', chartAiRoutes);
 app.route('/api/my-ai', myAiRoutes);
 app.route('/api/copy-trade', copyTradeRoutes);
+app.route('/api/dex', dexRoutes);
+app.route('/api/trustwallet', trustWalletRoutes);
 app.route('/api/support', supportRoutes);
 app.route('/api/webhook', webhookRoutes);
 app.route('/api/admin', adminRoutes);

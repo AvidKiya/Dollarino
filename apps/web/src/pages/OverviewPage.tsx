@@ -55,6 +55,7 @@ import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow } from '../li
 import { ModeGraphicAI, ModeGraphicCodex, ModeGraphicTelegram } from '../components/BrandGraphics';
 import { CoinIcon } from '../components/CoinIcon';
 import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '../components/DollarinoViz';
+import { QuickWidgetsBar } from '../components/QuickWidgetsBar';
 import { SetupWizardModal } from '../components/SetupWizardModal';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 
@@ -224,6 +225,19 @@ export function OverviewPage({
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Start failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleKillSwitch = async () => {
+    setBusy(true);
+    try {
+      await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
+      toastMsg(isFa ? 'توقف اضطراری (Kill Switch) اجرا و ربات متوقف شد' : 'Kill Switch activated');
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Kill switch failed', true);
     } finally {
       setBusy(false);
     }
@@ -682,8 +696,24 @@ export function OverviewPage({
               <KeyRound className="w-3.5 h-3.5 text-jade" />
               <span>{isFa ? 'اتصال صرافی Toobit / KCEX' : 'Connect Exchange'}</span>
             </button>
+            <button type="button" onClick={() => onNavigate('dex')} className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 border border-amber-500/30">
+              <Wallet className="w-3.5 h-3.5 text-amber-400" />
+              <span>{isFa ? '🦊 Trust Wallet و رادار DEX' : 'Trust Wallet & DEX'}</span>
+            </button>
           </div>
         </section>
+
+        <QuickWidgetsBar
+          lang={lang}
+          uiMode={uiMode}
+          user={user}
+          dashboard={data}
+          onToggleBot={handleStartStop}
+          onKillSwitch={handleKillSwitch}
+          onToggleUiMode={onToggleUiMode}
+          onNavigate={onNavigate}
+          onUserUpdated={onRefresh}
+        />
 
         {/* 3. Open & Settled AI Trades Summary */}
         <section className="panel rounded-[26px] p-4 sm:p-5 space-y-3">
@@ -834,6 +864,18 @@ export function OverviewPage({
           <button type="button" onClick={() => setErrorMsg(null)}><X className="w-4 h-4" /></button>
         </div>
       )}
+
+      <QuickWidgetsBar
+        lang={lang}
+        uiMode={uiMode}
+        user={user}
+        dashboard={data}
+        onToggleBot={handleStartStop}
+        onKillSwitch={handleKillSwitch}
+        onToggleUiMode={onToggleUiMode}
+        onNavigate={onNavigate}
+        onUserUpdated={onRefresh}
+      />
 
       {/* 1. Signature Overview Hero + Live Equity Card */}
       <section className="grid lg:grid-cols-[1.05fr_1fr] gap-8 items-center">

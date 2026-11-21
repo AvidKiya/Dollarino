@@ -9,6 +9,31 @@ export type AppVariables = {
 };
 
 export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
+  const extKey = c.req.header('X-Dollarino-Extension-Key');
+  if (extKey && extKey.startsWith('dlr_ext_')) {
+    const extRow = await c.env.DB.prepare(
+      'SELECT id, email, username, role, is_blocked, telegram_id FROM users WHERE extension_api_key = ? LIMIT 1'
+    ).bind(extKey.trim()).first<{
+      id: string;
+      email: string;
+      username: string;
+      role: string;
+      is_blocked: number;
+      telegram_id: string | null;
+    }>().catch(() => null);
+    if (!extRow) return c.json({ error: 'Invalid Extension Key' }, 401);
+    if (extRow.is_blocked) return c.json({ error: 'Account is suspended' }, 403);
+    c.set('user', {
+      id: extRow.id,
+      email: extRow.email,
+      username: extRow.username,
+      role: (extRow.role as AuthUser['role']) || 'user',
+      telegramId: extRow.telegram_id,
+    });
+    await next();
+    return;
+  }
+
   const customHeader = c.req.header('X-Dollarino-Token');
   const authHeader = c.req.header('Authorization');
   const cookieToken = getCookie(c, 'dollarino_session');
@@ -212,7 +237,10 @@ authRoutes.get('/session', async (c) => {
     return c.json({ authenticated: false, user: null });
   }
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, avatar_url, created_at
+    `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
+            wallet_balance_usdt, avatar_url, phone_number, phone_verified,
+            trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
+            ui_mode, mobile_widgets_json, extension_api_key, created_at
      FROM users WHERE id = ?`
   ).bind(payload.sub).first<{ is_blocked?: number }>();
   if (!full || full.is_blocked) {
@@ -224,7 +252,10 @@ authRoutes.get('/session', async (c) => {
 authRoutes.get('/me', requireAuth, async (c) => {
   const u = c.get('user');
   const full = await c.env.DB.prepare(
-    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code, wallet_balance_usdt, avatar_url, created_at
+    `SELECT id, email, username, role, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
+            wallet_balance_usdt, avatar_url, phone_number, phone_verified,
+            trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_verified,
+            ui_mode, mobile_widgets_json, extension_api_key, created_at
      FROM users WHERE id = ?`
   ).bind(u.id).first();
   return c.json({ user: full });
@@ -529,4 +560,38 @@ authRoutes.post('/telegram-magic-login', async (c) => {
       avatar_url: row.avatar_url ?? null,
     },
   });
+});
+
+// Generate or retrieve personal Browser Extension & Mobile Shortcut API key
+authRoutes.post('/extension-key', requireAuth, async (c) => {
+  const u = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as { rotate?: boolean };
+  const row = await c.env.DB.prepare(`SELECT extension_api_key FROM users WHERE id = ?`)
+    .bind(u.id)
+    .first<{ extension_api_key: string | null }>();
+  let key = row?.extension_api_key || null;
+  if (!key || body.rotate) {
+    key = `dlr_ext_${randomId('').replace(/_/g, '')}${Math.random().toString(36).slice(2, 10)}`;
+    await c.env.DB.prepare(`UPDATE users SET extension_api_key = ? WHERE id = ?`).bind(key, u.id).run();
+  }
+  return c.json({ ok: true, extensionApiKey: key });
+});
+
+// Sync user UI mode (simple / pro) & customized Mobile PWA widgets across devices
+authRoutes.patch('/ui-preferences', requireAuth, async (c) => {
+  const u = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    uiMode?: 'simple' | 'pro';
+    mobileWidgets?: string[];
+  };
+  if (body.uiMode && (body.uiMode === 'simple' || body.uiMode === 'pro')) {
+    await c.env.DB.prepare(`UPDATE users SET ui_mode = ? WHERE id = ?`).bind(body.uiMode, u.id).run();
+  }
+  if (Array.isArray(body.mobileWidgets)) {
+    const clean = body.mobileWidgets.slice(0, 12).map((x) => String(x).slice(0, 40));
+    await c.env.DB.prepare(`UPDATE users SET mobile_widgets_json = ? WHERE id = ?`)
+      .bind(JSON.stringify(clean), u.id)
+      .run();
+  }
+  return c.json({ ok: true });
 });

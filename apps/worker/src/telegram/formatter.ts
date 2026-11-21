@@ -1,11 +1,11 @@
 import { resolveEngineDisplayLabel } from '@dollarino/core';
 import type { FuturesBalance } from '../exchanges/base.js';
-import type { InlineKeyboardButton } from './client.js';
+import type { InlineKeyboardButton, ReplyKeyboardButton } from './client.js';
 
 export const OFFICIAL_CHANNEL_HANDLE = '@Dollarino_official';
 export const OFFICIAL_BOT_HANDLE = '@Dollarino_bot';
 export const ANTI_SCAM_WARNING_FA =
-  '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای پشتیبانی یا دریافت وجه ندارد. تنها راه ارتباطی رسمی: پشتیبانی آنلاین داخل سایت و ربات @Dollarino_bot است.';
+  '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای پشتیبانی یا دریافت وجه ندارد. ثبت‌نام، ورود و پشتیبانی رسمی فقط از طریق ربات @Dollarino_bot و پشتیبانی آنلاین داخل سایت انجام می‌شود.';
 
 export function formatIranDateTime(isoInput?: string | null): string {
   if (!isoInput) return '—';
@@ -30,53 +30,127 @@ export function formatToman(usdt: number, rate = 70000): string {
   return Math.round(usdt * rate).toLocaleString('en-US');
 }
 
-export function welcomeMessage(firstName: string): string {
+export function preAuthIntroMessage(firstName: string): string {
   return (
-    `سلام خوش اومدی ${firstName || 'دوست عزیز'} 🌹\n\n` +
-    `💎 به پلتفرم هوشمند ترید دلارینو (${OFFICIAL_BOT_HANDLE}) خوش آمدید!\n` +
-    `اینجا ۴ موتور قدرتمند در اختیار شماست:\n` +
-    `۱. 🧠 هوش مصنوعی دلارینو (تحلیل و معامله خودکار مرکزی)\n` +
-    `۲. 🤖 هوش مصنوعی خام (آموزش با چت به سبک خودتان)\n` +
-    `۳. 🎯 استراتژی شکار (استراتژی‌های آماده ما + استراتژی شخصی شما)\n` +
-    `۴. 🏆 کپی‌ترید تاییدشده (آینه‌سازی آنی معاملات تریدرهای برتر)\n\n` +
-    `📢 کانال رسمی سیگنال و اخبار: ${OFFICIAL_CHANNEL_HANDLE}\n` +
-    `${ANTI_SCAM_WARNING_FA}\n\n` +
-    `از منوی شیشه‌ای و کشویی زیر یا دکمه‌های ربات استفاده کنید:`
+    `🌟 به پلتفرم هوشمند ترید **دلارینو (Dollarino)** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
+    `📌 **دلارینو چیست و چگونه برای شما کار می‌کند؟**\n` +
+    `دلارینو یک میز معامله تمام‌هوشمند و خودکار ۲۴ ساعته است که هم در **حالت ساده (تازه‌کار)** و هم در **حالت حرفه‌ای (Quant Pro)** با ۴ موتور قدرتمند کار می‌کند:\n` +
+    `۱. 🧠 **هوش مصنوعی دلارینو:** تحلیل زنده بازار و معامله خودکار بدون نیاز به دانش فنی\n` +
+    `۲. 🤖 **هوش مصنوعی من:** هوش مصنوعی شخصی که با چت فارسی استراتژی شما را یاد می‌گیرد\n` +
+    `۳. 🎯 **استراتژی شکار (دُرنا V1):** الگوریتم شکار نقطه ورود با ۳ تارگت و ریسک‌فری خودکار\n` +
+    `۴. 🏆 **کپی‌ترید تاییدشده:** کپی خودکار معاملات تریدرهای تاییدشده پلتفرم\n\n` +
+    `🦊 **پشتیبانی کامل از Trust Wallet & DexScreener:**\n` +
+    `حتی اگر نخواهید از صرافی‌های متمرکز استفاده کنید، می‌توانید کیف پول **Trust Wallet** خود را مستقیم متصل کنید؛ هم توکن‌های جدید و داغ **DexScreener** را معامله کنید و هم اشتراک‌ها را با تراست‌ولت مدیریت نمایید (در کنار اتصال صرافی‌های Toobit و KCEX).\n\n` +
+    `🔐 **ثبت‌نام و احراز هویت امن:**\n` +
+    `برای ساخت حساب کاربری، فعال‌شدن منوهای کامل ربات و ورود به وب‌اپ و اکستنشن، لطفاً دکمه «📱 اشتراک‌گذاری شماره تماس اکانت من» را در پایین صفحه لمس کنید تا حساب شما بلافاصله تایید شود.`
   );
 }
 
-export function mainMenuKeyboard(webAppUrl?: string) {
-  const safeUrl = webAppUrl?.startsWith('https://') ? webAppUrl : undefined;
+export function preAuthIntroInlineButtons(): InlineKeyboardButton[][] {
   return [
+    [
+      { text: '🧠 آشنایی با ۴ موتور ترید', callback_data: 'pre_info:engines', style: 'primary' },
+      { text: '🦊 راهنمای Trust Wallet & DEX', callback_data: 'pre_info:trust', style: 'primary' },
+    ],
+    [
+      { text: '💎 مشاهده تعرفه‌ها و اشتراک', callback_data: 'pre_info:plans', style: 'success' },
+      { text: '🛡 امنیت و ضدکلاهبرداری', callback_data: 'pre_info:security' },
+    ],
+  ];
+}
+
+export function contactVerificationKeyboard(): ReplyKeyboardButton[][] {
+  return [
+    [{ text: '📱 اشتراک‌گذاری شماره تماس اکانت من (تایید و ثبت‌نام)', request_contact: true }],
+  ];
+}
+
+export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'simple'): string {
+  const modeTitle = uiMode === 'simple' ? '🌱 حالت ساده (تازه‌کار / ۴ گامه)' : '⚡ حالت حرفه‌ای (Quant Pro)';
+  return (
+    `سلام خوش اومدی ${firstName || 'دوست عزیز'} 🌹\n\n` +
+    `✅ حساب دلارینو شما احراز و فعال است | حالت فعلی: **${modeTitle}**\n\n` +
+    (uiMode === 'simple'
+      ? `🌱 **راهنمای سریع حالت ساده:**\n` +
+        `بدون پیچیدگی، تنها در ۴ قدم ربات را روشن کنید:\n` +
+        `• صرافی (Toobit / KCEX) یا کیف‌پول **Trust Wallet** را وصل کنید\n` +
+        `• یکی از ۴ موتور آماده را انتخاب کنید (مثلاً هوش مصنوعی دلارینو یا کپی‌ترید)\n` +
+        `• دکمه «🚀 راه‌اندازی ۴ مرحله‌ای» یا «🟢 شروع سریع» را بزنید!\n\n`
+      : `⚡ **امکانات حالت حرفه‌ای (Quant Pro):**\n` +
+        `• کنترل کامل Spot/Futures، جهت معاملات، Hedge و ۴ موتور همزمان\n` +
+        `• رصد زنده **DexScreener** و ترید توکن‌های جدید با **Trust Wallet DApp**\n` +
+        `• دریافت کلید **اکستنشن مرورگر** و تنظیم **ویجت‌های سریع موبایل**\n\n`) +
+    `📢 کانال رسمی: ${OFFICIAL_CHANNEL_HANDLE}\n` +
+    `${ANTI_SCAM_WARNING_FA}\n\n` +
+    `از منو و دکمه‌های ربات در پایین استفاده کنید:`
+  );
+}
+
+export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 'simple'): ReplyKeyboardButton[][] {
+  const safeUrl = webAppUrl?.startsWith('https://') ? webAppUrl : undefined;
+  if (uiMode === 'simple') {
+    return [
+      [{ text: '🚀 راه‌اندازی ۴ مرحله‌ای ربات' }, { text: '🦊 کیف‌پول Trust Wallet و DEX' }],
+      [{ text: 'ربات و هوش مصنوعی من 🤖' }, { text: '🏆 کپی‌ترید تاییدشده' }],
+      [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
+      [{ text: 'اتصال به صرافی 🔗' }, { text: '⚡ رفتن به حالت حرفه‌ای' }],
+      safeUrl
+        ? [{ text: '🚀 ورود به اپلیکیشن دلارینو', web_app: { url: safeUrl } }, { text: '💬 پشتیبانی آنلاین' }, { text: 'راهنما 📚' }]
+        : [{ text: '💬 پشتیبانی آنلاین' }, { text: 'راهنما 📚' }],
+    ];
+  }
+  return [
+    [{ text: '🔍 رادار DexScreener و توکن داغ' }, { text: '🦊 کیف‌پول Trust Wallet و DEX' }],
     [{ text: 'اتصال به صرافی 🔗' }, { text: 'تنظیمات ⚙️' }],
-    [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
     [{ text: '📈 معاملات باز' }, { text: 'ربات و هوش مصنوعی من 🤖' }],
     [{ text: '🎯 استراتژی شکار' }, { text: '🏆 کپی‌ترید تاییدشده' }],
+    [{ text: 'حساب کاربری 👤' }, { text: 'خرید اشتراک 💎' }],
+    [{ text: '🧩 اکستنشن و ویجت موبایل' }, { text: '🌱 رفتن به حالت ساده' }],
     safeUrl
-      ? [{ text: '🚀 مینی‌اپ دلارینو', web_app: { url: safeUrl } }, { text: '💬 پشتیبانی آنلاین' }, { text: 'راهنما 📚' }]
+      ? [{ text: '🚀 ورود به اپلیکیشن دلارینو', web_app: { url: safeUrl } }, { text: '💬 پشتیبانی آنلاین' }, { text: 'راهنما 📚' }]
       : [{ text: '💬 پشتیبانی آنلاین' }, { text: 'راهنما 📚' }],
   ];
 }
 
-export type CollapsibleMenuSection = 'none' | 'ai' | 'hunt' | 'copy' | 'tools';
+export type CollapsibleMenuSection = 'none' | 'ai' | 'hunt' | 'copy' | 'trust' | 'tools';
 
 export function miniAppInlineKeyboard(
   webAppUrl: string,
   path = '',
   openSection: CollapsibleMenuSection = 'none',
-  isBotRunning = false
+  isBotRunning = false,
+  uiMode: 'simple' | 'pro' = 'simple'
 ): InlineKeyboardButton[][] {
   const base = webAppUrl.replace(/\/$/, '');
   const fullUrl = `${base}${path}`;
   const hasHttps = fullUrl.startsWith('https://');
   const rows: InlineKeyboardButton[][] = [];
 
+  rows.push([
+    {
+      text: uiMode === 'simple' ? '🌱 حالت ساده فعال است (تغییر به حرفه‌ای ⚡)' : '⚡ حالت حرفه‌ای فعال است (تغییر به ساده 🌱)',
+      callback_data: 'tg_toggle_ui_mode',
+      style: 'primary',
+    },
+  ]);
+
   if (hasHttps) {
     rows.push([
       {
-        text: '🚀 باز کردن پنل شیشه‌ای در مینی‌اپ',
+        text: '🚀 باز کردن پنل وب و موبایل دلارینو',
         web_app: { url: fullUrl },
-        style: 'primary',
+        style: 'success',
+      },
+    ]);
+  }
+
+  if (uiMode === 'simple') {
+    rows.push([
+      { text: '🚀 راه‌اندازی گام‌به‌گام (۴ مرحله)', callback_data: 'tg_simple_wizard:1', style: 'primary' },
+      {
+        text: isBotRunning ? '🔴 توقف فوری ربات' : '🟢 شروع سریع ربات',
+        callback_data: 'tg_bot_toggle',
+        style: isBotRunning ? 'danger' : 'success',
       },
     ]);
   }
@@ -100,23 +174,23 @@ export function miniAppInlineKeyboard(
         callback_data: 'tg_bot_toggle',
         style: isBotRunning ? 'danger' : 'success',
       },
-      { text: '📊 دریافت کارت سود', callback_data: 'tg_profit_card' },
+      { text: '📊 صدور کارت سود رسمی', callback_data: 'tg_profit_card' },
     ]);
   }
 
   // Engine 3: Hunting Strategy (Ready + Personal)
   rows.push([
     {
-      text: `${openSection === 'hunt' ? '▾' : '▸'} 🎯 ۳: استراتژی شکار (آماده + شخصی)`,
+      text: `${openSection === 'hunt' ? '▾' : '▸'} 🎯 ۳: استراتژی شکار (دُرنا V1 + شخصی)`,
       callback_data: `tg_acc:${openSection === 'hunt' ? 'none' : 'hunt'}`,
       style: 'primary',
     },
   ]);
   if (openSection === 'hunt') {
     rows.push([
-      { text: '⚡️ استراتژی‌های آماده دلارینو', callback_data: 'tg_hunt_ready', style: 'success' },
+      { text: '⚡️ فعال‌سازی استراتژی شکار', callback_data: 'tg_hunt_ready', style: 'success' },
       ...(hasHttps
-        ? [{ text: '🛠 استراتژی شخصی خودتان (IDE)', web_app: { url: `${base}/?tab=radar` } }]
+        ? [{ text: '🛠 استراتژی شخصی (IDE)', web_app: { url: `${base}/?tab=radar` } }]
         : [{ text: '🛠 استراتژی شخصی', callback_data: 'tg_hunt_personal' }]),
     ]);
   }
@@ -133,15 +207,34 @@ export function miniAppInlineKeyboard(
     rows.push([
       { text: '📋 لیست تریدرهای تاییدشده', callback_data: 'tg_copy_list', style: 'success' },
       ...(hasHttps
-        ? [{ text: '🌐 باز کردن در مینی‌اپ', web_app: { url: `${base}/?tab=copy` } }]
+        ? [{ text: '🌐 مدیریت کپی‌ترید در اپ', web_app: { url: `${base}/?tab=copy` } }]
         : [{ text: '📈 پوزیشن‌های فعال', callback_data: 'tg_positions' }]),
     ]);
   }
 
-  // Section 4: Account, Subscription & Online Support (No personal DM!)
+  // Trust Wallet DApp & DexScreener
   rows.push([
     {
-      text: `${openSection === 'tools' ? '▾' : '▸'} 💎 اشتراک، پوزیشن‌ها و پشتیبانی آنلاین`,
+      text: `${openSection === 'trust' ? '▾' : '▸'} 🦊 کیف‌پول Trust Wallet و اسکنر DexScreener`,
+      callback_data: `tg_acc:${openSection === 'trust' ? 'none' : 'trust'}`,
+      style: 'primary',
+    },
+  ]);
+  if (openSection === 'trust') {
+    rows.push([
+      { text: '🦊 اتصال / وضعیت Trust Wallet', callback_data: 'tg_tw_menu', style: 'primary' },
+      { text: '🔍 توکن‌های داغ DexScreener', callback_data: 'tg_dex_trending', style: 'success' },
+    ]);
+    rows.push([
+      { text: '🔎 جستجوی توکن DEX (اسم/آدرس)', callback_data: 'tg_dex_search' },
+      { text: '💳 پرداخت اشتراک با تراست‌ولت', callback_data: 'tg_open_sub' },
+    ]);
+  }
+
+  // Section 5: Account, Widgets, Extension & Online Support
+  rows.push([
+    {
+      text: `${openSection === 'tools' ? '▾' : '▸'} 💎 اشتراک، اکستنشن، ویجت موبایل و پشتیبانی`,
       callback_data: `tg_acc:${openSection === 'tools' ? 'none' : 'tools'}`,
     },
   ]);
@@ -151,8 +244,11 @@ export function miniAppInlineKeyboard(
       { text: '💎 خرید / تمدید اشتراک', callback_data: 'tg_open_sub', style: 'success' },
     ]);
     rows.push([
-      { text: '💬 پشتیبانی آنلاین', callback_data: 'tg_support_open', style: 'primary' },
+      { text: '🧩 کلید اکستنشن و ویجت موبایل', callback_data: 'tg_ext_widgets' },
       { text: '🌐 ورود مستقیم به سایت', callback_data: 'tg_web_login' },
+    ]);
+    rows.push([
+      { text: '💬 پشتیبانی آنلاین', callback_data: 'tg_support_open', style: 'primary' },
     ]);
   }
 
@@ -283,6 +379,7 @@ export function settingsKeyboard(isAdmin: boolean, isSuperAdmin = false) {
 
 export function exchangeSelectionKeyboard() {
   return [
+    [{ text: '🦊 کیف‌پول Trust Wallet DApp (بدون نیاز به صرافی)' }],
     [{ text: 'Toobit (توبیت - API لایو) 🟢' }, { text: 'KCEX (کی‌سی‌ای‌ایکس - ۰٪ کارمزد) 🔵' }],
     [{ text: 'Paper Mode (حساب آزمایشی با اشتراک) 🧪' }],
     [{ text: 'بازگشت به صفحه قبل 🔙' }],
@@ -396,6 +493,10 @@ export function formatAccountCard(params: {
   telegramId: string;
   username: string;
   email: string;
+  phoneNumber?: string | null;
+  phoneVerified?: boolean;
+  trustWalletAddress?: string | null;
+  uiMode?: 'simple' | 'pro';
   walletUsdt: number;
   tomanRate: number;
   planNameFa: string;
@@ -410,16 +511,22 @@ export function formatAccountCard(params: {
   totalPnl: number;
 }): string {
   const walletToman = formatToman(params.walletUsdt, params.tomanRate);
+  const shortTw = params.trustWalletAddress
+    ? `${params.trustWalletAddress.slice(0, 6)}...${params.trustWalletAddress.slice(-4)}`
+    : 'متصل نشده (از منوی Trust Wallet متصل کنید)';
   return (
     `👤 اطلاعات حساب کاربری دلارینو\n\n` +
     `👤 نام: ${params.username}\n` +
+    `📱 شماره تماس احرازشده: ${params.phoneVerified && params.phoneNumber ? `${params.phoneNumber} ✅` : 'تایید نشده'}\n` +
+    `🦊 کیف‌پول Trust Wallet: ${shortTw}\n` +
+    `🎛 حالت رابط ربات: ${params.uiMode === 'pro' ? 'حالت حرفه‌ای ⚡' : 'حالت ساده 🌱'}\n` +
     `🆔 آیدی عددی: ${params.telegramId}\n` +
-    `📧 حساب وب: ${params.email.endsWith('.local') ? 'متصل نشده (از وب یا دکمه ورود سریع استفاده کنید)' : params.email}\n` +
+    `📧 حساب وب: ${params.email.endsWith('.local') ? 'ورود با تلگرام (از دکمه ورود سریع استفاده کنید)' : params.email}\n` +
     `💰 موجودی کیف پول: ${params.walletUsdt.toFixed(2)} USDT (${walletToman} تومان)\n\n` +
     `💎 اشتراک فعلی: ${params.planNameFa}\n` +
     (params.hasPaidPlan
       ? `📅 تاریخ شروع: ${formatIranDateTime(params.subStart)}\n⏳ تاریخ پایان: ${formatIranDateTime(params.subEnd)} (${params.daysRemaining} روز باقیمانده)\n\n`
-      : `⏳ برای دسترسی کامل به لایو و کپی‌ترید، اشتراک تهیه کنید.\n\n`) +
+      : `⏳ برای دسترسی کامل به لایو، DEX و کپی‌ترید، اشتراک تهیه کنید.\n\n`) +
     `⚙️ حالت معامله: ${params.tradingMode} | ${params.execMode === 'AUTO' ? 'اتوترید 🤖' : 'دستی ترید 💪'}\n` +
     `📊 معاملات بسته: ${params.totalTrades} (برد: ${params.wins})\n` +
     `📈 سود/ضرر خالص: ${params.totalPnl >= 0 ? '+' : '-'}$${Math.abs(params.totalPnl).toFixed(2)}\n\n` +

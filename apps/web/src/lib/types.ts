@@ -5,6 +5,7 @@ export type NavTab =
   | 'myai'
   | 'terminal'
   | 'markets'
+  | 'dex'
   | 'radar'
   | 'copy'
   | 'portfolio'
@@ -21,6 +22,15 @@ export interface AuthUserInfo {
   role: string;
   telegram_id: string | null;
   avatar_url?: string | null;
+  phone_number?: string | null;
+  phone_verified?: boolean;
+  trust_wallet_address?: string | null;
+  trust_wallet_tron?: string | null;
+  trust_wallet_solana?: string | null;
+  trust_wallet_verified?: boolean;
+  ui_mode?: 'simple' | 'pro';
+  mobile_widgets?: string[];
+  extension_api_key?: string | null;
 }
 
 export interface EntitlementSummary {

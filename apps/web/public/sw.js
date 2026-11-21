@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dollarino-pwa-v4';
+const CACHE_NAME = 'dollarino-pwa-v9';
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -17,14 +17,20 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never serve cached stale trading API responses
-  if (url.pathname.startsWith('/api/')) {
+  // Never serve cached stale trading/dex/trustwallet API responses or extension zip
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/downloads/')) {
     event.respondWith(
       fetch(request).catch(
         () =>
