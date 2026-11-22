@@ -59,6 +59,7 @@ async function serveAssetsWithDynamicOg(
   const origin = url.origin.replace(/\/+$/, '');
   const html = await res.text();
   const rewritten = html
+    .replaceAll('https://dollarino.pages.dev/dollarino-preview.jpg', `${origin}/dollarino-preview.jpg`)
     .replaceAll('https://dollarino.pages.dev/images/dollarino-og-brand.jpg', `${origin}/images/dollarino-og-brand.jpg`)
     .replaceAll('content="https://dollarino.pages.dev/"', `content="${origin}/"`)
     .replaceAll('href="https://dollarino.pages.dev/"', `href="${origin}/"`);
@@ -81,6 +82,11 @@ app.get('/', (c) => {
 });
 
 app.get('/api/health', (c) => {
+  try {
+    c.executionCtx.waitUntil(syncTelegramBotAutoOnVersion(c.env, '9.9.3').catch(() => {}));
+  } catch {
+    // ignore outside worker executionCtx
+  }
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
@@ -452,7 +458,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // 1-minute watchdog across running bots, open trades, always-on signal radar & AI market intel
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '9.9.2').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '9.9.3').catch(() => {});
 
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);

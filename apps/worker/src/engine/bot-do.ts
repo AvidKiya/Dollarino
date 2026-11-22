@@ -1,7 +1,10 @@
 import {
+  computeKbosV11Detailed,
   computeStrategySignals,
   DEFAULT_MIXER_WEIGHTS,
+  ema,
   evaluateCustomStrategy,
+  evaluateSignalMixerAtBar,
   mergeKbosParams,
   resolveEngineDisplayLabel,
   selectClosedCandles,
@@ -210,6 +213,20 @@ export class TradingBotCoordinator implements DurableObject {
     const cfg = await this.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
       .bind(userId).first<UserBotConfigRow>();
     if (!cfg || (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE')) {
+      return;
+    }
+
+    // Strict Single-Engine Mutual Exclusion: if Copy Trade is active, autonomous strategies/AI do not trade
+    if (cfg.strategy_key === 'copy_trade') {
+      return;
+    }
+    const activeCopyRow = await this.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`
+    )
+      .bind(userId)
+      .first<{ cnt: number }>()
+      .catch(() => ({ cnt: 0 }));
+    if ((activeCopyRow?.cnt ?? 0) > 0) {
       return;
     }
 
@@ -460,20 +477,64 @@ export class TradingBotCoordinator implements DurableObject {
       }
     } catch { /* fallback */ }
 
-    // 2A. Dollarino AI (Centralized Multi-AI Consensus Trader + Quant-AI Fallback)
+    // 2A. Dollarino AI (Token-Guarded Quant Pre-Filter + Single-Model Consensus + Quant Fallback)
     if (cfg.strategy_key === 'ai_autonomous_agent') {
       const latestBarTs = ltfClosed[ltfClosed.length - 1]!.timestamp;
       const aiBarKey = `last_ai_bar_ts_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
       const aiCheckKey = `last_ai_check_ms_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
-      const [lastAiTs, lastCheckMs] = await Promise.all([
+      const userAiThrottleKey = `user_ai_throttle_ms_${userId}`;
+      const [lastAiTs, lastCheckMs, lastUserAiMs] = await Promise.all([
         this.state.storage.get<number>(aiBarKey),
         this.state.storage.get<number>(aiCheckKey),
+        this.state.storage.get<number>(userAiThrottleKey),
       ]);
-      // Allow re-evaluation every 3 minutes even inside the same candle so AI stays responsive
-      if (lastAiTs === latestBarTs && lastCheckMs && now - lastCheckMs < 180_000) return false;
+      // Re-evaluate each symbol at most once every 15 minutes (or on new candle close)
+      if (lastAiTs === latestBarTs && lastCheckMs && now - lastCheckMs < 900_000) return false;
+
+      // Zero-Token Quant Pre-Filter: only consult external LLM when genuine confluence/momentum exists (or open position needs check)
+      let htfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+      if (htfClosed.length >= 25) {
+        const hc = htfClosed.map((c) => c.close);
+        const h20 = ema(hc, 20);
+        const h50 = ema(hc, 50);
+        const f = h20[htfClosed.length - 1];
+        const s = h50[htfClosed.length - 1];
+        if (Number.isFinite(f) && Number.isFinite(s)) {
+          htfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
+        }
+      }
+      const preMixer = evaluateSignalMixerAtBar(
+        ltfClosed,
+        ltfClosed.length - 1,
+        htfTrend,
+        mixerWeights,
+        cfg.mixer_threshold ?? 65
+      );
+      const preKbos = computeKbosV11Detailed(ltfClosed, cfg.entry_timeframe, kbosParams);
+      const preKbosSig = preKbos.outputs[preKbos.outputs.length - 1]?.signal ?? 'NONE';
+      const hasStrongQuantCandidate =
+        Boolean(openAny) ||
+        preKbosSig !== 'NONE' ||
+        Math.abs(preMixer.compositeScore || 0) >= 26 ||
+        preMixer.direction !== 'NONE';
+
+      if (!hasStrongQuantCandidate) {
+        await Promise.all([
+          this.state.storage.put(aiBarKey, latestBarTs),
+          this.state.storage.put(aiCheckKey, now),
+        ]);
+        return false;
+      }
+
+      // Per-user API token guard: at most 1 fresh LLM scan per 2 minutes when scanning multiple coins
+      if (!openAny && lastUserAiMs && now - lastUserAiMs < 120_000) {
+        return false;
+      }
+
       await Promise.all([
         this.state.storage.put(aiBarKey, latestBarTs),
         this.state.storage.put(aiCheckKey, now),
+        this.state.storage.put(userAiThrottleKey, now),
       ]);
 
       const [orderBook, market24h] = await Promise.all([
