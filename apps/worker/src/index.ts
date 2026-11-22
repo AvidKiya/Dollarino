@@ -3,7 +3,6 @@ import { cors } from 'hono/cors';
 import { authRoutes, requireAuth, type AppVariables } from './auth.js';
 import { hmacSha256Hex } from './crypto.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
-import { reconcileOpenPositionsForUser } from './engine/executor.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
@@ -41,6 +40,22 @@ app.use('/api/*', async (c, next) => {
   await next();
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+});
+
+app.onError((err, c) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/D1_ERROR|daily row read limit|quota|exceeded/i.test(msg)) {
+    return c.json(
+      {
+        error:
+          'سهمیه رایگان دیتابیس کلادفلر (۵ میلیون خواندن روزانه D1) پر شده است و ساعت ۰۰:۰۰ UTC (۰۳:۳۰ بامداد ایران) خودکار ریست می‌شود. با ارتقا به پلن پایه ۵ دلاری کلادفلر، محدودیت فوراً برداشته می‌شود.',
+        code: 'D1_QUOTA_EXCEEDED',
+      },
+      503
+    );
+  }
+  console.error('[Worker Error]', msg);
+  return c.json({ error: msg || 'Internal server error', code: 'INTERNAL_ERROR' }, 500);
 });
 
 async function serveAssetsWithDynamicOg(
@@ -456,21 +471,13 @@ app.all('*', async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    // 1-minute watchdog across running bots, open trades, always-on signal radar & AI market intel
+    // 1-minute watchdog: TradingBotCoordinator handles position reconciliation & bot scans; here we run radar & news
     ctx.waitUntil((async () => {
       await syncTelegramBotAutoOnVersion(env, '9.9.3').catch(() => {});
 
       const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
       const stub = env.TRADING_BOT_DO.get(id);
       await stub.fetch('https://do/start').catch(() => {});
-
-      const openUsers = await env.DB.prepare(
-        `SELECT DISTINCT user_id FROM trades WHERE status = 'OPEN'`
-      ).all<{ user_id: string }>();
-
-      for (const u of openUsers.results) {
-        await reconcileOpenPositionsForUser(env, u.user_id).catch(() => {});
-      }
 
       await runAlwaysOnSignalRadar(env).catch(() => {});
       await runAlwaysOnAiIntel(env).catch(() => {});

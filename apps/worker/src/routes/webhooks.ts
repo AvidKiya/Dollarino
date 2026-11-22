@@ -204,7 +204,11 @@ webhookRoutes.post('/telegram/setup', requireAuth, async (c) => {
   });
 });
 
+let memSyncedVersion = '';
+
 export async function syncTelegramBotAutoOnVersion(env: Env, targetVersion = '9.9.3'): Promise<void> {
+  if (memSyncedVersion === targetVersion) return;
+
   if (env.HILINKUP_TEST_API_KEY?.trim() && env.MASTER_ENCRYPTION_KEY) {
     const testKey = env.HILINKUP_TEST_API_KEY.trim();
     const masked = maskSecret(testKey);
@@ -221,11 +225,17 @@ export async function syncTelegramBotAutoOnVersion(env: Env, targetVersion = '9.
     }
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN) return;
+  if (!env.TELEGRAM_BOT_TOKEN) {
+    memSyncedVersion = targetVersion;
+    return;
+  }
   const row = await env.DB.prepare(
     `SELECT value FROM system_settings WHERE key = 'tg_bot_synced_version' LIMIT 1`
   ).first<{ value: string }>().catch(() => null);
-  if (row?.value === targetVersion) return;
+  if (row?.value === targetVersion) {
+    memSyncedVersion = targetVersion;
+    return;
+  }
 
   const client = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
   const webAppUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
@@ -239,6 +249,7 @@ export async function syncTelegramBotAutoOnVersion(env: Env, targetVersion = '9.
   await env.DB.prepare(
     `INSERT INTO system_settings (key, value, updated_at) VALUES ('tg_bot_synced_version', ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
-  ).bind(targetVersion).run();
+  ).bind(targetVersion).run().catch(() => {});
+  memSyncedVersion = targetVersion;
 }
 

@@ -52,12 +52,31 @@ async function setSetting(db: D1Database, key: string, value: string): Promise<v
     .catch(() => {});
 }
 
-async function minutesSinceSetting(db: D1Database, key: string): Promise<number> {
-  const val = await getSystemSettingValue(db, key, '');
+async function getSettingsMap(db: D1Database, keys: string[]): Promise<Record<string, string>> {
+  if (!keys.length) return {};
+  const placeholders = keys.map(() => '?').join(', ');
+  const rows = await db
+    .prepare(`SELECT key, value FROM system_settings WHERE key IN (${placeholders})`)
+    .bind(...keys)
+    .all<{ key: string; value: string }>()
+    .catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
+  const map: Record<string, string> = {};
+  for (const r of rows.results ?? []) {
+    map[r.key] = r.value;
+  }
+  return map;
+}
+
+function minsFromIso(val?: string): number {
   if (!val) return Infinity;
   const ts = Date.parse(val);
   if (!Number.isFinite(ts)) return Infinity;
   return (Date.now() - ts) / 60_000;
+}
+
+async function minutesSinceSetting(db: D1Database, key: string): Promise<number> {
+  const val = await getSystemSettingValue(db, key, '');
+  return minsFromIso(val);
 }
 
 function roundSignalPrice(val: number, ref: number): string {
@@ -86,18 +105,24 @@ export async function runAlwaysOnSignalRadar(
   subscribersNotified?: number;
   reason?: string;
 }> {
-  const enabled = (await getSystemSettingValue(env.DB, 'always_on_signals_enabled', 'true')) === 'true';
+  const settings = await getSettingsMap(env.DB, [
+    'always_on_signals_enabled',
+    'intel_last_scan_at',
+    'intel_last_signal_at',
+  ]);
+  const enabled = (settings['always_on_signals_enabled'] ?? 'true') === 'true';
   if (!enabled && !opts?.force) {
     return { scanned: 0, published: false, reason: 'disabled' };
   }
 
   if (!opts?.force) {
-    const minsSinceScan = await minutesSinceSetting(env.DB, 'intel_last_scan_at');
+    const minsSinceScan = minsFromIso(settings['intel_last_scan_at']);
     if (minsSinceScan < 15) {
       return { scanned: 0, published: false, reason: 'scan_cooldown' };
     }
-    const minsSincePub = await minutesSinceSetting(env.DB, 'intel_last_signal_at');
+    const minsSincePub = minsFromIso(settings['intel_last_signal_at']);
     if (minsSincePub < 45) {
+      await setSetting(env.DB, 'intel_last_scan_at', new Date().toISOString());
       return { scanned: 0, published: false, reason: 'publish_cooldown' };
     }
   }
@@ -419,14 +444,23 @@ export async function runAlwaysOnAiIntel(
   channelMessageId?: number;
   reason?: string;
 }> {
-  const enabled = (await getSystemSettingValue(env.DB, 'always_on_ai_broadcast_enabled', 'true')) === 'true';
+  const aiSettings = await getSettingsMap(env.DB, [
+    'always_on_ai_broadcast_enabled',
+    'intel_last_ai_check_at',
+    'intel_last_alert_at',
+    'intel_last_news_at',
+    'intel_last_analysis_at',
+    'intel_last_promo_at',
+    'intel_promo_cursor',
+  ]);
+  const enabled = (aiSettings['always_on_ai_broadcast_enabled'] ?? 'true') === 'true';
   if (!enabled && !opts?.forceKind) {
     return { published: false, reason: 'disabled' };
   }
 
   // Check at most once every 5 minutes so 30-min news & alerts trigger smoothly without wasting API quota
   if (!opts?.forceKind) {
-    const minsCheck = await minutesSinceSetting(env.DB, 'intel_last_ai_check_at');
+    const minsCheck = minsFromIso(aiSettings['intel_last_ai_check_at']);
     if (minsCheck < 5) {
       return { published: false, reason: 'check_cooldown' };
     }
@@ -446,7 +480,7 @@ export async function runAlwaysOnAiIntel(
   // 1) Priority 1: ALERT on extreme market move / overbought-oversold RSI (180m cooldown)
   const extremeCoin = snap.coins.find((c) => Math.abs(c.changePct24h) >= 7.5);
   const extremeRsi = snap.btcRsi1h >= 78 || snap.btcRsi1h <= 22;
-  const minsAlert = await minutesSinceSetting(env.DB, 'intel_last_alert_at');
+  const minsAlert = minsFromIso(aiSettings['intel_last_alert_at']);
   if (fk === 'ALERT' || (!fk && (extremeCoin || extremeRsi) && minsAlert >= 180)) {
     const triggerReason = extremeCoin
       ? `نوسان شدید ۲۴ ساعته روی ${extremeCoin.symbol.replace('USDT', '')} (${extremeCoin.changePct24h >= 0 ? '+' : ''}${extremeCoin.changePct24h.toFixed(2)}%)`
@@ -479,7 +513,7 @@ export async function runAlwaysOnAiIntel(
   }
 
   // 2) Priority 2: Crypto News Summary EVERY 30 MINUTES (low-token lightweight AI summary)
-  const minsNews = await minutesSinceSetting(env.DB, 'intel_last_news_at');
+  const minsNews = minsFromIso(aiSettings['intel_last_news_at']);
   if (fk === 'NEWS' || (!fk && minsNews >= 30)) {
     const headlines = await fetchPublicCryptoHeadlines();
     const headlineTxt = headlines.map((h, i) => `${i + 1}. [${h.source}] ${h.title}`).join('\n');
@@ -512,7 +546,7 @@ export async function runAlwaysOnAiIntel(
   }
 
   // 3) Priority 3: AI Market Analysis every 3 hours (180 mins)
-  const minsAnalysis = await minutesSinceSetting(env.DB, 'intel_last_analysis_at');
+  const minsAnalysis = minsFromIso(aiSettings['intel_last_analysis_at']);
   if (fk === 'ANALYSIS' || (!fk && minsAnalysis >= 180)) {
     const aiText = await generateAiPersianPost(
       env,
@@ -550,9 +584,9 @@ export async function runAlwaysOnAiIntel(
   }
 
   // 4) Priority 4: Rotating Dollarino Platform Showcase / Promotional Spotlight every 12 hours (720 mins)
-  const minsPromo = await minutesSinceSetting(env.DB, 'intel_last_promo_at');
+  const minsPromo = minsFromIso(aiSettings['intel_last_promo_at']);
   if (fk === 'PROMO' || (!fk && minsPromo >= 720)) {
-    const promoCursorStr = await getSystemSettingValue(env.DB, 'intel_promo_cursor', '0');
+    const promoCursorStr = aiSettings['intel_promo_cursor'] ?? '0';
     const promoCursor = (Number.parseInt(promoCursorStr, 10) || 0) % 4;
     await setSetting(env.DB, 'intel_promo_cursor', String((promoCursor + 1) % 4));
 
