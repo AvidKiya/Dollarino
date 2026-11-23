@@ -195,14 +195,14 @@ export function AuthPage({
                 <label className="text-[11px] font-bold text-dim block">
                   {isFa ? 'کد معرف یا دعوت (اختیاری):' : 'Referral Code (optional):'}
                 </label>
-                <div className="relative">
-                  <ShieldCheck className="w-4 h-4 text-jade absolute start-3.5 top-1/2 -translate-y-1/2" />
+                <div className="relative" dir="ltr">
+                  <ShieldCheck className="w-4 h-4 text-jade absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     dir="ltr"
                     value={referralCode}
                     onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
                     placeholder={isFa ? 'مثلاً DLR-XXXXXX' : 'e.g. DLR-XXXXXX'}
-                    className="field ps-10 text-xs font-mono-num"
+                    className="field pl-10 pr-3.5 text-xs font-mono-num text-left"
                   />
                 </div>
                 {cleanRef && (
@@ -250,8 +250,8 @@ export function AuthPage({
                 </span>
               </div>
 
-              <div className="relative">
-                <Mail className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
+              <div className="relative" dir="ltr">
+                <Mail className="w-4 h-4 text-dim absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="email"
                   required
@@ -259,12 +259,12 @@ export function AuthPage({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="field ps-10 text-xs"
+                  className="field pl-10 pr-3.5 text-xs text-left"
                 />
               </div>
 
-              <div className="relative">
-                <Lock className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
+              <div className="relative" dir="ltr">
+                <Lock className="w-4 h-4 text-dim absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="password"
                   required
@@ -273,7 +273,7 @@ export function AuthPage({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={isFa ? 'رمز عبور' : 'Password'}
-                  className="field ps-10 text-xs"
+                  className="field pl-10 pr-3.5 text-xs text-left"
                 />
               </div>
 

@@ -54,26 +54,26 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 }
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
-  { id: 'overview', labelFa: 'ترید هوشمند اتومات AI', labelEn: 'Automated AI Trading', icon: Home },
-  { id: 'aichat', labelFa: 'چت هوش مصنوعی AI (چارت)', labelEn: 'AI Chat & Vision', icon: Sparkles },
-  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
+  { id: 'overview', labelFa: 'ترید هوشمند AI', labelEn: 'Automated AI Trading', icon: Home },
+  { id: 'aichat', labelFa: 'چت و تحلیل چارت', labelEn: 'AI Chat & Vision', icon: Sparkles },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'copy', labelFa: 'کپی‌ترید تاییدشده', labelEn: 'Copy Trade', icon: Users },
   { id: 'portfolio', labelFa: 'کیف پول و سودها', labelEn: 'Wallet & Profit', icon: Wallet },
-  { id: 'services', labelFa: 'سرویس‌ها و اشتراک', labelEn: 'Services & Plans', icon: LayoutGrid },
+  { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
+  { id: 'services', labelFa: 'پروفایل و خدمات', labelEn: 'Profile & Services', icon: LayoutGrid },
   { id: 'pricing', labelFa: 'خرید و تمدید اشتراک', labelEn: 'Subscriptions', icon: CreditCard },
-  { id: 'faq', labelFa: 'راهنمای استفاده', labelEn: 'User Guide', icon: CircleHelp },
+  { id: 'faq', labelFa: 'راهنما و آموزش', labelEn: 'User Guide', icon: CircleHelp },
 ];
 
 const MAIN_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', labelFa: 'نمای کلی', labelEn: 'Overview', icon: LayoutDashboard },
-  { id: 'aichat', labelFa: 'چت هوش مصنوعی AI (چارت)', labelEn: 'AI Chat & Vision', icon: Sparkles },
-  { id: 'dex', labelFa: 'Trust Wallet و رادار DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
+  { id: 'aichat', labelFa: 'چت و تحلیل چارت AI', labelEn: 'AI Chat & Vision', icon: Sparkles },
+  { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'terminal', labelFa: 'پایانه و چارت AI', labelEn: 'Terminal & Chart AI', icon: CandlestickChart },
   { id: 'markets', labelFa: 'بازارهای فیوچرز', labelEn: 'Markets', icon: Globe },
   { id: 'radar', labelFa: 'رادار و استراتژی شخصی', labelEn: 'Radar & Custom IDE', icon: Radar },
-  { id: 'copy', labelFa: 'کپی‌ترید تاییدشده و API', labelEn: 'Copy Trade & API', icon: Users },
+  { id: 'copy', labelFa: 'کپی‌ترید و اتصال API', labelEn: 'Copy Trade & API', icon: Users },
   { id: 'portfolio', labelFa: 'پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
   { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
 ];
@@ -944,7 +944,7 @@ export function Layout({
     <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell flex flex-col overflow-x-hidden max-w-full">
       <div className="flex-1 flex min-w-0">
         <aside
-          className="hidden lg:flex w-64 shrink-0 border-e border-[var(--glass-border)] p-4 flex-col sticky top-0 h-screen overflow-y-auto backdrop-blur-2xl"
+          className="hidden lg:flex w-[272px] shrink-0 border-e border-[var(--glass-border)] p-4 flex-col sticky top-0 h-screen overflow-y-auto backdrop-blur-2xl"
           style={{ background: 'var(--panel-translucent)' }}
         >
           {renderSidebarBody()}
@@ -1006,35 +1006,39 @@ export function Layout({
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setPaletteOpen(true)}
-                className="hidden lg:flex flex-1 max-w-xs items-center gap-2.5 panel rounded-2xl px-3.5 py-1.5 text-[12px] text-dim hover:border-[var(--line-strong)] transition text-start"
-              >
-                <Search className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">{isFa ? 'جستجوی صفحه یا ارز...' : 'Search views or coins...'}</span>
-                <kbd dir="ltr" className="ms-auto text-[9px] border hairline rounded px-1.5 py-0.5">
-                  ⌘K
-                </kbd>
-              </button>
+              {uiMode === 'pro' && (
+                <button
+                  type="button"
+                  onClick={() => setPaletteOpen(true)}
+                  className="hidden lg:flex flex-1 max-w-xs items-center gap-2.5 panel rounded-2xl px-3.5 py-1.5 text-[12px] text-dim hover:border-[var(--line-strong)] transition text-start"
+                >
+                  <Search className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{isFa ? 'جستجوی صفحه یا ارز...' : 'Search views or coins...'}</span>
+                  <kbd dir="ltr" className="ms-auto text-[9px] border hairline rounded px-1.5 py-0.5">
+                    ⌘K
+                  </kbd>
+                </button>
+              )}
 
               <div className="flex items-center gap-1.5 shrink-0">
                 {renderModeSwitcher(true)}
 
-                <button
-                  type="button"
-                  onClick={() => selectTab('aichat')}
-                  aria-label={isFa ? 'چت هوش مصنوعی AI' : 'AI Chat'}
-                  title={isFa ? 'چت هوش مصنوعی + تحلیل عکس چارت' : 'AI Chat & Chart Vision'}
-                  className={`hidden lg:inline-flex h-8 px-2.5 items-center gap-1 rounded-xl border transition text-[11px] font-bold ${
-                    activeTab === 'aichat'
-                      ? 'bg-[var(--cobalt)] text-white border-[var(--cobalt)]'
-                      : 'bg-[var(--soft)] border-[var(--glass-border)] text-main hover:brightness-95'
-                  }`}
-                >
-                  <Sparkles className="w-[14px] h-[14px] text-[var(--gold)] shrink-0" />
-                  <span>{isFa ? 'چت AI' : 'AI Chat'}</span>
-                </button>
+                {uiMode === 'pro' && (
+                  <button
+                    type="button"
+                    onClick={() => selectTab('aichat')}
+                    aria-label={isFa ? 'چت هوش مصنوعی AI' : 'AI Chat'}
+                    title={isFa ? 'چت هوش مصنوعی + تحلیل عکس چارت' : 'AI Chat & Chart Vision'}
+                    className={`hidden lg:inline-flex h-8 px-2.5 items-center gap-1 rounded-xl border transition text-[11px] font-bold ${
+                      activeTab === 'aichat'
+                        ? 'bg-[var(--cobalt)] text-white border-[var(--cobalt)]'
+                        : 'bg-[var(--soft)] border-[var(--glass-border)] text-main hover:brightness-95'
+                    }`}
+                  >
+                    <Sparkles className="w-[14px] h-[14px] text-[var(--gold)] shrink-0" />
+                    <span>{isFa ? 'چت AI' : 'AI Chat'}</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -1118,7 +1122,7 @@ export function Layout({
             </div>
 
             {tickerCoins.length > 0 && uiMode === 'pro' && (
-              <div dir="ltr" className="border-t hairline bg-black/5 dark:bg-black/20 overflow-hidden">
+              <div dir="ltr" className="border-t hairline bg-black/5 dark:bg-black/20 overflow-hidden ticker-edge-fade">
                 <div className="flex w-max gap-8 px-5 py-1.5 animate-ticker">
                   {[...tickerCoins, ...tickerCoins].map((c, idx) => {
                     const ch = Number(c.changePct24h || 0);

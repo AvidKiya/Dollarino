@@ -137,11 +137,11 @@ export function QuickWidgetsBar({
   };
 
   return (
-    <section className="panel rounded-3xl p-3.5 space-y-3 border border-white/10">
+    <section className="panel rounded-3xl p-4 space-y-3 border hairline">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs font-black text-main">
           <Smartphone className="w-4 h-4 text-[var(--gold)]" />
-          <span>{isFa ? 'ویجت‌های کنترل سریع موبایل و اکستنشن مرورگر' : 'Quick Mobile Widgets & Browser Extension'}</span>
+          <span>{isFa ? 'کنترل سریع و افزونه مرورگر' : 'Quick Controls & Browser Extension'}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -150,7 +150,7 @@ export function QuickWidgetsBar({
               setExtOpen((v) => !v);
               if (!extKey && !extOpen) void handleGenerateExtKey(false);
             }}
-            className="btn-cobalt px-3 py-1 rounded-xl text-[11px] font-black inline-flex items-center gap-1"
+            className="btn-cobalt px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center gap-1"
           >
             <KeyRound className="w-3 h-3" />
             <span>{isFa ? 'اکستنشن کروم' : 'Extension'}</span>
@@ -158,10 +158,10 @@ export function QuickWidgetsBar({
           <button
             type="button"
             onClick={() => setCustomizing((v) => !v)}
-            className="btn-ghost px-2.5 py-1 rounded-xl text-[11px] font-bold inline-flex items-center gap-1"
+            className="btn-ghost px-2.5 py-1.5 rounded-xl text-[11px] font-bold inline-flex items-center gap-1"
           >
             <SlidersHorizontal className="w-3 h-3" />
-            <span>{isFa ? 'سفارشی‌سازی ویجت‌ها' : 'Customize'}</span>
+            <span>{isFa ? 'چیدمان' : 'Customize'}</span>
           </button>
         </div>
       </div>
@@ -175,10 +175,10 @@ export function QuickWidgetsBar({
                 key={wId}
                 type="button"
                 onClick={() => void onToggleBot()}
-                className={`rounded-2xl p-2.5 text-start transition border ${
+                className={`rounded-2xl p-3 text-start transition border ${
                   isRunning
                     ? 'bg-emerald-500/15 border-emerald-500/40 text-jade'
-                    : 'surface-soft border-white/10 text-main hover:border-[var(--gold)]/40'
+                    : 'surface-soft hairline text-main hover:border-[var(--gold)]/40'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -195,12 +195,12 @@ export function QuickWidgetsBar({
                 key={wId}
                 type="button"
                 onClick={() => onNavigate('portfolio')}
-                className="surface-soft rounded-2xl p-2.5 text-start border border-white/10 hover:border-[var(--gold)]/40 transition"
+                className="surface-soft rounded-2xl p-3 text-start border hairline hover:border-[var(--gold)]/40 transition"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-dim">{isFa ? 'موجودی / سود باز' : 'Bal / Open PnL'}</span>
                 </div>
-                <p dir="ltr" className="text-xs font-num font-black text-main mt-1">
+                <p dir="ltr" className="text-xs font-num font-black text-main mt-1.5">
                   ${Number(dashboard.balance.total || 0).toFixed(0)}{' '}
                   <span className={openPnl >= 0 ? 'text-jade' : 'text-loss'}>
                     ({openPnl >= 0 ? '+' : ''}
@@ -216,7 +216,7 @@ export function QuickWidgetsBar({
                 key={wId}
                 type="button"
                 onClick={() => onNavigate('dex')}
-                className="surface-soft rounded-2xl p-2.5 text-start border border-amber-500/25 hover:border-amber-500/60 transition"
+                className="surface-soft rounded-2xl p-3 text-start border border-amber-500/25 hover:border-amber-500/60 transition"
               >
                 <div className="flex items-center justify-between text-amber-400">
                   <Flame className="w-4 h-4" />
@@ -232,7 +232,7 @@ export function QuickWidgetsBar({
                 key={wId}
                 type="button"
                 onClick={() => void onKillSwitch()}
-                className="rounded-2xl p-2.5 text-start bg-rose-500/12 border border-rose-500/35 text-loss hover:bg-rose-500/20 transition"
+                className="rounded-2xl p-3 text-start bg-rose-500/12 border border-rose-500/35 text-loss hover:bg-rose-500/20 transition"
               >
                 <div className="flex items-center justify-between">
                   <ShieldAlert className="w-4 h-4" />
@@ -247,7 +247,7 @@ export function QuickWidgetsBar({
               key={wId}
               type="button"
               onClick={() => onToggleUiMode?.(uiMode === 'simple' ? 'pro' : 'simple')}
-              className="surface-soft rounded-2xl p-2.5 text-start border border-white/10 hover:border-blue-500/40 transition"
+              className="surface-soft rounded-2xl p-3 text-start border hairline hover:border-blue-500/40 transition"
             >
               <div className="flex items-center justify-between text-blue-400">
                 <Zap className="w-4 h-4" />
@@ -269,7 +269,7 @@ export function QuickWidgetsBar({
             {(Object.keys(WIDGET_META) as WidgetId[]).map((id) => {
               const active = widgets.includes(id);
               return (
-                <div key={id} className="flex items-center gap-1 bg-black/20 rounded-xl px-2.5 py-1.5 border border-white/10">
+                <div key={id} className="flex items-center gap-1 panel rounded-xl px-2.5 py-1.5 border hairline">
                   <input type="checkbox" checked={active} onChange={() => toggleWidgetVisibility(id)} />
                   <span className="text-[11px] font-bold text-main">{isFa ? WIDGET_META[id].fa : WIDGET_META[id].en}</span>
                   {active && (

@@ -346,9 +346,16 @@ export function ServicesPage({
 
           <div>
             <h2 className="font-display font-bold text-lg text-main">{user.username}</h2>
-            <p className="text-xs text-dim mt-0.5">
-              {user.telegram_username ? `@${user.telegram_username} · ` : ''}
-              {isTelegramPseudo ? (isFa ? 'ثبت‌نام‌شده با تلگرام (ایمیل شخصی ثبت نشده)' : 'Telegram Account') : user.email}
+            <p className="text-xs text-dim mt-0.5 flex flex-wrap items-center justify-center gap-1.5">
+              {user.telegram_username && (
+                <>
+                  <bdi dir="ltr" className="font-mono-num">@{user.telegram_username}</bdi>
+                  <span>·</span>
+                </>
+              )}
+              <bdi dir={isTelegramPseudo ? 'auto' : 'ltr'} className={isTelegramPseudo ? '' : 'font-mono-num'}>
+                {isTelegramPseudo ? (isFa ? 'ثبت‌نام‌شده با تلگرام (ایمیل شخصی ثبت نشده)' : 'Telegram Account') : user.email}
+              </bdi>
             </p>
           </div>
 
@@ -461,14 +468,14 @@ export function ServicesPage({
               <label className="text-[11px] font-bold text-dim block mb-1">
                 {isFa ? 'ایمیل شخصی (برای ورود با ایمیل و اعلان‌ها)' : 'Personal Email'}
               </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-dim absolute start-3.5 top-1/2 -translate-y-1/2" />
+              <div className="relative" dir="ltr">
+                <Mail className="w-4 h-4 text-dim absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="email"
                   dir="ltr"
                   value={editEmail}
                   onChange={(e) => setEditEmail(e.target.value)}
-                  className="field ps-10 text-xs"
+                  className="field pl-10 pr-3.5 text-xs text-left"
                   placeholder="you@gmail.com"
                 />
               </div>

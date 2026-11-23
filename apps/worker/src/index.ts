@@ -526,18 +526,41 @@ app.all('*', async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    // 1-minute watchdog: TradingBotCoordinator handles position reconciliation & bot scans; here we run radar & news
+    // Runs every 5 minutes (*/5): check lightweight indexed flags first so idle nights consume minimal D1 Rows Read
     ctx.waitUntil((async () => {
       await syncTelegramBotAutoOnVersion(env, '9.9.3').catch(() => {});
 
-      const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
-      const stub = env.TRADING_BOT_DO.get(id);
-      await stub.fetch('https://do/start').catch(() => {});
+      const activity = await env.DB.prepare(
+        `SELECT
+           EXISTS(SELECT 1 FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')) AS has_bot,
+           EXISTS(SELECT 1 FROM trades WHERE status = 'OPEN') AS has_open,
+           EXISTS(SELECT 1 FROM price_alerts WHERE is_active = 1) AS has_alert,
+           EXISTS(SELECT 1 FROM copy_follow_rules WHERE is_active = 1 AND trader_kind = 'SMART_WALLET') AS has_copy_watch,
+           EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos`
+      )
+        .first<{
+          has_bot: number;
+          has_open: number;
+          has_alert: number;
+          has_copy_watch: number;
+          has_copy_pos: number;
+        }>()
+        .catch(() => null);
 
-      await runAlwaysOnSignalRadar(env).catch(() => {});
-      await runAlwaysOnAiIntel(env).catch(() => {});
-      await pollWatchedWalletsForNewTrades(env).catch(() => {});
-      await reconcileCopyPositionsV2(env).catch(() => {});
+      if (!activity || activity.has_bot || activity.has_open || activity.has_alert) {
+        const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
+        const stub = env.TRADING_BOT_DO.get(id);
+        await stub.fetch('https://do/start').catch(() => {});
+      }
+
+      await runAlwaysOnSignalRadar(env, { fromCron: true }).catch(() => {});
+      await runAlwaysOnAiIntel(env, { fromCron: true }).catch(() => {});
+      if (!activity || activity.has_copy_watch) {
+        await pollWatchedWalletsForNewTrades(env).catch(() => {});
+      }
+      if (!activity || activity.has_copy_pos) {
+        await reconcileCopyPositionsV2(env).catch(() => {});
+      }
     })());
   },
 };

@@ -515,6 +515,7 @@ export function App() {
       {activeTab === 'copy' && (
         <CopyConnectPage
           lang={lang}
+          uiMode={uiMode}
           data={dashboard}
           entitlement={dashboard.entitlement}
           onNavigate={setActiveTab}

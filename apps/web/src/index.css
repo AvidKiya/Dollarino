@@ -37,7 +37,7 @@ html.theme-light {
   --accent-soft: #fde2ad;
   --ink: #1e293b;
   --solid: #f3f6fc;
-  --header-glass: rgba(238, 243, 252, 0.72);
+  --header-glass: rgba(238, 243, 252, 0.90);
 
   --soft: rgba(255, 255, 255, 0.62);
   --text: #0f172a;
@@ -88,7 +88,7 @@ html.dark {
   --accent-soft: #5a4216;
   --ink: #e5e7eb;
   --solid: #1b2640;
-  --header-glass: rgba(11, 18, 32, 0.66);
+  --header-glass: rgba(11, 18, 32, 0.88);
 
   --soft: rgba(255, 255, 255, 0.07);
   --text: #f8fafc;
@@ -258,46 +258,65 @@ html[data-theme='cosmic'] .panel {
   color: #ffffff;
 }
 
-.surface-card {
-  background: var(--panel);
-  border: 1px solid var(--border-app);
-  border-radius: 26px;
-  box-shadow: 0 6px 24px -10px rgba(15, 23, 42, 0.08);
-}
+@layer components {
+  .surface-card {
+    background: var(--panel);
+    border: 1px solid var(--border-app);
+    border-radius: 26px;
+    box-shadow: 0 6px 24px -10px rgba(15, 23, 42, 0.08);
+  }
 
-.surface-soft {
-  background: var(--bg-soft);
-  border: 1px solid var(--border-app);
-}
+  .surface-soft {
+    background: var(--bg-soft);
+    border: 1px solid var(--border-app);
+  }
 
-.surface-input {
-  background: var(--bg-soft);
-  border: 1px solid var(--border-app);
-  color: var(--text-main);
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-.surface-input:focus {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
-}
+  .surface-input {
+    background: var(--bg-soft);
+    border: 1px solid var(--border-app);
+    color: var(--text-main);
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .surface-input:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
+  }
 
-.field {
-  background: var(--soft);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 12px 15px;
-  width: 100%;
-  outline: none;
-  color: var(--text);
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-.field:focus {
-  border-color: var(--gold);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
-}
-.field::placeholder {
-  color: var(--faint);
+  .field {
+    background: var(--soft);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 12px 15px;
+    width: 100%;
+    outline: none;
+    color: var(--text);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .field:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
+  }
+  .field::placeholder {
+    color: var(--faint);
+  }
+
+  .input-field {
+    background: var(--soft);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 10px 14px;
+    outline: none;
+    color: var(--text);
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .input-field:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
+  }
+  .input-field::placeholder {
+    color: var(--faint);
+  }
 }
 
 .text-main { color: var(--text-main); }
@@ -722,7 +741,7 @@ input[type='range']::-webkit-slider-thumb {
 
 @media (prefers-reduced-transparency: reduce) {
   .dock-glass-body,
-  .liquid-orb,
+  .dz-ai,
   .liquid-ai-sheet {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -731,68 +750,215 @@ input[type='range']::-webkit-slider-thumb {
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dock-glass-body,
-  .liquid-orb,
+  .dz-ai,
   .liquid-ai-sheet {
     background: var(--solid);
   }
 }
 
 /* ==========================================================================
-   LIQUID GLASS FLOATING AI ORB & SHEET — 3D DORRBIN CRYSTAL CORE
+   LIQUID GLASS FLOATING AI ORB & SHEET — LOGO + ROBOT ASSISTIVETOUCH
    ========================================================================== */
-@keyframes orbSpinRing {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-@keyframes orbBreathe {
-  0%, 100% {
-    box-shadow:
-      0 10px 28px rgba(10, 18, 42, 0.42),
-      0 0 18px rgba(22, 82, 240, 0.34),
-      0 0 8px rgba(16, 185, 129, 0.28);
-  }
-  50% {
-    box-shadow:
-      0 14px 36px rgba(10, 18, 42, 0.5),
-      0 0 28px rgba(22, 82, 240, 0.52),
-      0 0 14px rgba(245, 165, 36, 0.35);
-  }
-}
-
-.liquid-orb {
+.dz-orb {
+  --size: 74px;
+  --edge: 12px;
+  --dock: 48px;
   position: fixed;
-  overflow: visible;
-  background: radial-gradient(circle at 30% 25%, #1652F0 0%, #050d24 72%);
-  border: 1.5px solid rgba(255, 255, 255, 0.28);
-  animation: orbBreathe 3.8s ease-in-out infinite;
+  z-index: 170;
+  direction: ltr;
+  width: var(--size);
+  height: var(--size);
+  touch-action: none;
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    left 0.6s cubic-bezier(0.3, 1.3, 0.5, 1),
+    top 0.35s cubic-bezier(0.3, 1.2, 0.5, 1),
+    translate 0.65s cubic-bezier(0.3, 1.25, 0.5, 1);
+}
+.dz-orb.drag {
+  transition: none;
+  cursor: grabbing;
+}
+.dz-orb.docked[data-side='left'] {
+  translate: calc(var(--dock) * -1) 0;
+}
+.dz-orb.docked[data-side='right'] {
+  translate: var(--dock) 0;
+}
+.dz-orb.docked .dz-wrap {
+  opacity: 0.84;
+  transform: scale(0.9);
+}
+.dz-wrap {
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  animation: dzFloat 5.5s ease-in-out infinite;
+  transition: opacity 0.4s, transform 0.6s cubic-bezier(0.3, 1.25, 0.5, 1);
+}
+.dz-orb.drag .dz-wrap {
+  animation-play-state: paused;
+}
+@keyframes dzFloat {
+  50% {
+    translate: 0 -4px;
+  }
 }
 
-.liquid-orb-ring {
+.dz-btn {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: inherit;
+  border-radius: 24px;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dz-orb:hover .dz-btn {
+  transform: scale(1.08);
+}
+.dz-orb:active .dz-btn,
+.dz-orb.drag .dz-btn {
+  transform: scale(0.93);
+  transition-duration: 0.15s;
+}
+.dz-btn:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 4px;
+}
+
+.dz-glass {
   position: absolute;
-  inset: -3px;
-  border-radius: 9999px;
-  background: conic-gradient(
-    from 0deg,
-    rgba(22, 230, 100, 0.85),
-    rgba(0, 200, 255, 0.9),
-    rgba(245, 165, 36, 0.85),
-    rgba(22, 82, 240, 0.75),
-    rgba(22, 230, 100, 0.85)
-  );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
-  animation: orbSpinRing 7s linear infinite;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   pointer-events: none;
-  opacity: 0.9;
+  filter: url(#dzGlassFx) drop-shadow(0 10px 14px rgba(15, 35, 120, 0.32)) drop-shadow(0 2px 3px rgba(15, 35, 120, 0.22));
+}
+.dz-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+  background: linear-gradient(
+      115deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.55) 46%,
+      rgba(255, 255, 255, 0.08) 54%,
+      transparent 68%
+    )
+    0 0 / 260% 100%;
+  background-position: 140% 0;
+  animation: dzSheen 6.5s ease-in-out infinite;
+  mix-blend-mode: soft-light;
+}
+@keyframes dzSheen {
+  0%,
+  55% {
+    background-position: 140% 0;
+  }
+  100% {
+    background-position: -60% 0;
+  }
+}
+.dz-top {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.12) 38%, transparent 55%);
 }
 
-.liquid-orb:hover {
-  transform: scale(1.07);
+.dz-ai {
+  position: absolute;
+  bottom: -11px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.6));
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  -webkit-backdrop-filter: blur(10px) saturate(190%);
+  backdrop-filter: blur(10px) saturate(190%);
+  box-shadow:
+    inset 0 1.5px 1px #fff,
+    inset 0 -4px 7px rgba(37, 99, 235, 0.2),
+    0 8px 14px -5px rgba(20, 40, 120, 0.45),
+    0 0 0 1px rgba(37, 99, 235, 0.1);
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dz-orb[data-side='left'] .dz-ai {
+  right: -13px;
+}
+.dz-orb[data-side='right'] .dz-ai {
+  left: -13px;
+}
+.dz-orb:hover .dz-ai {
+  transform: scale(1.12);
+}
+.dz-bot {
+  width: 22px;
+  height: 22px;
+  display: block;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: 50% 80%;
+}
+.dz-orb:hover .dz-bot {
+  transform: rotate(-9deg);
+}
+.dz-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dzBlink 5s infinite;
+}
+@keyframes dzBlink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+.dz-ant {
+  animation: dzAnt 2.2s ease-in-out infinite;
+}
+@keyframes dzAnt {
+  50% {
+    opacity: 0.35;
+  }
+}
+.dz-spark {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  width: 13px;
+  height: 13px;
+  filter: drop-shadow(0 1px 2px rgba(16, 185, 129, 0.55));
+  animation: dzTw 3.4s ease-in-out infinite;
+}
+@keyframes dzTw {
+  50% {
+    transform: scale(1.2) rotate(14deg);
+    opacity: 0.85;
+  }
 }
 
-.liquid-orb:active {
-  transform: scale(0.94);
+.ticker-edge-fade {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 28px, #000 calc(100% - 28px), transparent 100%);
 }
 
 .liquid-ai-sheet {
@@ -819,7 +985,9 @@ input[type='range']::-webkit-slider-thumb {
   .btn-cobalt,
   .btn-emerald,
   .btn-lime,
-  .btn-ghost {
+  .btn-ghost,
+  .dz-orb,
+  .dz-orb * {
     animation: none !important;
     transition: none !important;
   }

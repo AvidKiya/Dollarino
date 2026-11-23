@@ -145,7 +145,7 @@ export function SmartCopyProHub({
   const [savingRule, setSavingRule] = useState(false);
   const [backtesting, setBacktesting] = useState(false);
   const [backtestReport, setBacktestReport] = useState<BacktestReport | null>(null);
-  const [showGuide, setShowGuide] = useState(true);
+  const [showGuide, setShowGuide] = useState(false);
 
   // Signal test runner & Profit card preview
   const [testingRuleId, setTestingRuleId] = useState<string | null>(null);
@@ -558,36 +558,36 @@ export function SmartCopyProHub({
 
   return (
     <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5 border border-brand/25">
-      {/* Visual Hero Banner & Interactive Quick-Start Guide */}
-      <div className="surface-soft rounded-[24px] p-4 border border-amber-500/20 space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center gap-4">
+      {/* Visual Header & Collapsible Quick-Start Guide */}
+      <div className="surface-soft rounded-[22px] p-4 border border-amber-500/20 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3.5">
           <img
             src="/images/smart-wallet-radar.png"
             alt="Smart Wallet Radar & Copy-Vault"
-            className="w-full md:w-52 h-28 rounded-2xl object-cover shrink-0 border hairline"
+            className="w-full sm:w-36 h-20 rounded-2xl object-cover shrink-0 border hairline"
           />
-          <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="flex-1 min-w-0 space-y-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-[var(--gold)] shrink-0" />
-                <h3 className="font-display font-bold text-lg sm:text-xl text-main">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-[var(--gold)] shrink-0" />
+                <h3 className="font-display font-bold text-base sm:text-lg text-main truncate">
                   {isFa
-                    ? 'هاب کپی‌ترید هوشمند چندزنجیره‌ای و Trust Wallet (نسخه V2 Pro)'
-                    : 'Smart On-Chain & Multi-Chain Copy-Trading Hub V2'}
+                    ? 'هاب کپی‌ترید هوشمند ولت‌ها و Trust Wallet (V2)'
+                    : 'Smart On-Chain Copy-Trading Hub V2'}
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowGuide((g) => !g)}
-                className="btn-ghost px-3 py-1.5 rounded-xl text-[11px] font-black"
+                className="btn-ghost px-3 py-1.5 rounded-xl text-[11px] font-black shrink-0"
               >
-                {showGuide ? (isFa ? 'بستن راهنما ▲' : 'Hide Guide ▲') : isFa ? 'نمایش آموزش گام‌به‌گام ▼' : 'Show Guide ▼'}
+                {showGuide ? (isFa ? 'بستن راهنما ▲' : 'Hide Guide ▲') : isFa ? 'آموزش گام‌به‌گام ▼' : 'Guide ▼'}
               </button>
             </div>
-            <p className="text-xs text-dim leading-relaxed">
+            <p className="text-[11px] text-dim leading-relaxed">
               {isFa
-                ? 'کشف خودکار ۱۰ تریدر برتر بلاکچین، افزودن ولت‌های دلخواه روی همه شبکه‌ها، باکس مارجین اختصاصی برای هر تریدر، ضدراگ/AI-Guard، شبیه‌ساز ۷ روزه و اجرای Trust Wallet یا خزانه ۲۴ ساعته.'
-                : 'Auto Top-10 Smart Money discovery, custom wallets on any chain, isolated per-trader margin boxes, Anti-Rug/AI-Guard, 7-day backtest, and Trust Wallet or 24/7 Copy-Vault execution.'}
+                ? 'کشف ۱۰ تریدر برتر بلاکچین، افزودن ولت دلخواه روی همه شبکه‌ها، باکس مارجین اختصاصی، ضدراگ/AI-Guard و اجرای Trust Wallet یا خزانه ۲۴ ساعته.'
+                : 'Auto Top-10 Smart Money discovery, custom wallets on any chain, isolated margin boxes, Anti-Rug/AI-Guard, and Trust Wallet or 24/7 Copy-Vault execution.'}
             </p>
           </div>
         </div>
@@ -697,6 +697,56 @@ export function SmartCopyProHub({
           {loading ? (
             <div className="p-8 text-center text-xs text-dim">
               {isFa ? 'در حال اسکن و دسته‌بندی برترین کیف‌پول‌های Smart Money...' : 'Discovering Top-10 Smart Money wallets...'}
+            </div>
+          ) : top10.length === 0 ? (
+            <div className="surface-soft rounded-[24px] p-6 sm:p-8 text-center space-y-3 border hairline">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/15 text-amber-400 grid place-items-center mx-auto">
+                <Trophy className="w-6 h-6" />
+              </div>
+              <div className="space-y-1 max-w-md mx-auto">
+                <p className="font-display font-bold text-sm text-main">
+                  {chainFilter !== 'ALL'
+                    ? isFa
+                      ? `هنوز ولت برتری روی شبکه ${chainFilter.toUpperCase()} ثبت نشده است`
+                      : `No Top-10 wallets found on ${chainFilter.toUpperCase()} yet`
+                    : isFa
+                      ? 'لیست ۱۰ تریدر برتر آماده همگام‌سازی است'
+                      : 'Top-10 Smart Money leaderboard is ready to sync'}
+                </p>
+                <p className="text-[11px] text-dim leading-relaxed">
+                  {isFa
+                    ? 'برای دریافت رنکینگ زنده نهنگ‌ها دکمه همگام‌سازی را بزنید یا مستقیماً آدرس کیف‌پول دلخواه‌تان را در تب «ولت‌های دلخواه من» ثبت کنید.'
+                    : 'Click Refresh Top-10 to fetch live Smart Money rankings, or track any custom wallet address directly.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={refreshing}
+                  onClick={() => void handleRefreshTop10()}
+                  className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                  <span>{isFa ? 'دریافت و همگام‌سازی ۱۰ تریدر برتر' : 'Sync Top-10 Leaderboard'}</span>
+                </button>
+                {chainFilter !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => setChainFilter('ALL')}
+                    className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold"
+                  >
+                    {isFa ? 'نمایش همه شبکه‌ها' : 'Show All Chains'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSubTab('custom')}
+                  className="btn-gold px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'افزودن ولت دلخواه' : 'Add Custom Wallet'}</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3.5">

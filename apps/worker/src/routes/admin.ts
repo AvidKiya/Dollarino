@@ -1220,11 +1220,20 @@ adminRoutes.get('/system-health', async (c) => {
 });
 
 adminRoutes.post('/prune-logs', async (c) => {
-  const res = await c.env.DB.prepare(
-    `DELETE FROM audit_logs WHERE created_at < datetime('now', '-5 days')`
-  ).run();
+  const cutoffSec = Math.floor(Date.now() / 1000) - 86400;
+  const [r1, r2, r3, r4] = await Promise.all([
+    c.env.DB.prepare(`DELETE FROM audit_logs WHERE created_at < datetime('now', '-5 days')`).run(),
+    c.env.DB.prepare(`DELETE FROM signals WHERE created_at < datetime('now', '-30 days') AND status != 'PENDING'`).run().catch(() => ({ meta: { changes: 0 } })),
+    c.env.DB.prepare(`DELETE FROM channel_news WHERE created_at < datetime('now', '-30 days')`).run().catch(() => ({ meta: { changes: 0 } })),
+    c.env.DB.prepare(`DELETE FROM rate_limits WHERE window_start < ?`).bind(cutoffSec).run().catch(() => ({ meta: { changes: 0 } })),
+  ]);
   const countAfter = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM audit_logs`).first<{ cnt: number }>().catch(() => ({ cnt: 0 }));
-  return c.json({ ok: true, deletedRows: res.meta?.changes ?? 0, remainingRows: countAfter?.cnt ?? 0 });
+  const totalDeleted =
+    (r1.meta?.changes ?? 0) +
+    (r2.meta?.changes ?? 0) +
+    (r3.meta?.changes ?? 0) +
+    (r4.meta?.changes ?? 0);
+  return c.json({ ok: true, deletedRows: totalDeleted, remainingRows: countAfter?.cnt ?? 0 });
 });
 
 

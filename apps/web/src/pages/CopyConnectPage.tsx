@@ -93,12 +93,14 @@ interface TgBot {
 
 export function CopyConnectPage({
   lang,
+  uiMode = 'pro',
   data,
   entitlement,
   onNavigate,
   onRefresh,
 }: {
   lang: Lang;
+  uiMode?: 'simple' | 'pro';
   data: DashboardPayload;
   entitlement?: EntitlementSummary | null;
   onNavigate: (tab: NavTab) => void;
@@ -421,37 +423,17 @@ export function CopyConnectPage({
 
       {tab === 'copy' && (
         <div className="space-y-5 tab-enter">
-          <div className="panel rounded-[26px] p-4 sm:p-5 border border-amber-500/20 flex flex-col md:flex-row md:items-center gap-4">
-            <img
-              src="/images/copytrade-trophy.png"
-              alt="Dollarino Dual Copy-Trading System"
-              className="w-full md:w-44 h-24 rounded-2xl object-cover shrink-0 border hairline"
-            />
-            <div className="flex-1 min-w-0 space-y-1.5 text-xs">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
-                  {isFa ? 'کپی‌ترید دوگانه: CEX صرافی + ولت‌های آن‌چین V2' : 'Dual Engine: VIP CEX + On-Chain Smart Wallets V2'}
-                </span>
-              </div>
-              <p className="font-bold text-main">
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] font-bold text-sub flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="shrink-0">🔒</span>
+              <span>
                 {isFa
-                  ? 'در پایین دو بخش کامل در اختیار دارید: ۱) تریدرهای VIP تاییدشده روی صرافی‌های Toobit، Bitunix و KCEX و ۲) هاب کپی‌ترید هوشمند ولت‌ها با باکس مارجین اختصاصی، بک‌تست ۷ روزه و خزانه ۲۴ ساعته.'
-                  : 'Use both engines below: (1) Admin-vetted VIP CEX Traders (Toobit/Bitunix/KCEX) and (2) Smart On-Chain Wallets V2 with isolated margin boxes, 7-day backtest & 24/7 Copy-Vault.'}
-              </p>
-              <p className="text-[11px] text-dim">
-                {isFa
-                  ? 'نکته: روی کارت هر تریدر تاییدشده هم می‌توانید دکمه «تنظیم مارجین اختصاصی و TP/SL پرو (V2)» را بزنید تا با بودجه ایزوله، ۳ تارگت و Reverse Copy تنظیم شود.'
-                  : 'Tip: You can also click "Configure Isolated Box & Pro TP/SL (V2)" on any VIP trader card for isolated budget, 3-TP & Reverse Copy.'}
-              </p>
+                  ? 'قانون تک‌موتوره دلارینو: با فعال‌کردن کپی‌ترید هر تریدر یا ولت، موتورهای AI قبلی متوقف می‌شوند تا دو استراتژی هم‌زمان تداخل نکنند.'
+                  : 'Single-Engine Rule: Following a copy trader or wallet automatically stops any active AI/strategy bot so engines never conflict.'}
+              </span>
             </div>
-          </div>
-
-          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-[11px] font-bold text-sub flex items-center gap-2">
-            <span>🔒</span>
-            <span>
-              {isFa
-                ? 'قانون تک‌موتوره دلارینو: با فعال‌کردن کپی‌ترید هر تریدر، موتورهای AI و استراتژی خودکار قبلی به‌صورت خودکار متوقف می‌شوند تا هم‌زمان دو موتور روی سرمایه شما معامله نکنند.'
-                : 'Single-Engine Rule: Following a copy trader automatically stops any active AI or autonomous strategy bot so multiple engines never conflict.'}
+            <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black shrink-0">
+              {isFa ? 'CEX + ولت‌های آن‌چین V2' : 'VIP CEX + Smart Wallets V2'}
             </span>
           </div>
           {pendingConfirmTrades.length > 0 && (
@@ -518,13 +500,15 @@ export function CopyConnectPage({
             </div>
           )}
 
-          {/* Smart On-Chain & Multi-Chain Copy-Trading V2 Hub */}
-          <SmartCopyProHub
-            lang={lang}
-            onMsg={flash}
-            externalSiteTrader={proSiteTrader}
-            onClearExternalTrader={() => setProSiteTrader(null)}
-          />
+          {/* In Simple Mode: Show Verified Copy Traders first so beginners immediately see ready-to-copy cards */}
+          {uiMode !== 'simple' && (
+            <SmartCopyProHub
+              lang={lang}
+              onMsg={flash}
+              externalSiteTrader={proSiteTrader}
+              onClearExternalTrader={() => setProSiteTrader(null)}
+            />
+          )}
 
           {/* Verified Copy Traders Marketplace */}
           <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5">
@@ -682,6 +666,15 @@ export function CopyConnectPage({
               </div>
             )}
           </div>
+
+          {uiMode === 'simple' && (
+            <SmartCopyProHub
+              lang={lang}
+              onMsg={flash}
+              externalSiteTrader={proSiteTrader}
+              onClearExternalTrader={() => setProSiteTrader(null)}
+            />
+          )}
 
           {/* Collapsible Advanced TradingView / Telegram Mirror */}
           <div className="panel rounded-[24px] p-4 sm:p-5 space-y-4">

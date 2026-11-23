@@ -1100,13 +1100,13 @@ export function AdminPage({
                   <span>{isFa ? 'پرکردن سریع DeepSeek / Hilinkup' : 'Fill DeepSeek / Hilinkup'}</span>
                 </button>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5 items-end">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                 <div>
                   <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'اسلات (۱-۳)' : 'Slot (1-3)'}</label>
                   <select
                     value={aiForm.slotOrder}
                     onChange={(e) => setAiForm({ ...aiForm, slotOrder: Number(e.target.value) })}
-                    className="w-full surface-input rounded-xl px-2.5 py-2"
+                    className="w-full surface-input rounded-xl px-3 py-2"
                   >
                     <option value={1}>Slot 1</option>
                     <option value={2}>Slot 2</option>
@@ -1137,7 +1137,7 @@ export function AdminPage({
                         label: `مدل ${aiForm.slotOrder} (${p.toUpperCase()})`,
                       });
                     }}
-                    className="w-full surface-input rounded-xl px-2.5 py-2"
+                    className="w-full surface-input rounded-xl px-3 py-2"
                   >
                     <option value="openai_compatible">Hilinkup / OpenAI-Compatible</option>
                     <option value="deepseek">DeepSeek Direct</option>
@@ -1147,14 +1147,14 @@ export function AdminPage({
                   </select>
                 </div>
 
-                <div>
+                <div className="sm:col-span-2 lg:col-span-2">
                   <label className="text-[11px] font-bold text-sub block mb-1">Base URL</label>
                   <input
                     dir="ltr"
                     placeholder="https://api.hilinkup.com/v1"
                     value={aiForm.baseUrl}
                     onChange={(e) => setAiForm({ ...aiForm, baseUrl: e.target.value })}
-                    className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
+                    className="w-full surface-input rounded-xl px-3 py-2 font-mono-num text-left"
                   />
                 </div>
 
@@ -1165,7 +1165,7 @@ export function AdminPage({
                     dir="ltr"
                     value={aiForm.model}
                     onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
-                    className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
+                    className="w-full surface-input rounded-xl px-3 py-2 font-mono-num text-left"
                   />
                   <datalist id="admin-ai-models">
                     {(ADMIN_AI_MODELS[aiForm.provider] || []).map((m) => (
@@ -1179,7 +1179,7 @@ export function AdminPage({
                   <input
                     value={aiForm.label}
                     onChange={(e) => setAiForm({ ...aiForm, label: e.target.value })}
-                    className="w-full surface-input rounded-xl px-2.5 py-2"
+                    className="w-full surface-input rounded-xl px-3 py-2"
                   />
                 </div>
 
@@ -1191,11 +1191,11 @@ export function AdminPage({
                     placeholder="sk-..."
                     value={aiForm.apiKey}
                     onChange={(e) => setAiForm({ ...aiForm, apiKey: e.target.value })}
-                    className="w-full surface-input rounded-xl px-2.5 py-2 font-mono-num"
+                    className="w-full surface-input rounded-xl px-3 py-2 font-mono-num text-left"
                   />
                 </div>
 
-                <button type="submit" className="py-2.5 px-3 rounded-xl btn-cobalt font-black inline-flex items-center justify-center gap-1">
+                <button type="submit" className="py-2.5 px-4 rounded-xl btn-cobalt font-black inline-flex items-center justify-center gap-1.5 w-full">
                   <Plus className="w-3.5 h-3.5" />
                   <span>{isFa ? 'ثبت اسلات' : 'Save Slot'}</span>
                 </button>
@@ -1205,17 +1205,19 @@ export function AdminPage({
             {aiSignals.length > 0 && (
               <div className="pt-2 border-t space-y-2 text-xs">
                 <div className="font-black text-sub">{isFa ? 'آخرین تصمیمات اجماع هوش مصنوعی دلارینو' : 'Recent Dollarino AI Signals'}</div>
-                <div className="space-y-1.5 max-h-[180px] overflow-y-auto">
+                <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
                   {aiSignals.map((sig) => (
-                    <div key={sig.id} className="surface-soft rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <span className="font-black text-main">{sig.symbol} ({sig.timeframe})</span>{' '}
+                    <div key={sig.id} className="surface-soft rounded-xl px-3 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="shrink-0 flex items-center gap-1.5 flex-wrap">
+                        <span dir="ltr" className="font-black text-main font-mono-num">{sig.symbol} ({sig.timeframe})</span>
                         <span className={`font-black ${sig.action === 'LONG' ? 'text-signal' : sig.action === 'SHORT' ? 'text-loss' : 'text-dim'}`}>
                           {sig.action} ({sig.confidence}%)
-                        </span>{' '}
-                        <span className="text-[11px] text-dim">· {sig.model_count}x models</span>
+                        </span>
+                        <span dir="ltr" className="text-[11px] text-dim">· {sig.model_count}x models</span>
                       </div>
-                      <span className="text-[11px] text-sub truncate max-w-[360px]">{sig.thesis}</span>
+                      <p dir="auto" title={sig.thesis} className="text-[11px] text-sub leading-relaxed line-clamp-2 flex-1 min-w-0 sm:text-end">
+                        {sig.thesis}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -1530,7 +1532,7 @@ export function AdminPage({
                 await load();
                 onUserUpdated();
               }}
-              className="grid grid-cols-2 sm:grid-cols-6 gap-2 pt-3 border-t hairline items-end"
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 pt-3 border-t hairline items-end"
             >
               <input
                 value={newPlan.code}

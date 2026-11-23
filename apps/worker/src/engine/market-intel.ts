@@ -14,7 +14,6 @@ import type { Env } from '../env.js';
 import { fetchPublicKlines, fetchPublicMarket24h } from '../exchanges/paper.js';
 import { buildToobitRequest, type ToobitProxyConfig } from '../exchanges/proxy.js';
 import {
-  getSystemSettingValue,
   publishChannelNews,
   publishSignalBroadcast,
   resolveChannelAndBotConfig,
@@ -34,6 +33,9 @@ const WATCH_COINS = [
   'ARBUSDT',
   'ADAUSDT',
 ];
+
+let memLastSignalCheckMs = 0;
+let memLastAiIntelCheckMs = 0;
 
 function getProxyCfg(env: Env): ToobitProxyConfig | undefined {
   return env.TOOBIT_PROXY_URL
@@ -74,11 +76,6 @@ function minsFromIso(val?: string): number {
   return (Date.now() - ts) / 60_000;
 }
 
-async function minutesSinceSetting(db: D1Database, key: string): Promise<number> {
-  const val = await getSystemSettingValue(db, key, '');
-  return minsFromIso(val);
-}
-
 function roundSignalPrice(val: number, ref: number): string {
   if (!Number.isFinite(val) || val <= 0) return '0';
   if (ref >= 1000) return val.toFixed(2);
@@ -95,7 +92,7 @@ function roundSignalPrice(val: number, ref: number): string {
  */
 export async function runAlwaysOnSignalRadar(
   env: Env,
-  opts?: { force?: boolean }
+  opts?: { force?: boolean; fromCron?: boolean }
 ): Promise<{
   scanned: number;
   published: boolean;
@@ -105,34 +102,42 @@ export async function runAlwaysOnSignalRadar(
   subscribersNotified?: number;
   reason?: string;
 }> {
+  if (opts?.fromCron && !opts?.force && Date.now() - memLastSignalCheckMs < 14 * 60_000) {
+    return { scanned: 0, published: false, reason: 'scan_cooldown' };
+  }
   const settings = await getSettingsMap(env.DB, [
     'always_on_signals_enabled',
     'intel_last_scan_at',
     'intel_last_signal_at',
+    'intel_scan_cursor',
+    ...WATCH_COINS.map((s) => `intel_sig_last_${s}`),
   ]);
   const enabled = (settings['always_on_signals_enabled'] ?? 'true') === 'true';
   if (!enabled && !opts?.force) {
+    memLastSignalCheckMs = Date.now();
     return { scanned: 0, published: false, reason: 'disabled' };
   }
 
   if (!opts?.force) {
     const minsSinceScan = minsFromIso(settings['intel_last_scan_at']);
     if (minsSinceScan < 15) {
+      memLastSignalCheckMs = Date.now();
       return { scanned: 0, published: false, reason: 'scan_cooldown' };
     }
     const minsSincePub = minsFromIso(settings['intel_last_signal_at']);
     if (minsSincePub < 45) {
+      memLastSignalCheckMs = Date.now();
       await setSetting(env.DB, 'intel_last_scan_at', new Date().toISOString());
       return { scanned: 0, published: false, reason: 'publish_cooldown' };
     }
   }
 
+  memLastSignalCheckMs = Date.now();
   await setSetting(env.DB, 'intel_last_scan_at', new Date().toISOString());
   const proxyCfg = getProxyCfg(env);
   const cfg = await resolveChannelAndBotConfig(env);
 
-  const cursorStr = await getSystemSettingValue(env.DB, 'intel_scan_cursor', '0');
-  const cursor = Number.parseInt(cursorStr, 10) || 0;
+  const cursor = Number.parseInt(settings['intel_scan_cursor'] || '0', 10) || 0;
   const batch: string[] = [];
   for (let i = 0; i < 6; i++) {
     batch.push(WATCH_COINS[(cursor + i) % WATCH_COINS.length]!);
@@ -184,7 +189,7 @@ export async function runAlwaysOnSignalRadar(
 
   for (const sym of batch) {
     if (!opts?.force) {
-      const symCooldown = await minutesSinceSetting(env.DB, `intel_sig_last_${sym}`);
+      const symCooldown = minsFromIso(settings[`intel_sig_last_${sym}`]);
       if (symCooldown < 180) continue;
     }
 
@@ -436,7 +441,7 @@ async function fetchPublicCryptoHeadlines(): Promise<Array<{ title: string; sour
  */
 export async function runAlwaysOnAiIntel(
   env: Env,
-  opts?: { forceKind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'PROMO' }
+  opts?: { forceKind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'PROMO'; fromCron?: boolean }
 ): Promise<{
   published: boolean;
   kind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'PROMO';
@@ -444,6 +449,9 @@ export async function runAlwaysOnAiIntel(
   channelMessageId?: number;
   reason?: string;
 }> {
+  if (opts?.fromCron && !opts?.forceKind && Date.now() - memLastAiIntelCheckMs < 4.5 * 60_000) {
+    return { published: false, reason: 'check_cooldown' };
+  }
   const aiSettings = await getSettingsMap(env.DB, [
     'always_on_ai_broadcast_enabled',
     'intel_last_ai_check_at',
@@ -455,6 +463,7 @@ export async function runAlwaysOnAiIntel(
   ]);
   const enabled = (aiSettings['always_on_ai_broadcast_enabled'] ?? 'true') === 'true';
   if (!enabled && !opts?.forceKind) {
+    memLastAiIntelCheckMs = Date.now();
     return { published: false, reason: 'disabled' };
   }
 
@@ -462,9 +471,11 @@ export async function runAlwaysOnAiIntel(
   if (!opts?.forceKind) {
     const minsCheck = minsFromIso(aiSettings['intel_last_ai_check_at']);
     if (minsCheck < 5) {
+      memLastAiIntelCheckMs = Date.now();
       return { published: false, reason: 'check_cooldown' };
     }
   }
+  memLastAiIntelCheckMs = Date.now();
   await setSetting(env.DB, 'intel_last_ai_check_at', new Date().toISOString());
 
   const cfg = await resolveChannelAndBotConfig(env);
