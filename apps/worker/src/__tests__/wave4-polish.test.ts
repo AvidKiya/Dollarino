@@ -494,5 +494,105 @@ describe('Dollarino Wave 1-4 Completion: Banners, Admin Health, Perp DEX, AI Con
     expect(expJson.ok).toBe(true);
     expect(expJson.keys.evmPrivateKeyHex).toMatch(/^[a-f0-9]{64}$/);
     expect(telegramCalls.some((c) => c.body.includes('888111222'))).toBe(true);
+
+    // 4. Copy-Vault 2FA PIN flow: request PIN via Telegram, reject invalid PIN, accept exact PIN
+    const pinReqRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/copy-trade/vault/request-pin', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${userToken}` },
+      }),
+      env
+    );
+    expect(pinReqRes.status).toBe(200);
+    const pinCalls = telegramCalls.filter((c) => c.body.includes('888111222') && c.body.includes('<code>'));
+    const latestPinBody = pinCalls[pinCalls.length - 1]?.body || '';
+    const pinMatch = latestPinBody.match(/<code>(\d{6})<\/code>/);
+    expect(pinMatch?.[1]).toMatch(/^\d{6}$/);
+
+    const badExp = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/copy-trade/vault/export-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${userToken}` },
+        body: JSON.stringify({ pinCode: '000000', requireVerification: true }),
+      }),
+      env
+    );
+    expect(badExp.status).toBe(403);
+
+    const goodExp = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/copy-trade/vault/export-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${userToken}` },
+        body: JSON.stringify({ pinCode: pinMatch![1], requireVerification: true }),
+      }),
+      env
+    );
+    expect(goodExp.status).toBe(200);
+  });
+
+  it('supports Scheduled Broadcast Center (Telegram + In-App Notifications) and cancellation', async () => {
+    const env = makeEnv();
+    const ownerToken = await issueUserToken(env, {
+      id: 'owner_bcast',
+      role: 'OWNER',
+      telegramId: '944021185',
+      username: 'AvidOwner',
+    });
+
+    const futureIso = new Date(Date.now() + 3600_000).toISOString();
+    const schedRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/admin/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({
+          title: 'اطلاعیه تست زمان‌بندی‌شده',
+          message: 'نسخه جدید اسکنر ۱۰ کوین فعال شد!',
+          deliverTelegram: true,
+          deliverInApp: true,
+          scheduledAt: futureIso,
+        }),
+      }),
+      env
+    );
+    expect(schedRes.status).toBe(200);
+    const schedJson = (await schedRes.json()) as { ok: boolean; scheduled: boolean; id: string };
+    expect(schedJson.scheduled).toBe(true);
+
+    const listRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/admin/broadcasts', {
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      }),
+      env
+    );
+    expect(listRes.status).toBe(200);
+    const listJson = (await listRes.json()) as { broadcasts: Array<{ id: string; status: string }> };
+    expect(listJson.broadcasts.some((b) => b.id === schedJson.id && b.status === 'SCHEDULED')).toBe(true);
+
+    const cancelRes = await worker.fetch(
+      new Request(`https://dollarino.pages.dev/api/admin/broadcasts/${schedJson.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      }),
+      env
+    );
+    expect(cancelRes.status).toBe(200);
+
+    // Immediate In-App + Telegram broadcast creates notification rows
+    const immRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/admin/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({
+          title: 'اطلاعیه فوری',
+          message: 'سرور کپی‌ترید بروزرسانی شد',
+          deliverTelegram: true,
+          deliverInApp: true,
+        }),
+      }),
+      env
+    );
+    expect(immRes.status).toBe(200);
+    const immJson = (await immRes.json()) as { ok: boolean; deliveredInApp: number };
+    expect(immJson.deliveredInApp).toBeGreaterThanOrEqual(1);
   });
 });

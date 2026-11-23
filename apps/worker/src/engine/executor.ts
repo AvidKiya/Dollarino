@@ -602,6 +602,45 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
       continue;
     }
 
+    // 1B. Smart Danger Alert (Near Stop-Loss / High Margin Risk)
+    if (!t.risk_free_active && !t.tp1_hit && sl > 0) {
+      const totalRiskDist = Math.abs(entry - sl);
+      const adverseDist = isLong ? entry - mark : mark - entry;
+      if (totalRiskDist > 0 && adverseDist / totalRiskDist >= 0.72) {
+        const warnTag = `NEAR_SL_WARN:${t.id}`;
+        const existingWarn = await env.DB.prepare(
+          `SELECT id FROM audit_logs WHERE user_id = ? AND category = 'RISK_ALERT' AND details_json = ? LIMIT 1`
+        )
+          .bind(userId, warnTag)
+          .first<{ id: string }>()
+          .catch(() => null);
+        if (!existingWarn) {
+          await logAudit(
+            env.DB,
+            userId,
+            'RISK_ALERT',
+            'WARN',
+            `⚠️ هشدار محافظت سرمایه (${t.symbol}): معامله به حدود ۷۲٪ مسیر حد ضرر ($${t.current_stop_loss}) نزدیک شده است.`,
+            t.symbol,
+            warnTag
+          );
+          await pushNotification(
+            env.DB,
+            userId,
+            'TP_SL',
+            `⚠️ Danger Alert · ${t.symbol}`,
+            `Position moved ~72% toward Stop-Loss ($${t.current_stop_loss}). Check margin & risk!`
+          );
+          await notifyUserTelegram(
+            env,
+            userId,
+            `⚠️ **هشدار محافظت سرمایه (${t.symbol})**\n` +
+              `معامله ${t.direction} اهرم ${t.leverage}x به حدود **۷۲٪ مسیر حد ضرر** (SL: $${t.current_stop_loss} | مارک: $${mark}) نزدیک شده است.`
+          ).catch(() => {});
+        }
+      }
+    }
+
     // Track extreme price for dynamic Trailing SL
     const prevHigh = Number(t.highest_price || entry);
     const prevLow = Number(t.lowest_price || entry);

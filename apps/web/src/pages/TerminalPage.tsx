@@ -768,14 +768,21 @@ export function TerminalPage({
           </div>
         </div>
 
-        {/* 5. Outlined Safety Notice Box matching image-3.png */}
-        <div className="rounded-[18px] border hairline bg-[var(--panel)]/50 px-4 py-3 flex items-center justify-center gap-2 text-[11px] text-sub text-center leading-relaxed">
-          <ShieldCheck className="w-4 h-4 text-[#0D9455] shrink-0" />
-          <span>
+        {/* 5. Outlined Safety Notice Box matching image-3.png + Exchange vs Perp DEX Mini Guide */}
+        <div className="rounded-[18px] border hairline bg-[var(--panel)]/50 px-4 py-3 space-y-1.5 text-[11px] text-sub leading-relaxed">
+          <div className="flex items-center justify-center gap-2 text-center">
+            <ShieldCheck className="w-4 h-4 text-[#0D9455] shrink-0" />
+            <span>
+              {isFa
+                ? 'تمامی معاملات دلارینو با سپر حدضرر و تارگت سود خودکار محافظت می‌شوند.'
+                : 'All Dollarino trades are protected by automated Stop-Loss & TP1 risk guard.'}
+            </span>
+          </div>
+          <p className="text-[10.5px] text-dim text-center">
             {isFa
-              ? 'تمامی معاملات دلارینو با سپر حدضرر و تارگت سود خودکار محافظت می‌شوند.'
-              : 'All Dollarino trades are protected by automated Stop-Loss & TP1 risk guard.'}
-          </span>
+              ? 'نکته: این پایانه روی صرافی متمرکز (Toobit/Bitunix/KCEX یا دمو) معامله می‌زند. برای فیوچرز بدون KYC مستقیماً از کیف‌پول (Hyperliquid / Jupiter Perps) به بخش «DEX و تراست‌ولت ← فیوچرز Perp DEX» بروید.'
+              : 'Tip: This terminal executes on CEX/Paper. For No-KYC wallet futures (Hyperliquid / Jupiter Perps), open DEX & Trust Wallet → Perp DEX.'}
+          </p>
         </div>
 
         <ConfirmTradeSheet

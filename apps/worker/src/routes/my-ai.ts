@@ -356,6 +356,18 @@ myAiRoutes.post('/chat', async (c) => {
           if (typeof parsed.maxLeverage === 'number' && parsed.maxLeverage >= 1 && parsed.maxLeverage <= 50) {
             next.maxLeverage = Math.round(parsed.maxLeverage);
           }
+          if (typeof parsed.emaFast === 'number' && parsed.emaFast >= 3 && parsed.emaFast <= 100) {
+            next.emaFast = Math.round(parsed.emaFast);
+          }
+          if (typeof parsed.emaSlow === 'number' && parsed.emaSlow >= 10 && parsed.emaSlow <= 250) {
+            next.emaSlow = Math.round(parsed.emaSlow);
+          }
+          if (typeof parsed.rsiOversold === 'number' && parsed.rsiOversold >= 10 && parsed.rsiOversold <= 48) {
+            next.rsiOversold = Math.round(parsed.rsiOversold);
+          }
+          if (typeof parsed.rsiOverbought === 'number' && parsed.rsiOverbought >= 52 && parsed.rsiOverbought <= 90) {
+            next.rsiOverbought = Math.round(parsed.rsiOverbought);
+          }
         } catch {
           /* keep regex extraction */
         }

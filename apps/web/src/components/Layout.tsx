@@ -55,28 +55,29 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'ترید هوشمند AI', labelEn: 'Automated AI Trading', icon: Home },
-  { id: 'aichat', labelFa: 'چت و تحلیل چارت', labelEn: 'AI Chat & Vision', icon: Sparkles },
-  { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'copy', labelFa: 'کپی‌ترید تاییدشده', labelEn: 'Copy Trade', icon: Users },
   { id: 'portfolio', labelFa: 'کیف پول و سودها', labelEn: 'Wallet & Profit', icon: Wallet },
   { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'services', labelFa: 'پروفایل و خدمات', labelEn: 'Profile & Services', icon: LayoutGrid },
-  { id: 'pricing', labelFa: 'خرید و تمدید اشتراک', labelEn: 'Subscriptions', icon: CreditCard },
-  { id: 'faq', labelFa: 'راهنما و آموزش', labelEn: 'User Guide', icon: CircleHelp },
 ];
 
-const MAIN_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
+const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', labelFa: 'نمای کلی', labelEn: 'Overview', icon: LayoutDashboard },
-  { id: 'aichat', labelFa: 'چت و تحلیل چارت AI', labelEn: 'AI Chat & Vision', icon: Sparkles },
-  { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
-  { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
   { id: 'terminal', labelFa: 'پایانه و چارت AI', labelEn: 'Terminal & Chart AI', icon: CandlestickChart },
   { id: 'markets', labelFa: 'بازارهای فیوچرز', labelEn: 'Markets', icon: Globe },
   { id: 'radar', labelFa: 'رادار و استراتژی شخصی', labelEn: 'Radar & Custom IDE', icon: Radar },
+  { id: 'aichat', labelFa: 'چت و تحلیل چارت AI', labelEn: 'AI Chat & Vision', icon: Sparkles },
+  { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
+];
+
+const PRO_WALLET_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'copy', labelFa: 'کپی‌ترید و اتصال API', labelEn: 'Copy Trade & API', icon: Users },
+  { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'portfolio', labelFa: 'پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
   { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
 ];
+
+const MAIN_VIEWS = [...PRO_TRADING_VIEWS, ...PRO_WALLET_VIEWS];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
   { id: 'pricing', labelFa: 'اشتراک‌ها و کد هدیه', labelEn: 'Subscriptions', icon: CreditCard },
@@ -744,6 +745,29 @@ export function Layout({
             </p>
           </button>
 
+          <div className="mt-4 grid grid-cols-2 gap-1.5 px-0.5">
+            <button
+              type="button"
+              onClick={() => selectTab('pricing')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition ${
+                activeTab === 'pricing' ? 'ios-pill-active' : 'surface-soft text-dim hover:text-main'
+              }`}
+            >
+              <CreditCard className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{isFa ? 'اشتراک' : 'Plans'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectTab('faq')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition ${
+                activeTab === 'faq' ? 'ios-pill-active' : 'surface-soft text-dim hover:text-main'
+              }`}
+            >
+              <CircleHelp className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{isFa ? 'راهنما' : 'Guide'}</span>
+            </button>
+          </div>
+
           {isAdmin && (
             <button
               type="button"
@@ -760,10 +784,10 @@ export function Layout({
       ) : (
         <>
           <p className="px-3.5 text-[9px] font-black tracking-[0.2em] text-dim mb-2">
-            {isFa ? 'میز کار حرفه‌ای' : 'PRO VIEWS'}
+            {isFa ? 'ترید و هوش مصنوعی' : 'TRADING & AI'}
           </p>
           <div className="space-y-0.5">
-            {MAIN_VIEWS.map((item) => {
+            {PRO_TRADING_VIEWS.map((item) => {
               const Icon = item.icon;
               const on = activeTab === item.id;
               const badge = item.id === 'radar' ? recentSignalsCount : item.id === 'terminal' ? openTradesCount : 0;
@@ -792,6 +816,35 @@ export function Layout({
                       {badge}
                     </span>
                   )}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="px-3.5 text-[9px] font-black tracking-[0.2em] text-dim mt-5 mb-2">
+            {isFa ? 'کپی‌ترید و کیف‌پول' : 'COPY & WALLET'}
+          </p>
+          <div className="space-y-0.5">
+            {PRO_WALLET_VIEWS.map((item) => {
+              const Icon = item.icon;
+              const on = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => selectTab(item.id)}
+                  className={`relative w-full flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-[13px] font-semibold transition-all ${
+                    on ? 'bg-[color:color-mix(in_srgb,var(--gold)_18%,transparent)] text-main' : 'text-dim hover:text-main hover:bg-[var(--soft)]'
+                  }`}
+                >
+                  {on && (
+                    <span
+                      className="absolute start-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-full"
+                      style={{ background: 'var(--gold-soft)', boxShadow: '0 0 12px var(--gold)' }}
+                    />
+                  )}
+                  <Icon className="w-[18px] h-[18px] shrink-0" style={on ? { color: 'var(--gold-soft)' } : undefined} />
+                  <span className="truncate">{isFa ? item.labelFa : item.labelEn}</span>
                 </button>
               );
             })}

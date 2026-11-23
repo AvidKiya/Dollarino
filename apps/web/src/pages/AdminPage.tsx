@@ -225,6 +225,23 @@ export function AdminPage({
   const [orders, setOrders] = useState<SubOrder[]>([]);
   const [helpText, setHelpText] = useState('');
   const [broadcast, setBroadcast] = useState('');
+  const [broadcastTitle, setBroadcastTitle] = useState('اطلاعیه رسمی دلارینو');
+  const [broadcastTg, setBroadcastTg] = useState(true);
+  const [broadcastInApp, setBroadcastInApp] = useState(true);
+  const [broadcastScheduledAt, setBroadcastScheduledAt] = useState('');
+  const [broadcastList, setBroadcastList] = useState<
+    Array<{
+      id: string;
+      title: string;
+      message: string;
+      deliver_telegram: number;
+      deliver_inapp: number;
+      scheduled_at: string | null;
+      status: string;
+      sent_count: number;
+      created_at: string;
+    }>
+  >([]);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [username, setUsername] = useState(currentUser.username);
@@ -249,6 +266,7 @@ export function AdminPage({
 
   const [adminSection, setAdminSection] = useState<'overview' | 'banners' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'all'>('overview');
   const [showAdminSecurityBox, setShowAdminSecurityBox] = useState(false);
+  const [showBotFatherGuide, setShowBotFatherGuide] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [userFilter, setUserFilter] = useState<'all' | 'kyc_verified' | 'trust_wallet' | 'unverified'>('all');
   const [requirePhoneKyc, setRequirePhoneKyc] = useState(true);
@@ -420,7 +438,7 @@ export function AdminPage({
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -441,10 +459,12 @@ export function AdminPage({
       apiFetch<{ providers: OnchainApiProviderItem[] }>('/api/admin/onchain-apis').catch(() => ({ providers: [] })),
       apiFetch<{ banners: PromoBannerItem[] }>('/api/admin/banners').catch(() => ({ banners: [] })),
       apiFetch<{ health: typeof systemHealth }>('/api/admin/system-health').catch(() => ({ health: null })),
+      apiFetch<{ broadcasts?: typeof broadcastList }>('/api/admin/broadcasts').catch(() => ({ broadcasts: [] })),
     ]);
     setOnchainApis(onchainRes.providers || []);
     setPromoBanners(bannersRes.banners || []);
     setSystemHealth(healthRes.health || null);
+    setBroadcastList(broadcastsRes.broadcasts || []);
     setData(ov);
     setOrders(ordRes.orders);
     setAdminPlans(plansRes.plans || []);
@@ -2549,74 +2569,172 @@ export function AdminPage({
             </div>
 
             <div className="surface-card p-5 space-y-3">
-              <h3 className="font-black text-sm flex items-center gap-2 text-main">
-                <Send className="w-4 h-4 text-flame" />
-                <span>{isFa ? 'ارسال پیام همگانی به کاربران تلگرام' : 'Telegram Broadcast'}</span>
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-black text-sm flex items-center gap-2 text-main">
+                  <Send className="w-4 h-4 text-flame" />
+                  <span>{isFa ? 'مرکز اطلاعیه همگانی (تلگرام + وب‌اپ + زمان‌بندی)' : 'Broadcast Center (Telegram + In-App + Schedule)'}</span>
+                </h3>
+                <span dir="ltr" className="text-[10px] font-mono-num text-dim">
+                  {broadcast.length} chars
+                </span>
+              </div>
+              <input
+                value={broadcastTitle}
+                onChange={(e) => setBroadcastTitle(e.target.value)}
+                placeholder={isFa ? 'عنوان اطلاعیه (مثلاً آپدیت نسخه ۱۰)' : 'Broadcast title'}
+                className="w-full surface-input rounded-xl px-3 py-2 text-xs font-bold"
+              />
               <textarea
-                rows={4}
+                rows={3}
                 value={broadcast}
                 onChange={(e) => setBroadcast(e.target.value)}
-                placeholder="Write announcement..."
-                className="w-full surface-input rounded-2xl p-3"
+                placeholder={isFa ? 'متن اطلاعیه یا خبر را بنویسید...' : 'Write announcement...'}
+                className="w-full surface-input rounded-2xl p-3 text-xs"
               />
+              <div className="grid sm:grid-cols-2 gap-2.5 text-[11px]">
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="inline-flex items-center gap-1.5 text-sub cursor-pointer">
+                    <input type="checkbox" checked={broadcastTg} onChange={(e) => setBroadcastTg(e.target.checked)} />
+                    <span>{isFa ? 'ارسال به تلگرام' : 'Send to Telegram'}</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 text-sub cursor-pointer">
+                    <input type="checkbox" checked={broadcastInApp} onChange={(e) => setBroadcastInApp(e.target.checked)} />
+                    <span>{isFa ? 'اعلان داخل وب‌اپ' : 'In-App Bell Alert'}</span>
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-dim shrink-0">{isFa ? 'زمان‌بندی (اختیاری):' : 'Schedule:'}</span>
+                  <input
+                    type="datetime-local"
+                    value={broadcastScheduledAt}
+                    onChange={(e) => setBroadcastScheduledAt(e.target.value)}
+                    dir="ltr"
+                    className="input-field py-1 px-2 rounded-xl text-[11px] flex-1"
+                  />
+                </div>
+              </div>
+              {broadcast.trim().length > 0 && (
+                <div className="surface-soft rounded-2xl p-3 border hairline space-y-1">
+                  <p className="text-[10px] font-black text-dim">{isFa ? 'پیش‌نمایش اطلاعیه (تلگرام و وب‌اپ):' : 'Broadcast Preview:'}</p>
+                  <p className="text-xs font-black text-main">{broadcastTitle || 'اطلاعیه دلارینو'}</p>
+                  <p className="text-[11px] text-sub whitespace-pre-wrap leading-relaxed">{broadcast}</p>
+                </div>
+              )}
               <button
+                type="button"
+                disabled={!broadcast.trim() || (!broadcastTg && !broadcastInApp)}
                 onClick={async () => {
-                  const res = await apiFetch<{ sent: number }>('/api/admin/broadcast', {
+                  const res = await apiFetch<{ scheduled?: boolean; sent: number; deliveredInApp?: number; scheduledAt?: string }>('/api/admin/broadcast', {
                     method: 'POST',
-                    body: JSON.stringify({ message: broadcast }),
+                    body: JSON.stringify({
+                      title: broadcastTitle,
+                      message: broadcast,
+                      deliverTelegram: broadcastTg,
+                      deliverInApp: broadcastInApp,
+                      scheduledAt: broadcastScheduledAt || null,
+                    }),
                   });
                   setBroadcast('');
-                  setMsg(`Broadcast sent to ${res.sent} Telegram users.`);
+                  setBroadcastScheduledAt('');
+                  await load();
+                  setMsg(
+                    res.scheduled
+                      ? isFa
+                        ? `اطلاعیه برای زمان ${res.scheduledAt} زمان‌بندی و در صف ثبت شد.`
+                        : `Broadcast scheduled for ${res.scheduledAt}.`
+                      : isFa
+                        ? `اطلاعیه برای ${res.sent} کاربر تلگرام و ${res.deliveredInApp ?? 0} اعلان وب‌اپ ارسال شد.`
+                        : `Sent to ${res.sent} Telegram & ${res.deliveredInApp ?? 0} In-App users.`
+                  );
                 }}
-                className="px-4 py-2 rounded-xl btn-cobalt font-bold"
+                className="px-4 py-2 rounded-xl btn-cobalt font-bold disabled:opacity-50"
               >
-                Send Broadcast
+                {broadcastScheduledAt ? (isFa ? 'ثبت زمان‌بندی ارسال' : 'Schedule Broadcast') : (isFa ? 'ارسال فوری اطلاعیه' : 'Send Broadcast Now')}
               </button>
+
+              {broadcastList.length > 0 && (
+                <div className="pt-2 border-t hairline space-y-1.5 max-h-40 overflow-y-auto text-[11px]">
+                  <p className="font-bold text-dim">{isFa ? 'تاریخچه و صف زمان‌بندی اطلاعیه‌ها:' : 'Broadcast History & Queue:'}</p>
+                  {broadcastList.slice(0, 6).map((b) => (
+                    <div key={b.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="font-black text-main truncate block">{b.title}</span>
+                        <span className="text-[10px] text-dim truncate block">
+                          {b.status === 'SCHEDULED' ? `⏰ ${b.scheduled_at}` : `✓ ${b.sent_count} sent`} · {b.message.slice(0, 48)}
+                        </span>
+                      </div>
+                      {b.status === 'SCHEDULED' && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/broadcasts/${b.id}`, { method: 'DELETE' });
+                            await load();
+                          }}
+                          className="text-loss font-bold text-[10px] shrink-0"
+                        >
+                          {isFa ? 'لغو' : 'Cancel'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* BotFather Complete Setup & Command Sync Card */}
+          {/* BotFather Complete Setup & Command Sync Card (Collapsible Checklist) */}
           <div className="surface-card p-5 space-y-4 text-xs">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="font-black text-sm flex items-center gap-2 text-main">
                   <Bot className="w-4 h-4 text-[#0EA5E9]" />
-                  <span>{isFa ? 'پیکربندی کامل ربات @Dollarino_bot و BotFather' : '@Dollarino_bot & BotFather Control'}</span>
+                  <span>{isFa ? 'پیکربندی ربات @Dollarino_bot و BotFather' : '@Dollarino_bot & BotFather Control'}</span>
                 </h3>
                 <p className="text-[11px] text-sub mt-0.5">
                   {isFa
-                    ? 'ثبت هم‌زمان ۱۴ دستور اسلش، دکمه منوی مینی‌اپ و وب‌هوک تلگرام به همراه چک‌لیست تنظیمات BotFather'
-                    : 'Sync all 14 slash commands, Mini App Menu button, webhook, and BotFather settings checklist'}
+                    ? 'ثبت هم‌زمان ۱۴ دستور اسلش، دکمه منوی مینی‌اپ و وب‌هوک تلگرام'
+                    : 'Sync all 14 slash commands, Mini App Menu button & webhook'}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const res = await apiFetch<{ ok: boolean; webhook?: boolean; commands?: boolean; menuButton?: boolean }>(
-                      '/api/webhook/telegram/setup',
-                      { method: 'POST', body: JSON.stringify({}) }
-                    );
-                    setMsg(
-                      res.ok
-                        ? isFa
-                          ? 'وب‌هوک، ۱۴ دستور ربات و دکمه مینی‌اپ با موفقیت روی تلگرام همگام‌سازی شدند.'
-                          : 'Webhook, commands & Mini App menu synced to Telegram.'
-                        : 'Setup failed'
-                    );
-                  } catch (err) {
-                    setMsg(err instanceof Error ? err.message : 'Telegram setup error');
-                  }
-                }}
-                className="btn-cobalt px-4 py-2 rounded-xl font-black inline-flex items-center gap-1.5"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{isFa ? 'همگام‌سازی فوری با سرور تلگرام' : 'Sync Bot Commands & Webhook'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBotFatherGuide((v) => !v)}
+                  className="btn-ghost px-3 py-2 rounded-xl font-bold text-[11px]"
+                >
+                  {showBotFatherGuide
+                    ? isFa ? 'بستن راهنمای BotFather ▲' : 'Hide Guide ▲'
+                    : isFa ? 'لیست دستورات و چک‌لیست ▼' : 'Commands & Checklist ▼'}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await apiFetch<{ ok: boolean; webhook?: boolean; commands?: boolean; menuButton?: boolean }>(
+                        '/api/webhook/telegram/setup',
+                        { method: 'POST', body: JSON.stringify({}) }
+                      );
+                      setMsg(
+                        res.ok
+                          ? isFa
+                            ? 'وب‌هوک، ۱۴ دستور ربات و دکمه مینی‌اپ با موفقیت روی تلگرام همگام‌سازی شدند.'
+                            : 'Webhook, commands & Mini App menu synced to Telegram.'
+                          : 'Setup failed'
+                      );
+                    } catch (err) {
+                      setMsg(err instanceof Error ? err.message : 'Telegram setup error');
+                    }
+                  }}
+                  className="btn-cobalt px-4 py-2 rounded-xl font-black inline-flex items-center gap-1.5"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'همگام‌سازی فوری با سرور تلگرام' : 'Sync Bot Commands & Webhook'}</span>
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {showBotFatherGuide && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2 border-t hairline tab-enter">
               <div className="surface-soft rounded-2xl p-4 space-y-2 border hairline">
                 <div className="flex items-center justify-between">
                   <span className="font-black text-main">{isFa ? '۱. دستورات آماده برای /setcommands در @BotFather:' : '1. /setcommands List for @BotFather:'}</span>
@@ -2692,6 +2810,7 @@ help - راهنمای کامل و امنیت حساب`}
                 </ul>
               </div>
             </div>
+            )}
           </div>
           </div>
           )}

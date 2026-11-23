@@ -108,6 +108,21 @@ export function RadarLabPage({
   const [btResult, setBtResult] = useState<BacktestResult | null>(null);
   const [compareResult, setCompareResult] = useState<BacktestResult | null>(null);
 
+  // Top-10 Coin × Multi-Timeframe Matrix Auto-Scanner
+  const [matrixScanning, setMatrixScanning] = useState(false);
+  const [matrixStrategy, setMatrixStrategy] = useState<StrategyKey>('dollarino_v01');
+  const [matrixCells, setMatrixCells] = useState<
+    Array<{
+      symbol: string;
+      timeframe: Timeframe;
+      netReturnPct: number;
+      winRatePct: number;
+      profitFactor: number;
+      totalTrades: number;
+      maxDrawdownPct: number;
+    }>
+  >([]);
+
   const signals = data.recentSignals;
   const filteredSignals = useMemo(() => {
     if (sourceFilter === 'ALL') return signals;
@@ -241,6 +256,69 @@ export function RadarLabPage({
       setNotice(e instanceof Error ? e.message : 'Backtest failed');
     } finally {
       setBtLoading(false);
+    }
+  };
+
+  const runMatrixScan = async () => {
+    setMatrixScanning(true);
+    setNotice('');
+    try {
+      const topSyms = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'TONUSDT', 'DOGEUSDT', 'AVAXUSDT', 'LINKUSDT', 'SUIUSDT'];
+      const tfs: Array<{ tf: Timeframe; htf: Timeframe }> = [
+        { tf: '15m', htf: '1h' },
+        { tf: '1h', htf: '4h' },
+        { tf: '4h', htf: '1d' },
+      ];
+      const out: typeof matrixCells = [];
+      for (const sym of topSyms) {
+        const [c15, c1h, c4h, c1d] = await Promise.all([
+          apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${sym}&timeframe=15m&limit=320`).catch(() => ({ candles: [] })),
+          apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${sym}&timeframe=1h&limit=320`).catch(() => ({ candles: [] })),
+          apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${sym}&timeframe=4h&limit=320`).catch(() => ({ candles: [] })),
+          apiFetch<{ candles: Candle[] }>(`/api/trading/market/klines?symbol=${sym}&timeframe=1d&limit=180`).catch(() => ({ candles: [] })),
+        ]);
+        const byTf: Record<string, Candle[]> = {
+          '15m': c15.candles,
+          '1h': c1h.candles,
+          '4h': c4h.candles,
+          '1d': c1d.candles,
+        };
+        for (const pair of tfs) {
+          const ltf = byTf[pair.tf] || [];
+          const htf = byTf[pair.htf] || [];
+          if (ltf.length < 45) continue;
+          const res = runCoreBacktest(ltf, htf, {
+            symbol: sym,
+            strategyKey: matrixStrategy,
+            timeframe: pair.tf,
+            higherTimeframe: pair.htf,
+            initialBalance: btCapital,
+            marginPct: btMarginPct,
+            leverage: btLev,
+            tp1ClosePct: 30,
+            tp2ClosePct: 40,
+            tp3ClosePct: 30,
+            autoBreakevenOnTp1: true,
+            moveSlToTp1OnTp2: true,
+            useTrailingStop: true,
+            trailPct: 1.5,
+          });
+          out.push({
+            symbol: sym,
+            timeframe: pair.tf,
+            netReturnPct: res.metrics.netReturnPct,
+            winRatePct: res.metrics.winRatePct,
+            profitFactor: res.metrics.profitFactor,
+            totalTrades: res.metrics.totalTrades,
+            maxDrawdownPct: res.metrics.maxDrawdownPct,
+          });
+        }
+      }
+      setMatrixCells(out);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : 'Matrix scan failed');
+    } finally {
+      setMatrixScanning(false);
     }
   };
 
@@ -728,6 +806,143 @@ export function RadarLabPage({
               )}
             </div>
           )}
+
+          {/* Top-10 Coin × Multi-Timeframe Auto-Scanner Matrix */}
+          <div className="pt-5 border-t hairline space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 className="font-display font-bold text-base text-main flex items-center gap-2">
+                  <Trophy className="w-4 h-4 text-[#059669]" />
+                  <span>{isFa ? 'ماتریس خودکار ۱۰ کوین برتر × ۳ تایم‌فریم' : 'Auto Matrix Finder: Top-10 Coins × 3 Timeframes'}</span>
+                </h4>
+                <p className="text-[11px] text-dim mt-0.5">
+                  {isFa
+                    ? 'کل بازار را روی تایم‌فریم‌های 15m، 1h و 4h اسکن می‌کند تا پرسودترین جفت‌ارز و تایم‌فریم همین استراتژی را پیشنهاد دهد.'
+                    : 'Scans 10 liquid coins across 15m, 1h & 4h to recommend the #1 best symbol + timeframe for this strategy.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={matrixStrategy}
+                  onChange={(e) => setMatrixStrategy(e.target.value as StrategyKey)}
+                  className="field text-xs py-2 w-auto"
+                >
+                  <option value="dollarino_v01">{isFa ? 'دُرنا V1' : 'Dorna V1'}</option>
+                  <option value="kbos_v11">KBOS v11</option>
+                  <option value="sp2l">SP2L</option>
+                  <option value="ema_trend_pullback">EMA Pullback</option>
+                  <option value="signal_mixer">Signal Mixer</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={matrixScanning}
+                  onClick={() => void runMatrixScan()}
+                  className="btn-emerald px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{matrixScanning ? (isFa ? 'در حال اسکن ۳۰ ترکیب...' : 'Scanning 30 pairs...') : isFa ? 'کشف بهترین کوین و تایم‌فریم' : 'Discover Best Pair & TF'}</span>
+                </button>
+              </div>
+            </div>
+
+            {matrixCells.length > 0 && (() => {
+              const sorted = [...matrixCells].sort((a, b) => b.netReturnPct - a.netReturnPct);
+              const best = sorted[0];
+              const symbols = Array.from(new Set(matrixCells.map((c) => c.symbol)));
+              return (
+                <div className="space-y-3">
+                  {best && (
+                    <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/35 p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2.5">
+                        <CoinIcon symbol={best.symbol} size={28} />
+                        <div>
+                          <div className="font-black text-jade">
+                            {isFa ? `پیشنهاد شماره ۱: ${best.symbol} روی تایم‌فریم ${best.timeframe}` : `#1 Best Match: ${best.symbol} (${best.timeframe})`}
+                          </div>
+                          <div dir="ltr" className="text-[11px] font-num text-sub">
+                            Return: {best.netReturnPct >= 0 ? '+' : ''}{best.netReturnPct.toFixed(2)}% · WR: {best.winRatePct.toFixed(1)}% · PF: {best.profitFactor.toFixed(2)} ({best.totalTrades} trades)
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onTradeSymbol(best.symbol)}
+                          className="btn-gold px-3.5 py-2 rounded-xl text-[11px] font-black"
+                        >
+                          {isFa ? 'ترید در پایانه' : 'Open Terminal'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch('/api/trading/config', {
+                              method: 'PATCH',
+                              body: JSON.stringify({
+                                symbol: best.symbol,
+                                entry_timeframe: best.timeframe,
+                                strategy_key: matrixStrategy,
+                              }),
+                            });
+                            setNotice(isFa ? `${best.symbol} (${best.timeframe}) روی ربات تنظیم شد.` : `Bot set to ${best.symbol} (${best.timeframe}).`);
+                            await onRefresh();
+                          }}
+                          className="btn-cobalt px-3.5 py-2 rounded-xl text-[11px] font-black"
+                        >
+                          {isFa ? 'اعمال روی ربات' : 'Apply to Bot'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px] font-num border-collapse" dir="ltr">
+                      <thead>
+                        <tr className="text-dim border-b hairline">
+                          <th className="py-2 px-2 text-start">Coin</th>
+                          <th className="py-2 px-2 text-center">15m Return / WR</th>
+                          <th className="py-2 px-2 text-center">1h Return / WR</th>
+                          <th className="py-2 px-2 text-center">4h Return / WR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {symbols.map((sym) => (
+                          <tr key={sym} className="border-b hairline">
+                            <td className="py-2 px-2 font-black text-main">{sym.replace('USDT', '')}</td>
+                            {(['15m', '1h', '4h'] as const).map((tf) => {
+                              const cell = matrixCells.find((c) => c.symbol === sym && c.timeframe === tf);
+                              if (!cell) return <td key={tf} className="p-1 text-center text-dim">—</td>;
+                              const isBest = best && best.symbol === sym && best.timeframe === tf;
+                              return (
+                                <td key={tf} className="p-1 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setBtSymbol(sym);
+                                      setBtTf(tf);
+                                      setBtStrategy(matrixStrategy);
+                                    }}
+                                    className={`w-full py-1.5 px-2 rounded-xl transition ${
+                                      isBest
+                                        ? 'ring-2 ring-emerald-400 badge-signal font-black'
+                                        : cell.netReturnPct > 0
+                                          ? 'badge-signal'
+                                          : 'bg-rose-500/10 text-loss'
+                                    }`}
+                                  >
+                                    {cell.netReturnPct >= 0 ? '+' : ''}{cell.netReturnPct.toFixed(1)}% · {cell.winRatePct.toFixed(0)}%
+                                  </button>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
     </div>

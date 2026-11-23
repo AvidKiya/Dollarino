@@ -1,7 +1,7 @@
 import type { DollarinoSignal } from '@dollarino/core';
 import { Hono } from 'hono';
 import { requireAuth, type AppVariables } from '../auth.js';
-import { hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
+import { hmacSha256Hex, randomId, sha256Hex, verifyPassword } from '../crypto.js';
 import { fetchDexTrendingOverview, searchDexPairs } from '../dex/screener.js';
 import {
   baselineWalletTxIfEmpty,
@@ -694,12 +694,24 @@ copyTradeRoutes.get('/vault', async (c) => {
   const user = c.get('user');
   const vault = await ensureUserCopyVault(c.env, user.id);
 
-  const [bscBal, ethBal, baseBal, solBal, tronBal] = await Promise.all([
+  const [bscBal, ethBal, baseBal, solBal, tronBal, twRow] = await Promise.all([
     fetchEvmNativeBalance('https://bsc-dataseed.binance.org', vault.evmAddress),
     fetchEvmNativeBalance('https://ethereum-rpc.publicnode.com', vault.evmAddress),
     fetchEvmNativeBalance('https://mainnet.base.org', vault.evmAddress),
     fetchSolanaBalance(vault.solanaAddress),
     vault.tronAddress ? fetchTronBalances(vault.tronAddress) : Promise.resolve(null),
+    c.env.DB.prepare(
+      `SELECT trust_wallet_address, trust_wallet_solana, trust_wallet_tron, has_custom_password, telegram_id FROM users WHERE id = ? LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{
+        trust_wallet_address: string | null;
+        trust_wallet_solana: string | null;
+        trust_wallet_tron: string | null;
+        has_custom_password: number;
+        telegram_id: string | null;
+      }>()
+      .catch(() => null),
   ]);
 
   return c.json({
@@ -713,7 +725,47 @@ copyTradeRoutes.get('/vault', async (c) => {
       tronTrx: tronBal?.trx ?? 0,
       tronUsdt: tronBal?.usdt ?? 0,
     },
+    trustWalletTargets: {
+      evm: twRow?.trust_wallet_address || null,
+      solana: twRow?.trust_wallet_solana || null,
+      tron: twRow?.trust_wallet_tron || null,
+    },
+    securityCaps: {
+      hasCustomPassword: Boolean(twRow?.has_custom_password),
+      hasTelegramLinked: Boolean(twRow?.telegram_id),
+    },
   });
+});
+
+copyTradeRoutes.post('/vault/request-pin', async (c) => {
+  const user = c.get('user');
+  await ensureUserCopyVault(c.env, user.id);
+  const pin = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0]! % 900000));
+  const pinHash = await sha256Hex(`${user.id}:${pin}`);
+  await c.env.DB.prepare(
+    `UPDATE user_copy_vaults SET vault_pin_hash = ?, vault_pin_expires_at = datetime('now', '+10 minutes') WHERE user_id = ?`
+  )
+    .bind(pinHash, user.id)
+    .run();
+
+  const uRow = await c.env.DB.prepare(`SELECT telegram_id FROM users WHERE id = ? LIMIT 1`)
+    .bind(user.id)
+    .first<{ telegram_id: string | null }>()
+    .catch(() => null);
+
+  if (!uRow?.telegram_id) {
+    return c.json({ ok: false, error: 'حساب شما به تلگرام متصل نیست. از رمز عبور حساب خود برای تایید استفاده کنید.' }, 400);
+  }
+
+  await notifyUserTelegram(
+    c.env,
+    user.id,
+    `🔐 **کد تایید ۲ مرحله‌ای خزانه کپی‌ترید دلارینو**\n\n` +
+      `کد یک‌بارمصرف شما: \`${pin}\`\n` +
+      `اعتبار: ۱۰ دقیقه\n\n` +
+      `⚠️ اگر خودتان درخواست مشاهده کلیدهای خزانه را نداده‌اید، این کد را در اختیار هیچ‌کس قرار ندهید.`
+  );
+  return c.json({ ok: true, sentToTelegram: true, expiresInMinutes: 10 });
 });
 
 copyTradeRoutes.post('/vault/settings', async (c) => {
@@ -807,16 +859,72 @@ copyTradeRoutes.get('/token-safety', async (c) => {
 
 copyTradeRoutes.post('/vault/export-keys', async (c) => {
   const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    password?: string;
+    pinCode?: string;
+    requireVerification?: boolean;
+  };
+
+  const [uSec, vSec] = await Promise.all([
+    c.env.DB.prepare(`SELECT password_hash, has_custom_password FROM users WHERE id = ? LIMIT 1`)
+      .bind(user.id)
+      .first<{ password_hash: string; has_custom_password: number }>()
+      .catch(() => null),
+    c.env.DB.prepare(`SELECT vault_pin_hash, vault_pin_expires_at FROM user_copy_vaults WHERE user_id = ? LIMIT 1`)
+      .bind(user.id)
+      .first<{ vault_pin_hash: string | null; vault_pin_expires_at: string | null }>()
+      .catch(() => null),
+  ]);
+
+  const pinActive = Boolean(
+    vSec?.vault_pin_hash &&
+      vSec?.vault_pin_expires_at &&
+      Date.parse(`${vSec.vault_pin_expires_at.replace(' ', 'T')}Z`) > Date.now()
+  );
+
+  if (body.requireVerification || pinActive || body.password || body.pinCode) {
+    let verified = false;
+    if (body.pinCode && pinActive) {
+      const candidateHash = await sha256Hex(`${user.id}:${String(body.pinCode).trim()}`);
+      if (candidateHash === vSec?.vault_pin_hash) {
+        verified = true;
+        await c.env.DB.prepare(
+          `UPDATE user_copy_vaults SET vault_pin_hash = NULL, vault_pin_expires_at = NULL WHERE user_id = ?`
+        )
+          .bind(user.id)
+          .run()
+          .catch(() => {});
+      }
+    }
+    if (!verified && body.password && uSec?.has_custom_password && uSec.password_hash) {
+      verified = await verifyPassword(String(body.password), uSec.password_hash).catch(() => false);
+    }
+    if (!verified) {
+      return c.json(
+        {
+          ok: false,
+          code: 'VAULT_2FA_REQUIRED',
+          error: 'برای امنیت سرمایه، رمز عبور حساب یا کد تایید ۶ رقمی تلگرام الزامی و باید صحیح باشد.',
+        },
+        403
+      );
+    }
+  }
+
   const keys = await exportUserCopyVaultKeys(c.env, user.id);
   await logAudit(c.env.DB, user.id, 'SECURITY', 'WARN', 'User exported isolated Copy-Vault private keys');
   await notifyUserTelegram(
     c.env,
     user.id,
-    `🔐 <b>هشدار امنیتی خزانه ۲۴ ساعته دلارینو</b>\n` +
+    `🔐 **هشدار امنیتی خزانه ۲۴ ساعته دلارینو**\n` +
       `هم‌اکنون کلیدهای خصوصی خزانه اختصاصی شما در پنل وب نمایش/بک‌آپ گرفته شد.\n` +
       `اگر این اقدام توسط خودتان نبوده، دارایی خزانه را فوراً به Trust Wallet شخصی منتقل کرده و با پشتیبانی تماس بگیرید.`
   ).catch(() => {});
-  return c.json({ ok: true, keys });
+  return c.json({
+    ok: true,
+    keys,
+    warning: 'کلیدها نمایش داده شد و هشدار امنیتی برای تلگرام شما ارسال گردید.',
+  });
 });
 
 copyTradeRoutes.post('/poll-now', async (c) => {

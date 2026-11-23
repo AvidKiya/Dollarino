@@ -49,6 +49,12 @@ export interface DexTokenCardItem {
   info?: { imageUrl?: string };
   volume?: { h24?: number };
   priceChange?: { m5?: number; h1?: number; h24?: number };
+  txns?: {
+    m5?: { buys?: number; sells?: number };
+    h1?: { buys?: number; sells?: number };
+    h24?: { buys?: number; sells?: number };
+  };
+  pairCreatedAt?: number;
   liquidity?: { usd?: number };
   fdv?: number | null;
   safetyScore: number;
@@ -112,6 +118,17 @@ function fmtUsd(v?: number | null): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
+}
+
+function fmtTokenAge(createdAtMs?: number, isFa = true): string {
+  if (!createdAtMs || !Number.isFinite(createdAtMs) || createdAtMs <= 0) return '—';
+  const diffHrs = Math.max(0, (Date.now() - createdAtMs) / 3_600_000);
+  if (diffHrs < 1) return isFa ? `${Math.max(1, Math.round(diffHrs * 60))}دقیقه` : `${Math.max(1, Math.round(diffHrs * 60))}m`;
+  if (diffHrs < 24) return isFa ? `${Math.round(diffHrs)}ساعت` : `${Math.round(diffHrs)}h`;
+  const days = Math.floor(diffHrs / 24);
+  if (days < 30) return isFa ? `${days}روز` : `${days}d`;
+  const months = Math.floor(days / 30);
+  return isFa ? `${months}ماه` : `${months}mo`;
 }
 
 function fmtTokenPrice(p?: string | number | null): string {
@@ -979,10 +996,21 @@ export function DexTrustPage({
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-dim">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-dim">
                         <span>
                           {isFa ? 'حجم ۲۴س:' : 'Vol 24h:'} <strong className="text-main">{fmtUsd(t.volume?.h24)}</strong>
                         </span>
+                        <span>
+                          {isFa ? 'سن:' : 'Age:'}{' '}
+                          <strong className="text-main">{fmtTokenAge(t.pairCreatedAt, isFa)}</strong>
+                        </span>
+                        {(t.txns?.h1?.buys !== undefined || t.txns?.h1?.sells !== undefined) && (
+                          <span dir="ltr" className="font-num">
+                            1h B/S:{' '}
+                            <strong className="text-jade">{t.txns?.h1?.buys ?? 0}</strong>/
+                            <strong className="text-loss">{t.txns?.h1?.sells ?? 0}</strong>
+                          </span>
+                        )}
                         <span dir="ltr">1h: {ch1 >= 0 ? '+' : ''}{ch1.toFixed(1)}%</span>
                       </div>
 

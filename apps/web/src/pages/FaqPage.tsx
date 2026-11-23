@@ -127,6 +127,10 @@ export function FaqPage({ lang }: { lang: Lang }) {
           'تنها کانال رسمی دلارینو @Dollarino_official و تنها ربات و پشتیبانی رسمی @Dollarino_bot (و تیکت آنلاین داخل همین وب‌اپ) هستند. دلارینو هیچ آیدی پشتیبانی متفرقه یا ادمینی که اول پیام بدهد ندارد و هرگز کلید خصوصی کیف‌پول شخصی یا دسترسی برداشت صرافی را نمی‌خواهد.',
         ],
         [
+          'تفاوت فیوچرز صرافی (Toobit / Bitunix / KCEX) با فیوچرز کیف‌پول (Perp DEX مثل Hyperliquid) چیست؟',
+          'در فیوچرز صرافی، معاملات با کلید API ترید (بدون دسترسی برداشت) داخل حساب صرافی شما اجرا می‌شوند و از تمام ربات‌ها، هوش مصنوعی و استاپ‌لاس خودکار پشتیبانی می‌کنند. اما در بخش Perp DEX (صفحه DEX و تراست‌ولت ← تب فیوچرز کیف‌پول)، شما مستقیماً از کیف‌پول شخصی خودتان روی Hyperliquid، Jupiter Perps، GMX V2 یا dYdX بدون احراز هویت (No-KYC) و با حضانت کامل خودتان معامله اهرم‌دار باز می‌کنید.',
+        ],
+        [
           'آیا سرمایه من در صرافی‌های Toobit، Bitunix و KCEX امن است؟',
           'بله، سرمایه شما در حساب صرافی خودتان می‌ماند. کلیدهای API با استاندارد AES-256 رمزنگاری می‌شوند و تنها دسترسی معامله (بدون مجوز برداشت) نیاز دارند.',
         ],
@@ -155,6 +159,10 @@ export function FaqPage({ lang }: { lang: Lang }) {
         [
           'How do Verified Profit Cards & Signal Closed cards work?',
           'Generate official 16:9 or 3:4 PNG Profit Cards (7D, 30D, 1Y, plus Copy-Trade V2 positions) with watermarked Dollarino branding, a bold LIVE vs DEMO stamp, and cryptographic verification IDs.',
+        ],
+        [
+          'What is the difference between Exchange Futures (CEX) and Wallet Futures (Perp DEX)?',
+          'Exchange Futures (Toobit / Bitunix / KCEX) execute automated bots via trade-only API keys inside your CEX account. Wallet Futures (Perp DEX like Hyperliquid, Jupiter Perps, GMX V2 & dYdX) let you trade leveraged perpetuals directly from your self-custody wallet with zero KYC.',
         ],
         [
           'How do TRC20 auto-verification and referrals work?',

@@ -483,6 +483,33 @@ export class TradingBotCoordinator implements DurableObject {
     const htfClosed = selectClosedCandles(htfRaw, cfg.higher_timeframe, now);
     if (ltfClosed.length < 40) return false;
 
+    // Volatility / News Spike Guard: block brand-new entries when the latest closed bar prints an abnormal flash spike
+    // (> 3.8x ATR-14 or > 6.5% single-bar move), while still allowing protective closes / risk-free management.
+    if (!openAny && ltfClosed.length >= 20) {
+      const latestBar = ltfClosed[ltfClosed.length - 1]!;
+      const prevBars = ltfClosed.slice(-15, -1);
+      const atr14 = prevBars.reduce((acc, b) => acc + Math.max(0, b.high - b.low), 0) / Math.max(1, prevBars.length);
+      const latestRange = Math.max(0, latestBar.high - latestBar.low);
+      const latestBodyPct = latestBar.open > 0 ? (Math.abs(latestBar.close - latestBar.open) / latestBar.open) * 100 : 0;
+      const spikeRatio = atr14 > 0 ? latestRange / atr14 : 0;
+      if ((atr14 > 0 && spikeRatio >= 3.8) || latestBodyPct >= 6.5) {
+        const guardKey = `vol_guard_${userId}_${scanSymbol}_${latestBar.timestamp}`;
+        const alreadyLogged = await this.state.storage.get<boolean>(guardKey);
+        if (!alreadyLogged) {
+          await this.state.storage.put(guardKey, true);
+          const guardNote = `سپر نوسان شدید (Volatility Guard): کندل ${scanSymbol} (${spikeRatio.toFixed(1)}× ATR) غیرعادی بود؛ ورود جدید متوقف شد.`;
+          await this.env.DB.prepare(
+            `UPDATE bot_configs SET last_ai_reason = ?, last_ai_decision_at = datetime('now') WHERE user_id = ?`
+          )
+            .bind(guardNote, userId)
+            .run()
+            .catch(() => {});
+          await logAudit(this.env.DB, userId, 'RISK', 'WARN', guardNote, scanSymbol);
+        }
+        return false;
+      }
+    }
+
     let kbosParams = mergeKbosParams();
     try {
       if (cfg.kbos_params_json) kbosParams = mergeKbosParams(JSON.parse(cfg.kbos_params_json));

@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Rocket,
+  Scale,
   ShieldAlert,
   ShieldCheck,
   Sliders,
@@ -59,6 +60,15 @@ interface CopyVaultPayload {
     solana: number;
     tronTrx: number;
     tronUsdt: number;
+  };
+  trustWalletTargets?: {
+    evm: string | null;
+    solana: string | null;
+    tron: string | null;
+  };
+  securityCaps?: {
+    hasCustomPassword: boolean;
+    hasTelegramLinked: boolean;
   };
 }
 
@@ -138,6 +148,12 @@ export function SmartCopyProHub({
     solanaSecretBase58: string;
     tronAddress: string;
   } | null>(null);
+  const [vault2faOpen, setVault2faOpen] = useState(false);
+  const [vault2faPassword, setVault2faPassword] = useState('');
+  const [vault2faPin, setVault2faPin] = useState('');
+  const [vault2faPinSent, setVault2faPinSent] = useState(false);
+  const [vault2faBusy, setVault2faBusy] = useState(false);
+  const [vault2faErr, setVault2faErr] = useState('');
 
   // Rule configuration & backtest modal
   const [ruleModalTrader, setRuleModalTrader] = useState<SmartWalletTraderItem | null>(null);
@@ -146,6 +162,20 @@ export function SmartCopyProHub({
   const [backtesting, setBacktesting] = useState(false);
   const [backtestReport, setBacktestReport] = useState<BacktestReport | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const toggleCompare = (id: string) => {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 2) return [prev[1]!, id];
+      return [...prev, id];
+    });
+  };
+  const allTradersPool = [...top10, ...customWallets];
+  const comparedTraders = compareIds
+    .map((id) => allTradersPool.find((t) => t.id === id))
+    .filter((t): t is SmartWalletTraderItem => Boolean(t));
 
   // Signal test runner & Profit card preview
   const [testingRuleId, setTestingRuleId] = useState<string | null>(null);
@@ -537,6 +567,17 @@ export function SmartCopyProHub({
               <span>{testingRuleId === activeRule.id ? '...' : isFa ? 'تست سیگنال' : 'Test'}</span>
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => toggleCompare(tr.id)}
+            className={`px-2.5 py-2 rounded-xl text-[10px] font-black inline-flex items-center gap-1 transition ${
+              compareIds.includes(tr.id) ? 'btn-cobalt' : 'btn-ghost text-dim hover:text-main'
+            }`}
+            title={isFa ? 'افزودن به مقایسه کنار هم' : 'Compare trader'}
+          >
+            <Scale className="w-3.5 h-3.5" />
+            <span>{compareIds.includes(tr.id) ? (isFa ? 'انتخاب شد' : 'Picked') : isFa ? 'مقایسه' : 'Compare'}</span>
+          </button>
           {isCustom && (
             <button
               type="button"
@@ -663,6 +704,46 @@ export function SmartCopyProHub({
           })}
         </div>
       </div>
+
+      {/* Trader Compare Floating Selection Bar */}
+      {comparedTraders.length > 0 && (
+        <div className="surface-soft rounded-2xl px-4 py-2.5 border border-[#1652f0]/40 flex flex-wrap items-center justify-between gap-2 text-xs tab-enter">
+          <div className="flex flex-wrap items-center gap-2">
+            <Scale className="w-4 h-4 text-brand shrink-0" />
+            <span className="font-black text-main">
+              {isFa
+                ? `مقایسه تریدرها (${comparedTraders.length}/2):`
+                : `Compare Traders (${comparedTraders.length}/2):`}
+            </span>
+            {comparedTraders.map((t) => (
+              <span key={t.id} className="px-2.5 py-1 rounded-xl panel text-[11px] font-bold text-main inline-flex items-center gap-1.5">
+                <ChainLogo chain={t.chain_id} size={13} />
+                <span>{t.display_name}</span>
+                <button type="button" onClick={() => toggleCompare(t.id)} className="text-dim hover:text-loss">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={comparedTraders.length < 2}
+              onClick={() => setCompareOpen(true)}
+              className="btn-cobalt px-3.5 py-1.5 rounded-xl text-[11px] font-black disabled:opacity-45"
+            >
+              {isFa ? 'نمایش جدول مقایسه کنار هم' : 'Compare Side-by-Side'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompareIds([])}
+              className="btn-ghost px-2.5 py-1.5 rounded-xl text-[11px] font-bold"
+            >
+              {isFa ? 'پاک کردن' : 'Clear'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: AUTO TOP-10 SMART WALLETS */}
       {subTab === 'top10' && (
@@ -923,22 +1004,15 @@ export function SmartCopyProHub({
               </button>
               <button
                 type="button"
-                onClick={async () => {
+                onClick={() => {
                   if (exportedKeys) {
                     setExportedKeys(null);
                     return;
                   }
-                  const ok = window.confirm(
-                    isFa
-                      ? 'آیا مطمئن هستید که می‌خواهید کلیدهای خصوصی خزانه ۲۴/۷ را نمایش دهید؟ هنگام نمایش، هشدار امنیتی به تلگرام شما نیز ارسال می‌شود.'
-                      : 'Are you sure you want to reveal your 24/7 Copy-Vault private keys? A Telegram security alert will be sent.'
-                  );
-                  if (!ok) return;
-                  const res = await apiFetch<{ keys: typeof exportedKeys; warning?: string }>('/api/copy-trade/vault/export-keys', {
-                    method: 'POST',
-                  });
-                  setExportedKeys(res.keys);
-                  if (res.warning) onMsg(res.warning);
+                  setVault2faErr('');
+                  setVault2faPassword('');
+                  setVault2faPin('');
+                  setVault2faOpen(true);
                 }}
                 className="btn-ghost px-3.5 py-1.5 rounded-xl text-xs font-bold text-amber-400 inline-flex items-center gap-1"
               >
@@ -949,11 +1023,176 @@ export function SmartCopyProHub({
                       ? 'مخفی‌کردن کلیدهای خصوصی'
                       : 'Hide Private Keys'
                     : isFa
-                      ? 'پشتیبان‌گیری و کلید خزانه (Trust Import)'
-                      : 'Export Vault Keys'}
+                      ? 'پشتیبان‌گیری و کلید خزانه (با تایید ۲ مرحله‌ای)'
+                      : 'Export Vault Keys (2FA)'}
                 </span>
               </button>
             </div>
+
+            {/* Clear Safety Cap Warning + Profit Withdraw to Trust Wallet Card */}
+            <div className="grid md:grid-cols-2 gap-3 text-xs">
+              <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-3.5 flex items-start gap-2.5">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-black text-amber-400">
+                    {isFa ? `هشدار سقف امنیتی خزانه: حداکثر $${vaultLimit} مجاز` : `Vault Safety Cap Active: Max $${vaultLimit}`}
+                  </p>
+                  <p className="text-[11px] text-sub leading-relaxed">
+                    {isFa
+                      ? 'توصیه امنیتی: فقط به اندازه بودجه معاملات ۲۴ ساعته در خزانه واریز کنید و سرمایه اصلی را همیشه داخل Trust Wallet شخصی خودتان نگه دارید.'
+                      : 'Keep only your active 24/7 copy-trading budget inside the Vault; keep your main wealth inside Trust Wallet.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-black text-jade inline-flex items-center gap-1.5">
+                    <Wallet className="w-4 h-4" />
+                    <span>{isFa ? 'برداشت و انتقال سود به Trust Wallet' : 'Withdraw Vault Profits to Trust Wallet'}</span>
+                  </p>
+                </div>
+                {vaultData?.trustWalletTargets?.evm || vaultData?.trustWalletTargets?.solana || vaultData?.trustWalletTargets?.tron ? (
+                  <div className="space-y-1 text-[10.5px] font-mono" dir="ltr">
+                    {vaultData.trustWalletTargets.evm && (
+                      <div className="flex items-center justify-between gap-2 text-sub">
+                        <span className="truncate">EVM: {vaultData.trustWalletTargets.evm}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(vaultData.trustWalletTargets!.evm!);
+                            onMsg(isFa ? 'آدرس EVM تراست‌ولت کپی شد.' : 'Trust EVM address copied.');
+                          }}
+                          className="text-jade font-sans font-bold shrink-0"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    )}
+                    {vaultData.trustWalletTargets.solana && (
+                      <div className="flex items-center justify-between gap-2 text-sub">
+                        <span className="truncate">SOL: {vaultData.trustWalletTargets.solana}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(vaultData.trustWalletTargets!.solana!);
+                            onMsg(isFa ? 'آدرس سولانا تراست‌ولت کپی شد.' : 'Trust Solana address copied.');
+                          }}
+                          className="text-jade font-sans font-bold shrink-0"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-sub">
+                    {isFa
+                      ? 'با بک‌آپ کلید خصوصی خزانه و ایمپورت آن در Trust Wallet / Phantom، هر لحظه کنترل ۱۰۰٪ دارایی و برداشت سود در اختیار کامل شماست.'
+                      : 'Import your Vault private key into Trust Wallet or Phantom anytime for 100% self-custody profit sweeps.'}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {vault2faOpen && (
+              <div className="panel rounded-2xl p-4 space-y-3 border border-amber-400/40 text-xs tab-enter">
+                <div className="flex items-center justify-between">
+                  <p className="font-black text-main inline-flex items-center gap-1.5">
+                    <KeyRound className="w-4 h-4 text-amber-400" />
+                    <span>{isFa ? 'تایید هویت ۲ مرحله‌ای قبل از نمایش کلید خصوصی خزانه' : '2-Step Verification Before Exporting Private Keys'}</span>
+                  </p>
+                  <button type="button" onClick={() => setVault2faOpen(false)} className="text-dim hover:text-main">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {vault2faErr && <p className="text-loss font-bold text-[11px]">{vault2faErr}</p>}
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-dim block">
+                      {isFa ? 'روش ۱: رمز عبور حساب کاربری' : 'Option 1: Account Password'}
+                    </label>
+                    <input
+                      type="password"
+                      value={vault2faPassword}
+                      onChange={(e) => setVault2faPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="input-field w-full py-2 px-3 rounded-xl text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] text-dim">
+                        {isFa ? 'روش ۲: کد ۶ رقمی تلگرام' : 'Option 2: 6-Digit Telegram PIN'}
+                      </label>
+                      <button
+                        type="button"
+                        disabled={vault2faBusy}
+                        onClick={async () => {
+                          setVault2faErr('');
+                          setVault2faBusy(true);
+                          try {
+                            await apiFetch('/api/copy-trade/vault/request-pin', { method: 'POST' });
+                            setVault2faPinSent(true);
+                          } catch (err) {
+                            setVault2faErr(err instanceof Error ? err.message : 'Telegram PIN failed');
+                          } finally {
+                            setVault2faBusy(false);
+                          }
+                        }}
+                        className="text-[10.5px] font-black text-brand hover:underline"
+                      >
+                        {vault2faPinSent ? (isFa ? '✓ کد ارسال شد' : '✓ Sent') : (isFa ? 'ارسال کد به تلگرام' : 'Send PIN')}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={vault2faPin}
+                      onChange={(e) => setVault2faPin(e.target.value)}
+                      dir="ltr"
+                      placeholder="123456"
+                      className="input-field w-full py-2 px-3 rounded-xl text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button type="button" onClick={() => setVault2faOpen(false)} className="btn-ghost px-3 py-1.5 rounded-xl font-bold">
+                    {isFa ? 'انصراف' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={vault2faBusy || (!vault2faPassword.trim() && !vault2faPin.trim())}
+                    onClick={async () => {
+                      setVault2faBusy(true);
+                      setVault2faErr('');
+                      try {
+                        const res = await apiFetch<{ keys: typeof exportedKeys; warning?: string }>('/api/copy-trade/vault/export-keys', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            password: vault2faPassword.trim() || undefined,
+                            pinCode: vault2faPin.trim() || undefined,
+                            requireVerification: true,
+                          }),
+                        });
+                        setExportedKeys(res.keys);
+                        setVault2faOpen(false);
+                        if (res.warning) onMsg(res.warning);
+                      } catch (err) {
+                        setVault2faErr(err instanceof Error ? err.message : 'Verification failed');
+                      } finally {
+                        setVault2faBusy(false);
+                      }
+                    }}
+                    className="btn-gold px-4 py-1.5 rounded-xl font-black disabled:opacity-50"
+                  >
+                    {vault2faBusy ? '...' : isFa ? 'تایید و نمایش کلیدها' : 'Verify & Reveal Keys'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {exportedKeys && (
               <div className="panel rounded-2xl p-4 space-y-2.5 border border-rose-500/40 text-[11px] tab-enter">
@@ -1692,6 +1931,120 @@ export function SmartCopyProHub({
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{savingRule ? '...' : isFa ? 'ذخیره و فعال‌سازی کپی‌ترید اختصاصی' : 'Save & Activate Follow Rule'}</span>
                 </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Side-by-Side Trader Compare Modal */}
+      {compareOpen &&
+        comparedTraders.length === 2 &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            dir={isFa ? 'rtl' : 'ltr'}
+            className="fixed inset-0 z-[215] bg-black/80 backdrop-blur-md p-3 sm:p-5 grid place-items-center overflow-y-auto"
+            onClick={() => setCompareOpen(false)}
+          >
+            <div className="panel rounded-[28px] max-w-2xl w-full p-5 sm:p-6 space-y-4 my-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-display font-bold text-base sm:text-lg text-main flex items-center gap-2">
+                  <Scale className="w-5 h-5 text-brand" />
+                  <span>{isFa ? 'مقایسه تخصصی ۲ تریدر پیش از کپی' : 'Side-by-Side Trader Comparison'}</span>
+                </h3>
+                <button type="button" onClick={() => setCompareOpen(false)} className="btn-ghost p-2 rounded-xl">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b hairline">
+                      <th className="py-2.5 px-2 text-start text-dim">{isFa ? 'شاخص' : 'Metric'}</th>
+                      {comparedTraders.map((t) => (
+                        <th key={t.id} className="py-2.5 px-2 text-center">
+                          <div className="inline-flex items-center gap-1.5 font-black text-main">
+                            <ChainLogo chain={t.chain_id} size={15} />
+                            <span>{t.display_name}</span>
+                          </div>
+                          <div className="text-[10px] font-normal text-dim uppercase">{t.chain_id} · {t.style_tag}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y hairline">
+                    {[
+                      {
+                        label: isFa ? 'بازده ۳۰ روزه (ROI)' : '30d ROI',
+                        vals: comparedTraders.map((t) => `${t.roi_30d_pct >= 0 ? '+' : ''}${t.roi_30d_pct}%`),
+                        bestIdx: comparedTraders[0]!.roi_30d_pct >= comparedTraders[1]!.roi_30d_pct ? 0 : 1,
+                      },
+                      {
+                        label: isFa ? 'بازده ۷ روزه' : '7d ROI',
+                        vals: comparedTraders.map((t) => `${t.roi_7d_pct >= 0 ? '+' : ''}${t.roi_7d_pct}%`),
+                        bestIdx: comparedTraders[0]!.roi_7d_pct >= comparedTraders[1]!.roi_7d_pct ? 0 : 1,
+                      },
+                      {
+                        label: isFa ? 'نرخ برد (Win Rate)' : 'Win Rate',
+                        vals: comparedTraders.map((t) => `${t.win_rate}%`),
+                        bestIdx: comparedTraders[0]!.win_rate >= comparedTraders[1]!.win_rate ? 0 : 1,
+                      },
+                      {
+                        label: isFa ? 'سود خالص محقق‌شده' : 'Realized PnL',
+                        vals: comparedTraders.map((t) => `$${Math.round(t.realized_pnl_usd).toLocaleString()}`),
+                        bestIdx: comparedTraders[0]!.realized_pnl_usd >= comparedTraders[1]!.realized_pnl_usd ? 0 : 1,
+                      },
+                      {
+                        label: isFa ? 'امتیاز امنیت توکن‌ها' : 'Token Safety Score',
+                        vals: comparedTraders.map((t) => `${t.safety_discipline_score}/100`),
+                        bestIdx: comparedTraders[0]!.safety_discipline_score >= comparedTraders[1]!.safety_discipline_score ? 0 : 1,
+                      },
+                      {
+                        label: isFa ? 'میانگین مدت نگهداری' : 'Avg Hold Time',
+                        vals: comparedTraders.map((t) => `${t.avg_hold_mins} min`),
+                        bestIdx: -1,
+                      },
+                      {
+                        label: isFa ? 'تخمین ارزش ۱۰۰$ پس از ۳۰ روز' : 'Est. $100 over 30d',
+                        vals: comparedTraders.map((t) => `$${(100 * (1 + t.roi_30d_pct / 100)).toFixed(0)}`),
+                        bestIdx: comparedTraders[0]!.roi_30d_pct >= comparedTraders[1]!.roi_30d_pct ? 0 : 1,
+                      },
+                    ].map((row) => (
+                      <tr key={row.label}>
+                        <td className="py-2.5 px-2 font-bold text-dim">{row.label}</td>
+                        {row.vals.map((v, idx) => (
+                          <td
+                            key={idx}
+                            dir="ltr"
+                            className={`py-2.5 px-2 text-center font-num font-black ${
+                              row.bestIdx === idx ? 'text-jade' : 'text-main'
+                            }`}
+                          >
+                            {v} {row.bestIdx === idx ? '★' : ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 pt-2">
+                {comparedTraders.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setCompareOpen(false);
+                      openRuleModal(t);
+                    }}
+                    className="btn-gold py-2.5 px-3 rounded-xl text-xs font-black"
+                  >
+                    {isFa ? `انتخاب و فالو ${t.display_name}` : `Follow ${t.display_name}`}
+                  </button>
+                ))}
               </div>
             </div>
           </div>,

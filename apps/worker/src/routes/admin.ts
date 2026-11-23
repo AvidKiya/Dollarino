@@ -384,19 +384,159 @@ adminRoutes.put('/settings', async (c) => {
   return c.json({ ok: true });
 });
 
-adminRoutes.post('/broadcast', async (c) => {
-  const body = await c.req.json<{ message: string }>();
-  if (!body.message?.trim()) return c.json({ error: 'Message required' }, 400);
-  if (!c.env.TELEGRAM_BOT_TOKEN) return c.json({ error: 'Global TELEGRAM_BOT_TOKEN not configured' }, 400);
+export async function executeAdminBroadcast(
+  env: Env,
+  opts: { title: string; message: string; deliverTelegram: boolean; deliverInApp: boolean }
+): Promise<{ sentTelegram: number; totalTelegram: number; deliveredInApp: number }> {
+  let sentTelegram = 0;
+  let totalTelegram = 0;
+  let deliveredInApp = 0;
 
-  const client = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
-  const targets = await c.env.DB.prepare('SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL AND is_blocked = 0')
-    .all<{ telegram_id: string }>();
-  let sent = 0;
-  for (const t of targets.results) {
-    await client.sendMessage(t.telegram_id, `📢 اطلاعیه دلارینو:\n\n${body.message}`).then(() => sent++).catch(() => {});
+  if (opts.deliverTelegram && env.TELEGRAM_BOT_TOKEN) {
+    const client = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+    const targets = await env.DB.prepare('SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL AND is_blocked = 0')
+      .all<{ telegram_id: string }>();
+    totalTelegram = targets.results.length;
+    for (const t of targets.results) {
+      await client
+        .sendMessage(t.telegram_id, `📢 **${opts.title}**\n\n${opts.message}`)
+        .then(() => sentTelegram++)
+        .catch(() => {});
+    }
   }
-  return c.json({ ok: true, sent, total: targets.results.length });
+
+  if (opts.deliverInApp) {
+    const activeUsers = await env.DB.prepare('SELECT id FROM users WHERE is_blocked = 0 LIMIT 500')
+      .all<{ id: string }>();
+    const stmts = activeUsers.results.map((u) =>
+      env.DB.prepare(
+        `INSERT INTO notifications (id, user_id, category, title, body, is_read) VALUES (?, ?, 'SYSTEM', ?, ?, 0)`
+      ).bind(randomId('ntf'), u.id, opts.title, opts.message.slice(0, 600))
+    );
+    for (let i = 0; i < stmts.length; i += 80) {
+      await env.DB.batch(stmts.slice(i, i + 80));
+    }
+    deliveredInApp = activeUsers.results.length;
+  }
+
+  return { sentTelegram, totalTelegram, deliveredInApp };
+}
+
+export async function dispatchDueScheduledBroadcasts(env: Env): Promise<number> {
+  const due = await env.DB.prepare(
+    `SELECT * FROM scheduled_broadcasts
+     WHERE status = 'SCHEDULED' AND scheduled_at IS NOT NULL AND scheduled_at <= datetime('now')
+     ORDER BY scheduled_at ASC LIMIT 5`
+  )
+    .all<{
+      id: string;
+      title: string;
+      message: string;
+      deliver_telegram: number;
+      deliver_inapp: number;
+    }>()
+    .catch(() => ({ results: [] }));
+
+  let dispatched = 0;
+  for (const row of due.results) {
+    const res = await executeAdminBroadcast(env, {
+      title: row.title || 'اطلاعیه دلارینو',
+      message: row.message,
+      deliverTelegram: Boolean(row.deliver_telegram),
+      deliverInApp: Boolean(row.deliver_inapp),
+    });
+    await env.DB.prepare(
+      `UPDATE scheduled_broadcasts SET status = 'SENT', sent_count = ?, sent_at = datetime('now') WHERE id = ?`
+    )
+      .bind(Math.max(res.sentTelegram, res.deliveredInApp), row.id)
+      .run()
+      .catch(() => {});
+    dispatched++;
+  }
+  return dispatched;
+}
+
+adminRoutes.get('/broadcasts', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM scheduled_broadcasts ORDER BY created_at DESC LIMIT 25`
+  )
+    .all()
+    .catch(() => ({ results: [] }));
+  return c.json({ ok: true, broadcasts: rows.results });
+});
+
+adminRoutes.delete('/broadcasts/:id', async (c) => {
+  const id = c.req.param('id');
+  await c.env.DB.prepare(`DELETE FROM scheduled_broadcasts WHERE id = ? AND status = 'SCHEDULED'`).bind(id).run();
+  const rows = await c.env.DB.prepare(`SELECT * FROM scheduled_broadcasts ORDER BY created_at DESC LIMIT 25`)
+    .all()
+    .catch(() => ({ results: [] }));
+  return c.json({ ok: true, broadcasts: rows.results });
+});
+
+adminRoutes.post('/broadcast', async (c) => {
+  const actor = c.get('user');
+  const body = await c.req.json<{
+    title?: string;
+    message: string;
+    deliverTelegram?: boolean;
+    deliverInApp?: boolean;
+    scheduledAt?: string | null;
+  }>();
+  const text = body.message?.trim();
+  if (!text) return c.json({ error: 'متن اطلاعیه الزامی است.' }, 400);
+
+  const title = (body.title || 'اطلاعیه رسمی دلارینو').trim().slice(0, 120);
+  const deliverTelegram = body.deliverTelegram !== false;
+  const deliverInApp = body.deliverInApp !== false;
+
+  if (deliverTelegram && !deliverInApp && !c.env.TELEGRAM_BOT_TOKEN && !body.scheduledAt) {
+    return c.json({ error: 'Global TELEGRAM_BOT_TOKEN not configured' }, 400);
+  }
+
+  let scheduledIso: string | null = null;
+  if (body.scheduledAt && String(body.scheduledAt).trim()) {
+    const parsedMs = Date.parse(String(body.scheduledAt));
+    if (Number.isFinite(parsedMs) && parsedMs > Date.now() + 15_000) {
+      scheduledIso = new Date(parsedMs).toISOString().replace('T', ' ').slice(0, 19);
+    }
+  }
+
+  const bid = randomId('brd');
+  if (scheduledIso) {
+    await c.env.DB.prepare(
+      `INSERT INTO scheduled_broadcasts (id, title, message, deliver_telegram, deliver_inapp, scheduled_at, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'SCHEDULED', ?)`
+    )
+      .bind(bid, title, text, deliverTelegram ? 1 : 0, deliverInApp ? 1 : 0, scheduledIso, actor.id)
+      .run();
+    return c.json({ ok: true, scheduled: true, id: bid, scheduledAt: scheduledIso, sent: 0, total: 0 });
+  }
+
+  const res = await executeAdminBroadcast(c.env, { title, message: text, deliverTelegram, deliverInApp });
+  await c.env.DB.prepare(
+    `INSERT INTO scheduled_broadcasts (id, title, message, deliver_telegram, deliver_inapp, status, sent_count, created_by, sent_at)
+     VALUES (?, ?, ?, ?, ?, 'SENT', ?, ?, datetime('now'))`
+  )
+    .bind(
+      bid,
+      title,
+      text,
+      deliverTelegram ? 1 : 0,
+      deliverInApp ? 1 : 0,
+      Math.max(res.sentTelegram, res.deliveredInApp),
+      actor.id
+    )
+    .run()
+    .catch(() => {});
+
+  return c.json({
+    ok: true,
+    scheduled: false,
+    sent: res.sentTelegram,
+    total: res.totalTelegram,
+    deliveredInApp: res.deliveredInApp,
+  });
 });
 
 // =========================================================================

@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
+  BrainCircuit,
   Download,
   Eye,
   EyeOff,
   RefreshCw,
   RotateCcw,
   Search,
+  Sparkles,
   X,
   Zap,
 } from 'lucide-react';
@@ -58,6 +60,132 @@ export function PortfolioPage({
   const [hideZero, setHideZero] = useState(false);
   const [notice, setNotice] = useState('');
   const [hideBal, setHideBal] = useState(false);
+  const [coachAiBusy, setCoachAiBusy] = useState(false);
+  const [coachAiNote, setCoachAiNote] = useState<string | null>(null);
+
+  const coachStats = useMemo(() => {
+    const trades = data.closedTrades || [];
+    const total = trades.length;
+    if (total === 0) {
+      return {
+        total: 0,
+        winRate: 0,
+        longWinRate: 0,
+        shortWinRate: 0,
+        longPnl: 0,
+        shortPnl: 0,
+        avgWin: 0,
+        avgLoss: 0,
+        rrRatio: 0,
+        bestSymbol: '—',
+        bestSymbolPnl: 0,
+        worstSymbol: '—',
+        worstSymbolPnl: 0,
+        insightFa:
+          'هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین معاملات، مربی هوش مصنوعی الگوی برد و باخت، بهترین ارز و توصیه بهینه‌سازی را اینجا نشان می‌دهد.',
+        insightEn:
+          'No closed trades yet. Once your first trades close, AI Performance Coach analyzes your win rate, direction bias, and R:R discipline.',
+      };
+    }
+
+    let wins = 0;
+    let winSum = 0;
+    let lossCount = 0;
+    let lossSum = 0;
+    let longCount = 0;
+    let longWins = 0;
+    let longPnl = 0;
+    let shortCount = 0;
+    let shortWins = 0;
+    let shortPnl = 0;
+    const bySym = new Map<string, number>();
+
+    for (const t of trades) {
+      const pnl = Number(t.realized_pnl || 0);
+      if (pnl > 0) {
+        wins += 1;
+        winSum += pnl;
+      } else if (pnl < 0) {
+        lossCount += 1;
+        lossSum += Math.abs(pnl);
+      }
+      if (t.direction === 'LONG') {
+        longCount += 1;
+        longPnl += pnl;
+        if (pnl > 0) longWins += 1;
+      } else {
+        shortCount += 1;
+        shortPnl += pnl;
+        if (pnl > 0) shortWins += 1;
+      }
+      bySym.set(t.symbol, (bySym.get(t.symbol) ?? 0) + pnl);
+    }
+
+    const avgWin = wins > 0 ? winSum / wins : 0;
+    const avgLoss = lossCount > 0 ? lossSum / lossCount : 0;
+    const rrRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 2 : 0;
+    const winRate = (wins / total) * 100;
+    const longWinRate = longCount > 0 ? (longWins / longCount) * 100 : 0;
+    const shortWinRate = shortCount > 0 ? (shortWins / shortCount) * 100 : 0;
+
+    const symList = [...bySym.entries()].sort((a, b) => b[1] - a[1]);
+    const bestSymbol = symList[0]?.[0] ?? '—';
+    const bestSymbolPnl = symList[0]?.[1] ?? 0;
+    const worstSymbol = symList[symList.length - 1]?.[0] ?? '—';
+    const worstSymbolPnl = symList[symList.length - 1]?.[1] ?? 0;
+
+    let insightFa = '';
+    let insightEn = '';
+    if (shortCount >= 2 && shortPnl < -Math.abs(longPnl) * 0.5 && longPnl >= 0) {
+      insightFa = `پیشنهاد مربی AI: در جهت LONG عملکرد قوی دارید (${longWinRate.toFixed(0)}% برد)، اما معاملات SHORT عامل اصلی افت شما بوده‌اند (${shortPnl.toFixed(1)}$). پیشنهاد می‌شود موقتاً جهت ربات را روی «فقط لانگ» بگذارید یا تایم‌فریم ورود را بالاتر ببرید.`;
+      insightEn = `AI Coach Advice: Your LONG trades perform strongly (${longWinRate.toFixed(0)}% WR), while SHORT trades caused $${Math.abs(shortPnl).toFixed(1)} loss. Consider switching to Long Only or higher timeframe confirmation.`;
+    } else if (avgLoss > avgWin * 1.25 && lossCount > 0) {
+      insightFa = `پیشنهاد مربی AI: میانگین ضرر شما ($${avgLoss.toFixed(1)}) از میانگین سود ($${avgWin.toFixed(1)}) بیشتر است. نسبت R:R فعلی (${rrRatio.toFixed(2)}) نیاز به نزدیک‌تر کردن استاپ‌لاس یا ذخیره سود در TP2/TP3 دارد.`;
+      insightEn = `AI Coach Advice: Avg loss ($${avgLoss.toFixed(1)}) exceeds avg win ($${avgWin.toFixed(1)}). Tighten stop-loss or trail winners toward TP2/TP3 to lift R:R above 1.5.`;
+    } else if (winRate >= 55 && rrRatio >= 1.1) {
+      insightFa = `تبریک! انضباط معاملاتی شما عالی است: وین‌ریت ${winRate.toFixed(0)}% با نسبت سود به ضرر ${rrRatio.toFixed(2)}. بهترین عملکرد شما روی ${bestSymbol} (+$${bestSymbolPnl.toFixed(1)}) ثبت شده است.`;
+      insightEn = `Great discipline: ${winRate.toFixed(0)}% Win Rate with ${rrRatio.toFixed(2)} R:R. Top performer: ${bestSymbol} (+$${bestSymbolPnl.toFixed(1)}).`;
+    } else {
+      insightFa = `تحلیل عملکرد: از ${total} معامله، ${winRate.toFixed(0)}% با موفقیت بسته شده‌اند. بهترین نماد ${bestSymbol} و پرریسک‌ترین نماد ${worstSymbol} بوده است.`;
+      insightEn = `Summary: ${winRate.toFixed(0)}% win rate over ${total} trades. Best: ${bestSymbol}, Weakest: ${worstSymbol}.`;
+    }
+
+    return {
+      total,
+      winRate,
+      longWinRate,
+      shortWinRate,
+      longPnl,
+      shortPnl,
+      avgWin,
+      avgLoss,
+      rrRatio,
+      bestSymbol,
+      bestSymbolPnl,
+      worstSymbol,
+      worstSymbolPnl,
+      insightFa,
+      insightEn,
+    };
+  }, [data.closedTrades]);
+
+  const askAiCoachDeepAnalysis = async () => {
+    setCoachAiBusy(true);
+    try {
+      const prompt = isFa
+        ? `به عنوان مربی حرفه‌ای ترید، این آمار عملکرد واقعی حساب من را بررسی کن و ۳ راهکار کوتاه و دقیق برای بالا بردن سود و کاهش ریسک بده:\nتعداد ترید: ${coachStats.total} | وین‌ریت: ${coachStats.winRate.toFixed(1)}% | وین‌ریت لانگ: ${coachStats.longWinRate.toFixed(0)}% (${coachStats.longPnl.toFixed(1)}$) | وین‌ریت شورت: ${coachStats.shortWinRate.toFixed(0)}% (${coachStats.shortPnl.toFixed(1)}$) | میانگین سود: $${coachStats.avgWin.toFixed(1)} | میانگین ضرر: $${coachStats.avgLoss.toFixed(1)} | بهترین ارز: ${coachStats.bestSymbol} | بدترین ارز: ${coachStats.worstSymbol}`
+        : `Act as a pro trading coach and give 3 crisp actionable improvements for my account stats: Trades=${coachStats.total}, WR=${coachStats.winRate.toFixed(1)}%, LongWR=${coachStats.longWinRate.toFixed(0)}% ($${coachStats.longPnl.toFixed(1)}), ShortWR=${coachStats.shortWinRate.toFixed(0)}% ($${coachStats.shortPnl.toFixed(1)}), AvgWin=$${coachStats.avgWin.toFixed(1)}, AvgLoss=$${coachStats.avgLoss.toFixed(1)}, Best=${coachStats.bestSymbol}, Worst=${coachStats.worstSymbol}`;
+      const res = await apiFetch<{ reply: string }>('/api/ai-assistant/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: prompt }),
+      });
+      setCoachAiNote(res.reply);
+    } catch {
+      setCoachAiNote(isFa ? coachStats.insightFa : coachStats.insightEn);
+    } finally {
+      setCoachAiBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (ledgerTab === 'logs') {
@@ -416,6 +544,69 @@ export function PortfolioPage({
         </div>
         <div className="h-44">
           <AreaChart values={curvePoints} height={170} />
+        </div>
+      </div>
+
+      {/* 5.5 AI Performance Coach Card */}
+      <div className="panel rounded-[26px] p-5 space-y-3 border border-[#1652f0]/25">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl btn-cobalt grid place-items-center shrink-0">
+              <BrainCircuit className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-sm sm:text-base text-main flex items-center gap-1.5">
+                <span>{isFa ? 'مربی هوشمند عملکرد (AI Performance Coach)' : 'AI Performance Coach'}</span>
+              </h3>
+              <p className="text-[11px] text-dim">
+                {isFa ? 'تحلیل الگوی برد و باخت، لانگ در برابر شورت و نسبت ریسک به ریوارد' : 'Automated review of Long vs Short edge, R:R, and top symbols'}
+              </p>
+            </div>
+          </div>
+          {coachStats.total > 0 && (
+            <button
+              type="button"
+              disabled={coachAiBusy}
+              onClick={() => void askAiCoachDeepAnalysis()}
+              className="btn-cobalt px-3.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{coachAiBusy ? '...' : isFa ? 'تحلیل عمیق با AI' : 'Deep AI Review'}</span>
+            </button>
+          )}
+        </div>
+
+        {coachStats.total > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+            <div className="surface-soft rounded-2xl p-2.5">
+              <p className="text-[10px] text-dim">{isFa ? 'برد LONG / SHORT' : 'Long / Short WR'}</p>
+              <p dir="ltr" className="font-num font-black text-main mt-0.5">
+                {coachStats.longWinRate.toFixed(0)}% / {coachStats.shortWinRate.toFixed(0)}%
+              </p>
+            </div>
+            <div className="surface-soft rounded-2xl p-2.5">
+              <p className="text-[10px] text-dim">{isFa ? 'نسبت R:R واقعی' : 'Realized R:R'}</p>
+              <p dir="ltr" className="font-num font-black text-jade mt-0.5">
+                {coachStats.rrRatio.toFixed(2)}×
+              </p>
+            </div>
+            <div className="surface-soft rounded-2xl p-2.5">
+              <p className="text-[10px] text-dim">{isFa ? 'بهترین ارز' : 'Best Coin'}</p>
+              <p dir="ltr" className="font-num font-black text-jade mt-0.5">
+                {coachStats.bestSymbol.replace('USDT', '')}
+              </p>
+            </div>
+            <div className="surface-soft rounded-2xl p-2.5">
+              <p className="text-[10px] text-dim">{isFa ? 'پرضررترین ارز' : 'Weakest Coin'}</p>
+              <p dir="ltr" className="font-num font-black text-loss mt-0.5">
+                {coachStats.worstSymbol.replace('USDT', '')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="surface-soft rounded-2xl p-3.5 text-xs text-sub leading-relaxed whitespace-pre-wrap">
+          {coachAiNote ?? (isFa ? coachStats.insightFa : coachStats.insightEn)}
         </div>
       </div>
 

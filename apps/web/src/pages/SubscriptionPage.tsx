@@ -865,6 +865,37 @@ export function SubscriptionPage({
             </span>
           </div>
 
+          {/* Step-by-Step Visual Checkout Guide */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+            {[
+              {
+                n: '۱',
+                t: isFa ? 'انتخاب روش پرداخت' : '1. Pick Method',
+                d: isFa ? 'تتر TRC20 (تایید خودکار)، Trust Wallet BEP20 (کم‌کارمزد) یا کارت به کارت.' : 'Auto TRC20, low-fee BEP20 Trust Wallet, or Card-to-Card.',
+              },
+              {
+                n: '۲',
+                t: isFa ? 'واریز دقیق و کپی TXID' : '2. Transfer & Copy TXID',
+                d: isFa ? 'مبلغ را به آدرس نمایش‌داده‌شده بزنید و کد پیگیری یا عکس رسید را بگذارید.' : 'Send exact amount and paste TXID or screenshot.',
+              },
+              {
+                n: '۳',
+                t: isFa ? 'فعال‌سازی فوری اشتراک' : '3. Instant Activation',
+                d: isFa ? 'تراکنش TRC20/BEP20 روی بلاک‌چین خودکار چک و اشتراک همان لحظه فعال می‌شود.' : 'On-chain TXID activates Pro/VIP immediately.',
+              },
+            ].map((st) => (
+              <div key={st.n} className="surface-soft rounded-2xl p-3 border hairline flex items-start gap-2.5">
+                <span className="h-6 w-6 rounded-full btn-cobalt text-[11px] font-black grid place-items-center shrink-0">
+                  {st.n}
+                </span>
+                <div>
+                  <p className="font-black text-main">{st.t}</p>
+                  <p className="text-[10.5px] text-dim leading-relaxed mt-0.5">{st.d}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
           {/* Step 1: Select Payment Method */}
           <div className="space-y-2">
             <p className="text-xs font-black text-main">

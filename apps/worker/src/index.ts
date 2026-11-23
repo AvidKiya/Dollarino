@@ -13,7 +13,7 @@ import {
   runPublicGuestAIChat,
 } from './ai/assistant.js';
 import { buildClientFingerprints, enforceRateLimit } from './security.js';
-import { adminRoutes } from './routes/admin.js';
+import { adminRoutes, dispatchDueScheduledBroadcasts } from './routes/admin.js';
 import { aiAssistantRoutes } from './routes/ai-assistant.js';
 import { buildProfitCardSvg, renderProfitCardPng } from './cards/renderer.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
@@ -555,6 +555,7 @@ export default {
 
       await runAlwaysOnSignalRadar(env, { fromCron: true }).catch(() => {});
       await runAlwaysOnAiIntel(env, { fromCron: true }).catch(() => {});
+      await dispatchDueScheduledBroadcasts(env).catch(() => {});
       if (!activity || activity.has_copy_watch) {
         await pollWatchedWalletsForNewTrades(env).catch(() => {});
       }

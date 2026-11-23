@@ -53,7 +53,6 @@ import { formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow } from '../lib/types';
-import { ModeGraphicAI, ModeGraphicCodex, ModeGraphicTelegram } from '../components/BrandGraphics';
 import { CoinIcon } from '../components/CoinIcon';
 import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '../components/DollarinoViz';
 import { QuickWidgetsBar } from '../components/QuickWidgetsBar';
@@ -169,6 +168,21 @@ export function OverviewPage({
   const [simpleTradesTab, setSimpleTradesTab] = useState<'open' | 'closed'>('open');
   const [aiScanBusy, setAiScanBusy] = useState(false);
   const [aiScanResults, setAiScanResults] = useState<AiScanResultItem[]>([]);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('dollarino_onboarding_dismissed_v1') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismissOnboarding = () => {
+    setOnboardingDismissed(true);
+    try {
+      localStorage.setItem('dollarino_onboarding_dismissed_v1', '1');
+    } catch {
+      /* ignore */
+    }
+  };
 
   const runAiInstantScan = async (autoExecute = false) => {
     setAiScanBusy(true);
@@ -505,6 +519,57 @@ export function OverviewPage({
 
         {/* Animated Promo Carousel (Managed from Admin Banners Tab) */}
         <PromoBannerCarousel lang={lang} placement="DASHBOARD" onNavigateTab={onNavigate} />
+
+        {/* Clean 60-Second Onboarding Checklist for New / Idle Simple Mode Users */}
+        {!onboardingDismissed && (!isRunning || data.closedTrades.length === 0) && (
+          <section className="panel rounded-[26px] p-4 sm:p-5 border border-[#1652f0]/25 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#1652f0]" />
+                <h2 className="font-display font-bold text-xs sm:text-sm text-main">
+                  {isFa ? 'شروع سریع ۶۰ ثانیه‌ای (۳ گام ساده)' : '60-Second Quick Start (3 Easy Steps)'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={dismissOnboarding}
+                className="text-[11px] font-bold text-dim hover:text-main inline-flex items-center gap-1"
+              >
+                <span>{isFa ? 'بستن راهنما' : 'Dismiss'}</span>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="surface-soft rounded-2xl p-3 flex items-start gap-2.5 border hairline">
+                <span className="w-6 h-6 rounded-full btn-cobalt text-[11px] font-black grid place-items-center shrink-0">1</span>
+                <div>
+                  <p className="font-black text-main">{isFa ? 'موتور را انتخاب کن' : 'Pick Your Engine'}</p>
+                  <p className="text-[10.5px] text-dim mt-0.5">
+                    {isFa ? '«هوش مصنوعی دلارینو» یا «کپی‌ترید» را پایین علامت بزن.' : 'Choose Dollarino AI or Copy Trade below.'}
+                  </p>
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3 flex items-start gap-2.5 border hairline">
+                <span className="w-6 h-6 rounded-full bg-jade/20 text-jade text-[11px] font-black grid place-items-center shrink-0">2</span>
+                <div>
+                  <p className="font-black text-main">{isFa ? 'ریسک را تنظیم کن' : 'Set Comfort Risk'}</p>
+                  <p className="text-[10.5px] text-dim mt-0.5">
+                    {isFa ? 'حالت کم‌ریسک، متعادل یا پرقدرت را برگزین.' : 'Select Conservative, Balanced, or Pro risk.'}
+                  </p>
+                </div>
+              </div>
+              <div className="surface-soft rounded-2xl p-3 flex items-start gap-2.5 border hairline">
+                <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 text-[11px] font-black grid place-items-center shrink-0">3</span>
+                <div>
+                  <p className="font-black text-main">{isFa ? 'دکمه شروع را بزن' : 'Tap Start Trading'}</p>
+                  <p className="text-[10.5px] text-dim mt-0.5">
+                    {isFa ? 'روی «شروع ترید هوشمند» بزن و گزارش لحظه‌ای ببین.' : 'Tap Start Automated AI Trading to go live.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Row 1: Unified Cupertino Wallet Hero (5 cols) + 2-Step AI Setup (7 cols) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
@@ -1081,19 +1146,6 @@ export function OverviewPage({
           </section>
         </div>
 
-        {/* Row 3: Quick Mobile Widgets & Browser Extension */}
-        <QuickWidgetsBar
-          lang={lang}
-          uiMode={uiMode}
-          user={user}
-          dashboard={data}
-          onToggleBot={handleStartStop}
-          onKillSwitch={handleKillSwitch}
-          onToggleUiMode={onToggleUiMode}
-          onNavigate={onNavigate}
-          onUserUpdated={onRefresh}
-        />
-
         {renderSharedModals()}
       </div>
     );
@@ -1117,18 +1169,6 @@ export function OverviewPage({
           <button type="button" onClick={() => setErrorMsg(null)}><X className="w-4 h-4" /></button>
         </div>
       )}
-
-      <QuickWidgetsBar
-        lang={lang}
-        uiMode={uiMode}
-        user={user}
-        dashboard={data}
-        onToggleBot={handleStartStop}
-        onKillSwitch={handleKillSwitch}
-        onToggleUiMode={onToggleUiMode}
-        onNavigate={onNavigate}
-        onUserUpdated={onRefresh}
-      />
 
       {/* 1. Signature Overview Hero + Live Equity Card */}
       <section className="grid lg:grid-cols-[1.05fr_1fr] gap-8 items-center">
@@ -1317,45 +1357,7 @@ export function OverviewPage({
         </div>
       </section>
 
-      {/* 2. Kifpool-inspired Quick Services Grid */}
-      <section className="panel rounded-[26px] p-4 sm:p-5">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-black text-main flex items-center gap-2">
-            <Zap className="w-4 h-4" style={{ color: 'var(--gold)' }} />
-            <span>{isFa ? 'دسترسی سریع ابزارهای پلتفرم' : 'Quick Desk Shortcuts'}</span>
-          </p>
-          <span className="text-[11px] text-dim">{data.activeExchange?.label || 'Paper Desk'}</span>
-        </div>
-        <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 text-center text-[11px] font-bold">
-          {[
-            { icon: CandlestickChart, label: isFa ? 'پایانه و AI' : 'Terminal', onClick: () => onNavigate('terminal'), color: '#2b74ff' },
-            { icon: WandSparkles, label: isFa ? 'راه‌اندازی ۴م' : 'Wizard', onClick: () => setWizardOpen(true), color: '#e8c15a' },
-            { icon: Radar, label: isFa ? 'رادار زنده' : 'AI Radar', onClick: () => onNavigate('radar'), color: '#10d9a3' },
-            { icon: BarChart3, label: isFa ? 'بک‌تست' : 'Backtest', onClick: () => onNavigate('radar'), color: '#38e1ff' },
-            { icon: Bot, label: isFa ? 'کپی‌ترید' : 'Copy Trade', onClick: () => onNavigate('copy'), color: '#ff8a00' },
-            { icon: KeyRound, label: isFa ? 'صرافی واقعی' : 'Exchanges', onClick: () => onNavigate('copy'), color: '#a855f7' },
-            { icon: Wallet, label: isFa ? 'پورتفوی' : 'Portfolio', onClick: () => onNavigate('portfolio'), color: '#10d9a3' },
-            { icon: Layers, label: isFa ? 'کارت هفته' : 'Card PNG', onClick: () => onNavigate('card'), color: '#e8c15a' },
-          ].map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.label}
-                type="button"
-                onClick={item.onClick}
-                className="surface-soft rounded-2xl py-3 px-1.5 flex flex-col items-center gap-1.5 hover:border-[var(--gold)] transition"
-              >
-                <span className="h-9 w-9 rounded-xl grid place-items-center" style={{ background: `${item.color}1a`, color: item.color }}>
-                  <Icon className="w-4 h-4" />
-                </span>
-                <span className="text-main truncate w-full">{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* 3. Autonomous Trading Team + Full Strategy & Timeframe Selector */}
+      {/* 2. Autonomous Trading Team + Full Strategy & Timeframe Selector */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -1407,49 +1409,161 @@ export function OverviewPage({
           </div>
         </div>
 
-        {/* Live AI Core Connection & Instant Scan Strip (Pro Mode) */}
-        <div className="panel rounded-[26px] p-4 sm:p-5 border border-blue-500/20 bg-gradient-to-br from-blue-600/10 via-transparent to-emerald-500/10 space-y-3">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
-            <img
-              src="/images/ai-consensus-brain.png"
-              alt="Dollarino AI Core"
-              className="w-full md:w-44 h-24 rounded-2xl object-cover shrink-0 border hairline"
-            />
-            <div className="flex-1 min-w-0 space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 text-xs font-black text-jade">
-                  <span className="h-2 w-2 rounded-full bg-jade live-dot" />
-                  {isFa ? 'موتور هوش مصنوعی متصل و آماده معامله خودکار' : 'Central AI Engine Connected & Trading Ready'}
-                </span>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-bold">
-                  {isFa ? data.platformAI?.effectiveModeLabelFa || 'هوش مصنوعی دلارینو' : data.platformAI?.effectiveModeLabelEn || 'Dollarino AI'}
-                </span>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          {[
+            {
+              id: 'ai' as const,
+              active: activeStrategy === 'ai_autonomous_agent',
+              icon: BrainCircuit,
+              code: 'DOLLARINO AI',
+              title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
+              desc: isFa ? 'اجماع چند مدل هوش مصنوعی روی ساختار بازار بدون نیاز به کلید API شخصی.' : 'Consensus Multi-LLM engine managed centrally by Dollarino.',
+              win: 74,
+              color: '#e8c15a',
+              onClick: () =>
+                void patchConfig(
+                  { strategy_key: 'ai_autonomous_agent', ai_gate_enabled: 1 },
+                  isFa ? 'هوش مصنوعی دلارینو فعال شد' : 'Dollarino AI activated'
+                ),
+            },
+            {
+              id: 'myai' as const,
+              active: activeStrategy === 'my_custom_ai',
+              icon: Bot,
+              code: 'RAW PERSONAL AI',
+              title: isFa ? 'هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
+              desc: isFa ? 'به زبان فارسی به ربات یاد بده چطور معامله کند و مستقیم روی چارت اجرا شود.' : 'Teach your personal AI rules in chat and execute 24/7.',
+              win: 76,
+              color: '#a855f7',
+              onClick: () => onNavigate('myai'),
+            },
+            {
+              id: 'dorna' as const,
+              active: activeStrategy !== 'ai_autonomous_agent' && activeStrategy !== 'my_custom_ai' && activeStrategy !== 'copy_trade',
+              icon: Crosshair,
+              code: 'HUNTING · ۲ بخش',
+              title: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
+              desc: isFa
+                ? 'دارای ۲ بخش: ۱) استراتژی‌های آماده ما (دُرنا V1، KBOS، SP2L) و ۲) استراتژی شخصی شما.'
+                : '2 sub-modes: Our preset hunters (Dorna V1, KBOS, SP2L) OR your custom Pine/Python strategy.',
+              win: 68,
+              color: '#10d9a3',
+              onClick: () =>
+                void patchConfig(
+                  { strategy_key: 'dollarino_v01', ai_gate_enabled: 0 },
+                  isFa ? 'استراتژی شکار (دُرنا V1) فعال شد' : 'Hunting Strategy activated'
+                ),
+            },
+            {
+              id: 'copy' as const,
+              active: activeStrategy === 'copy_trade',
+              icon: Trophy,
+              code: 'COPY TRADE',
+              title: isFa ? 'کپی‌ترید تاییدشده دلارینو' : 'Verified Copy-Trade',
+              desc: isFa ? 'کپی خودکار معاملات تریدرهای تاییدشده، ولت‌های نهنگ و سیگنال‌های @Dollarino_official.' : 'Instant sub-second mirroring of verified traders & @Dollarino_official.',
+              win: 79,
+              color: '#38e1ff',
+              onClick: () => onNavigate('copy'),
+            },
+          ].map((e) => {
+            const Icon = e.icon;
+            return (
+            <div
+              key={e.id}
+              onClick={e.onClick}
+              className={`cursor-pointer panel panel-hover rounded-[24px] p-4 sm:p-5 flex flex-col justify-between gap-3 relative ${
+                e.active ? 'ring-2 ring-[var(--gold)]' : ''
+              }`}
+            >
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="h-9 w-9 rounded-xl grid place-items-center shrink-0" style={{ background: `${e.color}1e`, color: e.color }}>
+                    <Icon className="w-4 h-4" />
+                  </span>
+                  <span dir="ltr" className="text-[10px] font-black tracking-widest px-2 py-0.5 rounded-full shrink-0" style={{ background: `${e.color}1c`, color: e.color }}>
+                    {e.code}
+                  </span>
+                </div>
+                <h3 className="font-display font-bold text-sm sm:text-base text-main">{e.title}</h3>
+                <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
               </div>
-              <p className="text-xs text-sub leading-relaxed">
-                {isFa
-                  ? 'هوش مصنوعی مرکزی دلارینو ۲۴ ساعته کندل‌های کل بازار را پایش می‌کند. می‌توانید هم‌اکنون بازار را اسکن کنید یا اجرای فوری AI را بزنید.'
-                  : 'Dollarino AI continuously scans all markets. Trigger an instant market scan or execute live AI signals now.'}
-              </p>
-              <div className="flex flex-wrap gap-2 pt-0.5">
-                <button
-                  type="button"
-                  disabled={aiScanBusy}
-                  onClick={() => void runAiInstantScan(false)}
-                  className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
-                >
-                  <Radar className="w-4 h-4" />
-                  <span>{aiScanBusy ? '...' : isFa ? 'اسکن لحظه‌ای کل بازار با AI' : 'Instant AI Market Scan'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={aiScanBusy}
-                  onClick={() => void runAiInstantScan(true)}
-                  className="btn-emerald px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>{isFa ? 'شکار و اجرای معامله فوری AI' : 'Scan & Auto-Execute Trade'}</span>
-                </button>
+              <div className="space-y-2">
+                {e.id === 'dorna' && (
+                  <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => void patchConfig({ strategy_key: 'dollarino_v01', ai_gate_enabled: 0 }, isFa ? 'استراتژی آماده دُرنا V1 انتخاب شد' : 'Dorna V1 selected')}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-jade text-[10px] font-black hover:bg-emerald-500/25"
+                    >
+                      {isFa ? 'آماده (دُرنا)' : 'Presets'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('radar')}
+                      className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand text-[10px] font-black hover:opacity-85"
+                    >
+                      {isFa ? 'کد شخصی (IDE)' : 'Custom IDE'}
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs font-black pt-2 border-t hairline" style={{ color: e.color }}>
+                  <span className="inline-flex items-center gap-1">
+                    {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>{e.active ? (isFa ? 'فعال' : 'Active') : isFa ? 'انتخاب' : 'Select'}</span>
+                  </span>
+                  <span>{e.win}% WR</span>
+                </div>
               </div>
+            </div>
+            );
+          })}
+        </div>
+
+        {/* Compact Live AI Core Bar & Instant Market Scan */}
+        <div className="panel rounded-[22px] p-4 border border-blue-500/20 bg-gradient-to-br from-blue-600/8 via-transparent to-emerald-500/8 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl btn-cobalt grid place-items-center shrink-0">
+                <BrainCircuit className="w-4 h-4 text-white" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-black text-jade">
+                    <span className="h-2 w-2 rounded-full bg-jade live-dot" />
+                    {isFa ? 'اسکن لحظه‌ای و اجماع زنده AI' : 'Live AI Market Scan & Auto-Execute'}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-bold">
+                    {isFa ? data.platformAI?.effectiveModeLabelFa || 'هوش مصنوعی دلارینو' : data.platformAI?.effectiveModeLabelEn || 'Dollarino AI'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-dim truncate">
+                  {data.config.last_ai_reason
+                    ? data.config.last_ai_reason
+                    : isFa
+                      ? 'بررسی آنی بهترین فرصت‌های خرید و فروش کل بازار با حد ضرر خودکار'
+                      : 'Scan top market pairs instantly with automated SL & 3-TP planning.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={aiScanBusy}
+                onClick={() => void runAiInstantScan(false)}
+                className="btn-cobalt px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <Radar className="w-3.5 h-3.5" />
+                <span>{aiScanBusy ? '...' : isFa ? 'اسکن لحظه‌ای کل بازار' : 'Instant AI Scan'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={aiScanBusy}
+                onClick={() => void runAiInstantScan(true)}
+                className="btn-emerald px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{isFa ? 'شکار و اجرای فوری AI' : 'Scan & Execute'}</span>
+              </button>
             </div>
           </div>
 
@@ -1485,117 +1599,6 @@ export function OverviewPage({
               ))}
             </div>
           )}
-        </div>
-
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {[
-            {
-              id: 'ai' as const,
-              active: activeStrategy === 'ai_autonomous_agent',
-              art: <ModeGraphicAI />,
-              icon: BrainCircuit,
-              code: 'DOLLARINO AI',
-              title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
-              desc: isFa ? 'اجماع چند مدل هوش مصنوعی روی ساختار بازار بدون نیاز به کلید API شخصی.' : 'Consensus Multi-LLM engine managed centrally by Dollarino.',
-              win: 74,
-              color: '#e8c15a',
-              onClick: () =>
-                void patchConfig(
-                  { strategy_key: 'ai_autonomous_agent', ai_gate_enabled: 1 },
-                  isFa ? 'هوش مصنوعی دلارینو فعال شد' : 'Dollarino AI activated'
-                ),
-            },
-            {
-              id: 'myai' as const,
-              active: activeStrategy === 'my_custom_ai',
-              art: <ModeGraphicAI />,
-              icon: Bot,
-              code: 'RAW PERSONAL AI',
-              title: isFa ? 'هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
-              desc: isFa ? 'به زبان فارسی به ربات یاد بده چطور معامله کند و مستقیم روی چارت اجرا شود.' : 'Teach your personal AI rules in chat and execute 24/7.',
-              win: 76,
-              color: '#a855f7',
-              onClick: () => onNavigate('myai'),
-            },
-            {
-              id: 'dorna' as const,
-              active: activeStrategy !== 'ai_autonomous_agent' && activeStrategy !== 'my_custom_ai' && activeStrategy !== 'copy_trade',
-              art: <ModeGraphicCodex />,
-              icon: Crosshair,
-              code: 'HUNTING · ۲ بخش',
-              title: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
-              desc: isFa
-                ? 'دارای ۲ بخش: ۱) استراتژی‌های آماده ما (دُرنا V1، KBOS، SP2L) و ۲) استراتژی شخصی خودتان در آزمایشگاه کد.'
-                : '2 sub-modes: Our preset hunters (Dorna V1, KBOS, SP2L) OR your own custom Pine/Python strategy.',
-              win: 68,
-              color: '#10d9a3',
-              onClick: () =>
-                void patchConfig(
-                  { strategy_key: 'dollarino_v01', ai_gate_enabled: 0 },
-                  isFa ? 'استراتژی شکار (دُرنا V1) فعال شد' : 'Hunting Strategy activated'
-                ),
-            },
-            {
-              id: 'copy' as const,
-              active: activeStrategy === 'copy_trade',
-              art: <ModeGraphicTelegram />,
-              icon: Trophy,
-              code: 'COPY TRADE',
-              title: isFa ? 'کپی‌ترید تاییدشده دلارینو' : 'Verified Copy-Trade',
-              desc: isFa ? 'کپی خودکار معاملات تریدرهای تاییدشده و سیگنال‌های کانال رسمی @Dollarino_official.' : 'Instant sub-second mirroring of verified traders & @Dollarino_official.',
-              win: 79,
-              color: '#38e1ff',
-              onClick: () => onNavigate('copy'),
-            },
-          ].map((e) => {
-            const Icon = e.icon;
-            return (
-            <div
-              key={e.id}
-              onClick={e.onClick}
-              className={`cursor-pointer panel panel-hover rounded-[26px] p-5 space-y-3 relative overflow-hidden ${
-                e.active ? 'ring-2 ring-[var(--gold)]' : ''
-              }`}
-            >
-              {e.art}
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-display font-bold text-base text-main inline-flex items-center gap-2">
-                  <Icon className="w-4 h-4 shrink-0" style={{ color: e.color }} />
-                  <span>{e.title}</span>
-                </h3>
-                <span dir="ltr" className="text-[10px] font-black tracking-widest px-2 py-0.5 rounded-full shrink-0" style={{ background: `${e.color}20`, color: e.color }}>
-                  {e.code}
-                </span>
-              </div>
-              <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
-              {e.id === 'dorna' && (
-                <div className="flex flex-wrap gap-1.5 pt-1" onClick={(ev) => ev.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => void patchConfig({ strategy_key: 'dollarino_v01', ai_gate_enabled: 0 }, isFa ? 'استراتژی آماده دُرنا V1 انتخاب شد' : 'Dorna V1 selected')}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-jade text-[10px] font-black hover:bg-emerald-500/25"
-                  >
-                    {isFa ? 'استراتژی‌های آماده ما' : 'Our Presets'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onNavigate('radar')}
-                    className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand text-[10px] font-black hover:opacity-85"
-                  >
-                    {isFa ? 'استراتژی شخصی شما' : 'Your Custom Code'}
-                  </button>
-                </div>
-              )}
-              <div className="flex items-center justify-between text-xs font-black pt-1" style={{ color: e.color }}>
-                <span className="inline-flex items-center gap-1">
-                  {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
-                  <span>{e.active ? (isFa ? 'انتخاب‌شده و فعال' : 'Active Engine') : isFa ? 'انتخاب این موتور' : 'Activate'}</span>
-                </span>
-                <span>{e.win}% WR</span>
-              </div>
-            </div>
-            );
-          })}
         </div>
       </section>
 
@@ -1901,6 +1904,18 @@ export function OverviewPage({
           </button>
         </div>
       </section>
+
+      <QuickWidgetsBar
+        lang={lang}
+        uiMode={uiMode}
+        user={user}
+        dashboard={data}
+        onToggleBot={handleStartStop}
+        onKillSwitch={handleKillSwitch}
+        onToggleUiMode={onToggleUiMode}
+        onNavigate={onNavigate}
+        onUserUpdated={onRefresh}
+      />
 
       {renderSharedModals()}
     </div>

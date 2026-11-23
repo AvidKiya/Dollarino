@@ -4086,7 +4086,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE),
     ]);
     const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
-    const rawHelp = (helpText || (await getSystemSetting(env.DB, 'help_text', '📚 راهنمای دلارینو در پنل وب در دسترس است.'))).replace(/\\n/g, '\n');
+    const defaultHelpGuide = [
+      '📚 **راهنمای سریع دلارینو (نسخه ۱۰)**',
+      '• **۴ موتور معامله:** ۱) هوش مصنوعی دلارینو (کاملاً خودکار)، ۲) هوش مصنوعی من (قابل آموزش با چت و عکس)، ۳) استراتژی شکار دُرنا V1 + IDE، ۴) کپی‌ترید هوشمند ولت‌ها V2.',
+      '• **تفاوت فیوچرز صرافی (CEX) با فیوچرز کیف‌پول (Perp DEX):** در CEX (Toobit/Bitunix/KCEX) معاملات اهرم‌دار با API ترید انجام می‌شود؛ اما در Perp DEX (Hyperliquid / Jupiter Perps / GMX) معامله اهرم‌دار مستقیماً از کیف‌پول شخصی خودتان و بدون احراز هویت (No-KYC) اجرا می‌گردد.',
+      '• **خزانه ۲۴/۷ در برابر Trust Wallet 1-Click:** در حالت 1-Click کل سرمایه دست‌نخورده در تراست‌ولت شماست؛ اما خزانه ۲۴/۷ فقط با بودجه مجزایی که خودتان شارژ می‌کنید هنگام خواب نیز معامله می‌زند (همراه تایید ۲ مرحله‌ای کلید خصوصی).',
+      '• **تحلیل چارت:** در چت ربات بنویسید `/ai` یا مستقیماً عکس چارت را بفرستید تا ورود، استاپ و ۳ تارگت تحویل بگیرید.',
+    ].join('\n');
+    const rawHelp = (helpText || (await getSystemSetting(env.DB, 'help_text', defaultHelpGuide))).replace(/\\n/g, '\n');
     const caption = `${rawHelp}\n\n${CREATOR_ATTRIBUTION_FA}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
     const faqKb: InlineKeyboardButton[][] | undefined = webAppUrl.startsWith('https://')
       ? [[{ text: '🚀 راهنمای کامل در مینی‌اپ دلارینو', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/faq` }, style: 'primary' }]]
