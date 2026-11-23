@@ -211,7 +211,7 @@ export function App() {
       void apiFetch<DashboardPayload>('/api/trading/dashboard')
         .then((d) => setDashboard(d))
         .catch(() => {});
-    }, 12_000);
+    }, 30_000);
     return () => clearInterval(iv);
   }, [user]);
 
@@ -349,17 +349,35 @@ export function App() {
 
   if (!dashboard) {
     return (
-      <div className="min-h-screen app-shell flex items-center justify-center p-4">
-        <div className="panel rounded-3xl p-6 text-center space-y-3 max-w-sm w-full">
-          <DollarinoBrandMark size={44} glow />
-          <p className="text-sm font-bold text-main">
-            {lang === 'fa' ? 'در حال آماده‌سازی میز کار معاملاتی...' : 'Loading your trading desk...'}
-          </p>
-          <button type="button" onClick={() => void loadSessionAndDashboard()} className="btn-gold px-4 py-2 rounded-xl text-xs">
-            {lang === 'fa' ? 'تلاش مجدد' : 'Retry'}
-          </button>
+      <>
+        <div className="min-h-screen app-shell flex items-center justify-center p-4">
+          <div className="panel rounded-3xl p-6 text-center space-y-3 max-w-sm w-full">
+            <DollarinoBrandMark size={44} glow />
+            <p className="text-sm font-bold text-main">
+              {authError || (lang === 'fa' ? 'در حال آماده‌سازی میز کار معاملاتی...' : 'Loading your trading desk...')}
+            </p>
+            <div className="flex items-center justify-center gap-2">
+              <button type="button" onClick={() => void loadSessionAndDashboard()} className="btn-gold px-4 py-2 rounded-xl text-xs">
+                {lang === 'fa' ? 'تلاش مجدد' : 'Retry'}
+              </button>
+              <button type="button" onClick={() => void handleLogout()} className="btn-ghost px-4 py-2 rounded-xl text-xs">
+                {lang === 'fa' ? 'بازگشت' : 'Back'}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+        <SupportModal
+          open={supportOpen}
+          lang={lang}
+          authenticated={Boolean(user)}
+          onClose={() => setSupportOpen(false)}
+        />
+        <FloatingAiChat
+          lang={lang}
+          authenticated={Boolean(user)}
+          onNavigate={setActiveTab}
+        />
+      </>
     );
   }
 

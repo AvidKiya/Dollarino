@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { formatDollarinoSignal } from '@dollarino/core';
 import { ExchangeLogo } from '../components/BrandLogos';
+import { SmartCopyProHub } from '../components/SmartCopyProHub';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { DashboardPayload, EntitlementSummary, NavTab } from '../lib/types';
@@ -115,6 +116,7 @@ export function CopyConnectPage({
   const [allocMap, setAllocMap] = useState<Record<string, number>>({});
   const [copyingTradeId, setCopyingTradeId] = useState<string | null>(null);
   const [showWebhookMirror, setShowWebhookMirror] = useState(false);
+  const [proSiteTrader, setProSiteTrader] = useState<{ id: string; display_name: string } | null>(null);
 
   // Copy Trade & Signals
   const webhookUrl = `${window.location.origin}/api/webhook/tv/${data.config.webhook_secret}`;
@@ -418,7 +420,32 @@ export function CopyConnectPage({
       )}
 
       {tab === 'copy' && (
-        <div className="space-y-5">
+        <div className="space-y-5 tab-enter">
+          <div className="panel rounded-[26px] p-4 sm:p-5 border border-amber-500/20 flex flex-col md:flex-row md:items-center gap-4">
+            <img
+              src="/images/copytrade-trophy.png"
+              alt="Dollarino Dual Copy-Trading System"
+              className="w-full md:w-44 h-24 rounded-2xl object-cover shrink-0 border hairline"
+            />
+            <div className="flex-1 min-w-0 space-y-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
+                  {isFa ? 'کپی‌ترید دوگانه: CEX صرافی + ولت‌های آن‌چین V2' : 'Dual Engine: VIP CEX + On-Chain Smart Wallets V2'}
+                </span>
+              </div>
+              <p className="font-bold text-main">
+                {isFa
+                  ? 'در پایین دو بخش کامل در اختیار دارید: ۱) تریدرهای VIP تاییدشده روی صرافی‌های Toobit، Bitunix و KCEX و ۲) هاب کپی‌ترید هوشمند ولت‌ها با باکس مارجین اختصاصی، بک‌تست ۷ روزه و خزانه ۲۴ ساعته.'
+                  : 'Use both engines below: (1) Admin-vetted VIP CEX Traders (Toobit/Bitunix/KCEX) and (2) Smart On-Chain Wallets V2 with isolated margin boxes, 7-day backtest & 24/7 Copy-Vault.'}
+              </p>
+              <p className="text-[11px] text-dim">
+                {isFa
+                  ? 'نکته: روی کارت هر تریدر تاییدشده هم می‌توانید دکمه «تنظیم مارجین اختصاصی و TP/SL پرو (V2)» را بزنید تا با بودجه ایزوله، ۳ تارگت و Reverse Copy تنظیم شود.'
+                  : 'Tip: You can also click "Configure Isolated Box & Pro TP/SL (V2)" on any VIP trader card for isolated budget, 3-TP & Reverse Copy.'}
+              </p>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-[11px] font-bold text-sub flex items-center gap-2">
             <span>🔒</span>
             <span>
@@ -490,6 +517,14 @@ export function CopyConnectPage({
               </div>
             </div>
           )}
+
+          {/* Smart On-Chain & Multi-Chain Copy-Trading V2 Hub */}
+          <SmartCopyProHub
+            lang={lang}
+            onMsg={flash}
+            externalSiteTrader={proSiteTrader}
+            onClearExternalTrader={() => setProSiteTrader(null)}
+          />
 
           {/* Verified Copy Traders Marketplace */}
           <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5">
@@ -633,6 +668,14 @@ export function CopyConnectPage({
                               : `Follow & Auto-Copy (${tr.followers_count})`}
                         </span>
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setProSiteTrader({ id: tr.id, display_name: tr.display_name })}
+                        className="w-full py-2 rounded-xl text-[11px] font-black btn-cobalt inline-flex items-center justify-center gap-1.5"
+                      >
+                        <Sliders className="w-3.5 h-3.5" />
+                        <span>{isFa ? 'تنظیم مارجین اختصاصی و TP/SL پرو (V2)' : 'Pro Isolated Margin & Rules (V2)'}</span>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -734,7 +777,7 @@ export function CopyConnectPage({
       )}
 
       {tab === 'exchanges' && (
-        <div className="grid lg:grid-cols-2 gap-4">
+        <div className="grid lg:grid-cols-2 gap-4 tab-enter">
           <div className="space-y-4">
             {/* Platform Multi-AI Status Card (restored from ConnectionsPage) */}
             <div className="panel rounded-[26px] p-5 space-y-2.5 text-xs">
@@ -928,7 +971,7 @@ export function CopyConnectPage({
       )}
 
       {tab === 'risk' && (
-        <div className="panel rounded-[26px] p-5 sm:p-6 space-y-6">
+        <div className="panel rounded-[26px] p-5 sm:p-6 space-y-6 tab-enter">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">

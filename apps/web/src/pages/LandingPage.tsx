@@ -10,16 +10,20 @@ import {
   Download,
   Globe,
   Headphones,
+  KeyRound,
   Lock,
   Menu,
   Moon,
   Play,
+  Radar,
   Send,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sun,
   Trophy,
   Users,
+  Vault,
   X,
   Zap,
 } from 'lucide-react';
@@ -31,6 +35,7 @@ import { DollarinoBrandMark } from '../components/BrandGraphics';
 import { ChainLogo, ExchangeLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { Sparkline } from '../components/DollarinoViz';
+import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { PwaInstallModal } from '../components/PwaInstallModal';
 
 interface PublicPlan {
@@ -173,17 +178,25 @@ export function LandingPage({
     },
     {
       id: 'copy' as const,
-      badge: '۰۳ · VERIFIED COPY TRADE',
-      title: isFa ? 'کپی‌ترید تاییدشده دلارینو: کپی از تریدرهای احرازشده' : 'Verified Copy Trade: Mirror Admin-Vetted Leaders',
-      shortTitle: isFa ? 'کپی‌ترید تاییدشده' : 'Copy Trade',
+      badge: '۰۳ · VERIFIED & SMART WALLET COPY V2',
+      title: isFa ? 'کپی‌ترید دوگانه: تریدرهای تاییدشده + شکار ولت نهنگ‌ها (V2)' : 'Dual Copy Trade: Verified VIPs + Smart-Money Wallets (V2)',
+      shortTitle: isFa ? 'کپی‌ترید ولت و VIP' : 'Copy Trade V2',
       icon: Trophy,
       color: '#f59e0b',
       desc: isFa
-        ? 'فقط تریدرهایی که توسط مدیریت دلارینو بررسی و تایید شده‌اند در لیست کپی‌ترید نمایش داده می‌شوند. درصد برد، بازده ۳۰ روزه و تاریخچه معاملات هر تریدر را ببینید و با یک دکمه، تمام معاملاتشان را خودکار یا تکی کپی کنید.'
-        : 'Browse strictly verified traders approved by Dollarino admins. Inspect real win-rates, 30-day ROI, and active trades, then mirror them in 1 tap.',
+        ? 'هم معاملات تریدرهای تاییدشده سایت را روی صرافی‌های Toobit، Bitunix و KCEX کپی کنید و هم ۱۰ ولت برتر هوشمند یا هر ولت دلخواه در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین جداگانه، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
+        : 'Mirror verified site traders on CEXs AND track Top-10 Smart-Money or custom wallets across Solana, Base, ETH, BSC, TON & TRON with isolated margin boxes, 7-day backtest, Anti-Rug shield, 3-TP + Moonbag, and 24/7 Copy-Vault.',
       bullets: isFa
-        ? ['فقط تریدرهای احرازشده و تاییدشده توسط ادمین', 'مشاهده معاملات باز و بسته هر تریدر با جزئیات', 'کپی خودکار یا کپی فوری تک‌معامله با یک کلیک']
-        : ['Admin-verified traders only', 'Transparent trade history & risk level', 'Auto-mirror or 1-tap single-trade copy'],
+        ? [
+            'کپی فقط معاملات جدید از لحظه فالو + باکس مارجین ایزوله برای هر تریدر',
+            'سپر ضدراگ واقعی (GoPlus + Honeypot.is + RugCheck) و خروج خودکار Dev-Sell',
+            'حالت اجرای تک‌کلیک Trust Wallet یا خزانه تمام‌اتومات ۲۴/۷ با بک‌آپ کلید',
+          ]
+        : [
+            'Follows only fresh trades from follow-time forward + isolated margin box per trader',
+            'Real-time Anti-Rug (GoPlus + Honeypot.is + RugCheck) & Dev-Sell auto exit',
+            'Trust Wallet 1-Click DApp or 24/7 Auto Copy-Vault with encrypted key backup',
+          ],
     },
     {
       id: 'ide' as const,
@@ -236,9 +249,10 @@ export function LandingPage({
           <nav className="hidden lg:flex items-center gap-1 mx-auto text-xs font-bold text-dim">
             {[
               ['pillars', isFa ? '۴ روش معامله' : '4 Ways to Trade'],
+              ['smart-v2', isFa ? 'کپی ولت و ضدراگ' : 'Smart Wallets V2'],
               ['copy-leaders', isFa ? 'کپی‌تریدرها' : 'Copy Traders'],
               ['pricing', isFa ? 'اشتراک‌ها' : 'Subscriptions'],
-              ['faq', isFa ? 'سوالات و راهنما' : 'Guide & FAQ'],
+              ['faq', isFa ? 'آموزش و سوالات' : 'Guide & FAQ'],
             ].map(([id, label]) => (
               <button
                 key={id}
@@ -330,6 +344,7 @@ export function LandingPage({
             </div>
             {[
               ['pillars', isFa ? '۴ روش معامله (ساده تا حرفه‌ای)' : '4 Ways to Trade'],
+              ['smart-v2', isFa ? 'کپی‌ترید ولت نهنگ‌ها و سپر ضدراگ (V2)' : 'Smart Wallet Copy & Anti-Rug V2'],
               ['copy-leaders', isFa ? 'تریدرهای تاییدشده کپی‌ترید' : 'Verified Copy Traders'],
               ['pricing', isFa ? 'تعرفه اشتراک‌ها' : 'Subscriptions'],
               ['faq', isFa ? 'راهنما و سوالات پرتکرار' : 'FAQ'],
@@ -410,7 +425,7 @@ export function LandingPage({
               {[
                 { icon: Bot, text: isFa ? 'حالت ساده: ترید اتومات با AI' : 'Simple Mode: Auto AI', color: 'var(--jade)' },
                 { icon: Brain, text: isFa ? 'هوش مصنوعی قابل آموزش من' : 'Trainable My AI', color: 'var(--gold)' },
-                { icon: Trophy, text: isFa ? 'کپی‌ترید تاییدشده + IDE شخصی' : 'Verified Copy Trade + IDE', color: '#f59e0b' },
+                { icon: Trophy, text: isFa ? 'کپی‌ترید ولت نهنگ‌ها + ضدراگ V2' : 'Smart Wallets + Anti-Rug V2', color: '#f59e0b' },
               ].map((b) => {
                 const Icon = b.icon;
                 return (
@@ -623,6 +638,11 @@ export function LandingPage({
           </div>
         </section>
 
+        {/* Animated Auto-Rotating Promo Banners Carousel */}
+        <section className="reveal-up">
+          <PromoBannerCarousel lang={lang} placement="LANDING" onGuestAction={() => onGoAuth('register')} />
+        </section>
+
         {/* 2. Interactive 4 Pillars Clear Walkthrough */}
         <section id="pillars" className="space-y-6">
           <div className="text-center max-w-2xl mx-auto space-y-2">
@@ -725,6 +745,225 @@ export function LandingPage({
                     <p className="text-xs font-black text-main">{step.t}</p>
                     <p className="text-[11px] text-dim mt-0.5">{step.d}</p>
                   </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 2.5 Smart Copy-Trading V2 & Anti-Rug Multi-DApp Showcase */}
+        <section id="smart-v2" className="space-y-6">
+          <div className="text-center max-w-3xl mx-auto space-y-2">
+            <span className="inline-flex items-center gap-1.5 badge-signal px-3.5 py-1 rounded-full text-[11px] font-black">
+              <Radar className="w-3.5 h-3.5 text-jade" />
+              <span>SMART COPY-TRADING V2 · MULTI-CHAIN ANTI-RUG & TRUST DAPP</span>
+            </span>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
+              {isFa
+                ? 'شکار نهنگ‌ها، سپر ضدراگ واقعی و سوآپ Multi-DApp در یک پلتفرم'
+                : 'Whale Wallet Copy-Trading, Real Anti-Rug & Trust Multi-DApp'}
+            </h2>
+            <p className="text-xs sm:text-sm text-dim leading-relaxed">
+              {isFa
+                ? 'بهترین ولت‌های اسمارت‌مانی را در کل شبکه‌ها پیدا کنید، قبل از اتصال ۷ روز بک‌تست واقعی بگیرید، برای هر تریدر باکس مارجین اختصاصی بسازید و بدون نیاز به ترس از اسکم، معاملات جدیدشان را ۲۴/۷ یا با یک کلیک در Trust Wallet کپی کنید.'
+                : 'Discover Top-10 smart-money wallets or add any custom wallet, run a 7-day backtest, isolate per-trader margin boxes, and copy live trades safely with GoPlus/Honeypot/RugCheck protection.'}
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-5">
+            {/* Banner Card 1: Smart Wallet Copy + Isolated Boxes + 24/7 Copy-Vault */}
+            <div className="panel glow-card-anim rounded-[30px] overflow-hidden flex flex-col justify-between border border-amber-500/25">
+              <div>
+                <div className="relative h-48 sm:h-52 overflow-hidden">
+                  <img
+                    src="/images/smart-wallet-radar.png"
+                    alt="Smart Wallet Copy Trading & 24/7 Copy-Vault"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#081022] via-[#081022]/35 to-transparent flex items-end p-5">
+                    <div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black">
+                        {isFa ? '۱۰ تریدر برتر + ولت دلخواه + خزانه ۲۴/۷' : 'TOP-10 WALLETS + CUSTOM TRACKING + VAULT'}
+                      </span>
+                      <h3 className="font-display font-bold text-lg sm:text-xl text-white mt-1.5">
+                        {isFa ? 'کپی‌ترید هوشمند ولت‌ها با باکس مارجین ایزوله' : 'Smart-Money Wallets with Isolated Margin Boxes'}
+                      </h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 sm:p-6 space-y-3 text-xs">
+                  <p className="text-dim leading-relaxed">
+                    {isFa
+                      ? 'برترین ولت‌های Solana، Base، Ethereum، BSC، Arbitrum، TON و TRON را رصد کنید یا آدرس هر ولت شخصی را ثبت کنید. سیستم به‌صورت خودکار فقط تراکنش‌هایی را که از لحظه فالو باز می‌شوند رصد و کپی می‌کند.'
+                      : 'Track leaderboard whales or paste any custom address across Solana, Base, ETH, BSC, Arbitrum, TON & TRON. Strictly copies new positions opened after follow time.'}
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {[
+                      {
+                        icon: Vault,
+                        title: isFa ? 'باکس سرمایه جدا + سقف ضرر' : 'Isolated Margin Box & Daily Cap',
+                        desc: isFa ? 'هر تریدر حسابک مارجین و حد ضرر روزانه مستقل دارد.' : 'Separate budget box & daily loss cap per trader.',
+                      },
+                      {
+                        icon: Sparkles,
+                        title: isFa ? 'بک‌تست ۷ روزه + پله‌های پرو' : '7-Day Backtest & Pro TP/SL',
+                        desc: isFa ? 'TP1/2/3، Moonbag، Trailing، Break-Even و تایم‌لیمیت.' : 'TP1/2/3, Moonbag, Trailing SL, Break-Even & Reverse Copy.',
+                      },
+                      {
+                        icon: KeyRound,
+                        title: isFa ? 'خزانه ۲۴/۷ + دریافت کلید خصوصی' : '24/7 Copy-Vault + Key Backup',
+                        desc: isFa ? 'اجرای خودکار روی Jupiter سولانا و خروجی کلید AES-256.' : 'Automated Solana Jupiter swaps & encrypted key export.',
+                      },
+                      {
+                        icon: Trophy,
+                        title: isFa ? 'کنترل در تلگرام + کارت سود' : 'Telegram Bot + Verified Card',
+                        desc: isFa ? 'مدیریت پوزیشن‌ها در @Dollarino_bot و کارت سود PNG.' : 'Manage V2 trades in Telegram & issue Verified PnL Cards.',
+                      },
+                    ].map((f) => {
+                      const FIcon = f.icon;
+                      return (
+                        <div key={f.title} className="surface-soft rounded-2xl p-3 space-y-1">
+                          <div className="flex items-center gap-1.5 font-black text-main">
+                            <FIcon className="w-3.5 h-3.5 text-[var(--gold)] shrink-0" />
+                            <span>{f.title}</span>
+                          </div>
+                          <p className="text-[11px] text-dim leading-relaxed">{f.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div className="px-5 sm:px-6 pb-5">
+                <button
+                  type="button"
+                  onClick={() => onGoAuth('register')}
+                  className="btn-gold w-full py-3 rounded-2xl text-xs font-black"
+                >
+                  {isFa ? 'ورود به هاب کپی‌ترید هوشمند V2' : 'Open Smart Copy-Trading V2 Hub'}
+                </button>
+              </div>
+            </div>
+
+            {/* Banner Card 2: Real Anti-Rug Shield + Trust Wallet Multi-DApp Router */}
+            <div className="panel glow-card-anim rounded-[30px] overflow-hidden flex flex-col justify-between border border-emerald-500/25">
+              <div>
+                <div className="relative h-48 sm:h-52 overflow-hidden">
+                  <img
+                    src="/images/antirug-shield-dapp.png"
+                    alt="Real-Time Anti-Rug Shield and Multi-DApp Trust Wallet Routing"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#081022] via-[#081022]/35 to-transparent flex items-end p-5">
+                    <div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black">
+                        {isFa ? 'GOPLUS · HONEYPOT.IS · RUGCHECK · TRUST DAPP' : 'GOPLUS · HONEYPOT.IS · RUGCHECK · TRUST DAPP'}
+                      </span>
+                      <h3 className="font-display font-bold text-lg sm:text-xl text-white mt-1.5">
+                        {isFa ? 'سپر ضدراگ چندمنبعی + تمام صرافی‌های DEX در Trust Wallet' : 'Multi-Source Anti-Rug + All Network DEXs in Trust Wallet'}
+                      </h3>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 sm:p-6 space-y-3 text-xs">
+                  <p className="text-dim leading-relaxed">
+                    {isFa
+                      ? 'قبل از هر خرید غیرحضانتی، قرارداد توکن به‌صورت زنده از نظر Honeypot، مالیات خرید/فروش، مجوز Mint، قفل بودن نقدینگی و ریسک دولوپر بررسی می‌شود. سپس می‌توانید معامله را مستقیماً در برترین صرافی‌های همان شبکه باز کنید.'
+                      : 'Before any non-custodial swap, every contract is scanned live for Honeypot traps, Buy/Sell tax, Mint authority, and LP locks — then routed straight into the top DApps inside Trust Wallet.'}
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {[
+                      {
+                        icon: ShieldAlert,
+                        title: isFa ? 'امتیاز شفاف ۰ تا ۹۵ + اخطارها' : '0–95 Safety Score & Tax Flags',
+                        desc: isFa ? 'شناسایی مالیات بالا، فریز، هانی‌پات و خروج خودکار Dev-Sell.' : 'Detects high taxes, freeze/mint traps & auto Dev-Sell exit.',
+                      },
+                      {
+                        icon: Zap,
+                        title: isFa ? 'مسیریاب Multi-DApp همه‌شبکه‌ها' : 'All-Chain Multi-DApp Router',
+                        desc: isFa ? 'Jupiter, Raydium, PancakeSwap, Uniswap, 1inch, STON.fi, SunSwap, Cetus.' : 'Jupiter, Raydium, PancakeSwap, Uniswap, 1inch, STON.fi & Cetus.',
+                      },
+                      {
+                        icon: ShieldCheck,
+                        title: isFa ? 'فیلتر حداقل نقدینگی و مارکت‌کپ' : 'Liquidity, Slippage & MCap Guard',
+                        desc: isFa ? 'اگر توکن زیر نقدینگی یا اسلیپیج مجاز باشد خودکار رد می‌شود.' : 'Blocks illiquid or over-slippage trades before execution.',
+                      },
+                      {
+                        icon: Send,
+                        title: isFa ? 'یک کلیک تا Trust Wallet موبایل' : '1-Click Trust Wallet Deep Link',
+                        desc: isFa ? 'باز شدن فوری جفت‌ارز در DApp مرورگر تراست‌ولت بدون انتقال کلید.' : 'Launches straight inside Trust Wallet DApp with zero key sharing.',
+                      },
+                    ].map((f) => {
+                      const FIcon = f.icon;
+                      return (
+                        <div key={f.title} className="surface-soft rounded-2xl p-3 space-y-1">
+                          <div className="flex items-center gap-1.5 font-black text-main">
+                            <FIcon className="w-3.5 h-3.5 text-jade shrink-0" />
+                            <span>{f.title}</span>
+                          </div>
+                          <p className="text-[11px] text-dim leading-relaxed">{f.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div className="px-5 sm:px-6 pb-5">
+                <button
+                  type="button"
+                  onClick={() => onGoAuth('register')}
+                  className="btn-emerald w-full py-3 rounded-2xl text-xs font-black"
+                >
+                  {isFa ? 'اسکن ضدراگ و سوآپ Multi-DApp در پنل' : 'Launch Anti-Rug Scanner & Trust Multi-DApp'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 4-Step Visual Walkthrough Strip */}
+          <div className="panel rounded-[26px] p-5 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div>
+                <p className="text-[10px] font-black tracking-[0.18em] uppercase" style={{ color: 'var(--gold)' }}>
+                  QUICK START TRAINING
+                </p>
+                <h3 className="font-display font-bold text-lg text-main">
+                  {isFa ? 'آموزش ۴ مرحله‌ای شروع کپی‌ترید هوشمند ولت‌ها (از صفر تا اجرا)' : '4-Step Smart Copy-Trading Walkthrough'}
+                </h3>
+              </div>
+              <span className="badge-signal px-3 py-1 rounded-full text-[11px] font-black">
+                {isFa ? 'بدون نیاز به دانش برنامه‌نویسی' : 'Beginner Friendly'}
+              </span>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              {[
+                {
+                  n: '۱',
+                  t: isFa ? 'انتخاب تریدر یا ولت دلخواه' : 'Pick Top-10 or Custom Wallet',
+                  d: isFa ? 'از لیست ۱۰ تریدر برتر شبکه انتخاب کنید یا آدرس هر ولت دلخواه را بدهید (فقط تریدهای جدید کپی می‌شوند).' : 'Choose from Top-10 Smart Wallets or paste any custom address (only new trades copy).',
+                },
+                {
+                  n: '۲',
+                  t: isFa ? 'بک‌تست ۷ روزه + باکس مارجین' : '7-Day Backtest & Margin Box',
+                  d: isFa ? 'باکس سرمایه جدا، سقف ضرر روزانه، TP1/2/3، Moonbag، SL و سپر ضدراگ را تنظیم و با بک‌تست بررسی کنید.' : 'Simulate 7 days with your isolated margin box, 3-step TP, Moonbag, SL & Anti-Rug filters.',
+                },
+                {
+                  n: '۳',
+                  t: isFa ? 'انتخاب روش اجرا (Trust یا خزانه)' : 'Trust 1-Click or 24/7 Vault',
+                  d: isFa ? 'حالت تک‌کلیک Trust Wallet را انتخاب کنید یا خزانه اختصاصی ۲۴/۷ را شارژ و کلید پشتیبان آن را دریافت کنید.' : 'Choose Trust 1-Click confirmation or 24/7 Copy-Vault with instant AES-256 key backup.',
+                },
+                {
+                  n: '۴',
+                  t: isFa ? 'پایش لحظه‌ای + کارت سود' : 'Live Monitor + Profit Card',
+                  d: isFa ? 'با هر خرید جدید ولت، سپر ضدراگ اجرا می‌شود، خروج خودکار در TP/SL/Dev-Sell انجام شده و کارت سود صادر می‌گردد.' : 'Live polling + instant Dev-Sell exit, Telegram alerts, and Verified PnL PNG Cards.',
+                },
+              ].map((step) => (
+                <div key={step.n} className="surface-soft rounded-2xl p-4 space-y-2 border hairline">
+                  <span className="w-7 h-7 rounded-xl btn-gold grid place-items-center text-xs font-black">{step.n}</span>
+                  <p className="font-black text-main">{step.t}</p>
+                  <p className="text-[11px] text-dim leading-relaxed">{step.d}</p>
                 </div>
               ))}
             </div>
@@ -898,16 +1137,19 @@ export function LandingPage({
             </h3>
             {(isFa
               ? [
+                  ['کپی‌ترید هوشمند ولت‌ها (V2) و باکس مارجین اختصاصی چطور کار می‌کند؟', 'در بخش کپی‌ترید می‌توانید هم تریدرهای تاییدشده سایت را فالو کنید و هم از ۱۰ ولت برتر هوشمند هر شبکه یا هر ولت دلخواه (Solana, Base, ETH, BSC, TON, TRON) کپی بگیرید. پس از فعال‌سازی فالو، سیستم فقط معاملاتی که از همان لحظه به بعد باز می‌شوند را کپی می‌کند و برای هر تریدر باکس مارجین جداگانه و سقف ضرر روزانه دارد.'],
+                  ['سپر ضدراگ و Multi-DApp Trust Wallet چه فایده‌ای دارد؟', 'قبل از هر سوآپ یا کپی، قرارداد توکن به‌صورت خودکار با GoPlus، Honeypot.is و RugCheck از نظر قفل نقدینگی، مالیات خرید/فروش و مجوز Mint اسکن می‌شود. همچنین می‌توانید هر توکن را با یک کلیک روی همه صرافی‌های معتبر آن شبکه (Jupiter, Uniswap, PancakeSwap, 1inch, STON.fi و...) داخل مرورگر Trust Wallet باز کنید.'],
+                  ['خزانه کپی‌ترید ۲۴/۷ چقدر امن است و آیا کلید خصوصی در اختیار من است؟', 'بله؛ برای اجرای تمام‌اتومات ۲۴/۷ می‌توانید از آدرس خزانه اختصاصی خودتان استفاده کنید. کلیدهای شما با رمزنگاری AES-256-GCM نگهداری می‌شوند و هر زمان خواستید از دکمه «نمایش و بک‌آپ کلیدهای خزانه» پس از تایید رمز عبور حساب، کلید خصوصی EVM و سولانا را دریافت یا دارایی خود را برداشت کنید.'],
                   ['چطور با هوش مصنوعی من (My AI) کار کنم؟', 'بعد از ورود به میز کار وارد تب «هوش مصنوعی من» شوید و مثل چت کردن عادی استراتژیتان را بنویسید (مثلاً تایم ۱۵ دقیقه، RSI زیر ۳۵، حد ضرر ۲٪). سیستم فوراً قوانین را می‌فهمد، تست زنده می‌گیرد و با یک کلیک ۲۴ ساعته برایتان معامله می‌کند.'],
-                  ['تفاوت حالت ساده با حالت حرفه‌ای چیست؟', 'در حالت ساده فقط ترید هوشمند کاملاً اتومات با هوش مصنوعی وجود دارد تا هیچ پیچیدگی نبیند. در حالت حرفه‌ای به ترمینال چارت، هوش مصنوعی من، کپی‌ترید تاییدشده و IDE استراتژی شخصی دسترسی دارید.'],
-                  ['کپی‌ترید چگونه کار می‌کند؟', 'تریدرهای تاییدشده توسط مدیریت دلارینو در لیست کپی‌ترید نمایش داده می‌شوند. می‌توانید آمار و معاملات آن‌ها را ببینید و با یک دکمه کپی خودکار را فعال کنید.'],
-                  ['آیا اشتراک رایگان یا دمو وجود دارد؟', 'خیر — تمام امکانات دلارینو روی زیرساخت ابری اختصاصی با اشتراک فعال ارائه می‌شوند. می‌توانید پس از ثبت‌نام، اشتراک ماهانه، فصلی یا سالانه را با تتر یا کارت‌به‌کارت فعال کنید.'],
+                  ['تفاوت حالت ساده با حالت حرفه‌ای چیست؟', 'در حالت ساده فقط ترید هوشمند کاملاً اتومات با هوش مصنوعی وجود دارد تا هیچ پیچیدگی نبیند. در حالت حرفه‌ای به ترمینال چارت، هوش مصنوعی من، کپی‌ترید تاییدشده + ولت‌های هوشمند V2، رادار DEX و IDE استراتژی شخصی دسترسی دارید.'],
+                  ['آیا اشتراک رایگان یا دمو وجود دارد؟', 'تمام امکانات دلارینو روی زیرساخت ابری اختصاصی با اشتراک فعال ارائه می‌شوند. می‌توانید پس از ثبت‌نام، اشتراک ماهانه، فصلی یا سالانه را با تتر TRC20 یا کارت‌به‌کارت فعال کنید.'],
                 ]
               : [
+                  ['How does Smart-Wallet Copy Trading V2 & Isolated Margin Boxes work?', 'Track Top-10 smart-money wallets or add any custom wallet across Solana, Base, ETH, BSC, Arbitrum, TON & TRON. Only fresh trades opened after follow-time are mirrored, each inside an isolated margin box with its own daily max loss, 3-step TP, Moonbag, Trailing SL, and 7-day backtest.'],
+                  ['What does the Anti-Rug Shield & Trust Multi-DApp Router do?', 'Before every trade or copy order, contracts are scanned live via GoPlus, Honeypot.is & RugCheck for honeypots, high taxes, mint/freeze traps, and liquidity depth — plus 1-click Multi-DApp links directly into Trust Wallet.'],
+                  ['How does the 24/7 Copy-Vault & Key Backup work?', 'Each user gets an encrypted AES-256-GCM Copy-Vault for 24/7 automated Solana Jupiter execution, plus password-verified instant export of private keys anytime inside the dashboard.'],
                   ['How does My Trainable AI work?', 'Open "My AI" inside the workspace and chat naturally in Persian or English describing your rules, indicators, timeframe, SL/TP, and coins — test live and activate 24/7.'],
-                  ['What is the difference between Simple & Pro modes?', 'Simple Mode is strictly automated AI trading for effortless 1-tap usage. Pro Mode adds My AI, Verified Copy-Trade, Candlestick Terminal, and Pine/Python Strategy IDE.'],
-                  ['How does Copy Trade work?', 'Only admin-verified traders appear on the Copy Trade leaderboard. View their ROI, win rate, and live trades, and follow or mirror them in 1 tap.'],
-                  ['Is a subscription required?', 'Yes — all trading engines, Copy Trade, and AI desks require an active subscription plan.'],
+                  ['What is the difference between Simple & Pro modes?', 'Simple Mode is strictly automated AI trading for effortless 1-tap usage. Pro Mode adds My AI, Verified + Smart-Wallet Copy Trade V2, Anti-Rug DEX Desk, Candlestick Terminal, and Pine/Python Strategy IDE.'],
                 ]
             ).map(([q, a], i) => (
               <div key={q} className="surface-soft rounded-2xl overflow-hidden">

@@ -312,7 +312,7 @@ export function RadarLabPage({
       )}
 
       {subTab === 'radar' && (
-        <>
+        <div className="space-y-6 tab-enter">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { icon: Activity, l: isFa ? 'کل سیگنال‌ها' : 'Signals Logged', v: String(signals.length), c: 'text-goldsoft' },
@@ -487,11 +487,11 @@ export function RadarLabPage({
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {subTab === 'lab' && (
-        <div className="space-y-6">
+        <div className="space-y-6 tab-enter">
           <HybridLab lang={lang} onTryDemo={() => void applyHybridModel()} />
 
           <div className="panel rounded-[26px] p-5 sm:p-6 space-y-4">
@@ -538,17 +538,19 @@ export function RadarLabPage({
       )}
 
       {subTab === 'ide' && (
-        <StrategyIdePanel
-          lang={lang}
-          markets={markets}
-          defaultSymbol={data.config.symbol || 'BTCUSDT'}
-          activeCustomStrategyId={data.config.active_custom_strategy_id}
-          onActivatedOnBot={onRefresh}
-        />
+        <div className="tab-enter">
+          <StrategyIdePanel
+            lang={lang}
+            markets={markets}
+            defaultSymbol={data.config.symbol || 'BTCUSDT'}
+            activeCustomStrategyId={data.config.active_custom_strategy_id}
+            onActivatedOnBot={onRefresh}
+          />
+        </div>
       )}
 
       {subTab === 'backtest' && (
-        <div className="panel rounded-[26px] p-5 sm:p-6 space-y-5">
+        <div className="panel rounded-[26px] p-5 sm:p-6 space-y-5 tab-enter">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">

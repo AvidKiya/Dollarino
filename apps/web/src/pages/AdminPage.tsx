@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Activity,
   Bot,
   BrainCircuit,
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
   Gift,
   Headphones,
   History,
+  Image,
   KeyRound,
   Megaphone,
   MessageCircle,
@@ -18,11 +20,13 @@ import {
   Play,
   Plus,
   Radio,
+  RefreshCw,
   Send,
   Settings,
   Shield,
   ShieldCheck,
   Smartphone,
+  Sparkles,
   Trash2,
   Trophy,
   UserCheck,
@@ -33,6 +37,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import type { OnchainApiProviderItem, PromoBannerItem } from '../lib/types';
 
 interface PlatformAIEngine {
   id: string;
@@ -242,7 +247,8 @@ export function AdminPage({
     vipPriceToman: 3950000,
   });
 
-  const [adminSection, setAdminSection] = useState<'all' | 'overview' | 'users' | 'payments' | 'ops' | 'dex_logs'>('all');
+  const [adminSection, setAdminSection] = useState<'overview' | 'banners' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'all'>('overview');
+  const [showAdminSecurityBox, setShowAdminSecurityBox] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [userFilter, setUserFilter] = useState<'all' | 'kyc_verified' | 'trust_wallet' | 'unverified'>('all');
   const [requirePhoneKyc, setRequirePhoneKyc] = useState(true);
@@ -380,10 +386,41 @@ export function AdminPage({
     durationDays: 30,
     isPopular: false,
   });
+  const [onchainApis, setOnchainApis] = useState<OnchainApiProviderItem[]>([]);
+  const [onchainInputs, setOnchainInputs] = useState<Record<string, string>>({});
+  const [promoBanners, setPromoBanners] = useState<PromoBannerItem[]>([]);
+  const [bannerForm, setBannerForm] = useState({
+    id: '',
+    badge_fa: 'پیشنهاد ویژه',
+    badge_en: 'FEATURED',
+    title_fa: '',
+    title_en: '',
+    subtitle_fa: '',
+    subtitle_en: '',
+    cta_label_fa: 'شروع فوری',
+    cta_label_en: 'Launch Now',
+    cta_target: 'copy',
+    image_url: '/images/smart-wallet-radar.png',
+    accent_theme: 'gold',
+    placement: 'BOTH',
+    sort_order: 1,
+  });
+  const [systemHealth, setSystemHealth] = useState<{
+    runningBots: number;
+    openCexTrades: number;
+    activeSmartCopyRules: number;
+    openCopyPositionsV2: number;
+    userCopyVaults: number;
+    perpDexOrders: number;
+    auditLogsTotal: number;
+    activeBanners: number;
+    activeOnchainProviders: number;
+  } | null>(null);
+  const [onchainBusy, setOnchainBusy] = useState<string | null>(null);
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes, refAdminRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, supRes, plansRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -401,7 +438,13 @@ export function AdminPage({
       apiFetch<{ trades: AdminDexTrade[] }>('/api/admin/dex-trades').catch(() => ({ trades: [] })),
       apiFetch<{ logs: AdminAuditLog[] }>('/api/admin/audit-logs').catch(() => ({ logs: [] })),
       apiFetch<{ referrals: typeof adminReferrals; withdrawals: typeof refWithdrawals }>('/api/admin/referrals').catch(() => ({ referrals: [], withdrawals: [] })),
+      apiFetch<{ providers: OnchainApiProviderItem[] }>('/api/admin/onchain-apis').catch(() => ({ providers: [] })),
+      apiFetch<{ banners: PromoBannerItem[] }>('/api/admin/banners').catch(() => ({ banners: [] })),
+      apiFetch<{ health: typeof systemHealth }>('/api/admin/system-health').catch(() => ({ health: null })),
     ]);
+    setOnchainApis(onchainRes.providers || []);
+    setPromoBanners(bannersRes.banners || []);
+    setSystemHealth(healthRes.health || null);
     setData(ov);
     setOrders(ordRes.orders);
     setAdminPlans(plansRes.plans || []);
@@ -628,82 +671,99 @@ export function AdminPage({
   };
 
   return (
-    <div className="space-y-6">
-      {msg && <div className="surface-card p-4 border-brand text-xs text-brand font-bold">{msg}</div>}
+    <div className="space-y-5 tab-enter">
+      {msg && (
+        <div className="surface-card p-3.5 border-brand text-xs text-brand font-bold flex items-center justify-between gap-2">
+          <span>{msg}</span>
+          <button type="button" onClick={() => setMsg(null)} className="text-dim hover:text-main">
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-        <form onSubmit={updateProfile} className="surface-card p-5 space-y-3">
-          <h3 className="font-black text-sm text-main flex items-center gap-2">
-            <UserCheck className="w-4 h-4 text-signal" />
-            <span>{isFa ? 'پروفایل حساب کاربری' : 'Account Profile'}</span>
-          </h3>
-          <div className="text-sub">
-            Email: <span className="text-main font-mono-num font-bold">{currentUser.email}</span> · Role:{' '}
-            <span className="uppercase text-signal font-black">{currentUser.role}</span>
+      {/* Compact Top Account & Security Toggle Bar */}
+      <div className="panel rounded-3xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <UserCheck className="w-4 h-4 text-jade" />
+            <span className="font-black text-main">{currentUser.username}</span>
+            <span className="text-dim font-mono-num" dir="ltr">{currentUser.email}</span>
+            <span className="px-2 py-0.5 rounded-full badge-signal text-[10px] font-black uppercase">{currentUser.role}</span>
           </div>
-          <div className="flex gap-2">
-            <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 surface-input rounded-xl px-3 py-2" />
-            <button type="submit" className="px-4 py-2 rounded-xl btn-emerald font-extrabold">
-              {isFa ? 'ذخیره' : 'Save'}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="btn-ghost px-3 py-1.5 rounded-xl font-bold inline-flex items-center gap-1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{isFa ? 'بروزرسانی پنل' : 'Refresh'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAdminSecurityBox((s) => !s)}
+              className="btn-ghost px-3 py-1.5 rounded-xl font-bold inline-flex items-center gap-1"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span>{showAdminSecurityBox ? (isFa ? 'بستن امنیت ادمین ▲' : 'Hide Security ▲') : isFa ? 'پروفایل و رمز ادمین ▼' : 'Profile & Password ▼'}</span>
             </button>
           </div>
-        </form>
+        </div>
 
-        <form onSubmit={updatePassword} className="surface-card p-5 space-y-3">
-          <h3 className="font-black text-sm text-main flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-flame" />
-            <span>{isFa ? 'تغییر رمز عبور' : 'Security & Password'}</span>
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              required
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="Current Password"
-              className="surface-input rounded-xl px-3 py-2"
-            />
-            <input
-              required
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="New Password (min 6)"
-              className="surface-input rounded-xl px-3 py-2"
-            />
+        {showAdminSecurityBox && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t hairline text-xs tab-enter">
+            <form onSubmit={updateProfile} className="surface-soft rounded-2xl p-4 space-y-2.5">
+              <h3 className="font-black text-main">{isFa ? 'نام نمایشی ادمین' : 'Admin Display Name'}</h3>
+              <div className="flex gap-2">
+                <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 surface-input rounded-xl px-3 py-2" />
+                <button type="submit" className="px-4 py-2 rounded-xl btn-emerald font-extrabold">
+                  {isFa ? 'ذخیره' : 'Save'}
+                </button>
+              </div>
+            </form>
+            <form onSubmit={updatePassword} className="surface-soft rounded-2xl p-4 space-y-2.5">
+              <h3 className="font-black text-main">{isFa ? 'تغییر رمز عبور' : 'Update Password'}</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <input required type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Current Password" className="surface-input rounded-xl px-3 py-2" />
+                <input required type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Password (min 6)" className="surface-input rounded-xl px-3 py-2" />
+              </div>
+              <button type="submit" className="px-4 py-2 rounded-xl btn-cobalt font-extrabold">
+                {isFa ? 'به‌روزرسانی رمز عبور' : 'Update Password'}
+              </button>
+            </form>
           </div>
-          <button type="submit" className="px-4 py-2 rounded-xl btn-cobalt font-extrabold">
-            {isFa ? 'به‌روزرسانی رمز عبور' : 'Update Password'}
-          </button>
-        </form>
+        )}
       </div>
 
       {isOwnerOrAdmin && data && (
         <>
           {/* Organized Admin Command Bar */}
-          <div className="panel rounded-3xl p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-brand" />
+          <div className="panel rounded-3xl p-4 sm:p-5 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl btn-cobalt grid place-items-center shrink-0">
+                  <Shield className="w-5 h-5 text-white" />
+                </div>
                 <div>
                   <h2 className="text-sm sm:text-base font-black text-main">
                     {isFa ? 'مرکز فرماندهی و مدیریت کل دلارینو' : 'Dollarino Master Admin Desk'}
                   </h2>
                   <p className="text-[11px] text-dim">
                     {isFa
-                      ? 'مدیریت یکپارچه کاربران، احراز هویت تلگرام، کیف‌پول‌های Trust Wallet، موتور AI، معاملات DEX و کانال رسمی'
-                      : 'Unified control over users, Telegram phone KYC, Trust Wallet receivers, AI engines, DEX trades, and official channel'}
+                      ? 'پنل یکپارچه و دسته‌بندی‌شده: سلامت سیستم، بنرهای تبلیغاتی، کاربران، مالی، کانال و APIهای آن‌چین'
+                      : 'Clean categorized command center: Health, Promo Banners, Users, Finance, Channel & On-Chain APIs'}
                   </p>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1.5 text-xs">
                 {[
-                  { id: 'all', icon: null, fa: 'همه بخش‌ها', en: 'All' },
-                  { id: 'overview', icon: BrainCircuit, fa: 'هوش مصنوعی و آمار', en: 'AI & KPIs' },
-                  { id: 'users', icon: Users, fa: 'کاربران و KYC', en: 'Users & KYC' },
-                  { id: 'payments', icon: CreditCard, fa: 'مالی و Trust Wallet', en: 'Payments & Wallets' },
-                  { id: 'ops', icon: Megaphone, fa: 'کانال، کپی‌ترید و پشتیبانی', en: 'Channel & Support' },
-                  { id: 'dex_logs', icon: Flame, fa: 'DEX و لاگ‌ها', en: 'DEX & Audit Logs' },
+                  { id: 'overview', icon: BrainCircuit, fa: 'سلامت، آمار و AI', en: 'Health & AI' },
+                  { id: 'banners', icon: Image, fa: `بنرهای متحرک (${promoBanners.length})`, en: `Banners (${promoBanners.length})` },
+                  { id: 'users', icon: Users, fa: 'کاربران، KYC و رفرال', en: 'Users & KYC' },
+                  { id: 'payments', icon: CreditCard, fa: 'مالی، فیش و Trust Wallet', en: 'Finance & Wallets' },
+                  { id: 'ops', icon: Megaphone, fa: 'کانال، کپی‌ترید و تیکت‌ها', en: 'Channel & Support' },
+                  { id: 'dex_logs', icon: Flame, fa: 'API آن‌چین، DEX و لاگ', en: 'On-Chain APIs & Logs' },
+                  { id: 'all', icon: null, fa: 'نمایش همه', en: 'Show All' },
                 ].map((sec) => {
                   const SecIcon = sec.icon;
                   return (
@@ -766,7 +826,62 @@ export function AdminPage({
           </div>
 
           {(adminSection === 'all' || adminSection === 'overview') && (
-          <>
+          <div className="space-y-5 tab-enter">
+          {/* System Health & D1 Quota Optimization Board */}
+          {systemHealth && (
+            <div className="panel rounded-3xl p-5 border border-emerald-500/25 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-jade" />
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-main">
+                      {isFa ? 'سلامت زنده سیستم، کپی‌ترید V2 و مصرف پایگاه‌داده D1' : 'Live System Health, V2 Engines & D1 Housekeeping'}
+                    </h3>
+                    <p className="text-[11px] text-dim">
+                      {isFa
+                        ? 'پایش ربات‌های فعال، باکس‌های ولت V2، سفارشات Perp، خزانه‌ها و حجم لاگ‌های D1'
+                        : 'Monitor running bots, Smart Copy V2 rules, Perp orders, Copy-Vaults, and D1 log footprint'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const r = await apiFetch<{ deletedRows: number; remainingRows: number }>('/api/admin/prune-logs', {
+                      method: 'POST',
+                    });
+                    setMsg(
+                      isFa
+                        ? `${r.deletedRows} ردیف لاگ قدیمی پاکسازی شد (${r.remainingRows} ردیف باقی ماند).`
+                        : `Pruned ${r.deletedRows} stale log rows (${r.remainingRows} remaining).`
+                    );
+                    await load();
+                  }}
+                  className="btn-ghost px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isFa ? 'پاکسازی لاگ‌های قدیمی (>۵ روز)' : 'Prune Old Logs (>5d)'}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+                {[
+                  { label: isFa ? 'ربات فعال' : 'Running Bots', val: systemHealth.runningBots, color: 'text-jade' },
+                  { label: isFa ? 'قوانین ولت V2' : 'Smart Copy V2', val: systemHealth.activeSmartCopyRules, color: 'text-amber-400' },
+                  { label: isFa ? 'پوزیشن باز V2' : 'Open V2 Pos', val: systemHealth.openCopyPositionsV2, color: 'text-brand' },
+                  { label: isFa ? 'خزانه‌های ۲۴/۷' : 'Copy-Vaults', val: systemHealth.userCopyVaults, color: 'text-main' },
+                  { label: isFa ? 'سفارش Perp کیف‌پول' : 'Wallet Perps', val: systemHealth.perpDexOrders, color: 'text-jade' },
+                  { label: isFa ? 'لاگ‌های D1' : 'D1 Audit Rows', val: systemHealth.auditLogsTotal, color: 'text-dim' },
+                ].map((m) => (
+                  <div key={m.label} className="surface-soft rounded-2xl p-3">
+                    <p className="text-[10px] text-dim">{m.label}</p>
+                    <p className={`text-base font-black font-num mt-0.5 ${m.color}`}>{m.val}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Centralized Owner Multi-AI Engine (1 to 3 Combined Models) */}
           <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-5 border-[#1464F6]/35">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1107,11 +1222,11 @@ export function AdminPage({
               </div>
             )}
           </div>
-          </>
+          </div>
           )}
 
           {(adminSection === 'all' || adminSection === 'payments') && (
-          <>
+          <div className="space-y-5 tab-enter">
           <div className="surface-card p-5 space-y-3 overflow-x-auto">
             <h3 className="text-sm font-black text-main flex items-center gap-2">
               <Crown className="w-4 h-4 text-flame" />
@@ -1549,11 +1664,297 @@ export function AdminPage({
               </div>
             )}
           </div>
-          </>
+          </div>
+          )}
+
+          {(adminSection === 'all' || adminSection === 'banners') && (
+          <div className="space-y-5 tab-enter">
+            <div className="panel rounded-3xl p-5 sm:p-6 space-y-5 border border-amber-500/25">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+                    <Image className="w-5 h-5 text-[var(--gold)]" />
+                    <span>{isFa ? 'مدیریت بنرهای تبلیغاتی، متحرک و ورق‌خور (Carousel)' : 'Animated Promo Banners Carousel Manager'}</span>
+                  </h3>
+                  <p className="text-xs text-sub mt-1">
+                    {isFa
+                      ? 'بنرها به‌صورت خودکار و با انیمیشن نرم در صفحه اول سایت و داشبورد کاربران ورق می‌خورند. می‌توانید متن، تصویر، رنگ و دکمه هر اسلاید را مدیریت کنید.'
+                      : 'Manage animated auto-rotating promo slides displayed across the Landing Page and User Dashboard.'}
+                  </p>
+                </div>
+                <span className="badge-signal px-3 py-1 rounded-full text-[11px] font-black">
+                  {promoBanners.filter((b) => b.is_active === 1).length} / {promoBanners.length} {isFa ? 'فعال' : 'Active'}
+                </span>
+              </div>
+
+              {/* Add / Update Banner Form */}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const res = await apiFetch<{ banners: PromoBannerItem[] }>('/api/admin/banners', {
+                    method: 'POST',
+                    body: JSON.stringify(bannerForm),
+                  });
+                  setPromoBanners(res.banners || []);
+                  setBannerForm({
+                    id: '',
+                    badge_fa: 'پیشنهاد ویژه',
+                    badge_en: 'FEATURED',
+                    title_fa: '',
+                    title_en: '',
+                    subtitle_fa: '',
+                    subtitle_en: '',
+                    cta_label_fa: 'شروع فوری',
+                    cta_label_en: 'Launch Now',
+                    cta_target: 'copy',
+                    image_url: '/images/smart-wallet-radar.png',
+                    accent_theme: 'gold',
+                    placement: 'BOTH',
+                    sort_order: promoBanners.length + 1,
+                  });
+                  setMsg(isFa ? 'بنر تبلیغاتی با موفقیت ذخیره و در اسلایدر منتشر شد!' : 'Promo banner saved!');
+                }}
+                className="surface-soft rounded-2xl p-4 sm:p-5 space-y-3 text-xs border hairline"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-main inline-flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-[var(--gold)]" />
+                    <span>{bannerForm.id ? (isFa ? 'ویرایش بنر انتخاب‌شده' : 'Edit Banner') : isFa ? 'افزودن بنر جدید به اسلایدر' : 'Add New Promo Slide'}</span>
+                  </span>
+                  {bannerForm.id && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBannerForm((f) => ({ ...f, id: '', title_fa: '', title_en: '', subtitle_fa: '', subtitle_en: '' }))
+                      }
+                      className="text-[11px] text-loss font-bold"
+                    >
+                      {isFa ? 'لغو ویرایش' : 'Cancel Edit'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'برچسب بالای بنر (فارسی)' : 'Badge (FA)'}</label>
+                    <input
+                      value={bannerForm.badge_fa}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, badge_fa: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'عنوان بنر (فارسی) *' : 'Title (FA) *'}</label>
+                    <input
+                      required
+                      value={bannerForm.title_fa}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, title_fa: e.target.value }))}
+                      placeholder={isFa ? 'مثلاً: تخفیف ویژه اشتراک فصلی یا رادار نهنگ‌ها' : 'Banner title...'}
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'عنوان بنر (انگلیسی)' : 'Title (EN)'}</label>
+                    <input
+                      dir="ltr"
+                      value={bannerForm.title_en}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, title_en: e.target.value }))}
+                      placeholder="English banner title..."
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'متن دکمه CTA' : 'Button Label'}</label>
+                    <input
+                      value={bannerForm.cta_label_fa}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, cta_label_fa: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'توضیح بنر (فارسی) *' : 'Subtitle (FA) *'}</label>
+                    <textarea
+                      required
+                      rows={2}
+                      value={bannerForm.subtitle_fa}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, subtitle_fa: e.target.value }))}
+                      placeholder={isFa ? 'توضیح جذاب و کوتاه درباره پیشنهاد یا قابلیت...' : 'Short compelling description...'}
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'توضیح بنر (انگلیسی)' : 'Subtitle (EN)'}</label>
+                    <textarea
+                      dir="ltr"
+                      rows={2}
+                      value={bannerForm.subtitle_en}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, subtitle_en: e.target.value }))}
+                      placeholder="Short English subtitle..."
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-2.5 items-end">
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'لینک / تب هدف دکمه' : 'Target Tab or URL'}</label>
+                    <select
+                      value={bannerForm.cta_target}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, cta_target: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    >
+                      <option value="copy">{isFa ? 'کپی‌ترید و ولت‌های V2 (copy)' : 'Copy Trade V2 (copy)'}</option>
+                      <option value="dex">{isFa ? 'DEX، ضدراگ و فیوچرز کیف‌پول (dex)' : 'DEX & Perps (dex)'}</option>
+                      <option value="myai">{isFa ? 'هوش مصنوعی شخصی من (myai)' : 'My AI (myai)'}</option>
+                      <option value="pricing">{isFa ? 'صفحه اشتراک‌ها (pricing)' : 'Subscriptions (pricing)'}</option>
+                      <option value="radar">{isFa ? 'رادار و استراتژی شکار (radar)' : 'Radar & IDE (radar)'}</option>
+                      <option value="aichat">{isFa ? 'چت هوش مصنوعی و تحلیل عکس چارت (aichat)' : 'AI Vision Chat (aichat)'}</option>
+                      <option value="https://t.me/Dollarino_official">{isFa ? 'کانال رسمی تلگرام' : 'Telegram Channel'}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'تصویر آماده یا آدرس دلخواه' : 'Banner Image'}</label>
+                    <select
+                      value={bannerForm.image_url}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, image_url: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-3 py-2"
+                    >
+                      <option value="/images/smart-wallet-radar.png">رادار نهنگ‌ها و خزانه (Smart Radar)</option>
+                      <option value="/images/antirug-shield-dapp.png">سپر ضدراگ و DApp (Anti-Rug)</option>
+                      <option value="/images/hero-quant-desk.png">میز ترید کمی (Quant Desk)</option>
+                      <option value="/images/my-ai-brain.png">هوش مصنوعی شخصی (My AI)</option>
+                      <option value="/images/copytrade-trophy.png">جام کپی‌ترید (Copy Trophy)</option>
+                      <option value="/images/vip-club-banner.png">کلوپ VIP (VIP Club)</option>
+                      <option value="/images/trust-dex-hub.png">تراست‌ولت و DEX (Trust Hub)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'آدرس عکس سفارشی (اختیاری)' : 'Custom Image URL'}</label>
+                    <input
+                      dir="ltr"
+                      value={bannerForm.image_url}
+                      onChange={(e) => setBannerForm((f) => ({ ...f, image_url: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-3 py-2 font-mono text-[11px]"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div>
+                      <label className="text-[10px] text-dim block mb-1">{isFa ? 'محل نمایش' : 'Placement'}</label>
+                      <select
+                        value={bannerForm.placement}
+                        onChange={(e) => setBannerForm((f) => ({ ...f, placement: e.target.value }))}
+                        className="surface-input w-full rounded-xl px-2 py-2"
+                      >
+                        <option value="BOTH">{isFa ? 'همه‌جا' : 'Both'}</option>
+                        <option value="LANDING">{isFa ? 'صفحه اول' : 'Landing'}</option>
+                        <option value="DASHBOARD">{isFa ? 'داشبورد' : 'Dashboard'}</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-dim block mb-1">{isFa ? 'رنگ تم' : 'Theme'}</label>
+                      <select
+                        value={bannerForm.accent_theme}
+                        onChange={(e) => setBannerForm((f) => ({ ...f, accent_theme: e.target.value }))}
+                        className="surface-input w-full rounded-xl px-2 py-2"
+                      >
+                        <option value="gold">طلایی</option>
+                        <option value="emerald">زمردی</option>
+                        <option value="cobalt">کبالت</option>
+                        <option value="purple">بنفش</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button type="submit" className="btn-gold py-2.5 px-4 rounded-xl font-black">
+                    {bannerForm.id ? (isFa ? 'بروزرسانی بنر' : 'Update Slide') : isFa ? 'انتشار در اسلایدر' : 'Publish Slide'}
+                  </button>
+                </div>
+              </form>
+
+              {/* Existing Banners List */}
+              <div className="grid md:grid-cols-2 gap-3 text-xs">
+                {promoBanners.map((b) => (
+                  <div key={b.id} className="surface-soft rounded-2xl p-3.5 border hairline flex gap-3 items-center">
+                    <img
+                      src={b.image_url}
+                      alt={b.title_fa}
+                      className="w-24 h-16 rounded-xl object-cover shrink-0 border hairline"
+                    />
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[9px] font-black">
+                          #{b.sort_order} · {b.placement}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${b.is_active ? 'badge-signal' : 'bg-rose-500/15 text-loss'}`}>
+                          {b.is_active ? (isFa ? 'فعال' : 'ON') : isFa ? 'خاموش' : 'OFF'}
+                        </span>
+                      </div>
+                      <p className="font-black text-main truncate">{b.title_fa}</p>
+                      <p className="text-[10px] text-dim truncate">{b.subtitle_fa}</p>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const r = await apiFetch<{ banners: PromoBannerItem[] }>(`/api/admin/banners/${b.id}`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ is_active: b.is_active !== 1 }),
+                            });
+                            setPromoBanners(r.banners || []);
+                          }}
+                          className="btn-ghost px-2.5 py-1 rounded-lg text-[10px] font-bold"
+                        >
+                          {b.is_active ? (isFa ? 'خاموش کن' : 'Disable') : isFa ? 'فعال کن' : 'Enable'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setBannerForm({
+                              id: b.id,
+                              badge_fa: b.badge_fa,
+                              badge_en: b.badge_en,
+                              title_fa: b.title_fa,
+                              title_en: b.title_en,
+                              subtitle_fa: b.subtitle_fa,
+                              subtitle_en: b.subtitle_en,
+                              cta_label_fa: b.cta_label_fa,
+                              cta_label_en: b.cta_label_en,
+                              cta_target: b.cta_target,
+                              image_url: b.image_url,
+                              accent_theme: b.accent_theme,
+                              placement: b.placement,
+                              sort_order: b.sort_order,
+                            })
+                          }
+                          className="btn-cobalt px-2.5 py-1 rounded-lg text-[10px] font-black"
+                        >
+                          {isFa ? 'ویرایش' : 'Edit'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const r = await apiFetch<{ banners: PromoBannerItem[] }>(`/api/admin/banners/${b.id}`, {
+                              method: 'DELETE',
+                            });
+                            setPromoBanners(r.banners || []);
+                            setMsg(isFa ? 'بنر حذف شد.' : 'Banner removed.');
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-loss text-[10px] font-black"
+                        >
+                          {isFa ? 'حذف' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
           )}
 
           {(adminSection === 'all' || adminSection === 'users') && (
-          <div className="surface-card p-5 space-y-3 overflow-x-auto">
+          <div className="surface-card p-5 space-y-3 overflow-x-auto tab-enter">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-black flex items-center gap-2 text-main">
                 <Users className="w-4 h-4 text-brand" />
@@ -1692,7 +2093,7 @@ export function AdminPage({
           )}
 
           {(adminSection === 'all' || adminSection === 'ops') && (
-          <>
+          <div className="space-y-5 tab-enter">
           {/* Admin Copy Traders Manager + Online Support Inbox */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
             {/* Copy Traders Management */}
@@ -2290,11 +2691,187 @@ help - راهنمای کامل و امنیت حساب`}
               </div>
             </div>
           </div>
-          </>
+          </div>
           )}
 
           {(adminSection === 'all' || adminSection === 'dex_logs') && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+            <div className="space-y-5 tab-enter">
+              <div className="surface-card p-5 space-y-4 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-black text-sm text-main inline-flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-brand" />
+                      <span>
+                        {isFa
+                          ? 'مدیریت APIهای آن‌چین، اسکنرهای ضدراگ و تجمیع‌کننده‌های DEX'
+                          : 'On-Chain Indexers, Rug Scanners & DEX Aggregator APIs'}
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-dim mt-0.5">
+                      {isFa
+                        ? 'سرویس‌های رایگان همیشه فعال هستند. با افزودن کلید Moralis، Birdeye، Helius، GoPlus و 1inch رصد نهنگ‌ها و سوآپ خودکار قدرت دوچندان می‌گیرد.'
+                        : 'Free keyless providers are active out of the box. Add Moralis, Birdeye, Helius, GoPlus, or 1inch keys (AES-256 encrypted) for deep Smart Money tracking.'}
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full surface-soft font-bold text-jade">
+                    {onchainApis.filter((p) => p.is_active).length} / {onchainApis.length} {isFa ? 'فعال' : 'Active'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {onchainApis.map((prov) => {
+                    const busy = onchainBusy === prov.provider;
+                    const inputVal = onchainInputs[prov.provider] ?? '';
+                    return (
+                      <div key={prov.provider} className="surface-soft rounded-2xl p-3.5 space-y-2.5 border border-[var(--border)]">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-black text-main flex items-center gap-1.5">
+                              <span>{prov.label}</span>
+                              <span className="px-1.5 py-0.5 rounded bg-black/20 text-[9px] text-dim font-mono-num">
+                                {prov.category}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-dim font-mono-num mt-0.5" dir="ltr">
+                              {prov.base_url}
+                            </div>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              prov.is_active
+                                ? 'bg-emerald-500/15 text-jade'
+                                : 'bg-amber-500/15 text-amber-400'
+                            }`}
+                          >
+                            {prov.requires_key === 0
+                              ? isFa
+                                ? 'رایگان فعال'
+                                : 'Free Ready'
+                              : prov.api_key_masked
+                                ? isFa
+                                  ? 'کلید ثبت‌شده'
+                                  : 'Configured'
+                                : isFa
+                                  ? 'نیازمند کلید'
+                                  : 'Key Needed'}
+                          </span>
+                        </div>
+
+                        {prov.api_key_masked && (
+                          <div className="text-[10px] font-mono-num text-sub" dir="ltr">
+                            Key: {prov.api_key_masked} · Calls: {prov.calls_today}
+                          </div>
+                        )}
+
+                        {prov.last_error && (
+                          <div className="text-[10px] text-loss">{prov.last_error}</div>
+                        )}
+                        {prov.last_test_ok === 1 && !prov.last_error && (
+                          <div className="text-[10px] text-jade">
+                            {isFa ? '✓ آخرین تست اتصال موفق بود' : '✓ Last health check passed'}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {prov.requires_key === 1 && (
+                            <>
+                              <input
+                                type="password"
+                                dir="ltr"
+                                value={inputVal}
+                                onChange={(e) =>
+                                  setOnchainInputs((prev) => ({ ...prev, [prov.provider]: e.target.value }))
+                                }
+                                placeholder={`${prov.provider.toUpperCase()} API Key...`}
+                                className="input-field flex-1 min-w-[140px] py-1.5 text-[11px] font-mono-num"
+                              />
+                              <button
+                                type="button"
+                                disabled={busy || !inputVal.trim()}
+                                onClick={async () => {
+                                  setOnchainBusy(prov.provider);
+                                  try {
+                                    const res = await apiFetch<{ providers: OnchainApiProviderItem[] }>(
+                                      '/api/admin/onchain-apis',
+                                      {
+                                        method: 'POST',
+                                        body: JSON.stringify({
+                                          provider: prov.provider,
+                                          apiKey: inputVal.trim(),
+                                          isActive: true,
+                                        }),
+                                      }
+                                    );
+                                    setOnchainApis(res.providers || []);
+                                    setOnchainInputs((prev) => ({ ...prev, [prov.provider]: '' }));
+                                    setMsg(isFa ? `کلید ${prov.label} با رمزنگاری AES-256 ذخیره شد.` : `Saved ${prov.label} key.`);
+                                  } catch (err) {
+                                    setMsg(err instanceof Error ? err.message : 'Save failed');
+                                  } finally {
+                                    setOnchainBusy(null);
+                                  }
+                                }}
+                                className="btn-cobalt px-2.5 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40"
+                              >
+                                {isFa ? 'ذخیره' : 'Save'}
+                              </button>
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={async () => {
+                              setOnchainBusy(prov.provider);
+                              try {
+                                const res = await apiFetch<{
+                                  ok: boolean;
+                                  message: string;
+                                  providers: OnchainApiProviderItem[];
+                                }>(`/api/admin/onchain-apis/${prov.provider}/test`, { method: 'POST' });
+                                setOnchainApis(res.providers || []);
+                                setMsg(`${prov.label}: ${res.message}`);
+                              } catch (err) {
+                                setMsg(err instanceof Error ? err.message : 'Test failed');
+                              } finally {
+                                setOnchainBusy(null);
+                              }
+                            }}
+                            className="surface-card px-2.5 py-1.5 rounded-lg text-[10px] font-bold hover:text-brand inline-flex items-center gap-1"
+                          >
+                            <Zap className="w-3 h-3" />
+                            <span>{busy ? '...' : isFa ? 'تست زنده' : 'Test'}</span>
+                          </button>
+                          {prov.requires_key === 1 && prov.api_key_masked && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={async () => {
+                                setOnchainBusy(prov.provider);
+                                try {
+                                  const res = await apiFetch<{ providers: OnchainApiProviderItem[] }>(
+                                    `/api/admin/onchain-apis/${prov.provider}`,
+                                    { method: 'DELETE' }
+                                  );
+                                  setOnchainApis(res.providers || []);
+                                  setMsg(isFa ? `کلید ${prov.label} حذف شد.` : `Removed ${prov.label} key.`);
+                                } finally {
+                                  setOnchainBusy(null);
+                                }
+                              }}
+                              className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-loss hover:bg-rose-500/10"
+                              title="حذف کلید"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
               <div className="surface-card p-5 space-y-3 overflow-x-auto">
                 <div className="flex items-center justify-between">
                   <h3 className="font-black text-sm text-main inline-flex items-center gap-1.5">
@@ -2364,6 +2941,7 @@ help - راهنمای کامل و امنیت حساب`}
                   ))}
                 </div>
               </div>
+            </div>
             </div>
           )}
         </>

@@ -9,7 +9,10 @@ import {
   Coins,
   ExternalLink,
   Flame,
+  Gauge,
   History,
+  KeyRound,
+  Layers,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -33,7 +36,7 @@ import {
   switchEvmNetwork,
   type EvmNetworkSpec,
 } from '../lib/trustwallet';
-import type { AuthUserInfo } from '../lib/types';
+import type { AuthUserInfo, MultiDappRouteItem, PerpDappLinkItem, PerpMarketQuoteItem, TokenRugSafetyReport } from '../lib/types';
 
 export interface DexTokenCardItem {
   chainId: string;
@@ -144,7 +147,36 @@ export function DexTrustPage({
   onUserRefresh: () => Promise<void> | void;
 }) {
   const isFa = lang === 'fa';
-  const [subTab, setSubTab] = useState<'dex' | 'wallet' | 'trades'>('dex');
+  const [subTab, setSubTab] = useState<'dex' | 'perps' | 'wallet' | 'trades'>('dex');
+  const [perpMarkets, setPerpMarkets] = useState<PerpMarketQuoteItem[]>([]);
+  const [perpDapps, setPerpDapps] = useState<PerpDappLinkItem[]>([]);
+  const [perpBusy, setPerpBusy] = useState(false);
+  const [perpAccount, setPerpAccount] = useState<{
+    connected: boolean;
+    walletAddress?: string;
+    agentAddress?: string;
+    mode?: string;
+    liveAccount?: {
+      accountValueUsd: number;
+      marginUsedUsd: number;
+      withdrawableUsd: number;
+      positions: Array<{ symbol: string; size: number; side: string; entryPrice: number; unrealizedPnl: number; leverage: number }>;
+    } | null;
+    orders: Array<{ id: string; provider: string; symbol: string; side: string; size_usd: number; leverage: number; status: string; created_at: string }>;
+  } | null>(null);
+  const [perpAgentForm, setPerpAgentForm] = useState({
+    walletAddress: '',
+    agentAddress: '',
+    agentPrivateKey: '',
+    defaultLeverage: 5,
+  });
+  const [perpOrderForm, setPerpOrderForm] = useState({
+    symbol: 'BTC',
+    side: 'LONG' as 'LONG' | 'SHORT',
+    sizeUsd: 100,
+    leverage: 5,
+    provider: 'HYPERLIQUID',
+  });
   const [chainFilter, setChainFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [tokens, setTokens] = useState<DexTokenCardItem[]>([]);
@@ -156,6 +188,35 @@ export function DexTrustPage({
     levels?: { entryUsd: number; stopLossUsd: number; tp1Usd: number };
     loading: boolean;
   } | null>(null);
+
+  const [dappModal, setDappModal] = useState<{
+    token: DexTokenCardItem;
+    loading: boolean;
+    routes: MultiDappRouteItem[];
+    safety: TokenRugSafetyReport | null;
+  } | null>(null);
+
+  const openDappSafetyModal = async (t: DexTokenCardItem) => {
+    setDappModal({ token: t, loading: true, routes: [], safety: null });
+    try {
+      const [routesRes, safetyRes] = await Promise.all([
+        apiFetch<{ routes: MultiDappRouteItem[] }>(
+          `/api/dex/routes?chainId=${encodeURIComponent(t.chainId)}&tokenAddress=${encodeURIComponent(t.baseToken.address)}`
+        ).catch(() => ({ routes: [] })),
+        apiFetch<{ report: TokenRugSafetyReport }>(
+          `/api/dex/safety?chainId=${encodeURIComponent(t.chainId)}&tokenAddress=${encodeURIComponent(t.baseToken.address)}`
+        ).catch(() => ({ report: null })),
+      ]);
+      setDappModal({
+        token: t,
+        loading: false,
+        routes: routesRes.routes || [],
+        safety: safetyRes.report || null,
+      });
+    } catch {
+      setDappModal((prev) => (prev ? { ...prev, loading: false } : null));
+    }
+  };
 
   const [twStatus, setTwStatus] = useState<TrustWalletStatusRes | null>(null);
   const [balances, setBalances] = useState<{
@@ -389,10 +450,30 @@ export function DexTrustPage({
     }
   }, []);
 
+  const loadPerpData = useCallback(async () => {
+    try {
+      const [mk, acc] = await Promise.all([
+        apiFetch<{ markets: PerpMarketQuoteItem[]; dapps: PerpDappLinkItem[] }>('/api/dex/perp-markets'),
+        apiFetch<NonNullable<typeof perpAccount>>('/api/dex/perp-account').catch(() => null),
+      ]);
+      setPerpMarkets(mk.markets || []);
+      setPerpDapps(mk.dapps || []);
+      if (acc) {
+        setPerpAccount(acc);
+        if (acc.walletAddress) {
+          setPerpAgentForm((f) => ({ ...f, walletAddress: f.walletAddress || acc.walletAddress || '' }));
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     void loadTrending();
     void loadWalletAndTrades();
-  }, [loadTrending, loadWalletAndTrades]);
+    void loadPerpData();
+  }, [loadTrending, loadWalletAndTrades, loadPerpData]);
 
   const handleConnectInjectedTrust = async () => {
     setWalletBusy(true);
@@ -729,6 +810,7 @@ export function DexTrustPage({
       <div className="flex flex-wrap gap-2">
         {[
           { id: 'dex', icon: Search, fa: 'رادار زنده DexScreener', en: 'DexScreener Scanner' },
+          { id: 'perps', icon: Gauge, fa: 'فیوچرز کیف‌پول (Perp DEX)', en: 'Wallet Leveraged Perps' },
           { id: 'wallet', icon: ShieldCheck, fa: 'مدیریت کیف‌پول Trust Wallet', en: 'Trust Wallet Manager' },
           { id: 'trades', icon: History, fa: `پورتفوی معاملات DEX (${dexTrades.length})`, en: `DEX Trades (${dexTrades.length})` },
         ].map((t) => {
@@ -751,7 +833,36 @@ export function DexTrustPage({
 
       {/* TAB 1: DexScreener Live Radar */}
       {subTab === 'dex' && (
-        <div className="space-y-4">
+        <div className="space-y-4 tab-enter">
+          <div className="panel rounded-3xl p-4 border border-emerald-500/20 flex flex-col md:flex-row md:items-center gap-4">
+            <img
+              src="/images/antirug-shield-dapp.png"
+              alt="Anti-Rug & Multi-DApp Shield"
+              className="w-full md:w-44 h-24 rounded-2xl object-cover shrink-0 border hairline"
+            />
+            <div className="flex-1 min-w-0 space-y-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
+                  {isFa ? 'سپر ضدراگ ۳ منبعی (GoPlus + Honeypot.is + RugCheck)' : '3-Source Anti-Rug Scanner'}
+                </span>
+                <span className="text-[11px] font-bold text-jade">
+                  {isFa ? 'امتیاز ۷۵+ = ایمن' : 'Score 75+ = SAFE'}
+                </span>
+                <span className="text-[11px] font-bold text-amber-400">
+                  {isFa ? '۴۵ تا ۷۴ = احتیاط' : '45–74 = CAUTION'}
+                </span>
+                <span className="text-[11px] font-bold text-loss">
+                  {isFa ? 'زیر ۴۵ = ریسک هانی‌پات/راگ' : '<45 = HIGH RISK'}
+                </span>
+              </div>
+              <p className="text-dim leading-relaxed">
+                {isFa
+                  ? 'روی هر توکن، دکمه «DAppهای شبکه + ضدراگ» را بزنید تا بررسی کامل قرارداد (مالیات خرید/فروش، Mint و نقدینگی قفل‌شده) را ببینید و همزمان همه صرافی‌های آن شبکه را مستقیماً در Trust Wallet باز کنید.'
+                  : 'Tap "Multi-DApp + Safety" on any token to run live GoPlus/Honeypot/RugCheck inspection and open all top DEX routes directly inside Trust Wallet.'}
+              </p>
+            </div>
+          </div>
+
           <div className="panel rounded-3xl p-4 space-y-3">
             <form onSubmit={(e) => void handleSearch(e)} className="flex flex-wrap gap-2">
               <div className="relative flex-1 min-w-[220px]">
@@ -933,6 +1044,14 @@ export function DexTrustPage({
                         <Activity className="w-3 h-3" />
                         <span>{isFa ? 'چارت DexScreener' : 'Chart'}</span>
                       </a>
+                      <button
+                        type="button"
+                        onClick={() => void openDappSafetyModal(t)}
+                        className="col-span-2 surface-soft hover:border-brand/50 border border-[var(--border)] py-1.5 px-2.5 rounded-xl text-[11px] font-black text-main inline-flex items-center justify-center gap-1.5 transition"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-jade" />
+                        <span>{isFa ? 'بهترین DAppهای Trust Wallet + اسکن ضدراگ' : 'All Top DApps + Anti-Rug Scan'}</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -942,9 +1061,352 @@ export function DexTrustPage({
         </div>
       )}
 
+      {/* TAB PERPS: Non-Custodial Wallet Leveraged Futures (Hyperliquid / Jupiter Perps / GMX / dYdX) */}
+      {subTab === 'perps' && (
+        <div className="space-y-5 tab-enter">
+          <div className="panel rounded-3xl p-5 sm:p-6 space-y-4 border border-emerald-500/25">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1 max-w-2xl">
+                <div className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[11px] font-black">
+                  <Gauge className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'فیوچرز اهرم‌دار غیرمتمرکز روی کیف‌پول (بدون صرافی متمرکز)' : 'NON-CUSTODIAL WALLET LEVERAGED PERPS'}</span>
+                </div>
+                <h3 className="font-display font-bold text-lg sm:text-xl text-main">
+                  {isFa ? 'معامله لانگ و شورت اهرم‌دار تا ۱۰۰x مستقیم از Trust Wallet' : 'Trade Long/Short Up to 100x Straight From Your Wallet'}
+                </h3>
+                <p className="text-xs text-dim leading-relaxed">
+                  {isFa
+                    ? 'با اتصال کیف‌پول خود می‌توانید بدون احراز هویت در صرافی‌های متمرکز و بدون سپردن پول، روی صرافی‌های فیوچرز غیرمتمرکز Hyperliquid (تا ۵۰x)، Jupiter Perps سولانا (تا ۱۰۰x)، GMX V2 و dYdX معامله اهرم‌دار باز کنید.'
+                    : 'Open leveraged Long/Short positions directly from your non-custodial wallet on Hyperliquid (50x), Solana Jupiter Perps (100x), GMX V2, and dYdX v4.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadPerpData()}
+                className="btn-ghost px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>{isFa ? 'بروزرسانی نرخ‌ها' : 'Refresh Markets'}</span>
+              </button>
+            </div>
+
+            {/* 4 Leading Perp DEX Cards */}
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {perpDapps.map((d) => (
+                <div key={d.venue} className="surface-soft rounded-2xl p-4 border hairline flex flex-col justify-between gap-3 panel-hover">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-black text-sm text-main">{d.name}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 font-num text-[10px] font-black">
+                        Up to {d.maxLeverage}x
+                      </span>
+                    </div>
+                    <p className="text-[10px] font-bold text-brand uppercase">{d.chain}</p>
+                    <p className="text-[11px] text-dim leading-relaxed">{isFa ? d.noteFa : d.noteEn}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <a
+                      href={d.trustWalletDappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-gold flex-1 py-2 rounded-xl text-[11px] font-black text-center"
+                    >
+                      {isFa ? 'باز کردن در Trust Wallet' : 'Open in Trust Wallet'}
+                    </a>
+                    <a
+                      href={d.dappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-ghost px-2.5 py-2 rounded-xl text-[11px]"
+                      title={d.name}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-4 items-start">
+            {/* Quick Wallet Perp Order & Live Hyperliquid Markets */}
+            <div className="panel rounded-3xl p-5 space-y-4">
+              <h4 className="font-display font-bold text-sm sm:text-base text-main flex items-center gap-2">
+                <Layers className="w-4 h-4 text-brand" />
+                <span>{isFa ? 'ثبت سریع سفارش فیوچرز کیف‌پول + رصد زنده مارکت‌ها' : 'Quick Wallet Perp Order & Live Mark Prices'}</span>
+              </h4>
+
+              <div className="surface-soft rounded-2xl p-4 space-y-3 border hairline text-xs">
+                <div className="grid sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'پروتکل' : 'Perp DEX'}</label>
+                    <select
+                      value={perpOrderForm.provider}
+                      onChange={(e) => setPerpOrderForm((f) => ({ ...f, provider: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-2.5 py-2"
+                    >
+                      <option value="HYPERLIQUID">Hyperliquid (50x)</option>
+                      <option value="JUPITER_PERPS">Jupiter Perps SOL (100x)</option>
+                      <option value="GMX_ARB">GMX V2 ARB (50x)</option>
+                      <option value="DYDX_V4">dYdX v4 (20x)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'ارز' : 'Coin'}</label>
+                    <select
+                      value={perpOrderForm.symbol}
+                      onChange={(e) => setPerpOrderForm((f) => ({ ...f, symbol: e.target.value }))}
+                      className="surface-input w-full rounded-xl px-2.5 py-2 font-bold"
+                    >
+                      {(perpMarkets.length > 0 ? perpMarkets.slice(0, 12).map((m) => m.symbol) : ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'SUI', 'AVAX']).map((s) => (
+                        <option key={s} value={s}>{s}-PERP</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'حجم (دلار)' : 'Size ($)'}</label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={1000000}
+                      value={perpOrderForm.sizeUsd}
+                      onChange={(e) => setPerpOrderForm((f) => ({ ...f, sizeUsd: Number(e.target.value) || 50 }))}
+                      className="surface-input w-full rounded-xl px-2.5 py-2 font-num"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'اهرم (Leverage)' : 'Leverage'}</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={perpOrderForm.leverage}
+                      onChange={(e) => setPerpOrderForm((f) => ({ ...f, leverage: Math.max(1, Math.min(100, Number(e.target.value) || 5)) }))}
+                      className="surface-input w-full rounded-xl px-2.5 py-2 font-num"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={perpBusy}
+                    onClick={async () => {
+                      setPerpBusy(true);
+                      setErr(null);
+                      setMsg(null);
+                      try {
+                        const r = await apiFetch<{ messageFa: string; messageEn: string; dappRedirectUrl?: string }>('/api/dex/perp-order', {
+                          method: 'POST',
+                          body: JSON.stringify({ ...perpOrderForm, side: 'LONG' }),
+                        });
+                        setMsg(isFa ? r.messageFa : r.messageEn);
+                        await loadPerpData();
+                        if (r.dappRedirectUrl) window.open(r.dappRedirectUrl, '_blank', 'noopener,noreferrer');
+                      } catch (e) {
+                        setErr(e instanceof Error ? e.message : 'Order failed');
+                      } finally {
+                        setPerpBusy(false);
+                      }
+                    }}
+                    className="btn-emerald flex-1 py-2.5 rounded-xl font-black inline-flex items-center justify-center gap-1.5"
+                  >
+                    <TrendingUp className="w-4 h-4" />
+                    <span>{isFa ? `لانگ ${perpOrderForm.symbol} (${perpOrderForm.leverage}x)` : `LONG ${perpOrderForm.symbol}`}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={perpBusy}
+                    onClick={async () => {
+                      setPerpBusy(true);
+                      setErr(null);
+                      setMsg(null);
+                      try {
+                        const r = await apiFetch<{ messageFa: string; messageEn: string; dappRedirectUrl?: string }>('/api/dex/perp-order', {
+                          method: 'POST',
+                          body: JSON.stringify({ ...perpOrderForm, side: 'SHORT' }),
+                        });
+                        setMsg(isFa ? r.messageFa : r.messageEn);
+                        await loadPerpData();
+                        if (r.dappRedirectUrl) window.open(r.dappRedirectUrl, '_blank', 'noopener,noreferrer');
+                      } catch (e) {
+                        setErr(e instanceof Error ? e.message : 'Order failed');
+                      } finally {
+                        setPerpBusy(false);
+                      }
+                    }}
+                    className="btn-danger flex-1 py-2.5 rounded-xl font-black inline-flex items-center justify-center gap-1.5"
+                  >
+                    <TrendingDown className="w-4 h-4" />
+                    <span>{isFa ? `شورت ${perpOrderForm.symbol} (${perpOrderForm.leverage}x)` : `SHORT ${perpOrderForm.symbol}`}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Perp Markets Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] text-dim border-b hairline text-start">
+                      <th className="pb-2">{isFa ? 'قرارداد' : 'Market'}</th>
+                      <th className="pb-2">{isFa ? 'قیمت Mark' : 'Mark Price'}</th>
+                      <th className="pb-2">{isFa ? 'فاندینگ (ساعتی)' : 'Funding/1h'}</th>
+                      <th className="pb-2">{isFa ? 'اهرم' : 'Max Lev'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perpMarkets.slice(0, 10).map((m) => (
+                      <tr key={m.symbol} className="border-b hairline/50 hover:bg-white/[0.02]">
+                        <td className="py-2 font-black text-main">
+                          <button
+                            type="button"
+                            onClick={() => setPerpOrderForm((f) => ({ ...f, symbol: m.symbol }))}
+                            className="inline-flex items-center gap-1.5 hover:text-brand"
+                          >
+                            <CoinIcon symbol={`${m.symbol}USDT`} size={16} />
+                            <span>{m.symbol}-PERP</span>
+                          </button>
+                        </td>
+                        <td dir="ltr" className="py-2 font-num font-bold text-main">
+                          ${Number(m.markPrice || 0).toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                        </td>
+                        <td dir="ltr" className={`py-2 font-num font-bold ${m.fundingRatePct >= 0 ? 'text-jade' : 'text-loss'}`}>
+                          {m.fundingRatePct >= 0 ? '+' : ''}{m.fundingRatePct.toFixed(4)}%
+                        </td>
+                        <td dir="ltr" className="py-2 font-num text-amber-400 font-black">
+                          {m.maxLeverage}x
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Right Column: Hyperliquid Agent Wallet Setup + Live Positions */}
+            <div className="space-y-4">
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setPerpBusy(true);
+                  setErr(null);
+                  try {
+                    const r = await apiFetch<{ messageFa: string }>('/api/dex/perp-connect', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        provider: 'HYPERLIQUID',
+                        walletAddress: perpAgentForm.walletAddress || twStatus?.wallet.evmAddress || '',
+                        agentAddress: perpAgentForm.agentAddress || undefined,
+                        agentPrivateKey: perpAgentForm.agentPrivateKey || undefined,
+                        defaultLeverage: perpAgentForm.defaultLeverage,
+                      }),
+                    });
+                    setMsg(r.messageFa);
+                    setPerpAgentForm((f) => ({ ...f, agentPrivateKey: '' }));
+                    await loadPerpData();
+                  } catch (e2) {
+                    setErr(e2 instanceof Error ? e2.message : 'Connect failed');
+                  } finally {
+                    setPerpBusy(false);
+                  }
+                }}
+                className="panel rounded-3xl p-5 space-y-3 text-xs border border-blue-500/25"
+              >
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-sm text-main flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-brand" />
+                    <span>{isFa ? 'اتصال Agent Wallet (اختیاری)' : 'Connect Trade-Only Agent Wallet'}</span>
+                  </h4>
+                  {perpAccount?.connected && (
+                    <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
+                      {perpAccount.mode}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-dim leading-relaxed">
+                  {isFa
+                    ? 'برای رصد زنده پوزیشن‌ها و موجودی Hyperliquid آدرس اصلی ولت را وارد کنید. فقط اگر می‌خواهید ربات مستقیم معامله بفرستد، Agent Key (که مجوز برداشت ندارد) را ذخیره کنید.'
+                    : 'Enter your main wallet address to track live Hyperliquid equity & positions. Optionally attach a trade-only Agent Wallet key (cannot withdraw).'}
+                </p>
+                <input
+                  dir="ltr"
+                  required
+                  value={perpAgentForm.walletAddress || twStatus?.wallet.evmAddress || ''}
+                  onChange={(e) => setPerpAgentForm((f) => ({ ...f, walletAddress: e.target.value }))}
+                  placeholder="Main Wallet Address (0x...)"
+                  className="surface-input w-full rounded-xl px-3 py-2 font-mono text-[11px]"
+                />
+                <input
+                  dir="ltr"
+                  value={perpAgentForm.agentAddress}
+                  onChange={(e) => setPerpAgentForm((f) => ({ ...f, agentAddress: e.target.value }))}
+                  placeholder="Optional Agent Wallet Public Address (0x...)"
+                  className="surface-input w-full rounded-xl px-3 py-2 font-mono text-[11px]"
+                />
+                <input
+                  dir="ltr"
+                  type="password"
+                  value={perpAgentForm.agentPrivateKey}
+                  onChange={(e) => setPerpAgentForm((f) => ({ ...f, agentPrivateKey: e.target.value }))}
+                  placeholder="Optional Hyperliquid Trade-Only Agent Private Key (Encrypted AES-256)"
+                  className="surface-input w-full rounded-xl px-3 py-2 font-mono text-[11px]"
+                />
+                <button type="submit" disabled={perpBusy} className="btn-cobalt w-full py-2.5 rounded-xl font-black">
+                  {perpBusy ? '...' : isFa ? 'ذخیره اتصال امن فیوچرز' : 'Save Non-Custodial Perp Link'}
+                </button>
+              </form>
+
+              {perpAccount?.liveAccount && (
+                <div className="panel rounded-3xl p-5 space-y-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-main">{isFa ? 'مانده زنده Hyperliquid' : 'Live Hyperliquid Equity'}</span>
+                    <span dir="ltr" className="font-num font-black text-jade text-sm">
+                      ${perpAccount.liveAccount.accountValueUsd.toFixed(2)}
+                    </span>
+                  </div>
+                  {perpAccount.liveAccount.positions.length === 0 ? (
+                    <p className="text-[11px] text-dim">{isFa ? 'پوزیشن باز فعلی در Hyperliquid وجود ندارد.' : 'No open Hyperliquid positions.'}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {perpAccount.liveAccount.positions.map((pos) => (
+                        <div key={pos.symbol} className="surface-soft rounded-xl p-2.5 flex items-center justify-between">
+                          <div>
+                            <strong className="text-main">{pos.symbol} · {pos.side} ({pos.leverage}x)</strong>
+                            <p dir="ltr" className="text-[10px] text-dim">Entry ${pos.entryPrice.toFixed(2)}</p>
+                          </div>
+                          <span dir="ltr" className={`font-num font-black ${pos.unrealizedPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
+                            {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {perpAccount && perpAccount.orders?.length > 0 && (
+                <div className="panel rounded-3xl p-4 space-y-2 text-xs">
+                  <p className="font-black text-main">{isFa ? 'آخرین سفارش‌های فیوچرز کیف‌پول' : 'Recent Wallet Perp Orders'}</p>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {perpAccount.orders.slice(0, 6).map((o) => (
+                      <div key={o.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between">
+                        <span>
+                          <strong>{o.symbol}</strong> · {o.side} · {o.leverage}x (${o.size_usd})
+                        </span>
+                        <span className="text-[10px] text-jade font-black">{o.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TAB 2: Trust Wallet Manager */}
       {subTab === 'wallet' && (
-        <div className="grid lg:grid-cols-2 gap-4">
+        <div className="grid lg:grid-cols-2 gap-4 tab-enter">
           <form onSubmit={(e) => void handleSaveManualAddresses(e)} className="panel rounded-3xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
@@ -1079,7 +1541,7 @@ export function DexTrustPage({
 
       {/* TAB 3: DEX Trades Portfolio */}
       {subTab === 'trades' && (
-        <div className="panel rounded-3xl p-5 space-y-3">
+        <div className="panel rounded-3xl p-5 space-y-3 tab-enter">
           <div className="flex items-center justify-between">
             <h3 className="font-display font-bold text-base text-main">
               {isFa ? 'پورتفوی معاملات غیرمتمرکز (Trust Wallet + DexScreener)' : 'Non-Custodial DEX Portfolio'}
@@ -1196,6 +1658,126 @@ export function DexTrustPage({
                     <button type="button" onClick={() => setAiModal(null)} className="btn-ghost px-4 py-2.5 rounded-2xl text-xs font-bold">
                       {isFa ? 'بستن' : 'Close'}
                     </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Multi-DApp & Anti-Rug Safety Modal */}
+      {dappModal &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            dir={isFa ? 'rtl' : 'ltr'}
+            className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-md p-4 grid place-items-center overflow-y-auto"
+            onClick={() => setDappModal(null)}
+          >
+            <div className="panel rounded-[28px] max-w-xl w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-jade" />
+                  <span>
+                    {dappModal.token.baseToken.symbol} ({dappModal.token.chainId.toUpperCase()}) —{' '}
+                    {isFa ? 'اسکن ضدراگ و برترین DAppها' : 'Anti-Rug & Top DApps'}
+                  </span>
+                </h3>
+                <button type="button" onClick={() => setDappModal(null)} className="btn-ghost p-1.5 rounded-xl text-xs">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {dappModal.loading ? (
+                <p className="text-xs text-dim py-8 text-center">
+                  {isFa
+                    ? 'در حال استعلام قرارداد از GoPlus، Honeypot.is، RugCheck و ساخت مسیرهای DApp...'
+                    : 'Running deep anti-rug scan & building DApp routes...'}
+                </p>
+              ) : (
+                <>
+                  {dappModal.safety && (
+                    <div className="surface-soft rounded-2xl p-4 space-y-2.5 border border-[var(--border)]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-main">
+                          {isFa ? 'گزارش امنیتی ضدراگ و هانی‌پات' : 'Anti-Rug & Honeypot Audit'}
+                        </span>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                            dappModal.safety.verdict === 'SAFE'
+                              ? 'bg-emerald-500/15 text-jade'
+                              : dappModal.safety.verdict === 'CAUTION'
+                                ? 'bg-amber-500/15 text-amber-400'
+                                : 'bg-rose-500/15 text-loss'
+                          }`}
+                        >
+                          {dappModal.safety.safetyScore}/100 ({dappModal.safety.verdict})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-center">
+                        <div className="surface-card rounded-xl p-2">
+                          <span className="block text-[10px] text-dim">{isFa ? 'هانی‌پات' : 'Honeypot'}</span>
+                          <strong className={dappModal.safety.isHoneypot ? 'text-loss' : 'text-jade'}>
+                            {dappModal.safety.isHoneypot ? (isFa ? 'بله ⚠️' : 'YES') : isFa ? 'سالم ✓' : 'NO'}
+                          </strong>
+                        </div>
+                        <div className="surface-card rounded-xl p-2">
+                          <span className="block text-[10px] text-dim">{isFa ? 'مالیات خرید/فروش' : 'Buy/Sell Tax'}</span>
+                          <strong dir="ltr">
+                            {dappModal.safety.buyTaxPct}% / {dappModal.safety.sellTaxPct}%
+                          </strong>
+                        </div>
+                        <div className="surface-card rounded-xl p-2">
+                          <span className="block text-[10px] text-dim">{isFa ? 'قفل استخر LP' : 'LP Lock'}</span>
+                          <strong className={dappModal.safety.lpLockedOrBurned ? 'text-jade' : 'text-amber-400'}>
+                            {dappModal.safety.lpLockedOrBurned ? (isFa ? 'تایید ✓' : 'Locked') : isFa ? 'نامشخص' : 'Unverified'}
+                          </strong>
+                        </div>
+                        <div className="surface-card rounded-xl p-2">
+                          <span className="block text-[10px] text-dim">{isFa ? 'تمرکز ۱۰ هولدر' : 'Top 10'}</span>
+                          <strong dir="ltr">{dappModal.safety.top10HoldersPct}%</strong>
+                        </div>
+                      </div>
+                      {dappModal.safety.flags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {dappModal.safety.flags.map((f) => (
+                            <span key={f} className="px-2 py-0.5 rounded-lg bg-rose-500/12 text-loss text-[10px]">
+                              ⚠️ {f}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="text-[10px] text-dim">
+                        {isFa ? 'منابع بررسی:' : 'Sources:'} {dappModal.safety.sourcesUsed.join(' · ')}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-black text-main">
+                      {isFa ? 'مسیرهای مستقیم خرید در برترین DAppهای Trust Wallet:' : 'Direct Trust Wallet DApp Swap Routes:'}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {dappModal.routes.map((rt) => (
+                        <a
+                          key={rt.id}
+                          href={rt.trustWalletDappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="surface-soft hover:border-brand/50 border border-[var(--border)] rounded-2xl p-3 flex items-center justify-between gap-2 transition"
+                        >
+                          <div>
+                            <div className="font-black text-xs text-main">{rt.name}</div>
+                            <div className="text-[10px] text-jade">{rt.badge}</div>
+                          </div>
+                          <span className="btn-gold px-2.5 py-1 rounded-xl text-[10px] font-black inline-flex items-center gap-1">
+                            <span>{isFa ? 'Trust Wallet' : 'Open'}</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </span>
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 </>
               )}

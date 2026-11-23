@@ -9,6 +9,7 @@ import { generateSupportAIReply, getPlatformAISummary, resolveAIEnsemble, runAut
 import { ensureUserDefaults, syncTelegramAvatarForUser } from '../auth.js';
 import { encryptVaultJson, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
 import { fetchDexTrendingOverview, searchDexPairs, type DexTokenEnriched } from '../dex/screener.js';
+import { closeCopyPositionV2, discoverTop10SmartTraders, type CopyPositionV2Row } from '../dex/smart-copy.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { activateExclusiveTradingEngine, type TradingEngineChoice } from '../engine/exclusive-engine.js';
 import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
@@ -1350,6 +1351,47 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data.startsWith('cpos_act:')) {
+      const parts = data.split(':');
+      const posId = parts[1] || '';
+      const act = parts[2] || '';
+      const pos = await env.DB.prepare(
+        `SELECT * FROM copy_positions_v2 WHERE id = ? AND user_id = ? LIMIT 1`
+      )
+        .bind(posId, user.id)
+        .first<CopyPositionV2Row>()
+        .catch(() => null);
+
+      if (!pos) {
+        await bot.answerCallbackQuery(cq.id, 'پوزیشن یافت نشد یا دسترسی ندارید.', true);
+        return { ok: true };
+      }
+
+      if (act === 'CONFIRM') {
+        await env.DB.prepare(`UPDATE copy_positions_v2 SET status = 'OPEN' WHERE id = ?`).bind(posId).run();
+        await bot.answerCallbackQuery(cq.id, '✅ پوزیشن کپی‌ترید تایید و فعال شد!', true);
+        if (msgId) {
+          await bot.editMessageText(chatId, msgId, `✅ **پوزیشن ${pos.token_symbol} تایید شد و تحت رصد TP/SL دلارینو قرار گرفت.**\nمارجین اختصاصی: $${pos.margin_usd}`).catch(() => {});
+        }
+      } else if (act === 'DISMISS') {
+        await env.DB.batch([
+          env.DB.prepare(`UPDATE copy_positions_v2 SET status = 'CLOSED', remaining_pct = 0, closed_at = datetime('now'), ai_guard_note = 'لغو از تلگرام' WHERE id = ?`).bind(posId),
+          env.DB.prepare(`UPDATE copy_follow_rules SET used_margin_usd = MAX(0, used_margin_usd - ?) WHERE id = ?`).bind(pos.margin_usd, pos.rule_id),
+        ]);
+        await bot.answerCallbackQuery(cq.id, '❌ لغو شد و مارجین به باکس تریدر برگشت.', true);
+        if (msgId) {
+          await bot.editMessageText(chatId, msgId, `❌ **ورود ${pos.token_symbol} لغو شد** و مارجین آزاد گردید.`).catch(() => {});
+        }
+      } else if (act === 'SELL100') {
+        await closeCopyPositionV2(env, pos, Number(pos.current_price_usd || pos.entry_price_usd), 'Telegram Emergency Close');
+        await bot.answerCallbackQuery(cq.id, '💸 پوزیشن ۱۰۰٪ بسته شد!', true);
+        if (msgId) {
+          await bot.editMessageText(chatId, msgId, `💸 **پوزیشن ${pos.token_symbol} با موفقیت بسته شد** و مارجین آزاد گردید.`).catch(() => {});
+        }
+      }
+      return { ok: true };
+    }
+
     if (data.startsWith('adm_bind_ch:')) {
       if (!admin) {
         await bot.answerCallbackQuery(cq.id, '⛔️ دسترسی مدیریتی ندارید.', true);
@@ -2030,9 +2072,47 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const kb: InlineKeyboardButton[][] = traders.results.map((t) => [
         { text: `📌 کپی از ${t.display_name}`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
       ]);
+      kb.push([{ text: '🐋 ۱۰ تریدر برتر هوشمند & ولت‌ها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' }]);
       kb.push([{ text: '🔙 بازگشت', callback_data: 'tg_acc:copy' }]);
       if (msgId) await bot.editMessageText(chatId, msgId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, kb).catch(() => bot.sendMessage(chatId, lines, { inlineKeyboard: kb }));
       else await bot.sendMessage(chatId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data === 'tg_copy_smart_v2') {
+      const top10 = await discoverTop10SmartTraders(env, {}).catch(() => []);
+      const rules = await env.DB.prepare(
+        `SELECT trader_label, allocated_margin_usd, used_margin_usd, execution_mode FROM copy_follow_rules WHERE user_id = ? AND is_active = 1 LIMIT 8`
+      )
+        .bind(user.id)
+        .all<{ trader_label: string; allocated_margin_usd: number; used_margin_usd: number; execution_mode: string }>()
+        .catch(() => ({ results: [] }));
+
+      const topLines = top10
+        .slice(0, 10)
+        .map(
+          (w, i) =>
+            `${i + 1}. 🐋 **${w.display_name}** [${w.chain_id.toUpperCase()}]\n   ROI 30D: +${w.roi_30d_pct}% | برد: ${w.win_rate}% | ایمنی: ${w.safety_discipline_score}/100`
+        )
+        .join('\n');
+      const myLines = rules.results.length
+        ? `\n\n📌 **قوانین فعال شما (${rules.results.length}):**\n` +
+          rules.results
+            .map((r) => `• ${r.trader_label} — باکس: $${r.used_margin_usd.toFixed(0)}/$${r.allocated_margin_usd} (${r.execution_mode})`)
+            .join('\n')
+        : '\n\n💡 برای فالو، تعیین مارجین اختصاصی، افزودن ولت دلخواه و تنظیم TP/SL/Trailing وارد هاب کپی‌ترید شوید:';
+
+      const publicUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
+      const hasHttps = publicUrl.startsWith('https://');
+      await bot.answerCallbackQuery(cq.id);
+      await bot.sendMessage(chatId, `🐋 **۱۰ تریدر برتر هوشمند آن‌چین (Smart Money V2)**\n\n${topLines}${myLines}`, {
+        inlineKeyboard: [
+          hasHttps
+            ? [{ text: '⚙️ باز کردن هاب کپی‌ترید پرو V2', web_app: { url: `${publicUrl}/?tab=copy` }, style: 'primary' }]
+            : [{ text: '🌐 ورود به وب اپلیکیشن دلارینو', url: `${publicUrl}/?tab=copy` }],
+          [{ text: '🔙 منوی کپی‌ترید', callback_data: 'tg_copy_list' }],
+        ],
+      });
       return { ok: true };
     }
 
@@ -3636,6 +3716,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const kb: InlineKeyboardButton[][] = traders.results.map((t) => [
       { text: `📌 کپی از ${t.display_name}`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
     ]);
+    kb.push([{ text: '🐋 ۱۰ تریدر برتر هوشمند & ولت‌ها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' }]);
     await bot.sendMessage(chatId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, { inlineKeyboard: kb });
     return { ok: true };
   }

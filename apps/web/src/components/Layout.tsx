@@ -1150,7 +1150,7 @@ export function Layout({
             )}
           </header>
 
-          <main className="flex-1 mx-auto w-full max-w-7xl px-3 sm:px-6 py-5 pb-32 lg:pb-10">{children}</main>
+          <main key={activeTab} className="flex-1 mx-auto w-full max-w-7xl px-3 sm:px-6 py-5 pb-32 lg:pb-10 tab-enter">{children}</main>
         </div>
       </div>
 

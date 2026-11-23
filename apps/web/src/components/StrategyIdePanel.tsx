@@ -102,6 +102,8 @@ export function StrategyIdePanel({
   const [timeframe, setTimeframe] = useState<Timeframe>('15m');
 
   const [busy, setBusy] = useState(false);
+  const [aiGenBusy, setAiGenBusy] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [evalRes, setEvalRes] = useState<{
     valid: boolean;
@@ -227,6 +229,40 @@ export function StrategyIdePanel({
     await onActivatedOnBot?.();
   };
 
+  const convertWithAi = async () => {
+    const prompt = aiPrompt.trim() || code.trim();
+    if (!prompt) return;
+    setAiGenBusy(true);
+    setMsg(null);
+    try {
+      const targetLang = language;
+      const r = await apiFetch<{
+        ok: boolean;
+        title?: string;
+        code?: string;
+        summary?: string;
+        visualDef?: VisualStrategyDefinition;
+      }>('/api/my-ai/convert-strategy', {
+        method: 'POST',
+        body: JSON.stringify({ prompt, targetLanguage: targetLang }),
+      });
+      if (targetLang === 'visual' && r.visualDef) {
+        setVisualDef(r.visualDef);
+      } else if (r.code) {
+        setCode(r.code);
+      }
+      if (r.title) setName(r.title);
+      setMsg({
+        ok: true,
+        text: r.summary || (isFa ? 'استراتژی هوشمند ساخته شد! اکنون دکمه اجرای چارت را بزنید.' : 'AI strategy generated! Run on chart to verify.'),
+      });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : 'AI conversion failed' });
+    } finally {
+      setAiGenBusy(false);
+    }
+  };
+
   const loadSample = (s: (typeof SAMPLE_CUSTOM_STRATEGIES)[number]) => {
     setEditingId(undefined);
     setLanguage(s.language);
@@ -313,6 +349,39 @@ export function StrategyIdePanel({
               );
             })}
           </div>
+        </div>
+
+        {/* AI Strategy Builder / Converter */}
+        <div className="surface-soft rounded-2xl p-3.5 border border-blue-500/25 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <div className="flex items-center gap-2 text-xs font-black text-brand shrink-0">
+            <Wand2 className="w-4 h-4" />
+            <span>{isFa ? 'تبدیل ایده یا کد با AI:' : 'AI Strategy Builder:'}</span>
+          </div>
+          <input
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void convertWithAi();
+              }
+            }}
+            placeholder={
+              isFa
+                ? 'ایده‌ات را بنویس (مثلاً: تقاطع EMA 9/21 + RSI اشباع فروش با حد ضرر ۱.۵٪) یا کد بالا را بهینه کن...'
+                : 'Describe your setup (e.g. EMA 9/21 cross + RSI oversold) or leave blank to auto-convert code below...'
+            }
+            className="surface-input flex-1 rounded-xl px-3 py-2 text-xs"
+          />
+          <button
+            type="button"
+            disabled={aiGenBusy}
+            onClick={() => void convertWithAi()}
+            className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black inline-flex items-center justify-center gap-1.5 shrink-0"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{aiGenBusy ? '...' : isFa ? 'تولید / تبدیل هوشمند' : 'AI Convert'}</span>
+          </button>
         </div>
 
         {/* Sample Built-in Library + Saved Strategies */}

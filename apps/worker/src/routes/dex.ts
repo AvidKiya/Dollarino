@@ -2,11 +2,21 @@ import { Hono } from 'hono';
 import { callBYOAI, resolveAIEnsemble } from '../ai/providers.js';
 import { requireAuth } from '../auth.js';
 import {
+  buildMultiDappRoutes,
   fetchDexTrendingOverview,
   getDexOrdersCheck,
   getDexTokenPools,
   searchDexPairs,
 } from '../dex/screener.js';
+import { runTokenRugAndSafetyScan } from '../dex/smart-copy.js';
+import {
+  buildPerpDappLinks,
+  fetchHyperliquidLivePerpMarkets,
+  getUserPerpDexOverview,
+  recordPerpDexOrder,
+  savePerpDexConnection,
+  type PerpVenueId,
+} from '../dex/perp-dex.js';
 import type { AuthUser, Env } from '../env.js';
 import { enforceRateLimit } from '../security.js';
 
@@ -41,7 +51,24 @@ dexRoutes.get('/token/:chainId/:tokenAddress', async (c) => {
     pools,
     paidOrders: orders,
     primaryPair: pools[0] ?? null,
+    dappRoutes: buildMultiDappRoutes(chainId, tokenAddress, pools[0]?.url),
   });
+});
+
+dexRoutes.get('/routes', async (c) => {
+  const chainId = (c.req.query('chainId') || 'solana').trim();
+  const tokenAddress = (c.req.query('tokenAddress') || '').trim();
+  if (!tokenAddress) return c.json({ error: 'tokenAddress الزامی است' }, 400);
+  const routes = buildMultiDappRoutes(chainId, tokenAddress);
+  return c.json({ ok: true, chainId, tokenAddress, routes });
+});
+
+dexRoutes.get('/safety', async (c) => {
+  const chainId = (c.req.query('chainId') || 'solana').trim();
+  const tokenAddress = (c.req.query('tokenAddress') || '').trim();
+  if (!tokenAddress) return c.json({ error: 'tokenAddress الزامی است' }, 400);
+  const report = await runTokenRugAndSafetyScan(c.env, chainId, tokenAddress);
+  return c.json({ ok: true, report });
 });
 
 dexRoutes.post('/ai-analyze', requireAuth, async (c) => {
@@ -124,3 +151,148 @@ dexRoutes.post('/ai-analyze', requireAuth, async (c) => {
     },
   });
 });
+
+// =========================================================================
+// Non-Custodial Wallet Perpetual Futures (Hyperliquid, Jupiter Perps, GMX, dYdX)
+// =========================================================================
+
+function normalizePerpVenue(raw?: string): PerpVenueId {
+  const s = (raw || '').trim().toLowerCase();
+  if (s === 'jupiter_perps' || s === 'jupiter' || s === 'jup') return 'jupiter_perps';
+  if (s === 'gmx' || s === 'gmx_arb' || s === 'gmx_v2') return 'gmx';
+  if (s === 'dydx' || s === 'dydx_v4') return 'dydx';
+  return 'hyperliquid';
+}
+
+function formatPerpAccountPayload(overview: Awaited<ReturnType<typeof getUserPerpDexOverview>>) {
+  const primary = overview.connections.find((x) => x.venue === 'hyperliquid') ?? overview.connections[0];
+  const live = primary?.liveState;
+  const positions = (live?.positions || []).map((p) => ({
+    symbol: p.coin,
+    size: Math.abs(p.size),
+    side: p.size >= 0 ? 'LONG' : 'SHORT',
+    entryPrice: p.entryPx,
+    unrealizedPnl: p.unrealizedPnl,
+    leverage: p.leverage,
+  }));
+  const mappedOrders = overview.orders.map((o) => ({
+    ...o,
+    provider: String(o.venue || 'hyperliquid').toUpperCase(),
+    size_usd: Number(o.margin_usd || 0),
+  }));
+  return {
+    ok: true,
+    connected: Boolean(primary),
+    walletAddress: primary?.master_address || '',
+    agentAddress: primary?.agent_address || '',
+    mode: primary?.hasAgentKey ? 'AGENT_WALLET' : 'READ_ONLY',
+    liveAccount: live
+      ? {
+          accountValueUsd: live.accountValueUsd,
+          marginUsedUsd: Number(Math.max(0, live.accountValueUsd - live.withdrawableUsd).toFixed(2)),
+          withdrawableUsd: live.withdrawableUsd,
+          positions,
+        }
+      : null,
+    connections: overview.connections,
+    orders: mappedOrders,
+  };
+}
+
+dexRoutes.get('/perp-markets', async (c) => {
+  const symbol = (c.req.query('symbol') || 'BTC').trim();
+  const markets = await fetchHyperliquidLivePerpMarkets();
+  const dapps = buildPerpDappLinks(symbol);
+  return c.json({ ok: true, venue: 'hyperliquid', markets, dapps });
+});
+
+dexRoutes.get('/perp-links', async (c) => {
+  const symbol = (c.req.query('symbol') || 'BTC').trim();
+  const links = buildPerpDappLinks(symbol);
+  return c.json({ ok: true, symbol, links });
+});
+
+dexRoutes.get('/perp-overview', requireAuth, async (c) => {
+  const user = c.get('user');
+  const overview = await getUserPerpDexOverview(c.env, user.id);
+  return c.json(formatPerpAccountPayload(overview));
+});
+
+dexRoutes.get('/perp-account', requireAuth, async (c) => {
+  const user = c.get('user');
+  const overview = await getUserPerpDexOverview(c.env, user.id);
+  return c.json(formatPerpAccountPayload(overview));
+});
+
+dexRoutes.post('/perp-connect', requireAuth, async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    venue?: PerpVenueId;
+    provider?: string;
+    masterAddress?: string;
+    walletAddress?: string;
+    agentAddress?: string;
+    agentPrivateKey?: string;
+  };
+  const masterAddress = (body.masterAddress || body.walletAddress || '').trim();
+  if (!masterAddress) return c.json({ error: 'آدرس کیف‌پول اصلی الزامی است.' }, 400);
+  const venue = normalizePerpVenue(body.venue || body.provider);
+  const res = await savePerpDexConnection(c.env, user.id, {
+    venue,
+    masterAddress,
+    agentAddress: body.agentAddress,
+    agentPrivateKey: body.agentPrivateKey,
+  });
+  const overview = await getUserPerpDexOverview(c.env, user.id);
+  return c.json({
+    ...res,
+    ...formatPerpAccountPayload(overview),
+    messageFa: res.hasAgentKey
+      ? 'اتصال کیف‌پول و Agent Key (بدون مجوز برداشت) با رمزنگاری AES-256 ذخیره و همگام شد.'
+      : 'کیف‌پول اصلی برای رصد زنده پوزیشن‌ها و موجودی Perp متصل شد.',
+    messageEn: res.hasAgentKey
+      ? 'Main wallet and encrypted trade-only Agent Wallet connected.'
+      : 'Main wallet connected for live Perp position & balance tracking.',
+  });
+});
+
+dexRoutes.post('/perp-order', requireAuth, async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    venue?: PerpVenueId;
+    provider?: string;
+    symbol?: string;
+    side?: 'LONG' | 'SHORT';
+    leverage?: number;
+    marginUsd?: number;
+    sizeUsd?: number;
+    entryPrice?: number;
+    tpPrice?: number;
+    slPrice?: number;
+  };
+  if (!body.symbol) return c.json({ error: 'نماد ارز الزامی است.' }, 400);
+  const venue = normalizePerpVenue(body.venue || body.provider);
+  const cleanSym = body.symbol.toUpperCase().replace(/USDT$|USD$/i, '') || 'BTC';
+  let entryPx = Number(body.entryPrice || 0);
+  if (!Number.isFinite(entryPx) || entryPx <= 0) {
+    const mk = await fetchHyperliquidLivePerpMarkets().catch(() => []);
+    entryPx = mk.find((m) => m.symbol.toUpperCase() === cleanSym)?.markPrice || 0;
+  }
+  const res = await recordPerpDexOrder(c.env, user.id, {
+    venue,
+    symbol: cleanSym,
+    side: body.side === 'SHORT' ? 'SHORT' : 'LONG',
+    leverage: Number(body.leverage || 5),
+    marginUsd: Number(body.marginUsd ?? body.sizeUsd ?? 25),
+    entryPrice: entryPx,
+    tpPrice: body.tpPrice,
+    slPrice: body.slPrice,
+  });
+  return c.json({
+    ...res,
+    dappRedirectUrl: res.dappLink.trustWalletDappUrl,
+    messageFa: `سفارش ${body.side === 'SHORT' ? 'SHORT' : 'LONG'} ${cleanSym} با اهرم ${Number(body.leverage || 5)}x ثبت شد. برای تایید نهایی بدون حضانت، در کیف‌پول باز می‌شود.`,
+    messageEn: `${body.side === 'SHORT' ? 'SHORT' : 'LONG'} ${cleanSym} (${Number(body.leverage || 5)}x) recorded. Opening non-custodial wallet DApp...`,
+  });
+});
+

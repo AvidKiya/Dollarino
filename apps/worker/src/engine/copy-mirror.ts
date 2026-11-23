@@ -168,6 +168,105 @@ export async function confirmAndMirrorCopyTrade(
     }
   }
 
+  // Also mirror into V2 Pro Rules (copy_follow_rules where trader_kind = 'SITE_TRADER')
+  const v2Followers = await env.DB.prepare(
+    `SELECT r.*, u.telegram_id, u.email, u.role
+     FROM copy_follow_rules r
+     JOIN users u ON u.id = r.user_id
+     WHERE r.trader_kind = 'SITE_TRADER' AND r.trader_id = ? AND r.is_active = 1`
+  )
+    .bind(row.trader_id)
+    .all<{
+      id: string;
+      user_id: string;
+      allocated_margin_usd: number;
+      used_margin_usd: number;
+      order_size_usd: number;
+      leverage: number;
+      tp1_pct: number;
+      tp2_pct: number;
+      tp3_pct: number;
+      stop_loss_pct: number;
+      reverse_copy: number;
+      daily_max_loss_usd: number;
+      daily_loss_used_usd: number;
+      telegram_id: string | null;
+      email: string;
+      role: 'owner' | 'admin' | 'user';
+    }>()
+    .catch(() => ({ results: [] }));
+
+  const legacyFollowedUserIds = new Set(followers.results.map((f) => f.user_id));
+
+  for (const vr of v2Followers.results) {
+    if (legacyFollowedUserIds.has(vr.user_id)) continue;
+    try {
+      if (vr.daily_loss_used_usd >= vr.daily_max_loss_usd) {
+        skippedCount++;
+        continue;
+      }
+      const ent = await resolveUserEntitlement(env.DB, {
+        id: vr.user_id,
+        email: vr.email,
+        username: vr.email,
+        role: vr.role,
+        telegramId: vr.telegram_id,
+      });
+      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
+        skippedCount++;
+        continue;
+      }
+
+      const dir: Direction = vr.reverse_copy
+        ? row.direction === 'LONG'
+          ? 'SHORT'
+          : 'LONG'
+        : row.direction;
+      const lev = Math.max(1, Math.min(50, Number(vr.leverage || row.leverage || 5)));
+      const slDist = entryNum * (Math.max(1, Number(vr.stop_loss_pct || 5)) / 100 / lev);
+      const tp1Dist = entryNum * (Math.max(2, Number(vr.tp1_pct || 20)) / 100 / lev);
+      const tp2Dist = entryNum * (Math.max(4, Number(vr.tp2_pct || 45)) / 100 / lev);
+      const tp3Dist = entryNum * (Math.max(6, Number(vr.tp3_pct || 90)) / 100 / lev);
+
+      const customSig: DollarinoSignal = {
+        ...sig,
+        direction: dir,
+        leverage: lev,
+        stopLoss: (dir === 'LONG' ? Math.max(0.0001, entryNum - slDist) : entryNum + slDist).toFixed(4),
+        tp1: (dir === 'LONG' ? entryNum + tp1Dist : Math.max(0.0001, entryNum - tp1Dist)).toFixed(4),
+        tp2: (dir === 'LONG' ? entryNum + tp2Dist : Math.max(0.0001, entryNum - tp2Dist)).toFixed(4),
+        tp3: (dir === 'LONG' ? entryNum + tp3Dist : Math.max(0.0001, entryNum - tp3Dist)).toFixed(4),
+        engineLabel: `🏆 کپی‌ترید پرو V2 · ${row.trader_name}`,
+      };
+
+      const execRes = await executeSignalForUser(env, vr.user_id, customSig, {
+        signalId: broadcast.signalId,
+        forceBypassState: true,
+        strategyKey: 'copy_trade',
+        aiConfidence: 96,
+        aiReasoning: `Copy-Trade V2 Pro Rule (Margin Box $${vr.allocated_margin_usd}, ${lev}x, TP1 +${vr.tp1_pct}%)`,
+      });
+      if (execRes.ok) {
+        mirroredCount++;
+        if (tg && vr.telegram_id) {
+          await tg
+            .sendMessage(
+              vr.telegram_id,
+              `🏆 معامله کپی‌ترید پرو V2 از **${row.trader_name}** با قوانین اختصاصی شما باز شد!\n\n` +
+                `${dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'} · ${row.symbol} (${lev}x)\n` +
+                `💼 باکس اختصاصی: $${vr.allocated_margin_usd} | ورود: ${row.entry_price}\n` +
+                `⛔️ SL: ${customSig.stopLoss} | 🎯 TP1: ${customSig.tp1}`
+            )
+            .catch(() => {});
+        }
+      } else {
+        skippedCount++;
+      }
+    } catch {
+      skippedCount++;
+    }
+  }
+
   return {
     ok: true,
     published: true,

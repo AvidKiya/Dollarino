@@ -246,6 +246,8 @@ export interface DashboardPayload {
     use_signal_leverage?: number;
     notifications_enabled?: number;
     active_custom_strategy_id?: string | null;
+    last_ai_reason?: string | null;
+    last_ai_decision_at?: string | null;
   };
   balance: { free: string; used: string; total: string; currency: string };
   activeExchange: { provider: string; label: string };
@@ -306,3 +308,181 @@ export interface DashboardPayload {
   mixerSnapshot?: SignalMixerResult | null;
   recentSignals: RecentSignalRow[];
 }
+
+export interface OnchainApiProviderItem {
+  provider: string;
+  category: string;
+  label: string;
+  base_url: string;
+  requires_key: number;
+  api_key_masked: string | null;
+  is_active: number;
+  calls_today: number;
+  last_test_ok: number | null;
+  last_error: string | null;
+  updated_at: string;
+}
+
+export interface MultiDappRouteItem {
+  id: string;
+  name: string;
+  badge: string;
+  swapUrl: string;
+  trustWalletDappUrl: string;
+}
+
+export interface TokenRugSafetyReport {
+  chainId: string;
+  tokenAddress: string;
+  safetyScore: number;
+  isHoneypot: boolean;
+  buyTaxPct: number;
+  sellTaxPct: number;
+  lpLockedOrBurned: boolean;
+  isMintable: boolean;
+  top10HoldersPct: number;
+  devHoldPct: number;
+  liquidityUsd: number;
+  flags: string[];
+  verdict: 'SAFE' | 'CAUTION' | 'DANGER';
+  sourcesUsed: string[];
+}
+
+export interface SmartWalletTraderItem {
+  id: string;
+  source_type: 'AUTO_TOP10' | 'SITE_PICK' | 'USER_CUSTOM';
+  added_by_user_id: string | null;
+  wallet_address: string;
+  chain_id: string;
+  display_name: string;
+  style_tag: string;
+  roi_7d_pct: number;
+  roi_30d_pct: number;
+  realized_pnl_usd: number;
+  win_rate: number;
+  avg_hold_mins: number;
+  trades_30d: number;
+  safety_discipline_score: number;
+  is_bot_filtered: number;
+  top_tokens_json: string;
+  recent_trades_json: string;
+  last_synced_at: string;
+}
+
+export interface CopyFollowRuleItem {
+  id: string;
+  user_id: string;
+  trader_kind: 'SMART_WALLET' | 'SITE_TRADER';
+  trader_id: string;
+  trader_label: string;
+  chain_id: string;
+  execution_mode: 'TRUST_ONE_CLICK' | 'AUTO_EVM_ALLOWANCE' | 'AUTO_COPY_VAULT';
+  allocated_margin_usd: number;
+  used_margin_usd: number;
+  sizing_mode: 'FIXED_USD' | 'PCT_ALLOCATION' | 'PROPORTIONAL';
+  order_size_usd: number;
+  order_size_pct: number;
+  leverage: number;
+  tp1_pct: number;
+  tp1_sell_pct: number;
+  tp2_pct: number;
+  tp2_sell_pct: number;
+  tp3_pct: number;
+  moonbag_pct: number;
+  stop_loss_pct: number;
+  trailing_activate_pct: number;
+  trailing_drop_pct: number;
+  break_even_pct: number;
+  time_limit_hours: number;
+  min_safety_score: number;
+  max_slippage_pct: number;
+  min_liquidity_usd: number;
+  min_mcap_usd: number;
+  max_mcap_usd: number;
+  max_open_positions: number;
+  daily_max_loss_usd: number;
+  daily_loss_used_usd: number;
+  only_new_positions: number;
+  copy_sells: number;
+  dev_sell_auto_exit: number;
+  anti_mev: number;
+  ai_guard_enabled: number;
+  reverse_copy: number;
+  is_active: number;
+  updated_at: string;
+}
+
+export interface CopyPositionV2Item {
+  id: string;
+  user_id: string;
+  rule_id: string;
+  trader_kind: string;
+  trader_id: string;
+  trader_label: string;
+  execution_mode: string;
+  chain_id: string;
+  dex_name: string;
+  token_address: string;
+  token_symbol: string;
+  token_name: string;
+  direction: string;
+  margin_usd: number;
+  entry_price_usd: number;
+  current_price_usd: number;
+  qty_tokens: number;
+  remaining_pct: number;
+  tp1_hit: number;
+  tp2_hit: number;
+  tp3_hit: number;
+  peak_pnl_pct: number;
+  pnl_pct: number;
+  pnl_usd: number;
+  safety_score: number;
+  ai_guard_note: string | null;
+  status: 'PENDING_TRUST_SIGN' | 'OPEN' | 'CLOSED' | 'SKIPPED_SAFETY' | 'SKIPPED_AI';
+  trust_dapp_url: string | null;
+  tx_hash: string | null;
+  opened_at: string;
+  closed_at: string | null;
+}
+
+export interface PromoBannerItem {
+  id: string;
+  badge_fa: string;
+  badge_en: string;
+  title_fa: string;
+  title_en: string;
+  subtitle_fa: string;
+  subtitle_en: string;
+  cta_label_fa: string;
+  cta_label_en: string;
+  cta_target: string;
+  image_url: string;
+  accent_theme: 'gold' | 'emerald' | 'cobalt' | 'purple' | string;
+  placement: 'BOTH' | 'LANDING' | 'DASHBOARD' | string;
+  sort_order: number;
+  is_active: number;
+}
+
+export interface PerpMarketQuoteItem {
+  symbol: string;
+  markPrice: number;
+  fundingRatePct: number;
+  openInterestUsd: number;
+  maxLeverage: number;
+  volume24hUsd: number;
+  venue: string;
+}
+
+export interface PerpDappLinkItem {
+  venue: string;
+  name: string;
+  chain: string;
+  maxLeverage: number;
+  dappUrl: string;
+  trustWalletDappUrl: string;
+  noteFa: string;
+  noteEn: string;
+}
+
+

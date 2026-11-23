@@ -1,12 +1,31 @@
 import type { DollarinoSignal } from '@dollarino/core';
 import { Hono } from 'hono';
 import { requireAuth, type AppVariables } from '../auth.js';
-import { randomId } from '../crypto.js';
+import { hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
+import { fetchDexTrendingOverview, searchDexPairs } from '../dex/screener.js';
+import {
+  baselineWalletTxIfEmpty,
+  closeCopyPositionV2,
+  discoverTop10SmartTraders,
+  ensureUserCopyVault,
+  executeSmartCopySignalForRule,
+  exportUserCopyVaultKeys,
+  inspectAndAddCustomWallet,
+  pollWatchedWalletsForNewTrades,
+  reconcileCopyPositionsV2,
+  runTokenRugAndSafetyScan,
+  simulateWalletCopyBacktest,
+  type CopyFollowRuleRow,
+  type CopyPositionV2Row,
+  type SmartWalletTraderRow,
+} from '../dex/smart-copy.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { activateExclusiveTradingEngine, getActiveEngineState } from '../engine/exclusive-engine.js';
-import { executeSignalForUser, logAudit } from '../engine/executor.js';
+import { executeSignalForUser, logAudit, notifyUserTelegram } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { requirePaidEntitlement } from './subscriptions.js';
+import { buildVerifiedCardCanonicalPayload } from './trading.js';
+import { fetchEvmNativeBalance, fetchSolanaBalance, fetchTronBalances } from './trustwallet.js';
 
 export interface CopyTraderRow {
   id: string;
@@ -290,3 +309,604 @@ copyTradeRoutes.post('/copy-now/:tradeId', async (c) => {
   }
   return c.json({ ok: false, error: execRes.error || 'خطا در اجرای کپی‌ترید' }, 400);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Smart On-Chain & Multi-Chain Copy-Trading V2 (Top-10 + Custom Wallets + Rules)
+// ═══════════════════════════════════════════════════════════════════════════
+
+copyTradeRoutes.get('/smart-wallets', async (c) => {
+  const user = c.get('user');
+  const chainFilter = (c.req.query('chain') || 'ALL').trim();
+  const forceRefresh = c.req.query('refresh') === '1';
+
+  const [top10, customRes, rulesRes] = await Promise.all([
+    discoverTop10SmartTraders(c.env, { forceRefresh, chainFilter }),
+    c.env.DB.prepare(
+      `SELECT * FROM smart_wallet_traders
+       WHERE source_type = 'USER_CUSTOM' AND added_by_user_id = ? AND is_active = 1
+       ORDER BY created_at DESC LIMIT 30`
+    )
+      .bind(user.id)
+      .all<SmartWalletTraderRow>()
+      .catch(() => ({ results: [] as SmartWalletTraderRow[] })),
+    c.env.DB.prepare(
+      `SELECT * FROM copy_follow_rules WHERE user_id = ? ORDER BY is_active DESC, updated_at DESC`
+    )
+      .bind(user.id)
+      .all<CopyFollowRuleRow>()
+      .catch(() => ({ results: [] as CopyFollowRuleRow[] })),
+  ]);
+
+  const customFiltered =
+    chainFilter && chainFilter !== 'ALL'
+      ? customRes.results.filter((r) => r.chain_id.toLowerCase() === chainFilter.toLowerCase())
+      : customRes.results;
+
+  return c.json({
+    ok: true,
+    top10,
+    customWallets: customFiltered,
+    rules: rulesRes.results,
+  });
+});
+
+copyTradeRoutes.post('/smart-wallets/refresh', async (c) => {
+  const top10 = await discoverTop10SmartTraders(c.env, { forceRefresh: true });
+  return c.json({ ok: true, top10 });
+});
+
+copyTradeRoutes.post('/smart-wallets/custom', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    walletAddress?: string;
+    chainId?: string;
+    displayName?: string;
+  };
+  if (!body.walletAddress?.trim()) {
+    return c.json({ error: 'آدرس کیف‌پول الزامی است.' }, 400);
+  }
+  const res = await inspectAndAddCustomWallet(c.env, {
+    userId: user.id,
+    walletAddress: body.walletAddress,
+    chainId: body.chainId,
+    displayName: body.displayName,
+  });
+  if (!res.ok) {
+    return c.json({ ok: false, error: res.error }, 400);
+  }
+  return c.json(res);
+});
+
+copyTradeRoutes.delete('/smart-wallets/custom/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  await c.env.DB.prepare(
+    `DELETE FROM smart_wallet_traders WHERE id = ? AND added_by_user_id = ? AND source_type = 'USER_CUSTOM'`
+  )
+    .bind(id, user.id)
+    .run();
+  await c.env.DB.prepare(`DELETE FROM copy_follow_rules WHERE trader_id = ? AND user_id = ?`)
+    .bind(id, user.id)
+    .run();
+  return c.json({ ok: true });
+});
+
+copyTradeRoutes.post('/smart-wallets/:id/backtest', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const trader = await c.env.DB.prepare(
+    `SELECT * FROM smart_wallet_traders
+     WHERE id = ? AND (source_type != 'USER_CUSTOM' OR added_by_user_id = ?) LIMIT 1`
+  )
+    .bind(id, user.id)
+    .first<SmartWalletTraderRow>();
+  if (!trader) return c.json({ error: 'کیف‌پول تریدر یافت نشد.' }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as Partial<{
+    orderSizeUsd: number;
+    tp1Pct: number;
+    tp2Pct: number;
+    stopLossPct: number;
+    trailingActivatePct: number;
+    trailingDropPct: number;
+    breakEvenPct: number;
+    minSafetyScore: number;
+    reverseCopy: boolean;
+  }>;
+
+  const report = simulateWalletCopyBacktest(trader, {
+    orderSizeUsd: Number(body.orderSizeUsd ?? 25),
+    tp1Pct: Number(body.tp1Pct ?? 30),
+    tp2Pct: Number(body.tp2Pct ?? 75),
+    stopLossPct: Number(body.stopLossPct ?? 20),
+    trailingActivatePct: Number(body.trailingActivatePct ?? 25),
+    trailingDropPct: Number(body.trailingDropPct ?? 10),
+    breakEvenPct: Number(body.breakEvenPct ?? 18),
+    minSafetyScore: Number(body.minSafetyScore ?? 60),
+    reverseCopy: Boolean(body.reverseCopy),
+  });
+
+  return c.json({ ok: true, traderId: id, displayName: trader.display_name, report });
+});
+
+copyTradeRoutes.get('/rules', async (c) => {
+  const user = c.get('user');
+  const res = await c.env.DB.prepare(
+    `SELECT * FROM copy_follow_rules WHERE user_id = ? ORDER BY is_active DESC, updated_at DESC`
+  )
+    .bind(user.id)
+    .all<CopyFollowRuleRow>();
+  return c.json({ ok: true, rules: res.results });
+});
+
+copyTradeRoutes.post('/rules', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const traderKind = body.traderKind === 'SITE_TRADER' ? 'SITE_TRADER' : 'SMART_WALLET';
+  const traderId = String(body.traderId || '').trim();
+  if (!traderId) return c.json({ error: 'شناسه تریدر یا کیف‌پول الزامی است.' }, 400);
+
+  const isActive = body.isActive === false ? 0 : 1;
+  if (isActive) {
+    const gate = await requirePaidEntitlement(c.env.DB, user);
+    if (!gate.ok) {
+      return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
+    }
+  }
+
+  let traderLabel = String(body.traderLabel || '').trim();
+  let chainId = String(body.chainId || 'solana').toLowerCase().trim();
+
+  if (traderKind === 'SMART_WALLET') {
+    const w = await c.env.DB.prepare(
+      `SELECT display_name, chain_id FROM smart_wallet_traders WHERE id = ? LIMIT 1`
+    )
+      .bind(traderId)
+      .first<{ display_name: string; chain_id: string }>();
+    if (!w) return c.json({ error: 'کیف‌پول تریدر در دیتابیس یافت نشد.' }, 404);
+    if (!traderLabel) traderLabel = w.display_name;
+    if (!body.chainId) chainId = w.chain_id;
+  } else {
+    const st = await c.env.DB.prepare(`SELECT display_name FROM copy_traders WHERE id = ? LIMIT 1`)
+      .bind(traderId)
+      .first<{ display_name: string }>();
+    if (!st) return c.json({ error: 'تریدر سایت یافت نشد.' }, 404);
+    if (!traderLabel) traderLabel = st.display_name;
+    if (!body.chainId) chainId = 'cex';
+  }
+
+  const executionMode =
+    body.executionMode === 'AUTO_COPY_VAULT' || body.executionMode === 'AUTO_EVM_ALLOWANCE'
+      ? body.executionMode
+      : 'TRUST_ONE_CLICK';
+
+  if (executionMode === 'AUTO_COPY_VAULT') {
+    await ensureUserCopyVault(c.env, user.id);
+  }
+
+  const sizingMode =
+    body.sizingMode === 'PCT_ALLOCATION' || body.sizingMode === 'PROPORTIONAL'
+      ? body.sizingMode
+      : 'FIXED_USD';
+
+  const allocatedMargin = Math.max(10, Number(body.allocatedMarginUsd ?? 100));
+  const orderSizeUsd = Math.max(5, Math.min(allocatedMargin, Number(body.orderSizeUsd ?? 25)));
+  const orderSizePct = Math.max(1, Math.min(100, Number(body.orderSizePct ?? 15)));
+  const leverage = Math.max(1, Math.min(50, Number(body.leverage ?? 5)));
+  const tp1Pct = Math.max(2, Number(body.tp1Pct ?? 30));
+  const tp1SellPct = Math.max(0, Math.min(100, Number(body.tp1SellPct ?? 40)));
+  const tp2Pct = Math.max(tp1Pct + 1, Number(body.tp2Pct ?? 75));
+  const tp2SellPct = Math.max(0, Math.min(100, Number(body.tp2SellPct ?? 40)));
+  const tp3Pct = Math.max(tp2Pct + 1, Number(body.tp3Pct ?? 150));
+  const moonbagPct = Math.max(0, Math.min(50, Number(body.moonbagPct ?? 20)));
+  const stopLossPct = Math.max(2, Math.min(95, Number(body.stopLossPct ?? 20)));
+  const trailingActivatePct = Math.max(3, Number(body.trailingActivatePct ?? 25));
+  const trailingDropPct = Math.max(2, Math.min(50, Number(body.trailingDropPct ?? 10)));
+  const breakEvenPct = Math.max(2, Number(body.breakEvenPct ?? 18));
+  const timeLimitHours = Math.max(0, Math.min(720, Number(body.timeLimitHours ?? 48)));
+  const minSafetyScore = Math.max(0, Math.min(95, Number(body.minSafetyScore ?? 60)));
+  const maxSlippagePct = Math.max(0.5, Math.min(49, Number(body.maxSlippagePct ?? 15)));
+  const minLiquidityUsd = Math.max(0, Number(body.minLiquidityUsd ?? 15000));
+  const minMcapUsd = Math.max(0, Number(body.minMcapUsd ?? 25000));
+  const maxMcapUsd = Math.max(minMcapUsd + 1000, Number(body.maxMcapUsd ?? 500000000));
+  const maxOpenPositions = Math.max(1, Math.min(25, Number(body.maxOpenPositions ?? 4)));
+  const dailyMaxLossUsd = Math.max(5, Number(body.dailyMaxLossUsd ?? 50));
+
+  const onlyNewPositions = body.onlyNewPositions === false ? 0 : 1;
+  const copySells = body.copySells === false ? 0 : 1;
+  const devSellAutoExit = body.devSellAutoExit === false ? 0 : 1;
+  const antiMev = body.antiMev === false ? 0 : 1;
+  const aiGuardEnabled = body.aiGuardEnabled === true ? 1 : 0;
+  const reverseCopy = body.reverseCopy === true ? 1 : 0;
+
+  const existing = await c.env.DB.prepare(
+    `SELECT id FROM copy_follow_rules WHERE user_id = ? AND trader_kind = ? AND trader_id = ? LIMIT 1`
+  )
+    .bind(user.id, traderKind, traderId)
+    .first<{ id: string }>();
+
+  const ruleId = existing?.id || randomId('crule');
+
+  await c.env.DB.prepare(
+    `INSERT INTO copy_follow_rules (
+       id, user_id, trader_kind, trader_id, trader_label, chain_id, execution_mode,
+       allocated_margin_usd, sizing_mode, order_size_usd, order_size_pct, leverage,
+       tp1_pct, tp1_sell_pct, tp2_pct, tp2_sell_pct, tp3_pct, moonbag_pct,
+       stop_loss_pct, trailing_activate_pct, trailing_drop_pct, break_even_pct, time_limit_hours,
+       min_safety_score, max_slippage_pct, min_liquidity_usd, min_mcap_usd, max_mcap_usd,
+       max_open_positions, daily_max_loss_usd, only_new_positions, copy_sells, dev_sell_auto_exit,
+       anti_mev, ai_guard_enabled, reverse_copy, is_active, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id, trader_kind, trader_id) DO UPDATE SET
+       trader_label = excluded.trader_label,
+       chain_id = excluded.chain_id,
+       execution_mode = excluded.execution_mode,
+       allocated_margin_usd = excluded.allocated_margin_usd,
+       sizing_mode = excluded.sizing_mode,
+       order_size_usd = excluded.order_size_usd,
+       order_size_pct = excluded.order_size_pct,
+       leverage = excluded.leverage,
+       tp1_pct = excluded.tp1_pct,
+       tp1_sell_pct = excluded.tp1_sell_pct,
+       tp2_pct = excluded.tp2_pct,
+       tp2_sell_pct = excluded.tp2_sell_pct,
+       tp3_pct = excluded.tp3_pct,
+       moonbag_pct = excluded.moonbag_pct,
+       stop_loss_pct = excluded.stop_loss_pct,
+       trailing_activate_pct = excluded.trailing_activate_pct,
+       trailing_drop_pct = excluded.trailing_drop_pct,
+       break_even_pct = excluded.break_even_pct,
+       time_limit_hours = excluded.time_limit_hours,
+       min_safety_score = excluded.min_safety_score,
+       max_slippage_pct = excluded.max_slippage_pct,
+       min_liquidity_usd = excluded.min_liquidity_usd,
+       min_mcap_usd = excluded.min_mcap_usd,
+       max_mcap_usd = excluded.max_mcap_usd,
+       max_open_positions = excluded.max_open_positions,
+       daily_max_loss_usd = excluded.daily_max_loss_usd,
+       only_new_positions = excluded.only_new_positions,
+       copy_sells = excluded.copy_sells,
+       dev_sell_auto_exit = excluded.dev_sell_auto_exit,
+       anti_mev = excluded.anti_mev,
+       ai_guard_enabled = excluded.ai_guard_enabled,
+       reverse_copy = excluded.reverse_copy,
+       is_active = excluded.is_active,
+       updated_at = datetime('now')`
+  )
+    .bind(
+      ruleId,
+      user.id,
+      traderKind,
+      traderId,
+      traderLabel,
+      chainId,
+      executionMode,
+      allocatedMargin,
+      sizingMode,
+      orderSizeUsd,
+      orderSizePct,
+      leverage,
+      tp1Pct,
+      tp1SellPct,
+      tp2Pct,
+      tp2SellPct,
+      tp3Pct,
+      moonbagPct,
+      stopLossPct,
+      trailingActivatePct,
+      trailingDropPct,
+      breakEvenPct,
+      timeLimitHours,
+      minSafetyScore,
+      maxSlippagePct,
+      minLiquidityUsd,
+      minMcapUsd,
+      maxMcapUsd,
+      maxOpenPositions,
+      dailyMaxLossUsd,
+      onlyNewPositions,
+      copySells,
+      devSellAutoExit,
+      antiMev,
+      aiGuardEnabled,
+      reverseCopy,
+      isActive
+    )
+    .run();
+
+  if (isActive && traderKind === 'SITE_TRADER') {
+    await activateExclusiveTradingEngine(c.env.DB, user.id, 'COPY_TRADE', {
+      auditSource: 'copy_follow_rule_v2',
+    }).catch(() => {});
+  } else if (isActive && traderKind === 'SMART_WALLET') {
+    await baselineWalletTxIfEmpty(c.env, traderId).catch(() => {});
+  }
+
+  const saved = await c.env.DB.prepare(`SELECT * FROM copy_follow_rules WHERE id = ? LIMIT 1`)
+    .bind(ruleId)
+    .first<CopyFollowRuleRow>();
+
+  return c.json({ ok: true, rule: saved });
+});
+
+copyTradeRoutes.delete('/rules/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  await c.env.DB.prepare(`DELETE FROM copy_follow_rules WHERE id = ? AND user_id = ?`).bind(id, user.id).run();
+  return c.json({ ok: true });
+});
+
+copyTradeRoutes.post('/rules/:id/test-signal', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const rule = await c.env.DB.prepare(`SELECT * FROM copy_follow_rules WHERE id = ? AND user_id = ? LIMIT 1`)
+    .bind(id, user.id)
+    .first<CopyFollowRuleRow>();
+  if (!rule) return c.json({ error: 'قانون کپی‌ترید یافت نشد.' }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    chainId?: string;
+    tokenAddress?: string;
+    tokenSymbol?: string;
+    side?: 'BUY' | 'SELL';
+  };
+
+  let chainId = body.chainId?.trim() || (rule.chain_id === 'cex' ? 'solana' : rule.chain_id);
+  let tokenAddress = body.tokenAddress?.trim() || '';
+  let tokenSymbol = body.tokenSymbol?.trim() || '';
+  let tokenName = '';
+
+  if (!tokenAddress) {
+    const trending = await fetchDexTrendingOverview().catch(() => ({ pairs: [] }));
+    const match = trending.pairs.find((p) => p.chainId.toLowerCase() === chainId.toLowerCase()) || trending.pairs[0];
+    if (match) {
+      chainId = match.chainId;
+      tokenAddress = match.baseToken.address;
+      tokenSymbol = match.baseToken.symbol;
+      tokenName = match.baseToken.name;
+    } else {
+      const hits = await searchDexPairs('SOL').catch(() => []);
+      if (hits[0]) {
+        chainId = hits[0].chainId;
+        tokenAddress = hits[0].baseToken.address;
+        tokenSymbol = hits[0].baseToken.symbol;
+        tokenName = hits[0].baseToken.name;
+      }
+    }
+  }
+
+  if (!tokenAddress) {
+    return c.json({ error: 'توکن معتبری برای تست پیدا نشد؛ آدرس توکن را وارد کنید.' }, 400);
+  }
+
+  const result = await executeSmartCopySignalForRule(c.env, rule, {
+    chainId,
+    tokenAddress,
+    tokenSymbol,
+    tokenName,
+    side: body.side || 'BUY',
+  });
+
+  return c.json(result, result.ok ? 200 : 400);
+});
+
+copyTradeRoutes.get('/vault', async (c) => {
+  const user = c.get('user');
+  const vault = await ensureUserCopyVault(c.env, user.id);
+
+  const [bscBal, ethBal, baseBal, solBal, tronBal] = await Promise.all([
+    fetchEvmNativeBalance('https://bsc-dataseed.binance.org', vault.evmAddress),
+    fetchEvmNativeBalance('https://ethereum-rpc.publicnode.com', vault.evmAddress),
+    fetchEvmNativeBalance('https://mainnet.base.org', vault.evmAddress),
+    fetchSolanaBalance(vault.solanaAddress),
+    vault.tronAddress ? fetchTronBalances(vault.tronAddress) : Promise.resolve(null),
+  ]);
+
+  return c.json({
+    ok: true,
+    vault,
+    balances: {
+      bscBnb: bscBal ?? 0,
+      eth: ethBal ?? 0,
+      baseEth: baseBal ?? 0,
+      solana: solBal ?? 0,
+      tronTrx: tronBal?.trx ?? 0,
+      tronUsdt: tronBal?.usdt ?? 0,
+    },
+  });
+});
+
+copyTradeRoutes.post('/vault/settings', async (c) => {
+  const user = c.get('user');
+  await ensureUserCopyVault(c.env, user.id);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    allowanceLimitUsd?: number;
+    autoWithdrawToTrust?: boolean;
+  };
+  await c.env.DB.prepare(
+    `UPDATE user_copy_vaults
+     SET allowance_limit_usd = COALESCE(?, allowance_limit_usd),
+         auto_withdraw_to_trust = COALESCE(?, auto_withdraw_to_trust)
+     WHERE user_id = ?`
+  )
+    .bind(
+      typeof body.allowanceLimitUsd === 'number' ? Math.max(10, body.allowanceLimitUsd) : null,
+      typeof body.autoWithdrawToTrust === 'boolean' ? (body.autoWithdrawToTrust ? 1 : 0) : null,
+      user.id
+    )
+    .run();
+  return c.json({ ok: true });
+});
+
+copyTradeRoutes.get('/positions-v2', async (c) => {
+  const user = c.get('user');
+  if (c.req.query('reconcile') === '1') {
+    await reconcileCopyPositionsV2(c.env, user.id).catch(() => {});
+  }
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM copy_positions_v2 WHERE user_id = ? ORDER BY opened_at DESC LIMIT 80`
+  )
+    .bind(user.id)
+    .all<CopyPositionV2Row>()
+    .catch(() => ({ results: [] as CopyPositionV2Row[] }));
+
+  return c.json({ ok: true, positions: rows.results });
+});
+
+copyTradeRoutes.post('/positions-v2/:id/action', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    action?: 'CONFIRM' | 'CLOSE' | 'CLOSE_50' | 'DISMISS';
+    txHash?: string;
+  };
+  const pos = await c.env.DB.prepare(`SELECT * FROM copy_positions_v2 WHERE id = ? AND user_id = ? LIMIT 1`)
+    .bind(id, user.id)
+    .first<CopyPositionV2Row>();
+  if (!pos) return c.json({ error: 'پوزیشن یافت نشد.' }, 404);
+
+  if (body.action === 'CONFIRM') {
+    await c.env.DB.prepare(
+      `UPDATE copy_positions_v2 SET status = 'OPEN', tx_hash = COALESCE(?, tx_hash) WHERE id = ?`
+    )
+      .bind(body.txHash?.trim() || null, id)
+      .run();
+    return c.json({ ok: true, status: 'OPEN', message: 'پوزیشن روی Trust Wallet تایید و فعال شد.' });
+  }
+
+  if (body.action === 'DISMISS') {
+    await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE copy_positions_v2 SET status = 'CLOSED', remaining_pct = 0, closed_at = datetime('now'), ai_guard_note = 'لغو توسط کاربر' WHERE id = ?`).bind(id),
+      c.env.DB.prepare(`UPDATE copy_follow_rules SET used_margin_usd = MAX(0, used_margin_usd - ?) WHERE id = ?`).bind(pos.margin_usd, pos.rule_id),
+    ]);
+    return c.json({ ok: true, status: 'CLOSED', message: 'سیگنال لغو و مارجین به باکس تریدر برگشت.' });
+  }
+
+  if (body.action === 'CLOSE_50' && pos.status === 'OPEN') {
+    const half = Math.max(0, Number(pos.remaining_pct) / 2);
+    const partialUsd = (Number(pos.margin_usd) * (half / 100) * Number(pos.pnl_pct)) / 100;
+    await c.env.DB.prepare(
+      `UPDATE copy_positions_v2 SET remaining_pct = ?, pnl_usd = pnl_usd + ? WHERE id = ?`
+    )
+      .bind(Number(half.toFixed(1)), Number(partialUsd.toFixed(2)), id)
+      .run();
+    return c.json({ ok: true, message: '۵۰٪ حجم پوزیشن سیو سود شد.' });
+  }
+
+  await closeCopyPositionV2(c.env, pos, Number(pos.current_price_usd || pos.entry_price_usd), 'Manual Close');
+  return c.json({ ok: true, status: 'CLOSED', message: 'پوزیشن بسته و مارجین آزاد شد.' });
+});
+
+copyTradeRoutes.get('/token-safety', async (c) => {
+  const chainId = (c.req.query('chainId') || 'solana').trim();
+  const tokenAddress = (c.req.query('tokenAddress') || '').trim();
+  if (!tokenAddress) return c.json({ error: 'tokenAddress الزامی است.' }, 400);
+  const report = await runTokenRugAndSafetyScan(c.env, chainId, tokenAddress);
+  return c.json({ ok: true, report });
+});
+
+copyTradeRoutes.post('/vault/export-keys', async (c) => {
+  const user = c.get('user');
+  const keys = await exportUserCopyVaultKeys(c.env, user.id);
+  await logAudit(c.env.DB, user.id, 'SECURITY', 'WARN', 'User exported isolated Copy-Vault private keys');
+  await notifyUserTelegram(
+    c.env,
+    user.id,
+    `🔐 <b>هشدار امنیتی خزانه ۲۴ ساعته دلارینو</b>\n` +
+      `هم‌اکنون کلیدهای خصوصی خزانه اختصاصی شما در پنل وب نمایش/بک‌آپ گرفته شد.\n` +
+      `اگر این اقدام توسط خودتان نبوده، دارایی خزانه را فوراً به Trust Wallet شخصی منتقل کرده و با پشتیبانی تماس بگیرید.`
+  ).catch(() => {});
+  return c.json({ ok: true, keys });
+});
+
+copyTradeRoutes.post('/poll-now', async (c) => {
+  const res = await pollWatchedWalletsForNewTrades(c.env);
+  const reconciled = await reconcileCopyPositionsV2(c.env, c.get('user').id).catch(() => 0);
+  return c.json({ ok: true, ...res, reconciled });
+});
+
+copyTradeRoutes.post('/positions-v2/:id/profit-card', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const pos = await c.env.DB.prepare(`SELECT * FROM copy_positions_v2 WHERE id = ? AND user_id = ? LIMIT 1`)
+    .bind(id, user.id)
+    .first<CopyPositionV2Row>();
+  if (!pos) return c.json({ error: 'پوزیشن یافت نشد.' }, 404);
+
+  const cardId = `DLR-${randomId('').slice(0, 10).toUpperCase()}`;
+  const issuedAt = new Date().toISOString();
+  const mode = pos.tx_hash ? 'LIVE' : 'PAPER';
+  const startDate = pos.opened_at;
+  const endDate = pos.closed_at || issuedAt;
+  const pnlUsd = Number(Number(pos.pnl_usd || 0).toFixed(2));
+  const roiPct = Number(Number(pos.pnl_pct || 0).toFixed(2));
+  const winRate = pnlUsd >= 0 ? 100 : 0;
+  const profitFactor = pnlUsd > 0 ? 99 : 0;
+  const exchangeProvider = `${pos.chain_id.toUpperCase()} · ${pos.dex_name}`;
+  const strategyName = `کپی‌ترید ${pos.trader_label}`;
+  const tradesHash = await sha256Hex(`${pos.id}:${pnlUsd}:${endDate}`);
+  const cardSecret = c.env.SESSION_JWT_SECRET || c.env.MASTER_ENCRYPTION_KEY || 'dollarino-card-hmac-secret';
+
+  const canonical = buildVerifiedCardCanonicalPayload({
+    id: cardId,
+    userId: user.id,
+    mode,
+    period: 'TRADE',
+    startDate,
+    endDate,
+    tradesCount: 1,
+    winRate,
+    netPnlUsd: pnlUsd,
+    roiPct,
+    profitFactor,
+    exchangeProvider,
+    strategyName,
+    tradesHash,
+    issuedAt,
+  });
+  const hmacSignature = await hmacSha256Hex(canonical, cardSecret);
+
+  const payloadSnapshot = JSON.stringify({
+    cardStyle: 'gold',
+    symbol: `${pos.token_symbol}/${pos.chain_id.toUpperCase()}`,
+    direction: pos.direction,
+    isVerifiedReal: Boolean(pos.tx_hash),
+    txHash: pos.tx_hash || null,
+    tradesHash,
+  });
+
+  await c.env.DB.prepare(
+    `INSERT INTO verified_profit_cards (
+       id, user_id, mode, period, start_date, end_date,
+       trades_count, win_rate, net_pnl_usd, roi_pct, profit_factor,
+       exchange_provider, strategy_name, payload_json, hmac_signature, issued_at
+     ) VALUES (?, ?, ?, 'TRADE', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      cardId,
+      user.id,
+      mode,
+      startDate,
+      endDate,
+      winRate,
+      pnlUsd,
+      roiPct,
+      profitFactor,
+      exchangeProvider,
+      strategyName,
+      payloadSnapshot,
+      hmacSignature,
+      issuedAt
+    )
+    .run();
+
+  const publicUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
+  return c.json({
+    ok: true,
+    cardId,
+    imageUrl: `/api/public/cards/${cardId}/image`,
+    verifyUrl: `${publicUrl}/?verify=${cardId}`,
+  });
+});
+
+

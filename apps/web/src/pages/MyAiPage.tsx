@@ -5,18 +5,21 @@ import {
   Brain,
   CheckCircle2,
   Cpu,
+  ImagePlus,
   Lock,
   Play,
   RotateCcw,
   Send,
   ShieldCheck,
   Sparkles,
+  X,
   Zap,
 } from 'lucide-react';
 import { apiFetch, ApiError } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { NavTab } from '../lib/types';
 import { AreaChart } from '../components/DollarinoViz';
+import { compressChartImageFile } from '../components/FloatingAiChat';
 
 interface TrainedAIRules {
   style: string;
@@ -72,6 +75,8 @@ export function MyAiPage({
   } | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const imgInputRef = useRef<HTMLInputElement | null>(null);
+  const [chartImg, setChartImg] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -98,10 +103,14 @@ export function MyAiPage({
 
   const sendMessage = async (customText?: string) => {
     const txt = (customText ?? input).trim();
-    if (!txt) return;
+    if (!txt && !chartImg) return;
     setBusy(true);
     setNotice(null);
-    if (!customText) setInput('');
+    const imgToSend = chartImg;
+    if (!customText) {
+      setInput('');
+      setChartImg(null);
+    }
     try {
       const res = await apiFetch<{
         ok: boolean;
@@ -109,7 +118,11 @@ export function MyAiPage({
         rules: TrainedAIRules;
       }>('/api/my-ai/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: txt, agentName }),
+        body: JSON.stringify({
+          message: txt,
+          agentName,
+          imageDataUrl: imgToSend || undefined,
+        }),
       });
       setRules(res.rules);
       await load();
@@ -201,14 +214,16 @@ export function MyAiPage({
         'سبک اسکلپ ۱۵ دقیقه روی BTC و ETH با EMA 9/21 و RSI زیر ۳۵، حد ضرر ۱.۵٪ و حد سود ۴٪ و اهرم ۵x',
         'فقط معاملات لانگ در تایم‌فریم ۱ ساعته روی SOL و BNB با سوپرترند و مکدی، حد ضرر ۲٪ و حد سود ۶٪',
         'معامله دوطرفه با شکست باند بولینگر و جهش حجم روی تایم ۱۵ دقیقه با اهرم ۳x',
+        'اسوئینگ ۴ ساعته کم‌ریسک روی BTC/ETH/XRP با تقاطع EMA 20/50 و RSI، حد ضرر ۲٪ و سود ۷٪ با اهرم ۳x',
       ]
     : [
         '15m scalp on BTC and ETH with EMA 9/21 and RSI below 35, SL 1.5%, TP 4%, 5x leverage',
         'Long only 1h swing on SOL & BNB using SuperTrend + MACD, SL 2%, TP 6%',
+        '4h low-risk trend on BTC/ETH/XRP using EMA 20/50 + RSI, SL 2%, TP 7%, 3x',
       ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 tab-enter">
       <div className="panel rounded-[28px] p-5 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5 overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <img
@@ -349,7 +364,42 @@ export function MyAiPage({
               ))}
             </div>
 
+            {chartImg && (
+              <div className="flex items-center gap-2 surface-soft p-2 rounded-xl border hairline w-fit">
+                <img src={chartImg} alt="Chart preview" className="w-12 h-12 rounded-lg object-cover" />
+                <span className="text-[11px] text-sub">{isFa ? 'تصویر چارت آماده تحلیل' : 'Chart attached'}</span>
+                <button type="button" onClick={() => setChartImg(null)} className="text-loss p-1">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
+              <input
+                ref={imgInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  try {
+                    const dataUrl = await compressChartImageFile(file);
+                    setChartImg(dataUrl);
+                  } catch {
+                    setNotice({ ok: false, text: isFa ? 'خطا در خواندن تصویر چارت.' : 'Failed to load image.' });
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => imgInputRef.current?.click()}
+                title={isFa ? 'ارسال اسکرین‌شات چارت یا ستاپ معاملاتی' : 'Attach Chart Image'}
+                className="btn-ghost p-3 rounded-2xl shrink-0"
+              >
+                <ImagePlus className="w-4 h-4 text-brand" />
+              </button>
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -361,14 +411,14 @@ export function MyAiPage({
                 }}
                 placeholder={
                   isFa
-                    ? 'مثلاً: تایم ۱۵ دقیقه با RSI زیر ۳۵ و EMA 9/21 فقط روی BTC و SOL حد ضرر ۲٪ و سود ۵٪...'
-                    : 'Describe your timeframe, indicators, coins, SL%, TP%, and leverage...'
+                    ? 'استراتژی‌ات را بنویس یا عکس چارتت را بفرست (تایم، اندیکاتور، ریسک)...'
+                    : 'Describe your strategy or attach a chart screenshot...'
                 }
                 className="field text-xs flex-1 py-3"
               />
               <button
                 type="button"
-                disabled={busy || !input.trim()}
+                disabled={busy || (!input.trim() && !chartImg)}
                 onClick={() => void sendMessage()}
                 className="btn-gold px-5 py-3 rounded-2xl text-xs font-black inline-flex items-center gap-1.5 shrink-0 disabled:opacity-50"
               >

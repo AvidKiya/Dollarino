@@ -522,3 +522,109 @@ export async function fetchDexTrendingOverview(): Promise<{
     metas: Array.isArray(trendingMetas) ? trendingMetas.slice(0, 10) : [],
   };
 }
+
+export interface MultiDappRoute {
+  id: string;
+  name: string;
+  badge: string;
+  swapUrl: string;
+  trustWalletDappUrl: string;
+}
+
+export function buildMultiDappRoutes(chainId: string, tokenAddress: string, pairUrl?: string): MultiDappRoute[] {
+  const c = (chainId || 'solana').toLowerCase();
+  const coinId = TRUST_COIN_IDS[c] ?? 20000714;
+  const tok = encodeURIComponent(tokenAddress || '');
+  const wrap = (id: string, name: string, badge: string, swapUrl: string): MultiDappRoute => ({
+    id,
+    name,
+    badge,
+    swapUrl,
+    trustWalletDappUrl: `https://link.trustwallet.com/open_url?coin_id=${coinId}&url=${encodeURIComponent(swapUrl)}`,
+  });
+
+  const routes: MultiDappRoute[] = [];
+  if (c === 'solana') {
+    routes.push(
+      wrap('jupiter', 'Jupiter Aggregator', 'Best Price', `https://jup.ag/swap/SOL-${tok}`),
+      wrap('raydium', 'Raydium AMM', 'Deep Liquidity', `https://raydium.io/swap/?inputMint=sol&outputMint=${tok}`),
+      wrap('pumpfun', 'Pump.fun', 'Memecoins', `https://pump.fun/coin/${tok}`),
+      wrap('birdeye', 'Birdeye Terminal', 'Whale Flow', `https://birdeye.so/token/${tok}?chain=solana`)
+    );
+  } else if (c === 'bsc') {
+    routes.push(
+      wrap('pancake', 'PancakeSwap V3', 'Primary DEX', `https://pancakeswap.finance/swap?outputCurrency=${tok}`),
+      wrap('1inch', '1inch Aggregator', 'Best Route', `https://app.1inch.io/#/56/simple/swap/BNB/${tok}`),
+      wrap('kyber', 'KyberSwap', 'Low Slippage', `https://kyberswap.com/swap/bnb/bnb-to-${tok}`),
+      wrap('paraswap', 'ParaSwap (Velora)', 'MEV Safe', `https://app.velora.xyz/#/swap/0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE-${tok}/bsc`)
+    );
+  } else if (c === 'ethereum') {
+    routes.push(
+      wrap('uniswap', 'Uniswap V3/V4', 'Primary DEX', `https://app.uniswap.org/swap?chain=mainnet&outputCurrency=${tok}`),
+      wrap('1inch', '1inch Aggregator', 'Best Route', `https://app.1inch.io/#/1/simple/swap/ETH/${tok}`),
+      wrap('kyber', 'KyberSwap', 'Low Slippage', `https://kyberswap.com/swap/ethereum/eth-to-${tok}`)
+    );
+  } else if (c === 'base') {
+    routes.push(
+      wrap('uniswap', 'Uniswap (Base)', 'Fast Swap', `https://app.uniswap.org/swap?chain=base&outputCurrency=${tok}`),
+      wrap('aerodrome', 'Aerodrome Finance', 'Base Liquidity', `https://aerodrome.finance/swap?from=eth&to=${tok}`),
+      wrap('1inch', '1inch (Base)', 'Best Route', `https://app.1inch.io/#/8453/simple/swap/ETH/${tok}`)
+    );
+  } else if (c === 'arbitrum') {
+    routes.push(
+      wrap('uniswap', 'Uniswap (Arbitrum)', 'Primary DEX', `https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=${tok}`),
+      wrap('camelot', 'Camelot DEX', 'Native ARB', `https://app.camelot.exchange/?token2=${tok}`),
+      wrap('1inch', '1inch (Arbitrum)', 'Best Route', `https://app.1inch.io/#/42161/simple/swap/ETH/${tok}`)
+    );
+  } else if (c === 'polygon') {
+    routes.push(
+      wrap('uniswap', 'Uniswap (Polygon)', 'Primary DEX', `https://app.uniswap.org/swap?chain=polygon&outputCurrency=${tok}`),
+      wrap('quickswap', 'QuickSwap', 'Native POL', `https://quickswap.exchange/#/swap?outputCurrency=${tok}`),
+      wrap('1inch', '1inch (Polygon)', 'Best Route', `https://app.1inch.io/#/137/simple/swap/POL/${tok}`)
+    );
+  } else if (c === 'ton') {
+    routes.push(
+      wrap('stonfi', 'STON.fi', 'Primary TON DEX', `https://app.ston.fi/swap?ft=TON&tt=${tok}`),
+      wrap('dedust', 'DeDust.io', 'TON Liquidity', `https://dedust.io/swap/TON/${tok}`)
+    );
+  } else if (c === 'tron') {
+    routes.push(
+      wrap('sunswap', 'SunSwap V3', 'Primary TRON DEX', `https://sunswap.com/#/home?tokenAddress=${tok}`)
+    );
+  } else if (c === 'optimism') {
+    routes.push(
+      wrap('velodrome', 'Velodrome Finance', 'OP Liquidity', `https://velodrome.finance/swap?from=eth&to=${tok}`),
+      wrap('uniswap', 'Uniswap (Optimism)', 'Primary DEX', `https://app.uniswap.org/swap?chain=optimism&outputCurrency=${tok}`),
+      wrap('1inch', '1inch (Optimism)', 'Best Route', `https://app.1inch.io/#/10/simple/swap/ETH/${tok}`)
+    );
+  } else if (c === 'avalanche') {
+    routes.push(
+      wrap('lfj', 'LFJ (Trader Joe)', 'AVAX Liquidity', `https://lfj.gg/avalanche/trade?outputCurrency=${tok}`),
+      wrap('uniswap', 'Uniswap (Avalanche)', 'Primary DEX', `https://app.uniswap.org/swap?chain=avalanche&outputCurrency=${tok}`),
+      wrap('1inch', '1inch (Avalanche)', 'Best Route', `https://app.1inch.io/#/43114/simple/swap/AVAX/${tok}`)
+    );
+  } else if (c === 'sui') {
+    routes.push(
+      wrap('cetus', 'Cetus Protocol', 'Primary Sui DEX', `https://app.cetus.zone/swap?from=0x2::sui::SUI&to=${tok}`),
+      wrap('turbos', 'Turbos Finance', 'Sui CLMM', `https://app.turbos.finance/#/trade?input=0x2::sui::SUI&output=${tok}`)
+    );
+  } else if (c === 'linea') {
+    routes.push(
+      wrap('lynex', 'Lynex DEX', 'Linea Liquidity', `https://app.lynex.fi/swap?outputCurrency=${tok}`),
+      wrap('syncswap', 'SyncSwap', 'Fast Route', `https://syncswap.xyz/swap`)
+    );
+  } else if (c === 'blast') {
+    routes.push(
+      wrap('thruster', 'Thruster DEX', 'Blast Liquidity', `https://app.thruster.finance/swap?outputCurrency=${tok}`)
+    );
+  } else {
+    const primary = buildTrustWalletSwapLinks(c, tokenAddress, pairUrl);
+    routes.push(wrap(primary.dexName.toLowerCase().replace(/[^a-z0-9]/g, ''), primary.dexName, 'Primary DEX', primary.swapUrl));
+  }
+
+  routes.push(
+    wrap('dexscreener', 'DexScreener Live Chart', 'Chart & Orders', pairUrl || `https://dexscreener.com/${encodeURIComponent(c)}/${tok}`)
+  );
+  return routes;
+}
+

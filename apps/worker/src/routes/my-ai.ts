@@ -6,6 +6,7 @@ import {
   type VisualStrategyDefinition,
 } from '@dollarino/core';
 import { Hono } from 'hono';
+import { callMultimodalChatAI } from '../ai/assistant.js';
 import { callBYOAI, resolveAIEnsemble } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
@@ -301,15 +302,69 @@ myAiRoutes.get('/', async (c) => {
 
 myAiRoutes.post('/chat', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json<{ message?: string; agentName?: string }>().catch(
-    () => ({} as { message?: string; agentName?: string })
-  );
-  const msgText = String(body.message || '').trim();
-  if (!msgText) return c.json({ error: 'پیام آموزشی نمی‌تواند خالی باشد.' }, 400);
+  const body = await c.req
+    .json<{ message?: string; agentName?: string; imageDataUrl?: string | null }>()
+    .catch(() => ({} as { message?: string; agentName?: string; imageDataUrl?: string | null }));
+  const imageDataUrl =
+    body.imageDataUrl && String(body.imageDataUrl).startsWith('data:image/') && String(body.imageDataUrl).length < 5_000_000
+      ? String(body.imageDataUrl)
+      : null;
+  const msgText = String(body.message || '').trim() || (imageDataUrl ? 'لطفاً سبک و ستاپ این تصویر چارت را به قوانین من اضافه کن.' : '');
+  if (!msgText && !imageDataUrl) return c.json({ error: 'پیام یا تصویر آموزشی نمی‌تواند خالی باشد.' }, 400);
 
   const agent = await ensureAgent(c.env.DB, user.id);
   const currentRules = parseRulesJson(agent.system_rules_json);
   const { next, learnedHighlights } = extractRulesFromConversation(msgText, currentRules);
+
+  const ensemble = await resolveAIEnsemble(c.env, user.id).catch(() => ({ engines: [] }));
+  let replyText = '';
+
+  if (ensemble.engines.length > 0) {
+    try {
+      const extractorSys = [
+        'You are the user’s blank, personal trainable AI trading assistant inside Dollarino ("هوش مصنوعی من").',
+        'Analyze the user’s instructions (and optional chart/setup screenshot) and return a warm concise reply + updated JSON rules at the very end wrapped in <RULES_JSON>{...}</RULES_JSON>.',
+        'Allowed JSON keys: style ("SCALP"|"SWING"|"TREND"|"HYBRID"), timeframe ("1m"|"5m"|"15m"|"30m"|"1h"|"4h"|"1d"), directionMode ("BOTH"|"LONG_ONLY"|"SHORT_ONLY"), symbols (string[] like ["BTCUSDT","ETHUSDT"]), indicators (subset of ["EMA_CROSS","RSI","MACD","BOLLINGER","SUPERTREND","VOLUME"]), rsiOversold (10-45), rsiOverbought (55-90), emaFast (3-50), emaSlow (10-200), stopLossPct (0.3-15), takeProfitPct (0.5-40), maxLeverage (1-50).',
+        `Current rules baseline: ${JSON.stringify(next)}`,
+      ].join('\n');
+      const rawReply = imageDataUrl
+        ? await callMultimodalChatAI(ensemble.engines[0]!, extractorSys, [], msgText, imageDataUrl)
+        : await callBYOAI(ensemble.engines[0]!, extractorSys, msgText, { fastJson: false });
+
+      const jsonMatch = rawReply.match(/<RULES_JSON>([\s\S]*?)<\/RULES_JSON>/i);
+      if (jsonMatch?.[1]) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1].trim()) as Partial<TrainedAIRules>;
+          if (parsed.timeframe) next.timeframe = parsed.timeframe;
+          if (parsed.style) next.style = parsed.style;
+          if (parsed.directionMode) next.directionMode = parsed.directionMode;
+          if (Array.isArray(parsed.symbols) && parsed.symbols.length) {
+            next.symbols = parsed.symbols.map((s) => String(s).toUpperCase()).slice(0, 12);
+          }
+          if (Array.isArray(parsed.indicators) && parsed.indicators.length) {
+            const validInd = parsed.indicators.filter((x) =>
+              ['EMA_CROSS', 'RSI', 'MACD', 'BOLLINGER', 'SUPERTREND', 'VOLUME'].includes(String(x))
+            );
+            if (validInd.length) next.indicators = Array.from(new Set(validInd));
+          }
+          if (typeof parsed.stopLossPct === 'number' && parsed.stopLossPct >= 0.3 && parsed.stopLossPct <= 15) {
+            next.stopLossPct = Number(parsed.stopLossPct);
+          }
+          if (typeof parsed.takeProfitPct === 'number' && parsed.takeProfitPct >= 0.5 && parsed.takeProfitPct <= 40) {
+            next.takeProfitPct = Number(parsed.takeProfitPct);
+          }
+          if (typeof parsed.maxLeverage === 'number' && parsed.maxLeverage >= 1 && parsed.maxLeverage <= 50) {
+            next.maxLeverage = Math.round(parsed.maxLeverage);
+          }
+        } catch {
+          /* keep regex extraction */
+        }
+      }
+      replyText = rawReply.replace(/<RULES_JSON>[\s\S]*?<\/RULES_JSON>/gi, '').trim();
+    } catch {
+      replyText = '';
+    }
+  }
 
   const nextNotes = `${agent.training_notes ? `${agent.training_notes}\n` : ''}• ${msgText}`.slice(-4000);
   const nextName = body.agentName?.trim() ? body.agentName.trim().slice(0, 60) : agent.name;
@@ -322,23 +377,7 @@ myAiRoutes.post('/chat', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO user_ai_messages (id, user_id, role, content) VALUES (?, ?, 'user', ?)`
-  ).bind(randomId('msg'), user.id, msgText).run();
-
-  let replyText = '';
-  const ensemble = await resolveAIEnsemble(c.env, user.id).catch(() => ({ engines: [] }));
-  if (ensemble.engines.length > 0) {
-    try {
-      const sysPrompt = [
-        'You are the user’s blank, personal trainable AI trading assistant inside Dollarino ("هوش مصنوعی من").',
-        'Acknowledge what strategy rule(s) you just learned from the user in warm, concise Persian (or English if they wrote in English).',
-        'Confirm the active structured profile and invite them either to refine further or click Test / Activate.',
-        `Current learned rules JSON: ${JSON.stringify(next)}`,
-      ].join('\n');
-      replyText = await callBYOAI(ensemble.engines[0]!, sysPrompt, msgText);
-    } catch {
-      replyText = '';
-    }
-  }
+  ).bind(randomId('msg'), user.id, imageDataUrl ? `📷 [تصویر ستاپ] ${msgText}` : msgText).run();
 
   if (!replyText.trim()) {
     const summaryParts = [
@@ -490,3 +529,113 @@ myAiRoutes.post('/reset', async (c) => {
 
   return c.json({ ok: true, rules: DEFAULT_TRAINED_RULES });
 });
+
+function buildPineFromRules(title: string, r: TrainedAIRules): string {
+  const fast = Math.max(3, Math.min(50, Number(r.emaFast || 9)));
+  const slow = Math.max(fast + 2, Math.min(200, Number(r.emaSlow || 21)));
+  const rsiLow = Math.max(15, Math.min(45, Number(r.rsiOversold || 35)));
+  const rsiHigh = Math.max(55, Math.min(85, Number(r.rsiOverbought || 65)));
+  const useMacd = r.indicators.includes('MACD');
+  return [
+    `//@version=5`,
+    `strategy("${title.replace(/"/g, '')}", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)`,
+    `emaFast = ta.ema(close, ${fast})`,
+    `emaSlow = ta.ema(close, ${slow})`,
+    `rsiVal = ta.rsi(close, 14)`,
+    ...(useMacd ? [`[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)`] : []),
+    `longCond = ta.crossover(emaFast, emaSlow) or (close > emaSlow and rsiVal < ${rsiLow})${useMacd ? ' and macdLine > signalLine' : ''}`,
+    `shortCond = ta.crossunder(emaFast, emaSlow) or (close < emaSlow and rsiVal > ${rsiHigh})${useMacd ? ' and macdLine < signalLine' : ''}`,
+    `plot(emaFast, color=color.green, title="EMA Fast")`,
+    `plot(emaSlow, color=color.orange, title="EMA Slow")`,
+    `if (longCond)`,
+    `    strategy.entry("Long", strategy.long)`,
+    `if (shortCond)`,
+    `    strategy.entry("Short", strategy.short)`,
+  ].join('\n');
+}
+
+function buildPythonFromRules(title: string, r: TrainedAIRules): string {
+  const fast = Math.max(3, Math.min(50, Number(r.emaFast || 9)));
+  const slow = Math.max(fast + 2, Math.min(200, Number(r.emaSlow || 21)));
+  const rsiLow = Math.max(15, Math.min(45, Number(r.rsiOversold || 35)));
+  const rsiHigh = Math.max(55, Math.min(85, Number(r.rsiOverbought || 65)));
+  return [
+    `# Dollarino Quant Strategy: ${title}`,
+    `def generate_signal(df):`,
+    `    df['ema_fast'] = df['close'].ewm(span=${fast}).mean()`,
+    `    df['ema_slow'] = df['close'].ewm(span=${slow}).mean()`,
+    `    rsi_val = df['rsi_14'].iloc[-1] if 'rsi_14' in df else 50`,
+    `    if df['ema_fast'].iloc[-1] > df['ema_slow'].iloc[-1] and rsi_val <= ${rsiHigh}:`,
+    `        return 'LONG'`,
+    `    if df['ema_fast'].iloc[-1] < df['ema_slow'].iloc[-1] and rsi_val >= ${rsiLow}:`,
+    `        return 'SHORT'`,
+    `    return 'HOLD'`,
+  ].join('\n');
+}
+
+myAiRoutes.post('/convert-strategy', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    rawInput?: string;
+    prompt?: string;
+    targetMode?: 'visual' | 'pine' | 'python';
+    targetLanguage?: 'visual' | 'pine' | 'python';
+  };
+  const rawInput = String(body.rawInput || body.prompt || '').trim();
+  if (!rawInput) return c.json({ error: 'لطفاً ایده یا کد استراتژی خودتان را وارد کنید.' }, 400);
+  const lang = body.targetLanguage || body.targetMode || 'pine';
+
+  const { next } = extractRulesFromConversation(rawInput, { ...DEFAULT_TRAINED_RULES });
+  let visualDef = compileTrainedRulesToVisualDef(next, 'AI Converted Strategy');
+  let title = visualDef.name;
+  let code =
+    lang === 'python'
+      ? buildPythonFromRules(title, next)
+      : lang === 'visual'
+        ? JSON.stringify(visualDef, null, 2)
+        : buildPineFromRules(title, next);
+
+  const ensemble = await resolveAIEnsemble(c.env, user.id).catch(() => ({ engines: [] }));
+  if (ensemble.engines.length > 0) {
+    try {
+      const sys = [
+        `Convert the user strategy idea or snippet into a valid Dollarino VisualStrategyDefinition JSON and clean ${lang} code.`,
+        'Allowed rule kind values: EMA_CROSS_ABOVE, EMA_CROSS_BELOW, PRICE_ABOVE_EMA, PRICE_BELOW_EMA, RSI_BELOW, RSI_ABOVE, MACD_CROSS_UP, MACD_CROSS_DOWN, BB_LOWER_TOUCH, BB_UPPER_TOUCH, SUPERTREND_BULL, SUPERTREND_BEAR, VOLUME_SPIKE.',
+        'Return STRICT JSON ONLY: {"name":"string","logic":"ALL"|"ANY","slAtrMult":1.8,"tp1R":1.4,"tp2R":2.5,"tp3R":3.8,"longRules":[{"id":"l1","kind":"...","param1":9,"param2":21}],"shortRules":[{"id":"s1","kind":"...","param1":9,"param2":21}],"code":"..."}',
+      ].join('\n');
+      const out = await callBYOAI(ensemble.engines[0]!, sys, rawInput.slice(0, 3500), { fastJson: true });
+      const cleaned = out.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+      const parsed = JSON.parse(cleaned) as Partial<VisualStrategyDefinition> & { code?: string };
+      if (Array.isArray(parsed.longRules) || Array.isArray(parsed.shortRules)) {
+        title = String(parsed.name || title).slice(0, 60);
+        visualDef = {
+          name: title,
+          logic: parsed.logic === 'ANY' ? 'ANY' : 'ALL',
+          slAtrMult: Number(parsed.slAtrMult || 1.8),
+          tp1R: Number(parsed.tp1R || 1.4),
+          tp2R: Number(parsed.tp2R || 2.5),
+          tp3R: Number(parsed.tp3R || 3.8),
+          longRules: Array.isArray(parsed.longRules) ? parsed.longRules.slice(0, 6) : visualDef.longRules,
+          shortRules: Array.isArray(parsed.shortRules) ? parsed.shortRules.slice(0, 6) : visualDef.shortRules,
+        };
+      }
+      if (typeof parsed.code === 'string' && parsed.code.trim().length > 20 && lang !== 'visual') {
+        code = parsed.code.trim();
+      } else if (lang === 'visual') {
+        code = JSON.stringify(visualDef, null, 2);
+      }
+    } catch {
+      /* fallback to deterministic extracted visualDef + code */
+    }
+  }
+
+  return c.json({
+    ok: true,
+    title,
+    language: lang,
+    code,
+    visualDef,
+    summary: `استراتژی «${title}» (${lang.toUpperCase()}) با EMA ${next.emaFast}/${next.emaSlow} و RSI ${next.rsiOversold}/${next.rsiOverbought} تولید شد.`,
+  });
+});
+

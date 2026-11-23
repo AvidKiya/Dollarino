@@ -57,6 +57,7 @@ import { ModeGraphicAI, ModeGraphicCodex, ModeGraphicTelegram } from '../compone
 import { CoinIcon } from '../components/CoinIcon';
 import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '../components/DollarinoViz';
 import { QuickWidgetsBar } from '../components/QuickWidgetsBar';
+import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { SetupWizardModal } from '../components/SetupWizardModal';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 
@@ -496,6 +497,9 @@ export function OverviewPage({
           </div>
         )}
 
+        {/* Animated Promo Carousel (Managed from Admin Banners Tab) */}
+        <PromoBannerCarousel lang={lang} placement="DASHBOARD" onNavigateTab={onNavigate} />
+
         {/* 1. Clean Balance & Live Status Hero */}
         <section className="pt-2 pb-1 text-center space-y-1.5">
           <div className="flex items-center justify-center gap-2 text-xs text-dim font-bold">
@@ -889,8 +893,20 @@ export function OverviewPage({
           onUserUpdated={onRefresh}
         />
 
-        {/* 3. Open & Settled AI Trades Summary */}
+        {/* 3. Open & Settled AI Trades Summary + Live AI Reason */}
         <section className="panel rounded-[26px] p-4 sm:p-5 space-y-3">
+          {data.config.last_ai_reason && (
+            <div className="surface-soft rounded-2xl p-3 border border-blue-500/20 flex items-start gap-2.5 text-xs">
+              <BrainCircuit className="w-4 h-4 text-brand shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="font-black text-main text-[11px]">
+                  {isFa ? 'آخرین تصمیم و دلیل هوش مصنوعی:' : 'Latest AI Decision & Reasoning:'}
+                </p>
+                <p className="text-[11px] text-dim mt-0.5 leading-relaxed">{data.config.last_ai_reason}</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between gap-2">
             <div className="ios-segmented p-1">
               <button
@@ -905,12 +921,17 @@ export function OverviewPage({
                 onClick={() => setSimpleTradesTab('closed')}
                 className={`px-3 py-1 rounded-full text-[11px] font-black ${simpleTradesTab === 'closed' ? 'ios-pill-active' : 'text-dim'}`}
               >
-                {isFa ? `معاملات بسته‌شده (${data.closedTrades.length})` : `Closed (${data.closedTrades.length})`}
+                {isFa ? `تاریخچه بسته‌شده (${data.closedTrades.length})` : `History (${data.closedTrades.length})`}
               </button>
             </div>
-            <button type="button" onClick={() => onNavigate('portfolio')} className="text-xs font-black text-[#1652F0]">
-              {isFa ? 'مشاهده کامل کیف پول' : 'Full Portfolio'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => onNavigate('card')} className="btn-gold px-2.5 py-1 rounded-xl text-[10px] font-black">
+                {isFa ? 'کارت سود' : 'Profit Card'}
+              </button>
+              <button type="button" onClick={() => onNavigate('portfolio')} className="text-xs font-black text-[#1652F0]">
+                {isFa ? 'کیف پول کامل' : 'Portfolio'}
+              </button>
+            </div>
           </div>
 
           {simpleTradesTab === 'closed' ? (
@@ -1022,7 +1043,8 @@ export function OverviewPage({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 tab-enter">
+      <PromoBannerCarousel lang={lang} placement="DASHBOARD" onNavigateTab={onNavigate} />
       {notice && (
         <div className="p-3.5 rounded-2xl badge-signal text-xs font-extrabold flex items-center justify-between">
           <span className="flex items-center gap-2">

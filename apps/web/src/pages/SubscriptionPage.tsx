@@ -431,7 +431,7 @@ export function SubscriptionPage({
           return (
             <div
               key={p.code}
-              className={`p-6 rounded-3xl flex flex-col justify-between gap-4 transition ${
+              className={`p-6 rounded-3xl flex flex-col justify-between gap-4 panel-hover ${
                 p.is_popular ? 'hero-cobalt text-white' : 'surface-card'
               } ${isSelected && !p.is_popular ? 'ring-2 ring-[#1464F6]' : ''}`}
             >

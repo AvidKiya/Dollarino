@@ -640,7 +640,13 @@ export function DedicatedAiChatSurface({
           )}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
-              <DollarinoRobotLogoIcon size={34} />
+              <div className="relative w-9 h-9 rounded-full overflow-hidden border border-cyan-400/50 shadow-[0_0_12px_rgba(22,82,240,0.4)] shrink-0">
+                <img
+                  src="/images/ai-orb-avatar.png"
+                  alt="Dollarino AI Core"
+                  className="w-full h-full object-cover scale-[1.28]"
+                />
+              </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <h3 className="font-display font-bold text-xs sm:text-sm text-main truncate">
@@ -996,7 +1002,7 @@ export function DollarinoRobotLogoIcon({ size = 34 }: { size?: number }) {
 }
 
 const ORB_STORAGE_KEY = 'dollarino_ai_orb_pos_v2';
-const ORB_SIZE = 56;
+const ORB_SIZE = 62;
 
 interface OrbPos {
   side: 'left' | 'right';
@@ -1044,8 +1050,10 @@ export function FloatingAiChat({
   const isFa = lang === 'fa';
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<OrbPos>(() => loadSavedOrbPos());
-  const [vw, setVw] = useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 390));
-  const [collapsed, setCollapsed] = useState(true);
+  const [vw, setVw] = useState<number>(() =>
+    typeof window !== 'undefined' ? (document.documentElement.clientWidth || window.innerWidth) : 390
+  );
+  const [collapsed, setCollapsed] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [dragCoords, setDragCoords] = useState<{ x: number; y: number } | null>(null);
 
@@ -1063,12 +1071,12 @@ export function FloatingAiChat({
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     idleTimerRef.current = setTimeout(() => {
       setCollapsed(true);
-    }, 2400);
+    }, 3500);
   }, []);
 
   useEffect(() => {
     const onResize = () => {
-      setVw(window.innerWidth);
+      setVw(document.documentElement.clientWidth || window.innerWidth);
       setPos((p) => ({ ...p, y: clampOrbY(p.y) }));
     };
     window.addEventListener('resize', onResize);
@@ -1087,12 +1095,12 @@ export function FloatingAiChat({
   // Hide floating orb when user is already inside the dedicated full-page AI Chat view
   if (authenticated && activeTab === 'aichat') return null;
 
-  const restX = pos.side === 'right' ? Math.max(8, vw - ORB_SIZE - 8) : 8;
+  const restX = pos.side === 'right' ? Math.max(12, vw - ORB_SIZE - 12) : 12;
 
   const activeX = dragCoords ? dragCoords.x : restX;
   const activeY = dragCoords ? dragCoords.y : clampOrbY(pos.y);
 
-  const collapsedShiftX = !dragging && collapsed ? (pos.side === 'right' ? 22 : -22) : 0;
+  const collapsedShiftX = 0;
 
   return (
     <>
@@ -1203,26 +1211,45 @@ export function FloatingAiChat({
             scheduleCollapse();
           }}
           style={{
+            position: 'fixed',
             left: `${activeX}px`,
             top: `${activeY}px`,
             width: `${ORB_SIZE}px`,
             height: `${ORB_SIZE}px`,
-            transform: `translate3d(${collapsedShiftX}px, 0, 0)`,
-            opacity: dragging ? 0.98 : collapsed ? 0.68 : 0.96,
+            transform: dragging ? 'scale(1.06)' : `translate3d(${collapsedShiftX}px, 0, 0)`,
+            opacity: dragging ? 1 : 0.99,
             transition: dragging
               ? 'none'
-              : 'left 0.28s cubic-bezier(0.22, 1, 0.36, 1), top 0.22s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease, box-shadow 0.25s ease',
+              : 'left 0.28s cubic-bezier(0.22, 1, 0.36, 1), top 0.22s ease, transform 0.24s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease',
             touchAction: 'none',
           }}
-          className="liquid-orb fixed z-[175] rounded-full grid place-items-center cursor-pointer select-none hover:!opacity-100 focus:outline-none"
+          className="liquid-orb fixed z-[175] rounded-full grid place-items-center cursor-pointer select-none focus:outline-none group"
         >
-          <div className="relative z-10 grid place-items-center drop-shadow-[0_2px_6px_rgba(22,82,240,0.3)]">
-            <DollarinoRobotLogoIcon size={35} />
+          {/* Rotating Neon Halo Ring */}
+          <span className="liquid-orb-ring" aria-hidden="true" />
+
+          {/* 3D Crystal AI Core Image clipped edge-to-edge */}
+          <div className="relative z-10 w-full h-full rounded-full overflow-hidden grid place-items-center">
+            <img
+              src="/images/ai-orb-avatar.png"
+              alt="Dollarino AI Core"
+              draggable={false}
+              className="w-full h-full object-cover scale-[1.28] transition-transform duration-500 group-hover:scale-[1.36] pointer-events-none"
+            />
+            {/* Top Liquid Specular Sheen */}
+            <span
+              className="absolute inset-x-2 top-1 h-4 rounded-full bg-gradient-to-b from-white/40 to-transparent pointer-events-none"
+              aria-hidden="true"
+            />
           </div>
+
+          {/* Crisp Floating AI Badge */}
           <span
-            className="absolute top-1.5 end-1.5 z-20 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-[var(--panel)] shadow-[0_0_8px_rgba(16,185,129,0.65)] pointer-events-none"
-            aria-hidden="true"
-          />
+            dir="ltr"
+            className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 z-20 px-2 py-0.5 rounded-full bg-gradient-to-r from-[#1652F0] via-[#0ea5e9] to-[#10b981] text-white text-[9px] font-black tracking-wider shadow-[0_2px_10px_rgba(16,185,129,0.5)] border border-white/30 pointer-events-none whitespace-nowrap"
+          >
+            AI · LIVE
+          </span>
         </button>
       )}
     </>

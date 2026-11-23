@@ -738,57 +738,61 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 /* ==========================================================================
-   LIQUID GLASS FLOATING AI ORB & SHEET — MATCHING CUPERTINO DOCK & THEME
+   LIQUID GLASS FLOATING AI ORB & SHEET — 3D DORRBIN CRYSTAL CORE
    ========================================================================== */
+@keyframes orbSpinRing {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes orbBreathe {
+  0%, 100% {
+    box-shadow:
+      0 10px 28px rgba(10, 18, 42, 0.42),
+      0 0 18px rgba(22, 82, 240, 0.34),
+      0 0 8px rgba(16, 185, 129, 0.28);
+  }
+  50% {
+    box-shadow:
+      0 14px 36px rgba(10, 18, 42, 0.5),
+      0 0 28px rgba(22, 82, 240, 0.52),
+      0 0 14px rgba(245, 165, 36, 0.35);
+  }
+}
+
 .liquid-orb {
-  position: relative;
+  position: fixed;
   overflow: visible;
-  background:
-    radial-gradient(125% 90% at 30% 14%, var(--rim) 0%, transparent 56%),
-    radial-gradient(95% 75% at 78% 88%, rgba(22, 82, 240, 0.22) 0%, transparent 66%),
-    radial-gradient(75% 65% at 18% 82%, rgba(245, 165, 36, 0.16) 0%, transparent 65%),
-    linear-gradient(155deg, var(--glass-a) 0%, var(--glass-b) 100%);
-  -webkit-backdrop-filter: blur(22px) saturate(215%) brightness(1.08);
-  backdrop-filter: blur(22px) saturate(215%) brightness(1.08);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1.5px 2px var(--rim),
-    inset 0 -2px 5px var(--rim-soft),
-    0 12px 30px rgba(15, 23, 42, 0.2),
-    0 3px 12px rgba(22, 82, 240, 0.18);
+  background: radial-gradient(circle at 30% 25%, #1652F0 0%, #050d24 72%);
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  animation: orbBreathe 3.8s ease-in-out infinite;
 }
 
-.liquid-orb::before {
-  content: '';
+.liquid-orb-ring {
   position: absolute;
-  inset: 2px 6px auto 6px;
-  height: 44%;
+  inset: -3px;
   border-radius: 9999px;
-  background: linear-gradient(180deg, var(--rim) 0%, rgba(255, 255, 255, 0) 100%);
-  opacity: 0.72;
+  background: conic-gradient(
+    from 0deg,
+    rgba(22, 230, 100, 0.85),
+    rgba(0, 200, 255, 0.9),
+    rgba(245, 165, 36, 0.85),
+    rgba(22, 82, 240, 0.75),
+    rgba(22, 230, 100, 0.85)
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+  animation: orbSpinRing 7s linear infinite;
   pointer-events: none;
-}
-
-.liquid-orb::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  border: 1px solid var(--rim-soft);
-  pointer-events: none;
-  opacity: 0.65;
+  opacity: 0.9;
 }
 
 .liquid-orb:hover {
-  box-shadow:
-    inset 0 1.5px 2.5px var(--rim),
-    inset 0 -2px 6px var(--rim-soft),
-    0 16px 36px rgba(15, 23, 42, 0.24),
-    0 0 20px rgba(22, 82, 240, 0.26);
+  transform: scale(1.07);
 }
 
 .liquid-orb:active {
-  transform: scale(0.95);
+  transform: scale(0.94);
 }
 
 .liquid-ai-sheet {
@@ -808,8 +812,123 @@ input[type='range']::-webkit-slider-thumb {
   .liquid-tab svg,
   .liquid-tab span,
   .dock-ind,
-  .dock-fab {
+  .dock-fab,
+  .tab-enter,
+  .banner-slide,
+  .btn-gold,
+  .btn-cobalt,
+  .btn-emerald,
+  .btn-lime,
+  .btn-ghost {
     animation: none !important;
     transition: none !important;
   }
 }
+
+/* ==========================================================================
+   SMOOTH MICRO-INTERACTIONS, BUTTONS & ANIMATED CAROUSEL TRANSITIONS
+   ========================================================================== */
+.btn-gold,
+.btn-cobalt,
+.btn-emerald,
+.btn-lime,
+.btn-ghost {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 210ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 200ms ease,
+    background-color 200ms ease;
+  will-change: transform;
+}
+
+.btn-gold:hover:not(:disabled),
+.btn-cobalt:hover:not(:disabled),
+.btn-emerald:hover:not(:disabled),
+.btn-lime:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  filter: brightness(1.06);
+}
+
+.btn-gold:active:not(:disabled),
+.btn-cobalt:active:not(:disabled),
+.btn-emerald:active:not(:disabled),
+.btn-lime:active:not(:disabled),
+.btn-ghost:active:not(:disabled) {
+  transform: scale(0.965);
+}
+
+.btn-gold::after,
+.btn-emerald::after,
+.btn-lime::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.28) 48%, transparent 72%);
+  transform: translateX(-140%);
+  transition: transform 650ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.btn-gold:hover::after,
+.btn-emerald:hover::after,
+.btn-lime:hover::after {
+  transform: translateX(140%);
+}
+
+.panel-hover {
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 220ms ease;
+}
+
+.panel-hover:hover {
+  transform: translateY(-2px);
+}
+
+@keyframes tabEnterSmooth {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tab-enter {
+  animation: tabEnterSmooth 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes bannerFlipIn {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.banner-slide {
+  animation: bannerFlipIn 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes bannerProgressBar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.banner-progress {
+  transform-origin: left center;
+  animation: bannerProgressBar 5.5s linear infinite;
+}
+

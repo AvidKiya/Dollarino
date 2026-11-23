@@ -959,6 +959,7 @@ export async function runAutonomousAITrader(
     mixerWeights?: SignalMixerWeights;
     mixerThreshold?: number;
     bypassCache?: boolean;
+    recentTradesSummary?: string;
   }
 ): Promise<AITradeDecision> {
   if (params.candles.length < 35) {
@@ -1114,18 +1115,20 @@ Rules:
 3. Minimum R:R >= 1.2 on TP1, 2.2 on TP2, 3.2 on TP3.
 4. For LONG: stopLoss < entry < tp1 < tp2 < tp3. For SHORT: stopLoss > entry > tp1 > tp2 > tp3.
 5. Leverage between 1 and ${Math.max(1, params.maxLeverage)}.
-6. Preserve ${pricePrecision(ctx.price)} decimal places for ${params.symbol}.`;
+6. Preserve ${pricePrecision(ctx.price)} decimal places for ${params.symbol}.
+7. Learn from recent closed trade lessons if provided (avoid repeating SL mistakes on the same volatility regime).`;
 
   const userPrompt = [
     `Market: ${params.symbol} | LTF: ${params.timeframe} | HTF: ${params.higherTimeframe} | Last Price: ${roundPx(ctx.price, ctx.price)}`,
     `Risk Preset: ${params.riskPreset || 'balanced'} | Max Leverage: ${params.maxLeverage}x | Min Confidence Gate: ${params.minConfidence}%`,
     `Orderbook Imbalance: ${params.orderBookImbalancePct ?? '0.0'}% | Spread: ${params.spreadPct ?? '0.01'}% | Funding: ${params.fundingRate ?? '0.0001'}`,
     `Open Position on ${params.symbol}: ${params.openPosition ? JSON.stringify(params.openPosition) : 'NONE'}`,
+    params.recentTradesSummary ? `Recent Closed Trade Lessons (Post-Trade Memory): ${params.recentTradesSummary}` : '',
     `Quant Telemetry: ${JSON.stringify(ctx.telemetry)}`,
     `Swing Supports: ${JSON.stringify(ctx.supports)} | Swing Resistances: ${JSON.stringify(ctx.resistances)}`,
     `HTF Candles (${params.higherTimeframe}, last 16): ${JSON.stringify(ctx.compactHtf)}`,
     `LTF Candles (${params.timeframe}, last 32): ${JSON.stringify(ctx.compactCandles)}`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   const votes: AIModelVote[] = [];
   const validResults: Array<{

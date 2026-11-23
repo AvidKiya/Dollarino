@@ -16,6 +16,12 @@ import {
   resolveChannelAndBotConfig,
 } from '../telegram/publisher.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
+import {
+  listOnchainApiProviders,
+  saveOnchainApiProviderKey,
+  testOnchainApiProvider,
+  type OnchainProviderId,
+} from '../dex/smart-copy.js';
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 adminRoutes.use('*', requireAuth);
@@ -1013,3 +1019,212 @@ adminRoutes.post('/referrals/withdrawals/:id/decide', async (c) => {
   }
   return c.json({ ok: true });
 });
+
+adminRoutes.get('/onchain-apis', async (c) => {
+  const providers = await listOnchainApiProviders(c.env.DB);
+  return c.json({ ok: true, providers });
+});
+
+adminRoutes.post('/onchain-apis', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    provider?: OnchainProviderId;
+    apiKey?: string;
+    baseUrl?: string;
+    isActive?: boolean;
+    label?: string;
+  };
+  if (!body.provider) return c.json({ error: 'provider الزامی است' }, 400);
+  const res = await saveOnchainApiProviderKey(c.env, {
+    provider: body.provider,
+    apiKey: body.apiKey,
+    baseUrl: body.baseUrl,
+    isActive: body.isActive,
+    label: body.label,
+  });
+  const providers = await listOnchainApiProviders(c.env.DB);
+  return c.json({ ok: true, masked: res.masked, providers });
+});
+
+adminRoutes.post('/onchain-apis/:provider/test', async (c) => {
+  const provider = c.req.param('provider') as OnchainProviderId;
+  const result = await testOnchainApiProvider(c.env, provider);
+  const providers = await listOnchainApiProviders(c.env.DB);
+  return c.json({ ...result, providers });
+});
+
+adminRoutes.delete('/onchain-apis/:provider', async (c) => {
+  const provider = c.req.param('provider');
+  await c.env.DB.prepare(
+    `UPDATE onchain_api_providers
+     SET api_key_masked = NULL, encrypted_api_key = NULL,
+         is_active = CASE WHEN requires_key = 0 THEN 1 ELSE 0 END,
+         last_test_ok = NULL, last_error = NULL, updated_at = datetime('now')
+     WHERE provider = ?`
+  )
+    .bind(provider)
+    .run();
+  const providers = await listOnchainApiProviders(c.env.DB);
+  return c.json({ ok: true, providers });
+});
+
+// =========================================================================
+// Promo Banners Carousel Management (Landing + Dashboard)
+// =========================================================================
+
+adminRoutes.get('/banners', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`
+  )
+    .all<Record<string, unknown>>()
+    .catch(() => ({ results: [] }));
+  return c.json({ ok: true, banners: rows.results });
+});
+
+adminRoutes.post('/banners', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    id?: string;
+    badge_fa?: string;
+    badge_en?: string;
+    title_fa?: string;
+    title_en?: string;
+    subtitle_fa?: string;
+    subtitle_en?: string;
+    cta_label_fa?: string;
+    cta_label_en?: string;
+    cta_target?: string;
+    image_url?: string;
+    accent_theme?: string;
+    placement?: string;
+    sort_order?: number;
+    is_active?: boolean | number;
+  };
+  const titleFa = String(body.title_fa || '').trim();
+  const subtitleFa = String(body.subtitle_fa || '').trim();
+  if (!titleFa || !subtitleFa) return c.json({ error: 'عنوان و متن توضیح بنر الزامی است.' }, 400);
+
+  const id = body.id?.trim() || randomId('banner');
+  const isActive = body.is_active === false || body.is_active === 0 ? 0 : 1;
+
+  await c.env.DB.prepare(
+    `INSERT INTO promo_banners (
+       id, badge_fa, badge_en, title_fa, title_en, subtitle_fa, subtitle_en,
+       cta_label_fa, cta_label_en, cta_target, image_url, accent_theme, placement, sort_order, is_active, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       badge_fa = excluded.badge_fa,
+       badge_en = excluded.badge_en,
+       title_fa = excluded.title_fa,
+       title_en = excluded.title_en,
+       subtitle_fa = excluded.subtitle_fa,
+       subtitle_en = excluded.subtitle_en,
+       cta_label_fa = excluded.cta_label_fa,
+       cta_label_en = excluded.cta_label_en,
+       cta_target = excluded.cta_target,
+       image_url = excluded.image_url,
+       accent_theme = excluded.accent_theme,
+       placement = excluded.placement,
+       sort_order = excluded.sort_order,
+       is_active = excluded.is_active,
+       updated_at = datetime('now')`
+  )
+    .bind(
+      id,
+      String(body.badge_fa || 'اطلاعیه ویژه').slice(0, 80),
+      String(body.badge_en || body.badge_fa || 'FEATURED').slice(0, 80),
+      titleFa.slice(0, 140),
+      String(body.title_en || titleFa).slice(0, 140),
+      subtitleFa.slice(0, 320),
+      String(body.subtitle_en || subtitleFa).slice(0, 320),
+      String(body.cta_label_fa || 'مشاهده و شروع').slice(0, 60),
+      String(body.cta_label_en || body.cta_label_fa || 'Explore').slice(0, 60),
+      String(body.cta_target || 'copy').slice(0, 200),
+      String(body.image_url || '/images/smart-wallet-radar.png').slice(0, 500),
+      String(body.accent_theme || 'gold').slice(0, 24),
+      String(body.placement || 'BOTH').toUpperCase(),
+      Number(body.sort_order || 1),
+      isActive
+    )
+    .run();
+
+  const rows = await c.env.DB.prepare(`SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`).all();
+  return c.json({ ok: true, id, banners: rows.results });
+});
+
+adminRoutes.patch('/banners/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as { is_active?: boolean | number; sort_order?: number };
+  if (typeof body.is_active !== 'undefined') {
+    await c.env.DB.prepare(`UPDATE promo_banners SET is_active = ?, updated_at = datetime('now') WHERE id = ?`)
+      .bind(body.is_active ? 1 : 0, id)
+      .run();
+  }
+  if (typeof body.sort_order === 'number') {
+    await c.env.DB.prepare(`UPDATE promo_banners SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`)
+      .bind(body.sort_order, id)
+      .run();
+  }
+  const rows = await c.env.DB.prepare(`SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`).all();
+  return c.json({ ok: true, banners: rows.results });
+});
+
+adminRoutes.delete('/banners/:id', async (c) => {
+  const id = c.req.param('id');
+  await c.env.DB.prepare(`DELETE FROM promo_banners WHERE id = ?`).bind(id).run();
+  const rows = await c.env.DB.prepare(`SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`).all();
+  return c.json({ ok: true, banners: rows.results });
+});
+
+// =========================================================================
+// System Health, D1 Housekeeping & Smart Copy V2 Telemetry
+// =========================================================================
+
+adminRoutes.get('/system-health', async (c) => {
+  const [
+    runningBots,
+    openCexTrades,
+    smartRules,
+    openCopyV2,
+    vaultCount,
+    perpOrders,
+    auditCount,
+    activeBanners,
+    activeProviders,
+  ] = await Promise.all([
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE status = 'OPEN'`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM copy_follow_rules WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM copy_positions_v2 WHERE status = 'OPEN'`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM user_copy_vaults`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM perp_dex_orders`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM audit_logs`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM promo_banners WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM onchain_api_providers WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+  ]);
+
+  return c.json({
+    ok: true,
+    health: {
+      runningBots: runningBots?.cnt ?? 0,
+      openCexTrades: openCexTrades?.cnt ?? 0,
+      activeSmartCopyRules: smartRules?.cnt ?? 0,
+      openCopyPositionsV2: openCopyV2?.cnt ?? 0,
+      userCopyVaults: vaultCount?.cnt ?? 0,
+      perpDexOrders: perpOrders?.cnt ?? 0,
+      auditLogsTotal: auditCount?.cnt ?? 0,
+      activeBanners: activeBanners?.cnt ?? 0,
+      activeOnchainProviders: activeProviders?.cnt ?? 0,
+      cronIntervalSec: 60,
+      timestamp: new Date().toISOString(),
+    },
+  });
+});
+
+adminRoutes.post('/prune-logs', async (c) => {
+  const res = await c.env.DB.prepare(
+    `DELETE FROM audit_logs WHERE created_at < datetime('now', '-5 days')`
+  ).run();
+  const countAfter = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM audit_logs`).first<{ cnt: number }>().catch(() => ({ cnt: 0 }));
+  return c.json({ ok: true, deletedRows: res.meta?.changes ?? 0, remainingRows: countAfter?.cnt ?? 0 });
+});
+
+

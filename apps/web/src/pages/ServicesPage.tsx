@@ -785,11 +785,20 @@ export function ServicesPage({
     },
     {
       tab: 'copy',
-      title: isFa ? 'کپی‌ترید تاییدشده و صرافی Toobit / Bitunix / KCEX' : 'Verified Copy Trade & Exchanges',
-      subtitle: isFa ? 'تریدرهای تاییدشده ادمین + اتصال امن صرافی AES-256' : 'Admin-verified Copy Traders & AES-256 exchange vault',
+      title: isFa ? 'کپی‌ترید V2، ولت نهنگ‌ها و صرافی‌های CEX' : 'Smart Copy V2, Whales & Exchanges',
+      subtitle: isFa ? 'تریدرهای تاییدشده ادمین + اتصال امن صرافی و خزانه ۲۴/۷' : 'Admin-verified Copy Traders, 24/7 Copy-Vault & CEX APIs',
       icon: Users,
       tileBg: 'bg-[#0EA5E9]/15',
       tileColor: 'text-[#0284C7]',
+    },
+    {
+      tab: 'dex',
+      title: isFa ? 'فیوچرز کیف‌پول (Perp DEX) و رادار ضدراگ' : 'Wallet Perp DEX & Anti-Rug Radar',
+      subtitle: isFa ? 'Hyperliquid / Jupiter Perps تا ۱۰۰x روی کیف‌پول + اسکنر DexScreener' : 'Hyperliquid / Jupiter Perps up to 100x + Anti-Rug DEX radar',
+      icon: Sparkles,
+      tileBg: 'bg-[#10B981]/15',
+      tileColor: 'text-[#0D9455]',
+      badge: 'Perp DEX',
     },
     {
       tab: 'card',

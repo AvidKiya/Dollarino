@@ -4,6 +4,7 @@ import { authRoutes, requireAuth, type AppVariables } from './auth.js';
 import { hmacSha256Hex } from './crypto.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
+import { pollWatchedWalletsForNewTrades, reconcileCopyPositionsV2 } from './dex/smart-copy.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
 import {
@@ -202,6 +203,20 @@ app.post('/api/public/ai-chat', async (c) => {
   });
 
   return c.json(res);
+});
+
+app.get('/api/public/banners', async (c) => {
+  const placement = (c.req.query('placement') || 'ALL').toUpperCase();
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM promo_banners WHERE is_active = 1 ORDER BY sort_order ASC, created_at DESC LIMIT 20`
+  )
+    .all<Record<string, unknown>>()
+    .catch(() => ({ results: [] as Array<Record<string, unknown>> }));
+  const filtered = rows.results.filter((b) => {
+    const p = String(b.placement || 'BOTH').toUpperCase();
+    return placement === 'ALL' || p === 'BOTH' || p === placement;
+  });
+  return c.json({ ok: true, banners: filtered });
 });
 
 app.get('/api/public/verify-card/:cardId', async (c) => {
@@ -521,6 +536,8 @@ export default {
 
       await runAlwaysOnSignalRadar(env).catch(() => {});
       await runAlwaysOnAiIntel(env).catch(() => {});
+      await pollWatchedWalletsForNewTrades(env).catch(() => {});
+      await reconcileCopyPositionsV2(env).catch(() => {});
     })());
   },
 };

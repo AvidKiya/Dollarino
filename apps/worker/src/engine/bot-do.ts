@@ -563,10 +563,22 @@ export class TradingBotCoordinator implements DurableObject {
         this.state.storage.put(userAiThrottleKey, now),
       ]);
 
-      const [orderBook, market24h] = await Promise.all([
+      const [orderBook, market24h, recentClosedRows] = await Promise.all([
         adapter.getOrderBook(scanSymbol, 15).catch(() => ({ bids: [], asks: [] })),
         adapter.getMarket24h(scanSymbol).catch(() => null),
+        this.env.DB.prepare(
+          `SELECT symbol, direction, exit_reason, realized_pnl FROM trades WHERE user_id = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 5`
+        )
+          .bind(userId)
+          .all<{ symbol: string; direction: string; exit_reason: string | null; realized_pnl: string }>()
+          .catch(() => ({ results: [] })),
       ]);
+
+      const recentTradesSummary = recentClosedRows.results.length
+        ? recentClosedRows.results
+            .map((t) => `${t.symbol} ${t.direction} => ${t.exit_reason || 'CLOSED'} ($${Number(t.realized_pnl || 0).toFixed(2)})`)
+            .join('; ')
+        : undefined;
 
       const bidVol = orderBook.bids.reduce((s, [, q]) => s + Number(q), 0);
       const askVol = orderBook.asks.reduce((s, [, q]) => s + Number(q), 0);
@@ -588,6 +600,7 @@ export class TradingBotCoordinator implements DurableObject {
           orderBookImbalancePct: imbalancePct,
           spreadPct,
           fundingRate: market24h?.fundingRate,
+          recentTradesSummary,
           openPosition: openAny
             ? {
                 direction: openAny.direction,
@@ -606,6 +619,14 @@ export class TradingBotCoordinator implements DurableObject {
         await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `Dollarino AI error on ${scanSymbol}: ${msg}`, scanSymbol);
         return false;
       }
+
+      const reasonSummary = `${scanSymbol} (${decision.action} · ${decision.confidence}%): ${decision.thesis}`;
+      await this.env.DB.prepare(
+        `UPDATE bot_configs SET last_ai_reason = ?, last_ai_decision_at = datetime('now') WHERE user_id = ?`
+      )
+        .bind(reasonSummary.slice(0, 480), userId)
+        .run()
+        .catch(() => {});
 
       await logAudit(
         this.env.DB,
