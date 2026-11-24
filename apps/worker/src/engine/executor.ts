@@ -16,8 +16,10 @@ import { decryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { resolveTelegramBotToken } from '../telegram/token.js';
 import { formatTradeOpenedCard } from '../telegram/formatter.js';
 import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard } from '../telegram/publisher.js';
+import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
 
 export interface UserBotConfigRow {
   user_id: string;
@@ -157,11 +159,12 @@ export async function notifyUserTelegram(
       'SELECT encrypted_bot_token FROM telegram_bots WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1'
     ).bind(userId).first<{ encrypted_bot_token: string }>();
 
-    let token = env.TELEGRAM_BOT_TOKEN;
+    let token = '';
     if (botRow?.encrypted_bot_token) {
       const dec = await decryptVaultJson<{ botToken?: string }>(botRow.encrypted_bot_token, env.MASTER_ENCRYPTION_KEY);
       if (dec.botToken) token = dec.botToken;
     }
+    if (!token) token = await resolveTelegramBotToken(env);
     if (!token) return;
 
     const client = new TelegramBotClient(token);
@@ -225,6 +228,45 @@ export async function executeSignalForUser(
       ok: false,
       error: 'LIVE trading is safety-locked by instance env (ALLOW_LIVE_TRADING != true). Switch to Paper Mode or enable ALLOW_LIVE_TRADING.',
     };
+  }
+
+  if (cfgRow.trading_mode === 'LIVE') {
+    const feeCheck = await checkLiveFeeEnforcement(env.DB, userId);
+    if (!feeCheck.allowed) {
+      return { ok: false, error: 'FEE_SETTLEMENT_REQUIRED: Live trade blocked until 5% server profit fees are settled.' };
+    }
+    // Never silently fall back to Paper simulation when user specifically launched LIVE mode without an active Agent/Exchange adapter
+    if (provider === 'paper' && !options?.forceBypassState) {
+      const base = signal.symbol.replace(/USDT$|USDC$|USD$/i, '') || 'BTC';
+      const hlUrl = `https://app.hyperliquid.xyz/trade/${encodeURIComponent(base)}`;
+      const twLink = `https://link.trustwallet.com/open_url?coin_id=10042161&url=${encodeURIComponent(hlUrl)}`;
+      if (cfgRow.trade_execution_mode === 'MANUAL_CONFIRM') {
+        await pushNotification(
+          env.DB,
+          userId,
+          'TRADE',
+          `درخواست امضای معامله واقعی ${signal.direction} ${signal.symbol}`,
+          `نقطه ورود $${signal.price} · حد ضرر $${signal.stopLoss} · برای تایید و امضای مستقیم در Trust Wallet کلیک کنید.`
+        );
+        await notifyUserTelegram(
+          env,
+          userId,
+          `🛡 **فرصت ترید واقعی (نیاز به تایید Trust Wallet)**\n\n` +
+            `📌 نماد: **${signal.symbol}** (${signal.direction} ${signal.leverage || 5}×)\n` +
+            `💵 ورود پیشنهادی: \`$${signal.price}\` · SL: \`$${signal.stopLoss}\` · TP1: \`$${signal.tp1}\`\n` +
+            `👇 برای تایید غیرحضانتی در Trust Wallet DApp لمس کنید (یا کلید Agent Wallet Hyperliquid را در پنل ثبت نمایید):`,
+          [[{ text: 'امضا و اجرا در Trust Wallet 🛡', url: twLink }]]
+        );
+        return {
+          ok: false,
+          error: 'TRUST_WALLET_MANUAL_SIGN_SENT: لینک امضای مستقیم به تلگرام و اعلان‌های شما ارسال شد (در حالت لایو بدون Agent Key روی شبیه‌ساز دمو ثبت نمی‌شود).',
+        };
+      }
+      return {
+        ok: false,
+        error: 'AGENT_KEY_REQUIRED: برای اجرای کاملاً خودکار ۲۴/۷ در حالت واقعی (LIVE)، لطفاً کلید Trade-Only Agent Wallet هایپرلیکویید یا صرافی را در بخش اتصال کیف‌پول ثبت کنید.',
+      };
+    }
   }
 
   const [bal, spec, openCountRow, todayPnlRow, livePrice] = await Promise.all([
@@ -582,6 +624,16 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
           reason,
           openedAt: t.opened_at,
           closedAt: new Date().toISOString(),
+        }).catch(() => {});
+
+        await recordProfitShareServerFee(env.DB, {
+          userId,
+          tradeId: t.id,
+          source: 'PERP_LIVE',
+          symbol: t.symbol,
+          mode: t.mode,
+          realizedPnlUsd: newRealized,
+          tradeAmountUsd: Number(t.initial_quantity || 0) * Number(t.entry_price || mark || 0),
         }).catch(() => {});
       } else {
         await env.DB.prepare(

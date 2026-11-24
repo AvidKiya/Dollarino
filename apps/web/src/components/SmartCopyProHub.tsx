@@ -154,6 +154,10 @@ export function SmartCopyProHub({
   const [vault2faPinSent, setVault2faPinSent] = useState(false);
   const [vault2faBusy, setVault2faBusy] = useState(false);
   const [vault2faErr, setVault2faErr] = useState('');
+  const [wdChain, setWdChain] = useState<'bsc' | 'base' | 'ethereum' | 'arbitrum' | 'solana'>('bsc');
+  const [wdTo, setWdTo] = useState('');
+  const [wdAmt, setWdAmt] = useState('');
+  const [wdBusy, setWdBusy] = useState(false);
 
   // Rule configuration & backtest modal
   const [ruleModalTrader, setRuleModalTrader] = useState<SmartWalletTraderItem | null>(null);
@@ -496,10 +500,10 @@ export function SmartCopyProHub({
           {topTokens.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {topTokens.slice(0, 3).map((tk, i) => (
-                <span key={i} className="px-2 py-0.5 rounded-lg panel text-[10px] font-bold text-main">
-                  ${tk.symbol}
+                <span key={i} dir="ltr" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg panel text-[10px] font-bold text-main">
+                  <span>${tk.symbol}</span>
                   {typeof tk.change24h === 'number' && (
-                    <span dir="ltr" className={`ms-1 ${tk.change24h >= 0 ? 'text-jade' : 'text-loss'}`}>
+                    <span className={tk.change24h >= 0 ? 'text-jade' : 'text-loss'}>
                       {tk.change24h >= 0 ? '+' : ''}
                       {tk.change24h.toFixed(0)}%
                     </span>
@@ -603,7 +607,7 @@ export function SmartCopyProHub({
       <div className="surface-soft rounded-[22px] p-4 border border-amber-500/20 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3.5">
           <img
-            src="/images/smart-wallet-radar.png"
+            src="/images/smart-wallet-radar.webp"
             alt="Smart Wallet Radar & Copy-Vault"
             className="w-full sm:w-36 h-20 rounded-2xl object-cover shrink-0 border hairline"
           />
@@ -941,7 +945,7 @@ export function SmartCopyProHub({
                       <ChainLogo chain={v.chain} size={15} />
                       <span>{v.title}</span>
                     </div>
-                    <div dir="ltr" className="text-[10px] font-mono break-all text-sub bg-black/20 p-2 rounded-xl">
+                    <div dir="ltr" className="text-[10px] font-mono break-all text-sub surface-soft border hairline p-2 rounded-xl">
                       {v.addr}
                     </div>
                     <div className="flex items-center justify-between gap-2">
@@ -1045,53 +1049,137 @@ export function SmartCopyProHub({
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 space-y-1.5">
+              <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <p className="font-black text-jade inline-flex items-center gap-1.5">
                     <Wallet className="w-4 h-4" />
-                    <span>{isFa ? 'برداشت و انتقال سود به Trust Wallet' : 'Withdraw Vault Profits to Trust Wallet'}</span>
+                    <span>{isFa ? 'برداشت مستقیم سود از خزانه به Trust Wallet' : 'Direct Withdraw Vault → Trust Wallet'}</span>
                   </p>
                 </div>
-                {vaultData?.trustWalletTargets?.evm || vaultData?.trustWalletTargets?.solana || vaultData?.trustWalletTargets?.tron ? (
-                  <div className="space-y-1 text-[10.5px] font-mono" dir="ltr">
-                    {vaultData.trustWalletTargets.evm && (
-                      <div className="flex items-center justify-between gap-2 text-sub">
-                        <span className="truncate">EVM: {vaultData.trustWalletTargets.evm}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void navigator.clipboard.writeText(vaultData.trustWalletTargets!.evm!);
-                            onMsg(isFa ? 'آدرس EVM تراست‌ولت کپی شد.' : 'Trust EVM address copied.');
-                          }}
-                          className="text-jade font-sans font-bold shrink-0"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    )}
-                    {vaultData.trustWalletTargets.solana && (
-                      <div className="flex items-center justify-between gap-2 text-sub">
-                        <span className="truncate">SOL: {vaultData.trustWalletTargets.solana}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void navigator.clipboard.writeText(vaultData.trustWalletTargets!.solana!);
-                            onMsg(isFa ? 'آدرس سولانا تراست‌ولت کپی شد.' : 'Trust Solana address copied.');
-                          }}
-                          className="text-jade font-sans font-bold shrink-0"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    )}
+
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <select
+                    value={wdChain}
+                    onChange={(e) => {
+                      const next = e.target.value as typeof wdChain;
+                      setWdChain(next);
+                      if (next === 'solana' && vaultData?.trustWalletTargets?.solana) {
+                        setWdTo(vaultData.trustWalletTargets.solana);
+                      } else if (next !== 'solana' && vaultData?.trustWalletTargets?.evm) {
+                        setWdTo(vaultData.trustWalletTargets.evm);
+                      }
+                    }}
+                    className="input-field py-1.5 px-2 rounded-xl text-[11px]"
+                  >
+                    <option value="bsc">BSC (BNB)</option>
+                    <option value="base">Base (ETH)</option>
+                    <option value="arbitrum">Arbitrum (ETH)</option>
+                    <option value="ethereum">Ethereum (ETH)</option>
+                    <option value="solana">Solana (SOL)</option>
+                  </select>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    dir="ltr"
+                    value={wdAmt}
+                    onChange={(e) => setWdAmt(e.target.value)}
+                    placeholder={wdChain === 'solana' ? 'Amount (SOL)' : wdChain === 'bsc' ? 'Amount (BNB)' : 'Amount (ETH)'}
+                    className="input-field py-1.5 px-2 rounded-xl text-[11px] font-num"
+                  />
+                </div>
+
+                <input
+                  value={
+                    wdTo ||
+                    (wdChain === 'solana'
+                      ? vaultData?.trustWalletTargets?.solana || ''
+                      : vaultData?.trustWalletTargets?.evm || '')
+                  }
+                  onChange={(e) => setWdTo(e.target.value)}
+                  dir="ltr"
+                  placeholder={isFa ? 'آدرس مقصد Trust Wallet (0x... یا Solana)' : 'Trust Wallet destination address'}
+                  className="input-field w-full py-1.5 px-2.5 rounded-xl text-[11px] font-mono"
+                />
+
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <input
+                    type="password"
+                    value={vault2faPassword}
+                    onChange={(e) => setVault2faPassword(e.target.value)}
+                    placeholder={isFa ? 'رمز حساب (یا پین تلگرام)' : 'Password (or TG PIN)'}
+                    className="input-field py-1.5 px-2 rounded-xl text-[11px]"
+                  />
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={vault2faPin}
+                      onChange={(e) => setVault2faPin(e.target.value)}
+                      dir="ltr"
+                      placeholder="PIN"
+                      className="input-field w-full py-1.5 px-2 rounded-xl text-[11px] font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await apiFetch('/api/copy-trade/vault/request-pin', { method: 'POST' });
+                          setVault2faPinSent(true);
+                          onMsg(isFa ? 'کد ۶ رقمی تایید به تلگرام شما ارسال شد.' : '6-digit PIN sent to Telegram.');
+                        } catch (err) {
+                          onMsg(err instanceof Error ? err.message : 'PIN failed', true);
+                        }
+                      }}
+                      className="btn-ghost px-2 rounded-xl text-[10px] font-bold shrink-0"
+                    >
+                      {vault2faPinSent ? '✓' : 'TG PIN'}
+                    </button>
                   </div>
-                ) : (
-                  <p className="text-[11px] text-sub">
-                    {isFa
-                      ? 'با بک‌آپ کلید خصوصی خزانه و ایمپورت آن در Trust Wallet / Phantom، هر لحظه کنترل ۱۰۰٪ دارایی و برداشت سود در اختیار کامل شماست.'
-                      : 'Import your Vault private key into Trust Wallet or Phantom anytime for 100% self-custody profit sweeps.'}
-                  </p>
-                )}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={wdBusy || (!vault2faPassword.trim() && !vault2faPin.trim())}
+                  onClick={async () => {
+                    const targetAddr =
+                      wdTo.trim() ||
+                      (wdChain === 'solana'
+                        ? vaultData?.trustWalletTargets?.solana || ''
+                        : vaultData?.trustWalletTargets?.evm || '');
+                    const amt = Number(wdAmt);
+                    if (!targetAddr || !Number.isFinite(amt) || amt <= 0) {
+                      onMsg(isFa ? 'آدرس مقصد و مبلغ برداشت معتبر وارد کنید.' : 'Enter valid destination address & amount.', true);
+                      return;
+                    }
+                    setWdBusy(true);
+                    try {
+                      const res = await apiFetch<{ txHash: string; amountSent: number; symbol: string }>('/api/copy-trade/vault/withdraw', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          chainId: wdChain,
+                          toAddress: targetAddr,
+                          amountNative: amt,
+                          password: vault2faPassword.trim() || undefined,
+                          pinCode: vault2faPin.trim() || undefined,
+                        }),
+                      });
+                      setWdAmt('');
+                      onMsg(
+                        isFa
+                          ? `✅ برداشت ${res.amountSent} ${res.symbol} با موفقیت انجام شد (${res.txHash.slice(0, 14)}...)`
+                          : `✅ Withdrew ${res.amountSent} ${res.symbol} (${res.txHash.slice(0, 14)}...)`
+                      );
+                      await loadAll(false);
+                    } catch (err) {
+                      onMsg(err instanceof Error ? err.message : 'Withdraw error', true);
+                    } finally {
+                      setWdBusy(false);
+                    }
+                  }}
+                  className="btn-emerald w-full py-2 rounded-xl text-[11px] font-black disabled:opacity-50"
+                >
+                  {wdBusy ? '...' : isFa ? 'انتقال مستقیم به Trust Wallet' : 'Withdraw Directly to Trust Wallet'}
+                </button>
               </div>
             </div>
 
@@ -1388,7 +1476,7 @@ export function SmartCopyProHub({
 
                   <div className="flex flex-wrap items-center gap-2">
                     <span dir="ltr" className={`font-num font-black text-sm ${p.pnl_usd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                      {p.pnl_usd >= 0 ? '+' : ''}${p.pnl_usd.toFixed(2)} ({p.pnl_pct >= 0 ? '+' : ''}
+                      {p.pnl_usd >= 0 ? `+$${p.pnl_usd.toFixed(2)}` : `-$${Math.abs(p.pnl_usd).toFixed(2)}`} ({p.pnl_pct >= 0 ? '+' : ''}
                       {p.pnl_pct.toFixed(1)}%)
                     </span>
 
@@ -1621,7 +1709,7 @@ export function SmartCopyProHub({
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'اهرم (برای CEX/VIP)' : 'Leverage (×)'}</label>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'اهرم (Perp DEX / VIP)' : 'Leverage (×)'}</label>
                     <input
                       type="number"
                       min={1}

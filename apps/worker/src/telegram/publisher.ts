@@ -8,6 +8,7 @@ import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/rendere
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
+import { resolveTelegramBotToken } from './token.js';
 import {
   channelNewsInlineButtons,
   channelSignalInlineButtons,
@@ -32,29 +33,82 @@ export async function resolveChannelAndBotConfig(env: Env): Promise<{
   signalsChannelInvite: string;
   resultsChannelId: string;
   resultsChannelInvite: string;
+  newsChannelId: string;
+  educationChannelId: string;
+  alertsChannelId: string;
+  communityGroupId: string;
+  communityGroupInvite: string;
+  signalsEnabled: boolean;
+  resultsEnabled: boolean;
+  newsEnabled: boolean;
+  educationEnabled: boolean;
+  alertsEnabled: boolean;
   botUsername: string;
   webAppUrl: string;
 }> {
-  const [channelRaw, sigChanRaw, sigInviteRaw, resChanRaw, resInviteRaw, botUserRaw, webUrlRaw] = await Promise.all([
+  const [
+    channelRaw,
+    sigChanRaw,
+    sigInviteRaw,
+    resChanRaw,
+    resInviteRaw,
+    newsChanRaw,
+    eduChanRaw,
+    alertsChanRaw,
+    commGroupRaw,
+    commInviteRaw,
+    sigEn,
+    resEn,
+    newsEn,
+    eduEn,
+    alertsEn,
+    botUserRaw,
+    webUrlRaw,
+  ] = await Promise.all([
     getSystemSettingValue(env.DB, 'official_channel', env.DEFAULT_SIGNAL_CHANNEL || OFFICIAL_CHANNEL_HANDLE),
     getSystemSettingValue(env.DB, 'signals_channel_id', ''),
     getSystemSettingValue(env.DB, 'signals_channel_invite', SIGNALS_CHANNEL_INVITE),
     getSystemSettingValue(env.DB, 'results_channel_id', ''),
     getSystemSettingValue(env.DB, 'results_channel_invite', RESULTS_CHANNEL_INVITE),
+    getSystemSettingValue(env.DB, 'news_channel_id', ''),
+    getSystemSettingValue(env.DB, 'education_channel_id', ''),
+    getSystemSettingValue(env.DB, 'alerts_channel_id', ''),
+    getSystemSettingValue(env.DB, 'community_group_id', ''),
+    getSystemSettingValue(env.DB, 'community_group_invite', ''),
+    getSystemSettingValue(env.DB, 'channel_signals_enabled', 'true'),
+    getSystemSettingValue(env.DB, 'channel_results_enabled', 'true'),
+    getSystemSettingValue(env.DB, 'channel_news_enabled', 'true'),
+    getSystemSettingValue(env.DB, 'channel_education_enabled', 'true'),
+    getSystemSettingValue(env.DB, 'channel_alerts_enabled', 'true'),
     getSystemSettingValue(env.DB, 'bot_username', 'Dollarino_bot'),
     getSystemSettingValue(env.DB, 'public_web_url', env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev'),
   ]);
   const norm = (val: string) => {
     const t = val.trim();
     if (!t) return '';
+    if (t.startsWith('https://t.me/')) {
+      const slug = t.replace(/^https:\/\/t\.me\//i, '').split(/[/?]/)[0];
+      if (slug && !slug.startsWith('+')) return `@${slug}`;
+    }
     return t.startsWith('@') || t.startsWith('-100') || /^-?\d+$/.test(t) ? t : `@${t}`;
   };
+  const fallbackChan = norm(channelRaw) || OFFICIAL_CHANNEL_HANDLE;
   return {
-    channelHandle: norm(channelRaw) || OFFICIAL_CHANNEL_HANDLE,
+    channelHandle: fallbackChan,
     signalsChannelId: norm(sigChanRaw),
     signalsChannelInvite: sigInviteRaw.trim() || SIGNALS_CHANNEL_INVITE,
     resultsChannelId: norm(resChanRaw),
     resultsChannelInvite: resInviteRaw.trim() || RESULTS_CHANNEL_INVITE,
+    newsChannelId: norm(newsChanRaw),
+    educationChannelId: norm(eduChanRaw),
+    alertsChannelId: norm(alertsChanRaw),
+    communityGroupId: norm(commGroupRaw),
+    communityGroupInvite: commInviteRaw.trim(),
+    signalsEnabled: sigEn !== 'false',
+    resultsEnabled: resEn !== 'false',
+    newsEnabled: newsEn !== 'false',
+    educationEnabled: eduEn !== 'false',
+    alertsEnabled: alertsEn !== 'false',
     botUsername: botUserRaw.replace(/^@/, '') || 'Dollarino_bot',
     webAppUrl: webUrlRaw.replace(/\/$/, ''),
   };
@@ -65,7 +119,8 @@ export async function notifyAllAdmins(
   text: string,
   options?: { inlineKeyboard?: InlineKeyboardButton[][] }
 ): Promise<number> {
-  if (!env.TELEGRAM_BOT_TOKEN) return 0;
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return 0;
   const admins = await env.DB.prepare(
     `SELECT DISTINCT telegram_id FROM users WHERE role IN ('owner', 'admin') AND telegram_id IS NOT NULL AND telegram_id != ''`
   ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
@@ -76,7 +131,7 @@ export async function notifyAllAdmins(
     if (r.telegram_id?.trim()) targets.add(r.telegram_id.trim());
   }
 
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const tg = new TelegramBotClient(botToken);
   let sent = 0;
   for (const chatId of targets) {
     try {
@@ -95,7 +150,8 @@ export async function notifyAllAdminsPhoto(
   caption: string,
   options?: { inlineKeyboard?: InlineKeyboardButton[][] }
 ): Promise<number> {
-  if (!env.TELEGRAM_BOT_TOKEN) return 0;
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return 0;
   const admins = await env.DB.prepare(
     `SELECT DISTINCT telegram_id FROM users WHERE role IN ('owner', 'admin') AND telegram_id IS NOT NULL AND telegram_id != ''`
   ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
@@ -106,7 +162,7 @@ export async function notifyAllAdminsPhoto(
     if (r.telegram_id?.trim()) targets.add(r.telegram_id.trim());
   }
 
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const tg = new TelegramBotClient(botToken);
   let sent = 0;
   for (const chatId of targets) {
     try {
@@ -182,15 +238,16 @@ export async function publishSignalBroadcast(
   let channelError: string | undefined;
   let subscribersNotified = 0;
 
-  if (!env.TELEGRAM_BOT_TOKEN) {
-    return { signalId, subscribersNotified: 0, channelError: 'TELEGRAM_BOT_TOKEN not configured' };
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) {
+    return { signalId, subscribersNotified: 0, channelError: 'توکن ربات تلگرام هنوز تنظیم نشده است.' };
   }
 
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const tg = new TelegramBotClient(botToken);
   const autoPublish = (await getSystemSettingValue(env.DB, 'auto_publish_signals_to_channel', 'true')) === 'true';
   const alsoOfficial = (await getSystemSettingValue(env.DB, 'signals_also_official', 'true')) === 'true';
 
-  if (params.publishToChannel ?? autoPublish) {
+  if (cfg.signalsEnabled && (params.publishToChannel ?? autoPublish)) {
     const primaryTarget = cfg.signalsChannelId || cfg.channelHandle;
     const targets = new Set<string>();
     if (primaryTarget) targets.add(primaryTarget);
@@ -333,8 +390,9 @@ export async function publishSignalClosedCard(
     ).run().catch(() => {});
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN) return;
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return;
+  const tg = new TelegramBotClient(botToken);
 
   const pngBytes = await renderSignalClosedCardPng({
     cardId,
@@ -469,8 +527,9 @@ export async function publishProfitCardToTelegram(
   },
   layout: 'horizontal' | 'vertical' = 'horizontal'
 ): Promise<boolean> {
-  if (!env.TELEGRAM_BOT_TOKEN) return false;
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return false;
+  const tg = new TelegramBotClient(botToken);
   const pngBytes = await renderProfitCardPng({ ...card, cardId: card.id, layout }).catch(() => null);
   const caption =
     `🏆 کارت سود رسمی دلارینو (${card.mode === 'LIVE' ? 'حساب واقعی ✅' : 'حساب دمو 🧪'})\n` +
@@ -489,7 +548,7 @@ export async function publishProfitCardToTelegram(
 export async function publishChannelNews(
   env: Env,
   params: {
-    category: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT' | 'ALERT' | 'PROMO';
+    category: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT' | 'ALERT' | 'EDUCATION' | 'PROMO';
     title: string;
     body: string;
     mediaUrl?: string;
@@ -506,13 +565,15 @@ export async function publishChannelNews(
       ? '📊 تحلیل هوشمند بازار دلارینو'
       : params.category === 'ALERT'
         ? '⚠️ اخطار و هشدار مدیریت ریسک دلارینو'
-        : params.category === 'PROMO'
-          ? '🚀 معرفی قدرت و امکانات دلارینو'
-          : params.category === 'ANNOUNCEMENT'
-            ? '📣 اطلاعیه رسمی دلارینو'
-            : params.category === 'SIGNAL_UPDATE'
-              ? '⚡️ به‌روزرسانی سیگنال'
-              : '📰 خبر فوری و نبض بازار کریپتو';
+        : params.category === 'EDUCATION'
+          ? '🎓 آموزش گام‌به‌گام و ساده دلارینو'
+          : params.category === 'PROMO'
+            ? '🚀 معرفی قدرت و امکانات دلارینو'
+            : params.category === 'ANNOUNCEMENT'
+              ? '📣 اطلاعیه رسمی دلارینو'
+              : params.category === 'SIGNAL_UPDATE'
+                ? '⚡️ به‌روزرسانی سیگنال'
+                : '📰 خبر فوری و نبض بازار کریپتو';
 
   const text =
     `${catBadge}\n\n` +
@@ -521,6 +582,17 @@ export async function publishChannelNews(
     `${params.body.trim()}\n` +
     `------------------------------------------------\n` +
     `🆔 ${cfg.channelHandle} · 🤖 @${cfg.botUsername}`;
+
+  const targetChannel =
+    params.category === 'ALERT' && cfg.alertsEnabled
+      ? (cfg.alertsChannelId || cfg.channelHandle)
+      : (params.category === 'EDUCATION' || params.category === 'PROMO' || params.category === 'ANNOUNCEMENT') && cfg.educationEnabled
+        ? (cfg.educationChannelId || cfg.newsChannelId || cfg.channelHandle)
+        : params.category === 'SIGNAL_UPDATE' && cfg.signalsEnabled
+          ? (cfg.signalsChannelId || cfg.channelHandle)
+          : cfg.newsEnabled
+            ? (cfg.newsChannelId || cfg.channelHandle)
+            : cfg.channelHandle;
 
   await env.DB.prepare(
     `INSERT INTO channel_news (id, category, title, body, media_url, button_label, button_url, channel_chat_id, created_by)
@@ -533,15 +605,16 @@ export async function publishChannelNews(
     params.mediaUrl || null,
     params.buttonLabel || null,
     params.buttonUrl || null,
-    cfg.channelHandle,
+    targetChannel,
     params.createdBy || null
   ).run().catch(() => {});
 
-  if (!env.TELEGRAM_BOT_TOKEN) {
-    return { id, usersNotified: 0, error: 'TELEGRAM_BOT_TOKEN not configured' };
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) {
+    return { id, usersNotified: 0, error: 'توکن ربات تلگرام تنظیم نشده است.' };
   }
 
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const tg = new TelegramBotClient(botToken);
   const markup = channelNewsInlineButtons({
     botUsername: cfg.botUsername,
     webAppUrl: cfg.webAppUrl,
@@ -555,8 +628,8 @@ export async function publishChannelNews(
   let channelErr: string | undefined;
   try {
     const res = params.mediaUrl?.startsWith('http')
-      ? await tg.sendPhoto(cfg.channelHandle, params.mediaUrl, text.slice(0, 1020), { inlineKeyboard: markup })
-      : await tg.sendMessage(cfg.channelHandle, text, { inlineKeyboard: markup });
+      ? await tg.sendPhoto(targetChannel, params.mediaUrl, text.slice(0, 1020), { inlineKeyboard: markup })
+      : await tg.sendMessage(targetChannel, text, { inlineKeyboard: markup });
     channelMessageId = res.message_id;
     await env.DB.prepare(`UPDATE channel_news SET channel_message_id = ? WHERE id = ?`)
       .bind(res.message_id, id).run().catch(() => {});
@@ -613,8 +686,9 @@ export async function promptCopyTraderPublish(
     tp3?: string;
   }
 ): Promise<boolean> {
-  if (!env.TELEGRAM_BOT_TOKEN || !params.traderTelegramId) return false;
-  const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken || !params.traderTelegramId) return false;
+  const tg = new TelegramBotClient(botToken);
   const text =
     `🏆 تایید انتشار معامله کپی‌ترید (${params.traderName})\n\n` +
     `شما یک معامله جدید باز کردید:\n` +
@@ -708,3 +782,20 @@ export async function maybePromptCopyTraderOnNewTrade(
 
   return { prompted: true, copyTradeId };
 }
+
+export async function publishAlertToRadarChannel(env: Env, text: string): Promise<boolean> {
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return false;
+  const cfg = await resolveChannelAndBotConfig(env);
+  if (!cfg.alertsEnabled) return false;
+  const target = cfg.alertsChannelId || cfg.channelHandle;
+  if (!target) return false;
+  try {
+    const tg = new TelegramBotClient(botToken);
+    await tg.sendMessage(target, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+

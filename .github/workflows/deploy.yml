@@ -28,7 +28,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply dollarino-db --remote
-      - name: Deploy Cloudflare Worker (v9.6 API + DO + Assets)
+      - name: Deploy Cloudflare Worker (V10.1 API + DO + Assets)
         if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
         with:

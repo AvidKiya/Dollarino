@@ -3,6 +3,7 @@ import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { FloatingAiChat } from './components/FloatingAiChat';
 import { Layout, type UiMode } from './components/Layout';
+import { OnboardingAcademyModal } from './components/OnboardingAcademyModal';
 import { PwaInstallModal } from './components/PwaInstallModal';
 import { QuickLauncherModal } from './components/QuickWidgetsBar';
 import { SupportModal } from './components/SupportModal';
@@ -61,6 +62,7 @@ export function App() {
   const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
   const [supportOpen, setSupportOpen] = useState(false);
+  const [academyOpen, setAcademyOpen] = useState(false);
   const [installOpen, setInstallOpen] = useState(() => {
     const qp = new URLSearchParams(window.location.search);
     return qp.get('install') === '1' || qp.get('install') === 'true';
@@ -98,6 +100,17 @@ export function App() {
   useEffect(() => {
     initTelegramMiniApp(look === 'paper' ? '#F3F7FF' : '#040917');
   }, [look]);
+
+  useEffect(() => {
+    if (!user) return;
+    const hasTw = Boolean(
+      user.trust_wallet_address || user.trust_wallet_tron || user.trust_wallet_solana || user.trust_wallet_ton
+    );
+    const seenKey = `dollarino_academy_done_${user.id}`;
+    if (!hasTw && !localStorage.getItem(seenKey) && activeTab !== 'admin') {
+      setAcademyOpen(true);
+    }
+  }, [user, activeTab]);
 
   const handleSetLang = (l: Lang) => {
     setLang(l);
@@ -406,31 +419,14 @@ export function App() {
       onSelectSymbolForTerminal={openTerminalWithSymbol}
       onRefresh={loadSessionAndDashboard}
       onOpenSupport={() => setSupportOpen(true)}
+      onOpenAcademy={() => setAcademyOpen(true)}
       onLogout={handleLogout}
     >
       {globalNotice && (
         <div className="mb-4 p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-xs font-bold text-main flex items-center justify-between gap-2">
           <span>{globalNotice}</span>
-          <button type="button" onClick={() => setActiveTab('pricing')} className="btn-gold px-3 py-1 rounded-xl text-[11px] font-black shrink-0">
-            {lang === 'fa' ? 'مشاهده اشتراک‌ها' : 'Plans'}
-          </button>
-        </div>
-      )}
-
-      {!dashboard.entitlement?.hasPaidPlan && activeTab !== 'pricing' && activeTab !== 'admin' && (
-        <div className="mb-5 panel rounded-3xl p-4 border border-amber-500/40 flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-0.5 text-xs">
-            <p className="font-black text-main">
-              {lang === 'fa' ? 'اشتراک فعال برای حساب شما ثبت نشده است' : 'No Active Subscription Found'}
-            </p>
-            <p className="text-dim">
-              {lang === 'fa'
-                ? 'برای فعال‌سازی ترید هوشمند اتومات، هوش مصنوعی من، کپی‌ترید و استراتژی شخصی، یکی از اشتراک‌ها را تهیه کنید.'
-                : 'Subscribe to unlock Automated AI Trading, My Trainable AI, Verified Copy-Trade, and Custom Strategies.'}
-            </p>
-          </div>
-          <button type="button" onClick={() => setActiveTab('pricing')} className="btn-gold px-5 py-2.5 rounded-2xl text-xs font-black shrink-0">
-            {lang === 'fa' ? 'خرید / تمدید اشتراک' : 'Buy Subscription'}
+          <button type="button" onClick={() => setActiveTab('dex')} className="px-3 py-1 rounded-xl bg-[#0D47A1] text-white text-[11px] font-black shrink-0">
+            {lang === 'fa' ? 'مدیریت Trust Wallet' : 'Trust Wallet'}
           </button>
         </div>
       )}
@@ -454,6 +450,7 @@ export function App() {
           onNavigate={setActiveTab}
           onSelectTerminalSymbol={openTerminalWithSymbol}
           onRefresh={loadSessionAndDashboard}
+          onOpenAcademy={() => setAcademyOpen(true)}
           onUpgradeUser={(u) => setUser(u)}
         />
       )}
@@ -566,6 +563,13 @@ export function App() {
       lang={lang}
       authenticated
       onClose={() => setSupportOpen(false)}
+    />
+    <OnboardingAcademyModal
+      open={academyOpen}
+      lang={lang}
+      user={user}
+      onClose={() => setAcademyOpen(false)}
+      onDone={loadSessionAndDashboard}
     />
     <FloatingAiChat
       lang={lang}

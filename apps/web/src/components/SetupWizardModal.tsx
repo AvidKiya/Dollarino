@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   KeyRound,
   Rocket,
-  ShieldCheck,
   TrendingUp,
   Wallet,
   X,
@@ -15,7 +14,7 @@ import {
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { DollarinoBrandMark } from './BrandGraphics';
-import { ExchangeLogo } from './BrandLogos';
+import { TrustWalletConnectInline } from './TrustWalletConnectInline';
 
 export function SetupWizardModal({
   lang,
@@ -39,11 +38,7 @@ export function SetupWizardModal({
     'ai_autonomous_agent' | 'my_custom_ai' | 'dollarino_v01' | 'kbos_v11' | 'sp2l' | 'ema_trend_pullback' | 'signal_mixer' | 'high_20x'
   >('ai_autonomous_agent');
 
-  const [exProvider, setExProvider] = useState<'toobit' | 'bitunix' | 'kcex'>('toobit');
-  const [apiKey, setApiKey] = useState('');
-  const [apiSecret, setApiSecret] = useState('');
-  const [proxyUrl, setProxyUrl] = useState('');
-  const [kcexSession, setKcexSession] = useState('');
+  const [execMode, setExecMode] = useState<'AUTO' | 'MANUAL_CONFIRM'>('AUTO');
 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -172,6 +167,7 @@ export function SetupWizardModal({
           trailingStopEnabled: true,
           trailingStopPct: selectedRisk.trailingPct,
           allocatedAmount,
+          tradeExecutionMode: execMode,
         }),
       });
 
@@ -179,38 +175,6 @@ export function SetupWizardModal({
       onClose();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Failed to start');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveExchange = async () => {
-    setSaving(true);
-    setMsg('');
-    try {
-      const res = await apiFetch<{ test: { message: string }; activated?: boolean; requiresSubscription?: boolean }>(
-        '/api/connections/exchanges',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            provider: exProvider,
-            apiKey,
-            apiSecret,
-            proxyUrl: exProvider === 'toobit' && proxyUrl.trim() ? proxyUrl.trim() : undefined,
-            webSessionToken: exProvider === 'kcex' ? kcexSession : undefined,
-          }),
-        }
-      );
-      setMsg(
-        res.requiresSubscription && !res.activated
-          ? isFa
-            ? 'کلید ذخیره شد. برای معامله واقعی اشتراک Pro را فعال کنید.'
-            : 'Saved. Upgrade to Pro to activate live trading.'
-          : res.test?.message || 'Saved'
-      );
-      await onCompleted();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Failed');
     } finally {
       setSaving(false);
     }
@@ -241,7 +205,7 @@ export function SetupWizardModal({
                 {isFa ? 'راه‌اندازی گام‌به‌گام ربات دلارینو' : 'Dollarino Setup Wizard'}
               </h3>
               <p className="text-[11px] text-dim">
-                {isFa ? 'تنظیم سریع سرمایه، ریسک، استراتژی و اتصال صرافی' : '4-step capital, risk, strategy & exchange deployment'}
+                {isFa ? 'تنظیم سریع سرمایه، ریسک، استراتژی و اتصال Trust Wallet' : '4-step capital, risk, strategy & Trust Wallet deployment'}
               </p>
             </div>
           </div>
@@ -250,12 +214,12 @@ export function SetupWizardModal({
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl surface-soft text-xs">
+        <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-2xl surface-soft border hairline text-xs">
           <button
             type="button"
             onClick={() => setTab('agent')}
             className={`py-2.5 rounded-xl font-black flex items-center justify-center gap-1.5 transition ${
-              tab === 'agent' ? 'btn-gold' : 'text-dim hover:text-main'
+              tab === 'agent' ? 'tab-pill-active' : 'text-dim hover:text-main hover:bg-[var(--panel)]/60'
             }`}
           >
             <Bot className="w-4 h-4" />
@@ -265,11 +229,11 @@ export function SetupWizardModal({
             type="button"
             onClick={() => setTab('vault')}
             className={`py-2.5 rounded-xl font-black flex items-center justify-center gap-1.5 transition ${
-              tab === 'vault' ? 'btn-gold' : 'text-dim hover:text-main'
+              tab === 'vault' ? 'tab-pill-active' : 'text-dim hover:text-main hover:bg-[var(--panel)]/60'
             }`}
           >
             <KeyRound className="w-4 h-4" />
-            <span>{isFa ? 'اتصال صرافی واقعی' : 'Connect Exchange'}</span>
+            <span>{isFa ? 'اتصال و دسترسی تراست‌ولت' : 'Trust Wallet Connect'}</span>
           </button>
         </div>
 
@@ -387,20 +351,45 @@ export function SetupWizardModal({
             )}
 
             {step === 3 && (
-              <div className="surface-soft rounded-2xl p-4 space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-dim">{isFa ? 'استراتژی:' : 'Strategy:'}</span>
-                  <span className="font-bold text-main">{selectedStrat.title}</span>
+              <div className="space-y-3 text-xs">
+                <div className="surface-soft rounded-2xl p-4 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-dim">{isFa ? 'استراتژی:' : 'Strategy:'}</span>
+                    <span className="font-bold text-main">{selectedStrat.title}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-dim">{isFa ? 'ریسک و اهرم:' : 'Risk & Max Lev:'}</span>
+                    <span className="font-bold text-jade">
+                      {selectedRisk.title} ({strategyType === 'high_20x' ? '20x' : `${selectedRisk.maxLev}x`})
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-dim">{isFa ? 'درصد مارجین:' : 'Margin Ratio:'}</span>
+                    <span dir="ltr" className="font-num font-bold text-main">{marginPct}%</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-dim">{isFa ? 'ریسک و اهرم:' : 'Risk & Max Lev:'}</span>
-                  <span className="font-bold text-jade">
-                    {selectedRisk.title} ({strategyType === 'high_20x' ? '20x' : `${selectedRisk.maxLev}x`})
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-dim">{isFa ? 'درصد مارجین:' : 'Margin Ratio:'}</span>
-                  <span dir="ltr" className="font-num font-bold text-main">{marginPct}%</span>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExecMode('AUTO')}
+                    className={`p-3 rounded-xl border text-start transition ${
+                      execMode === 'AUTO' ? 'border-emerald-400 bg-emerald-500/15 text-main' : 'surface-soft text-dim'
+                    }`}
+                  >
+                    <p className="font-black">{isFa ? '⚡ تمام‌اتوترید ۲۴/۷' : '⚡ Full 24/7 Auto'}</p>
+                    <p className="text-[10px] opacity-80">{isFa ? 'بدون نیاز به تایید دستی' : 'Zero manual confirmation'}</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExecMode('MANUAL_CONFIRM')}
+                    className={`p-3 rounded-xl border text-start transition ${
+                      execMode === 'MANUAL_CONFIRM' ? 'border-amber-400 bg-amber-500/15 text-main' : 'surface-soft text-dim'
+                    }`}
+                  >
+                    <p className="font-black">{isFa ? '✋ تایید دستی' : '✋ Manual Approval'}</p>
+                    <p className="text-[10px] opacity-80">{isFa ? 'تایید هر معامله در تراست‌ولت' : 'Confirm inside Trust Wallet'}</p>
+                  </button>
                 </div>
               </div>
             )}
@@ -441,62 +430,13 @@ export function SetupWizardModal({
             </div>
           </>
         ) : (
-          <div className="space-y-3 text-xs">
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { id: 'toobit' as const, label: 'Toobit' },
-                { id: 'bitunix' as const, label: 'Bitunix' },
-                { id: 'kcex' as const, label: 'KCEX' },
-              ]).map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setExProvider(p.id)}
-                  className={`py-2.5 px-2 rounded-xl font-black uppercase inline-flex items-center justify-center gap-1.5 ${
-                    exProvider === p.id ? 'btn-gold' : 'btn-ghost text-dim'
-                  }`}
-                >
-                  <ExchangeLogo provider={p.id} size={18} />
-                  <span>{p.label}</span>
-                </button>
-              ))}
-            </div>
-            {exProvider === 'kcex' && (
-              <p className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl p-2.5 leading-relaxed">
-                {isFa
-                  ? 'صرافی KCEX در حالت Signal-Mirror بدون نیاز به کلید API اجباری کار می‌کند.'
-                  : 'KCEX works in Signal-Mirror mode — API keys are optional.'}
-              </p>
-            )}
-            <input
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              dir="ltr"
-              placeholder={exProvider === 'kcex' ? 'API Key (Optional)' : 'API Key'}
-              className="field font-mono"
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            <TrustWalletConnectInline
+              lang={lang}
+              compact
+              onMsg={(t) => setMsg(t)}
+              onRefresh={onCompleted}
             />
-            <input
-              type="password"
-              value={apiSecret}
-              onChange={(e) => setApiSecret(e.target.value)}
-              dir="ltr"
-              placeholder={exProvider === 'kcex' ? 'API Secret (Optional)' : 'API Secret'}
-              className="field font-mono"
-            />
-            {exProvider === 'kcex' && (
-              <input value={kcexSession} onChange={(e) => setKcexSession(e.target.value)} dir="ltr" placeholder="KCEX Web Token (optional)" className="field font-mono" />
-            )}
-            {exProvider === 'toobit' && (
-              <input value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} dir="ltr" placeholder="Relay Proxy URL (optional)" className="field font-mono" />
-            )}
-            {msg && <p className="font-bold text-jade">{msg}</p>}
-            <button type="button" disabled={saving} onClick={() => void saveExchange()} className="btn-emerald w-full py-3 rounded-xl font-black">
-              {saving ? '...' : isFa ? 'اتصال رمزنگاری‌شده به صرافی' : 'Save Encrypted Connection'}
-            </button>
-            <p className="text-[11px] text-dim flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-jade shrink-0" />
-              <span>{isFa ? 'فقط مجوز معامله Futures فعال باشد — برداشت خاموش.' : 'Trade-only API keys — zero withdrawal scope.'}</span>
-            </p>
           </div>
         )}
       </div>

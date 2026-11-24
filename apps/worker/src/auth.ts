@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, Next } from 'hono';
 import type { AuthUser, Env } from './env.js';
 import {
+  generateReferralCode,
   hashPassword,
   randomId,
   signJwt,
@@ -13,12 +14,13 @@ import {
 } from './crypto.js';
 import { buildClientFingerprints, enforceRateLimit, getClientIp } from './security.js';
 import { TelegramBotClient } from './telegram/client.js';
+import { resolveTelegramBotToken } from './telegram/token.js';
 
 const USER_PROFILE_COLUMNS = `
   id, email, username, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
   wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
   COALESCE(has_custom_password, 0) as has_custom_password, display_bio,
-  COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) as referral_code,
+  COALESCE(referral_code, 'DLR' || UPPER(SUBSTR(REPLACE(id, '_', ''), -5))) as referral_code,
   trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified,
   ui_mode, mobile_widgets_json, extension_api_key, created_at
 `;
@@ -40,7 +42,7 @@ export async function syncTelegramAvatarForUser(
     }
 
     let fileId = row.telegram_avatar_file_id;
-    const botToken = env.TELEGRAM_BOT_TOKEN?.trim();
+    const botToken = await resolveTelegramBotToken(env);
     if (botToken && telegramId && (!fileId || forceRefresh)) {
       const bot = new TelegramBotClient(botToken);
       const photos = await bot.getUserProfilePhotos(telegramId, 1).catch(() => null);
@@ -184,10 +186,12 @@ authRoutes.post('/register', async (c) => {
     );
   }
 
-  const tgOnlyRow = await c.env.DB.prepare(
-    `SELECT value FROM system_settings WHERE key = 'telegram_only_signup' LIMIT 1`
-  ).first<{ value: string }>().catch(() => null);
-  const telegramOnlySignup = (tgOnlyRow?.value ?? 'true') !== 'false';
+  const tgOnlyRows = await c.env.DB.prepare(
+    `SELECT key, value FROM system_settings WHERE key IN ('telegram_only_signup', 'allow_direct_email_signup')`
+  ).all<{ key: string; value: string }>().catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
+  const signupCfg: Record<string, string> = {};
+  for (const r of tgOnlyRows.results ?? []) signupCfg[r.key] = r.value;
+  const telegramOnlySignup = (signupCfg.telegram_only_signup ?? 'true') !== 'false' || signupCfg.allow_direct_email_signup === 'false';
   if (telegramOnlySignup) {
     return c.json(
       {
@@ -219,7 +223,7 @@ authRoutes.post('/register', async (c) => {
   const role = (countRow?.cnt ?? 0) === 0 ? 'owner' : 'user';
 
   const id = randomId('usr');
-  const myReferralCode = `DLR-${id.slice(-6).toUpperCase()}`;
+  const myReferralCode = generateReferralCode();
   const passwordHash = await hashPassword(password);
   const fp = await buildClientFingerprints(c.req.raw, c.env);
 
@@ -231,9 +235,14 @@ authRoutes.post('/register', async (c) => {
   await ensureUserDefaults(c.env.DB, id);
 
   if (referralCode) {
+    const normalizedRef = referralCode.trim().toUpperCase();
     const referrer = await c.env.DB.prepare(
-      `SELECT id, signup_ip_hash FROM users WHERE COALESCE(referral_code, 'DLR-' || UPPER(SUBSTR(id, -6))) = ? OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ? LIMIT 1`
-    ).bind(referralCode, referralCode).first<{ id: string; signup_ip_hash: string | null }>().catch(() => null);
+      `SELECT id, signup_ip_hash FROM users
+       WHERE UPPER(COALESCE(referral_code, '')) = ?
+          OR ('DLR-' || UPPER(SUBSTR(id, -6))) = ?
+          OR ('DLR' || UPPER(SUBSTR(REPLACE(id, '_', ''), -5))) = ?
+       LIMIT 1`
+    ).bind(normalizedRef, normalizedRef, normalizedRef).first<{ id: string; signup_ip_hash: string | null }>().catch(() => null);
     if (referrer?.id && referrer.id !== id) {
       let fraudFlag = 0;
       let fraudReason: string | null = null;
@@ -279,8 +288,54 @@ authRoutes.post('/register', async (c) => {
 
   return c.json({
     token,
-    user: { id, email, username, role, telegram_id: null },
+    user: { id, email, username, role, telegram_id: null, referral_code: myReferralCode },
   }, 201);
+});
+
+authRoutes.post('/bootstrap-owner', async (c) => {
+  const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
+  if ((countRow?.cnt ?? 0) > 0) {
+    return c.json({ error: 'Instance already initialized with an owner account.' }, 403);
+  }
+  const body = await c.req.json<{
+    email?: string;
+    username?: string;
+    password?: string;
+    bootstrapSecret?: string;
+  }>().catch(() => ({} as { email?: string; username?: string; password?: string; bootstrapSecret?: string }));
+
+  const providedSecret = (body.bootstrapSecret ?? '').trim();
+  if (!providedSecret || (providedSecret !== c.env.SESSION_JWT_SECRET && providedSecret !== c.env.MASTER_ENCRYPTION_KEY)) {
+    return c.json({ error: 'Invalid bootstrap secret' }, 403);
+  }
+
+  const email = (body.email ?? '').trim().toLowerCase();
+  const username = (body.username ?? 'owner').trim();
+  const password = body.password ?? '';
+  if (!email.includes('@') || password.length < 8) {
+    return c.json({ error: 'Valid email and strong password (min 8 chars) are required' }, 400);
+  }
+
+  const id = randomId('usr');
+  const myReferralCode = generateReferralCode();
+  const passwordHash = await hashPassword(password);
+  await c.env.DB.prepare(
+    `INSERT INTO users (id, email, username, password_hash, role, referral_code)
+     VALUES (?, ?, ?, ?, 'owner', ?)`
+  ).bind(id, email, username, passwordHash, myReferralCode).run();
+  await ensureUserDefaults(c.env.DB, id);
+
+  const isHttps = isHttpsRequest(c);
+  const token = await signJwt({ sub: id, email, role: 'owner' }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', token, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  return c.json({ token, user: { id, email, username, role: 'owner', telegram_id: null } }, 201);
 });
 
 authRoutes.post('/login', async (c) => {
@@ -416,7 +471,7 @@ authRoutes.get('/avatar/:userId', async (c) => {
   ).bind(userId).first<{ telegram_id: string | null; telegram_avatar_file_id: string | null }>();
   if (!row || !row.telegram_id) return c.notFound();
 
-  const botToken = c.env.TELEGRAM_BOT_TOKEN?.trim();
+  const botToken = await resolveTelegramBotToken(c.env);
   if (!botToken) return c.notFound();
   const bot = new TelegramBotClient(botToken);
 
@@ -727,7 +782,7 @@ authRoutes.post('/upgrade-demo', requireAuth, async (c) => {
 authRoutes.post('/telegram-webapp', async (c) => {
   const body = await c.req.json<{ initData?: string }>().catch(() => ({} as { initData?: string }));
   const initData = (body.initData ?? '').trim();
-  const botToken = c.env.TELEGRAM_BOT_TOKEN;
+  const botToken = await resolveTelegramBotToken(c.env);
   if (!botToken) {
     return c.json({ error: 'TELEGRAM_BOT_TOKEN not configured on server' }, 503);
   }
@@ -757,11 +812,12 @@ authRoutes.post('/telegram-webapp', async (c) => {
     const username = verified.user.username || verified.user.first_name || `tg_${tgId}`;
     const email = `tg_${tgId}@telegram.dollarino.local`;
     const pwd = await hashPassword(randomId('tg_pwd'));
+    const myRefCode = generateReferralCode();
 
     await c.env.DB.prepare(
-      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, email, username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null, tgId === ownerId ? 1 : 0).run();
+      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, referral_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, email, username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null, tgId === ownerId ? 1 : 0, myRefCode).run();
 
     await ensureUserDefaults(c.env.DB, id);
     row = { id, email, username, role, is_blocked: 0, telegram_id: tgId, avatar_url: null, phone_verified: tgId === ownerId ? 1 : 0 };
@@ -884,7 +940,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
 
 // Telegram Login Widget verification (BotFather -> Login Widget) for phone-verified users
 authRoutes.post('/telegram-login-widget', async (c) => {
-  const botToken = c.env.TELEGRAM_BOT_TOKEN?.trim();
+  const botToken = await resolveTelegramBotToken(c.env);
   if (!botToken) {
     return c.json({ error: 'TELEGRAM_BOT_TOKEN not configured on server' }, 503);
   }
@@ -1028,8 +1084,9 @@ authRoutes.delete('/account', requireAuth, async (c) => {
     }
   }
 
-  if (row.telegram_id && c.env.TELEGRAM_BOT_TOKEN) {
-    const bot = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
+  const botToken = row.telegram_id ? await resolveTelegramBotToken(c.env) : '';
+  if (row.telegram_id && botToken) {
+    const bot = new TelegramBotClient(botToken);
     await bot
       .sendMessage(
         row.telegram_id,

@@ -284,13 +284,9 @@ export function ServicesPage({
     }
   };
 
-  const activePlanLabel = data.entitlement?.hasPaidPlan
-    ? isFa
-      ? data.entitlement.planNameFa
-      : data.entitlement.planNameEn
-    : isFa
-      ? 'بدون اشتراک فعال (نیازمند خرید اشتراک)'
-      : 'No Active Plan (Subscription Required)';
+  const activePlanLabel = isFa
+    ? 'رایگان همیشگی · ۹۵٪ سود برای شما (کارمزد ۵٪ فقط از سود واقعی)'
+    : 'Free Forever · 5% Fee Only on Real Profit';
 
   /* Dedicated Account Management View: Full Editable Profile with Locked Verified Phone */
   if (accountView) {
@@ -582,11 +578,11 @@ export function ServicesPage({
             >
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
                 <KeyRound className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'اتصال صرافی‌ها (Toobit / Bitunix / KCEX)' : 'Exchange API Vault'}</span>
+                <span>{isFa ? 'اتصال و دسترسی Trust Wallet (۲۴/۷ و دستی)' : 'Trust Wallet & 24/7 Access'}</span>
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-dim font-bold">
-                  {data.activeExchange?.provider?.toUpperCase() || 'PAPER'}
+                  {data.config.trading_mode === 'LIVE' ? 'TRUST WALLET' : 'SIMULATOR $10K'}
                 </span>
                 <Arrow className="w-4 h-4 text-dim" />
               </div>
@@ -770,7 +766,7 @@ export function ServicesPage({
       subtitle: isFa ? 'با چت فارسی استراتژی خودت را به AI یاد بده، تست بگیر و ۲۴/۷ اجرا کن' : 'Teach your strategy via chat, test live & activate 24/7',
       icon: BrainCircuit,
       tileBg: 'bg-[#1652F0]/15',
-      tileColor: 'text-[#1652F0]',
+      tileColor: 'text-[#1652F0] dark:text-[#60A5FA]',
       badge: isFa ? 'جدید' : 'NEW',
     },
     {
@@ -779,7 +775,7 @@ export function ServicesPage({
       subtitle: isFa ? 'اسکن کل بازار با استاپ، تریلینگ و TP1-TP3 خودکار' : 'Automated TP1-TP3, breakeven & AI filtering',
       icon: Bot,
       tileBg: 'bg-[#F59E0B]/15',
-      tileColor: 'text-[#D97706]',
+      tileColor: 'text-[#D97706] dark:text-[#FBBF24]',
       badge: data.config.bot_state.startsWith('RUNNING') ? (isFa ? 'روشن' : 'LIVE') : isFa ? 'آماده' : 'READY',
     },
     {
@@ -792,11 +788,11 @@ export function ServicesPage({
     },
     {
       tab: 'copy',
-      title: isFa ? 'کپی‌ترید V2، ولت نهنگ‌ها و صرافی‌های CEX' : 'Smart Copy V2, Whales & Exchanges',
-      subtitle: isFa ? 'تریدرهای تاییدشده ادمین + اتصال امن صرافی و خزانه ۲۴/۷' : 'Admin-verified Copy Traders, 24/7 Copy-Vault & CEX APIs',
+      title: isFa ? 'کپی‌ترید V2، ولت نهنگ‌ها و Trust Wallet' : 'Smart Copy V2, Whales & Trust Wallet',
+      subtitle: isFa ? 'تریدرهای تاییدشده + اتصال Trust Wallet و خزانه تمام‌اتومات ۲۴/۷' : 'Verified Copy Traders, 24/7 Copy-Vault & Trust Wallet',
       icon: Users,
       tileBg: 'bg-[#0EA5E9]/15',
-      tileColor: 'text-[#0284C7]',
+      tileColor: 'text-[#0284C7] dark:text-[#38BDF8]',
     },
     {
       tab: 'dex',
@@ -804,7 +800,7 @@ export function ServicesPage({
       subtitle: isFa ? 'Hyperliquid / Jupiter Perps تا ۱۰۰x روی کیف‌پول + اسکنر DexScreener' : 'Hyperliquid / Jupiter Perps up to 100x + Anti-Rug DEX radar',
       icon: Sparkles,
       tileBg: 'bg-[#10B981]/15',
-      tileColor: 'text-[#0D9455]',
+      tileColor: 'text-[#0D9455] dark:text-[#34D399]',
       badge: 'Perp DEX',
     },
     {
@@ -813,7 +809,7 @@ export function ServicesPage({
       subtitle: isFa ? 'صدور تصویر PNG رسمی عملکرد با مهر حساب واقعی/دمو و امضای سرور' : 'Generate official Live/Demo PNG Profit Card with HMAC verification',
       icon: Image,
       tileBg: 'bg-[#10B981]/15',
-      tileColor: 'text-[#0D9455]',
+      tileColor: 'text-[#0D9455] dark:text-[#34D399]',
     },
   ];
 
@@ -827,7 +823,7 @@ export function ServicesPage({
           className="flex items-center gap-3 min-w-0 text-start group"
         >
           <div className="w-11 h-11 rounded-full p-0.5 bg-gradient-to-tr from-[#1652F0] to-[#3B82F6] shrink-0">
-            <div className="w-full h-full rounded-full bg-[var(--panel)] overflow-hidden grid place-items-center font-display font-black text-sm text-[#1652F0]">
+            <div className="w-full h-full rounded-full bg-[var(--panel)] overflow-hidden grid place-items-center font-display font-black text-sm text-[#1652F0] dark:text-[#60A5FA]">
               {user.avatar_url ? (
                 <img src={user.avatar_url} alt={user.username} className="w-full h-full object-cover" />
               ) : (
@@ -837,10 +833,10 @@ export function ServicesPage({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h2 className="font-display font-bold text-sm text-main truncate group-hover:text-[#1652F0] transition">
+              <h2 className="font-display font-bold text-sm text-main truncate group-hover:text-[#1652F0] dark:group-hover:text-[#60A5FA] transition">
                 {user.username}
               </h2>
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#0D9455] shrink-0" />
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#0D9455] dark:text-[#34D399] shrink-0" />
             </div>
             <p className="text-[11px] text-dim truncate">{activePlanLabel}</p>
           </div>
@@ -854,7 +850,7 @@ export function ServicesPage({
             title={isFa ? 'تغییر سطح کاربری (ساده / حرفه‌ای)' : 'Toggle Easy / Pro'}
             className="w-9 h-9 rounded-full surface-soft grid place-items-center text-xs font-black text-main hover:bg-[var(--line)] transition"
           >
-            {uiMode === 'simple' ? <Sprout className="w-4 h-4 text-[#0D9455]" /> : <Zap className="w-4 h-4 text-[#1652F0]" />}
+            {uiMode === 'simple' ? <Sprout className="w-4 h-4 text-[#0D9455] dark:text-[#34D399]" /> : <Zap className="w-4 h-4 text-[#1652F0] dark:text-[#60A5FA]" />}
           </button>
           <button
             type="button"
@@ -908,24 +904,18 @@ export function ServicesPage({
           }`}
         />
         <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background:
-              currentLook === 'paper'
-                ? isFa
-                  ? 'linear-gradient(90deg, rgba(243,245,248,0.02) 0%, rgba(243,245,248,0.78) 46%, rgba(243,245,248,0.97) 100%)'
-                  : 'linear-gradient(270deg, rgba(243,245,248,0.02) 0%, rgba(243,245,248,0.78) 46%, rgba(243,245,248,0.97) 100%)'
-                : isFa
-                  ? 'linear-gradient(90deg, rgba(15,23,42,0.18) 0%, rgba(15,23,42,0.82) 48%, rgba(15,23,42,0.96) 100%)'
-                  : 'linear-gradient(270deg, rgba(15,23,42,0.18) 0%, rgba(15,23,42,0.82) 48%, rgba(15,23,42,0.96) 100%)',
-          }}
+          className={`absolute inset-0 pointer-events-none ${
+            isFa
+              ? 'bg-gradient-to-l from-[#F3F5F8] via-[#F3F5F8]/82 to-transparent dark:from-slate-900 dark:via-slate-900/85 dark:to-slate-900/20'
+              : 'bg-gradient-to-r from-[#F3F5F8] via-[#F3F5F8]/82 to-transparent dark:from-slate-900 dark:via-slate-900/85 dark:to-slate-900/20'
+          }`}
         />
         <div className="relative z-10 w-full px-5 py-4 flex items-center justify-between gap-3">
           <div className="space-y-1.5 max-w-[66%]">
-            <p className={`text-xs sm:text-sm font-black ${currentLook === 'paper' ? 'text-slate-900' : 'text-white'}`}>
+            <p className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">
               {isFa ? 'رادار هوشمند و استراتژی کاستوم دلارینو' : 'Dollarino Smart Radar & Pine/Py IDE'}
             </p>
-            <p className={`text-[11px] leading-relaxed ${currentLook === 'paper' ? 'text-slate-600' : 'text-slate-300'}`}>
+            <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
               {isFa ? (
                 <>
                   اسکن زنده ۸۰۷ جفت‌ارز، بک‌تست ۹۰۰ کندلی و اتصال ۱-کلیکی به{' '}
@@ -989,7 +979,7 @@ export function ServicesPage({
             onClick={() => setAccountView(true)}
             className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
           >
-            <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/12 text-[#1652F0] grid place-items-center shrink-0">
+            <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/12 text-[#1652F0] dark:text-[#60A5FA] grid place-items-center shrink-0">
               <UserCheck className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
@@ -1006,17 +996,19 @@ export function ServicesPage({
             onClick={() => onNavigate('pricing')}
             className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
           >
-            <span className="w-10 h-10 rounded-2xl bg-[#F59E0B]/15 text-[#D97706] grid place-items-center shrink-0">
+            <span className="w-10 h-10 rounded-2xl bg-[#F59E0B]/15 text-[#D97706] dark:text-[#FBBF24] grid place-items-center shrink-0">
               <Award className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اشتراک، باشگاه رفرال و درآمد دلاری' : 'Plans, Partner Club & Referrals'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#0D9455]/15 text-[#0D9455]">
-                  {isFa ? 'تا ۲۲٪ پورسانت' : 'Up to 22%'}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'کارمزد ۵٪ سود و باشگاه دعوت از دوستان' : '5% Profit Fee & Referral Hub'}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#0D9455]/15 text-[#0D9455] dark:text-[#34D399]">
+                  {isFa ? 'اعتبار کارمزد غیرقابل‌برداشت' : 'Prepaid Fee Credit'}
                 </span>
               </div>
-              <span className="text-[11px] text-dim block">{activePlanLabel} · {isFa ? 'برداشت USDT یا تبدیل به اشتراک' : 'USDT Payout & Pro Credit'}</span>
+              <span className="text-[11px] text-dim block">
+                {isFa ? 'بنر دعوت اختصاصی، متن پیام، کد معرف + پاداش پس از $۱۰ موجودی و ترید واقعی' : 'Invite banner, text, code + credit unlock after >= $10 live trade'}
+              </span>
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>
@@ -1026,13 +1018,13 @@ export function ServicesPage({
             download="dollarino-extension.zip"
             className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
           >
-            <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/15 text-[#1652F0] grid place-items-center shrink-0">
+            <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA] grid place-items-center shrink-0">
               <Download className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (v9.7 ZIP)'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0]">v9.7 گرافیکی</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">v9.7 گرافیکی</span>
               </div>
               <span className="text-[11px] text-dim block">{isFa ? 'طراحی Liquid Glass هم‌شکل سایت · کنترل ربات، بازارها و رادار DEX' : 'Liquid Glass UI matching web app · Bot, Markets & DEX radar'}</span>
             </div>
@@ -1045,7 +1037,7 @@ export function ServicesPage({
               onClick={onOpenSupport}
               className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
             >
-              <span className="w-10 h-10 rounded-2xl bg-[#10B981]/15 text-[#0D9455] grid place-items-center shrink-0">
+              <span className="w-10 h-10 rounded-2xl bg-[#10B981]/15 text-[#0D9455] dark:text-[#34D399] grid place-items-center shrink-0">
                 <Headphones className="w-5 h-5" />
               </span>
               <div className="min-w-0 flex-1">
@@ -1061,7 +1053,7 @@ export function ServicesPage({
             onClick={() => onNavigate('faq')}
             className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
           >
-            <span className="w-10 h-10 rounded-2xl bg-[#0D9455]/12 text-[#0D9455] grid place-items-center shrink-0">
+            <span className="w-10 h-10 rounded-2xl bg-[#0D9455]/12 text-[#0D9455] dark:text-[#34D399] grid place-items-center shrink-0">
               <CircleHelp className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
@@ -1077,14 +1069,14 @@ export function ServicesPage({
             rel="noreferrer"
             className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
           >
-            <span className="w-10 h-10 rounded-2xl bg-[#0EA5E9]/15 text-[#0284C7] grid place-items-center shrink-0">
+            <span className="w-10 h-10 rounded-2xl bg-[#0EA5E9]/15 text-[#0284C7] dark:text-[#38BDF8] grid place-items-center shrink-0">
               <Send className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
               <span className="text-xs sm:text-sm font-extrabold text-main block">
                 {isFa ? 'کانال رسمی سیگنال و اخبار دلارینو' : 'Official Dollarino Signals Channel'}
               </span>
-              <span dir="ltr" className="text-[11px] text-[#0284C7] font-mono-num font-bold block">@Dollarino_official</span>
+              <span dir="ltr" className="text-[11px] text-[#0284C7] dark:text-[#38BDF8] font-mono-num font-bold block">@Dollarino_official</span>
             </div>
             <ExternalLink className="w-4 h-4 text-dim shrink-0" />
           </a>

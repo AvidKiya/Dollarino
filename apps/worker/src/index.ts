@@ -25,7 +25,12 @@ import { getPublicPlans, subscriptionRoutes } from './routes/subscriptions.js';
 import { supportRoutes } from './routes/support.js';
 import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/trading.js';
 import { trustWalletRoutes } from './routes/trustwallet.js';
-import { syncTelegramBotAutoOnVersion, webhookRoutes } from './routes/webhooks.js';
+import { evaluateTradingViewFreeAlerts, syncTelegramBotAutoOnVersion, webhookRoutes } from './routes/webhooks.js';
+import { getFounderProfile } from './services/founder-profile.js';
+import { SERVER_PROFIT_FEE_PCT } from './services/server-fee.js';
+import { syncAutoTopSiteTraders } from './services/site-traders.js';
+import { getSystemSettingValue } from './telegram/publisher.js';
+import { fetchIranUsdtRate } from './exchanges/iran-rate.js';
 
 export { TradingBotCoordinator };
 
@@ -106,9 +111,14 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '9.9.2',
+    version: '10.0.0',
     openSource: false,
-    paidSubscriptions: true,
+    paidSubscriptions: false,
+    profitShareFeePct: SERVER_PROFIT_FEE_PCT,
+    trustWalletOnly: true,
+    minLiveBalanceUsd: 10,
+    demoSimulatorUsd: 10000,
+    freeTradingViewAlerts: true,
     centralMultiAI: true,
     multiCoinAutonomous: true,
     alwaysOnSignalsAndAiIntel: true,
@@ -122,10 +132,8 @@ app.get('/api/health', (c) => {
     },
     aiProviders: ['deepseek', 'anthropic', 'openai', 'gemini', 'openai_compatible'],
     exchanges: {
-      toobit: 'LIVE_SPOT_AND_FUTURES_SUPPORTED',
-      bitunix: 'LIVE_FUTURES_SUPPORTED',
-      kcex: 'MIRROR_0PCT_MAKER_AND_WEB_SESSION',
-      paper: 'SIMULATOR_LIVE_QUOTES',
+      trustwallet: 'LIVE_EVM_SOLANA_TON_TRON_AND_PERP_DEX',
+      paper: 'SIMULATOR_10K_LIVE_QUOTES',
     },
     capabilities: {
       spotTrading: true,
@@ -148,7 +156,32 @@ app.get('/api/health', (c) => {
   });
 });
 
-app.get('/api/public/creator', (c) => c.json({ creator: DOLLARINO_CREATOR_INFO }));
+app.get('/api/public/creator', async (c) => {
+  const [founderProfile, communityGroupInvite] = await Promise.all([
+    getFounderProfile(c.env.DB),
+    getSystemSettingValue(c.env.DB, 'community_group_invite', ''),
+  ]);
+  return c.json({
+    creator: {
+      ...DOLLARINO_CREATOR_INFO,
+      nameFa: founderProfile.fullNameFa || DOLLARINO_CREATOR_INFO.nameFa,
+      nameEn: founderProfile.fullNameEn || DOLLARINO_CREATOR_INFO.nameEn,
+      telegram: founderProfile.telegram || DOLLARINO_CREATOR_INFO.telegram,
+      telegramUrl: founderProfile.telegramUrl || DOLLARINO_CREATOR_INFO.telegramUrl,
+      instagram: founderProfile.instagram || DOLLARINO_CREATOR_INFO.instagram,
+      instagramUrl: founderProfile.instagramUrl || DOLLARINO_CREATOR_INFO.instagramUrl,
+      twitter: founderProfile.twitter || DOLLARINO_CREATOR_INFO.twitter,
+      twitterUrl: founderProfile.twitterUrl || DOLLARINO_CREATOR_INFO.twitterUrl,
+    },
+    founderProfile,
+    communityGroupInvite: communityGroupInvite.trim(),
+  });
+});
+
+app.get('/api/public/founder-profile', async (c) => {
+  const founderProfile = await getFounderProfile(c.env.DB);
+  return c.json({ ok: true, founderProfile });
+});
 
 app.get('/api/public/ai-models', async (c) => {
   const data = await listSelectableAIModels(c.env);
@@ -416,9 +449,10 @@ const FALLBACK_COPY_TRADERS = [
 
 app.get('/api/public/copy-traders', async (c) => {
   try {
+    await syncAutoTopSiteTraders(c.env.DB).catch(() => {});
     const rows = await c.env.DB.prepare(
       `SELECT id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level
-       FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
+       FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 12`
     ).all();
     return c.json({ traders: rows.results.length > 0 ? rows.results : FALLBACK_COPY_TRADERS });
   } catch {
@@ -473,6 +507,11 @@ app.route('/api/trustwallet', trustWalletRoutes);
 app.route('/api/support', supportRoutes);
 app.route('/api/webhook', webhookRoutes);
 app.route('/api/admin', adminRoutes);
+
+app.get('/api/public/usdt-irt-rate', async (c) => {
+  const rate = await fetchIranUsdtRate();
+  return c.json({ ok: true, ...rate });
+});
 
 app.get('/api/events/stream', requireAuth, async (c) => {
   const user = c.get('user');
@@ -555,6 +594,8 @@ export default {
 
       await runAlwaysOnSignalRadar(env, { fromCron: true }).catch(() => {});
       await runAlwaysOnAiIntel(env, { fromCron: true }).catch(() => {});
+      await evaluateTradingViewFreeAlerts(env).catch(() => {});
+      await syncAutoTopSiteTraders(env.DB).catch(() => {});
       await dispatchDueScheduledBroadcasts(env).catch(() => {});
       if (!activity || activity.has_copy_watch) {
         await pollWatchedWalletsForNewTrades(env).catch(() => {});

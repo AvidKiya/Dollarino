@@ -281,6 +281,38 @@ export interface DashboardPayload {
     }>;
   };
   entitlement?: EntitlementSummary | null;
+  iranRate?: {
+    usdtIrr: number;
+    usdtIrt: number;
+    source: string;
+    updatedAt: string;
+  } | null;
+  serverFeeSummary?: {
+    feePct: number;
+    totalProfitablePnlUsd: number;
+    totalFeeUsd: number;
+    accruedFeeUsd: number;
+    pendingVerifyFeeUsd?: number;
+    settledFeeUsd: number;
+    profitableTradesCount: number;
+    enforcement?: {
+      allowed: boolean;
+      lockStatus: 'ACTIVE' | 'WARNING' | 'PENDING_REVIEW' | 'LOCKED';
+      reasonCode?: 'FEE_SETTLEMENT_REQUIRED';
+      reasonFa?: string;
+      reasonEn?: string;
+      accruedUsd: number;
+      pendingVerifyUsd: number;
+      penaltyUsd: number;
+      totalDueUsd: number;
+      prepaidCreditUsd: number;
+      graceLimitUsd: number;
+      graceDeadline: string | null;
+      hoursRemaining: number | null;
+      latePenaltyPct: number;
+      autoLockEnabled: boolean;
+    };
+  } | null;
   stats: {
     totalTrades: number;
     wins: number;
@@ -303,7 +335,7 @@ export interface DashboardPayload {
   charts: {
     dailyPnl: Array<{ day: string; pnl: number }>;
     weeklyResults: Array<{ day: string; pnl: number; count: number; wins?: number }>;
-    equityCurve?: Array<{ time: string; equity: number }>;
+    equityCurve?: Array<{ time: number | string; label?: string; equity: number; pnl?: number }>;
   };
   mixerSnapshot?: SignalMixerResult | null;
   recentSignals: RecentSignalRow[];
@@ -343,6 +375,7 @@ export interface TokenRugSafetyReport {
   top10HoldersPct: number;
   devHoldPct: number;
   liquidityUsd: number;
+  tokenAgeHours?: number | null;
   flags: string[];
   verdict: 'SAFE' | 'CAUTION' | 'DANGER';
   sourcesUsed: string[];
@@ -483,6 +516,39 @@ export interface PerpDappLinkItem {
   trustWalletDappUrl: string;
   noteFa: string;
   noteEn: string;
+}
+
+export interface FounderProfile {
+  fullNameFa: string;
+  fullNameEn: string;
+  roleFa: string;
+  roleEn: string;
+  photoUrl: string;
+  email: string;
+  phone: string;
+  addressFa: string;
+  addressEn: string;
+  telegram: string;
+  telegramUrl: string;
+  channel: string;
+  channelUrl: string;
+  instagram: string;
+  instagramUrl: string;
+  twitter: string;
+  twitterUrl: string;
+  github: string;
+  website: string;
+  verificationId: string;
+  independenceFa: string;
+  independenceEn: string;
+  bioFa: string;
+  bioEn: string;
+  missionFa: string;
+  missionEn: string;
+  antiPonziFa: string;
+  antiPonziEn: string;
+  showPublic: boolean;
+  updatedAt?: string | null;
 }
 
 

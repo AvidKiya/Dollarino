@@ -97,7 +97,7 @@ export function ConfirmTradeSheet({
               </p>
             </div>
           </div>
-          <span dir="ltr" className="font-num font-black text-base px-2.5 py-1 rounded-xl bg-black/20 text-main">
+          <span dir="ltr" className="font-num font-black text-base px-2.5 py-1 rounded-xl surface-soft border hairline text-main">
             {order.leverage}×
           </span>
         </div>

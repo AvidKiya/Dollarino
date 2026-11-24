@@ -276,7 +276,7 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     expect(healthRes.status).toBe(200);
     expect(healthRes.headers.get('X-Content-Type-Options')).toBe('nosniff');
     const health = (await healthRes.json()) as { version: string; capabilities: Record<string, boolean> };
-    expect(health.version).toBe('9.9.2');
+    expect(health.version).toBe('10.0.0');
     expect(health.capabilities.alwaysOnSignalsAndAiIntel).toBe(true);
     expect(health.capabilities.dedicatedFloatingVisionAI).toBe(true);
     expect(health.capabilities.antiAbuseReferralSystem).toBe(true);
@@ -299,8 +299,8 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
 
   it('prevents self-referral IP farming, blocks $0 gift commission unlock, and processes legitimate tiered payout + refund', async () => {
     const env = makeEnv();
-    // Temporarily disable telegram_only_signup inside this anti-fraud unit test to exercise IP/UA duplicate registration checks directly
-    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false');`);
+    // Temporarily disable telegram_only_signup & allow_direct_email_signup inside this anti-fraud unit test to exercise IP/UA duplicate registration checks directly
+    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false'), ('allow_direct_email_signup', 'true');`);
 
     // 1. Register Referrer (first user becomes owner/admin automatically)
     const reg1 = await worker.fetch(

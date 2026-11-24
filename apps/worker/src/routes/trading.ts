@@ -47,6 +47,9 @@ import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS, normalizeCanonicalSymbol } from '../exchanges/markets.js';
 import { publishProfitCardToTelegram, publishSignalClosedCard } from '../telegram/publisher.js';
+import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
+import { checkLiveFeeEnforcement, getUserServerFeeSummary } from '../services/server-fee.js';
+import { getTrustWalletLiveTotalUsd } from './trustwallet.js';
 import type { ExchangeProviderId } from '@dollarino/core';
 
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -62,12 +65,14 @@ tradingRoutes.get('/overview', async (c) => {
     `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
   ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
 
-  const effectiveProvider: ExchangeProviderId =
+  const effectiveProvider: ExchangeProviderId | undefined =
     activeRow?.provider === 'kcex'
       ? 'kcex'
       : cfg?.trading_mode === 'PAPER'
         ? 'paper'
-        : activeRow?.provider ?? 'paper';
+        : activeRow?.provider && activeRow.provider !== 'paper'
+          ? activeRow.provider
+          : undefined;
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
 
@@ -112,12 +117,18 @@ tradingRoutes.get('/overview', async (c) => {
 
   const totalClosed = Number(stats?.total_trades || 0);
   const wins = Number(stats?.winning_trades || 0);
+  const [iranRate, serverFeeSummary] = await Promise.all([
+    fetchIranUsdtRate().catch(() => null),
+    getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
+  ]);
   return c.json({
     config: cfg,
     activeExchange: { provider, label },
     balance,
     openTrades,
     unreadNotifications: Number(unreadNotifications?.cnt || 0),
+    iranRate,
+    serverFeeSummary,
     stats: {
       totalTrades: totalClosed,
       winRatePct: totalClosed > 0 ? Number(((wins / totalClosed) * 100).toFixed(1)) : 0,
@@ -157,12 +168,14 @@ tradingRoutes.get('/dashboard', async (c) => {
     `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
   ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
 
-  const effectiveProvider: ExchangeProviderId =
+  const effectiveProvider: ExchangeProviderId | undefined =
     activeRow?.provider === 'kcex'
       ? 'kcex'
       : cfg?.trading_mode === 'PAPER'
         ? 'paper'
-        : activeRow?.provider ?? 'paper';
+        : activeRow?.provider && activeRow.provider !== 'paper'
+          ? activeRow.provider
+          : undefined;
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
 
@@ -300,6 +313,66 @@ tradingRoutes.get('/dashboard', async (c) => {
     return { date: d.bucket, dailyPnl: Number(d.pnl || 0), cumulativePnl: Number(runningCum.toFixed(2)) };
   });
 
+  // Build real chronological Equity Curve from actual closed trades + live open unrealized PnL
+  const closedAscRows = await c.env.DB.prepare(
+    `SELECT symbol, realized_pnl, closed_at
+     FROM trades
+     WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
+     ORDER BY closed_at ASC LIMIT 240`
+  ).bind(user.id).all<{ symbol: string; realized_pnl: string; closed_at: string }>().catch(() => ({ results: [] }));
+
+  const closedSum = closedAscRows.results.reduce((s, r) => s + Number(r.realized_pnl || 0), 0);
+  const currentEqTotal = Math.max(0, Number(balance.total || 0) + totalUnrealizedPnl);
+  const totalDepositedEst = (walletRow?.deposited ?? 0) > 0 ? Number(walletRow!.deposited) : Math.max(10, currentEqTotal - closedSum - totalUnrealizedPnl);
+  const curveStartEq = Math.max(10, Number((totalEq - closedSum).toFixed(2)));
+  const startUnix = closedAscRows.results[0]?.closed_at
+    ? Math.floor(Date.parse(closedAscRows.results[0].closed_at.replace(' ', 'T') + 'Z') / 1000) - 3600
+    : Math.floor(Date.now() / 1000) - 7200;
+
+  const equityCurve: Array<{ time: number; label: string; equity: number; pnl: number }> = [
+    {
+      time: Number.isFinite(startUnix) && startUnix > 0 ? startUnix : Math.floor(Date.now() / 1000) - 7200,
+      label: 'Start',
+      equity: Number(curveStartEq.toFixed(2)),
+      pnl: 0,
+    },
+  ];
+  let runEq = curveStartEq;
+  let runRealized = 0;
+  let lastTs = equityCurve[0]!.time;
+  for (const row of closedAscRows.results) {
+    const p = Number(row.realized_pnl || 0);
+    runEq += p;
+    runRealized += p;
+    const rawTs = Math.floor(Date.parse(row.closed_at.replace(' ', 'T') + 'Z') / 1000);
+    const ts = Number.isFinite(rawTs) && rawTs > lastTs ? rawTs : lastTs + 60;
+    lastTs = ts;
+    equityCurve.push({
+      time: ts,
+      label: `${row.symbol} (${row.closed_at.slice(5, 16)})`,
+      equity: Number(Math.max(0, runEq).toFixed(2)),
+      pnl: Number(runRealized.toFixed(2)),
+    });
+  }
+  const nowTs = Math.max(lastTs + 60, Math.floor(Date.now() / 1000));
+  const livePointEq = Math.max(0, Number((totalEq + totalUnrealizedPnl).toFixed(2)));
+  if (equityCurve.length === 1) {
+    const midTs = Math.floor((equityCurve[0]!.time + nowTs) / 2);
+    equityCurve.push({
+      time: midTs > equityCurve[0]!.time ? midTs : equityCurve[0]!.time + 30,
+      label: 'Active',
+      equity: Number(((equityCurve[0]!.equity + livePointEq) / 2).toFixed(2)),
+      pnl: Number((totalUnrealizedPnl / 2).toFixed(2)),
+    });
+  }
+  equityCurve.push({
+    time: nowTs,
+    label: 'Live Now',
+    equity: livePointEq,
+    pnl: Number((runRealized + totalUnrealizedPnl).toFixed(2)),
+  });
+  void totalDepositedEst;
+
   // Live 8-channel Signal Mixer snapshot on active symbol using real HTF trend
   let mixerSnapshot = null;
   if (cfg) {
@@ -359,6 +432,11 @@ tradingRoutes.get('/dashboard', async (c) => {
   const cyclePeriod = tfSecs[cfg?.entry_timeframe ?? '15m'] ?? 900;
   const nextCycleInSec = cyclePeriod - (Math.floor(Date.now() / 1000) % cyclePeriod);
 
+  const [iranRate, serverFeeSummary] = await Promise.all([
+    fetchIranUsdtRate().catch(() => null),
+    getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
+  ]);
+
   return c.json({
     config: cfg,
     activeEngine,
@@ -369,6 +447,8 @@ tradingRoutes.get('/dashboard', async (c) => {
     platformAI,
     entitlement,
     balance,
+    iranRate,
+    serverFeeSummary,
     openTrades,
     pendingOrders: pendingOrders.results,
     closedTrades: closedTrades.results,
@@ -393,6 +473,7 @@ tradingRoutes.get('/dashboard', async (c) => {
       dailyPnl: [...dailyAgg.results],
       cumulative30d,
       weeklyResults: weeklyAgg.results,
+      equityCurve,
     },
     mixerSnapshot,
   });
@@ -499,17 +580,32 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     const ent = await resolveUserEntitlement(c.env.DB, user);
     if (!ent.allowLiveTrading) {
       return c.json({
-        error: 'Active paid subscription required to switch to Live Trading (Toobit / Bitunix / KCEX).',
+        error: 'برای فعال‌سازی معامله واقعی با Trust Wallet، ابتدا یکی از پلن‌های اشتراک را فعال کنید.',
         code: 'SUBSCRIPTION_REQUIRED',
       }, 402);
     }
-    const liveEx = await c.env.DB.prepare(
-      `SELECT id FROM exchange_connections WHERE user_id = ? AND provider IN ('toobit', 'bitunix', 'kcex') LIMIT 1`
-    ).bind(user.id).first();
-    if (!liveEx) {
+    const [uWallet, perpConn, copyVault, liveEx] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton FROM users WHERE id = ?`
+      ).bind(user.id).first<{
+        trust_wallet_address: string | null;
+        trust_wallet_tron: string | null;
+        trust_wallet_solana: string | null;
+        trust_wallet_ton: string | null;
+      }>(),
+      c.env.DB.prepare(`SELECT id FROM perp_dex_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`).bind(user.id).first().catch(() => null),
+      c.env.DB.prepare(`SELECT id FROM user_copy_vaults WHERE user_id = ? LIMIT 1`).bind(user.id).first().catch(() => null),
+      c.env.DB.prepare(
+        `SELECT id FROM exchange_connections WHERE user_id = ? AND provider IN ('toobit', 'bitunix', 'kcex') LIMIT 1`
+      ).bind(user.id).first(),
+    ]);
+    const hasTrustWallet = Boolean(
+      uWallet?.trust_wallet_address || uWallet?.trust_wallet_tron || uWallet?.trust_wallet_solana || uWallet?.trust_wallet_ton || perpConn || copyVault || liveEx
+    );
+    if (!hasTrustWallet) {
       return c.json({
-        error: 'ابتدا در صفحه «صرافی»، حساب Toobit، Bitunix یا KCEX خود را متصل کنید تا بتوانید معامله واقعی را روشن کنید.',
-        code: 'NO_LIVE_EXCHANGE',
+        error: 'ابتدا در بخش «اتصال Trust Wallet» آدرس کیف‌پول تراست‌ولت خود را متصل کنید تا معاملات واقعی فعال شود.',
+        code: 'NO_TRUST_WALLET',
       }, 400);
     }
   }
@@ -582,13 +678,22 @@ tradingRoutes.post('/bot/start', async (c) => {
     trailingStopPct?: number;
     allocatedAmount?: number;
     customStrategyId?: string;
+    tradeExecutionMode?: 'AUTO' | 'MANUAL_CONFIRM';
   }>().catch(() => ({} as Record<string, unknown>));
 
-  const [cfg, ensemble, entitlement] = await Promise.all([
-    c.env.DB.prepare('SELECT trading_mode, market_type, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ trading_mode: string; market_type?: MarketType; strategy_key: string; risk_profile_json?: string }>(),
+  const [cfg, ensemble, entitlement, twUser] = await Promise.all([
+    c.env.DB.prepare('SELECT trading_mode, trade_execution_mode, market_type, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ trading_mode: string; trade_execution_mode?: string; market_type?: MarketType; strategy_key: string; risk_profile_json?: string }>(),
     resolveAIEnsemble(c.env, user.id),
     resolveUserEntitlement(c.env.DB, user),
+    c.env.DB.prepare(
+      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton FROM users WHERE id = ?`
+    ).bind(user.id).first<{
+      trust_wallet_address: string | null;
+      trust_wallet_tron: string | null;
+      trust_wallet_solana: string | null;
+      trust_wallet_ton: string | null;
+    }>(),
   ]);
 
   const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'dollarino_v01');
@@ -600,7 +705,7 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   if (cfg?.trading_mode === 'LIVE' && !entitlement.allowLiveTrading) {
     return c.json({
-      error: 'Active paid subscription required for Live Trading (Toobit / KCEX).',
+      error: 'برای معاملات واقعی روی Trust Wallet، اشتراک فعال الزامی است.',
       code: 'SUBSCRIPTION_REQUIRED',
     }, 402);
   }
@@ -624,15 +729,47 @@ tradingRoutes.post('/bot/start', async (c) => {
     user.id,
     cfg?.trading_mode === 'PAPER' ? 'paper' : undefined
   );
-  const nextState = cfg?.trading_mode === 'LIVE' && activeExProvider !== 'paper' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+  const hasTrustConnected = Boolean(
+    twUser?.trust_wallet_address || twUser?.trust_wallet_tron || twUser?.trust_wallet_solana || twUser?.trust_wallet_ton
+  );
+
+  if (cfg?.trading_mode === 'LIVE' && hasTrustConnected) {
+    const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
+    if (!feeCheck.allowed) {
+      return c.json({
+        error: feeCheck.reasonFa || 'حساب ترید واقعی تا زمان تسویه کارمزد معوق ۵٪ قفل است.',
+        code: 'FEE_SETTLEMENT_REQUIRED',
+        enforcement: feeCheck,
+      }, 402);
+    }
+    const readiness = await getTrustWalletLiveTotalUsd(c.env.DB, user.id);
+    if (!readiness.meetsMinimum) {
+      return c.json({
+        error: `برای اجرای ربات روی کیف‌پول واقعی، حداقل ${readiness.minRequiredUsd} دلار موجودی در Trust Wallet نیاز است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}). می‌توانید همین الان با شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان شروع کنید.`,
+        code: 'MIN_BALANCE_10_USD',
+        currentUsd: readiness.totalUsd,
+        minRequiredUsd: readiness.minRequiredUsd,
+      }, 400);
+    }
+  }
+
+  const nextState = cfg?.trading_mode === 'LIVE' && (hasTrustConnected || activeExProvider !== 'paper') ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+  const resolvedExecMode =
+    body.tradeExecutionMode === 'MANUAL_CONFIRM'
+      ? 'MANUAL_CONFIRM'
+      : body.tradeExecutionMode === 'AUTO'
+        ? 'AUTO'
+        : cfg?.trade_execution_mode === 'MANUAL_CONFIRM'
+          ? 'MANUAL_CONFIRM'
+          : 'AUTO';
 
   const sets = [
     `bot_state = ?`,
-    `trade_execution_mode = 'AUTO'`,
+    `trade_execution_mode = ?`,
     `started_at = datetime('now')`,
     `updated_at = datetime('now')`,
   ];
-  const vals: unknown[] = [nextState];
+  const vals: unknown[] = [nextState, resolvedExecMode];
 
   if (typeof body.marginPct === 'number') {
     sets.push(`margin_pct = ?`);
@@ -756,10 +893,61 @@ tradingRoutes.post('/bot/start', async (c) => {
     strategy_key: targetStrategy,
     activeExchangeProvider: activeExProvider,
     warning:
-      cfg?.trading_mode === 'LIVE' && activeExProvider === 'paper'
-        ? 'صرافی واقعی فعال نیست (یا Toobit نیاز به پروکسی دارد)؛ ربات در حالت شبیه‌ساز Paper فعال شد.'
+      cfg?.trading_mode === 'LIVE' && !hasTrustConnected && activeExProvider === 'paper'
+        ? 'کیف‌پول Trust Wallet هنوز متصل نیست؛ ربات در شبیه‌ساز دمو مشابه تراست‌ولت ($10,000) فعال شد.'
         : undefined,
   });
+});
+
+tradingRoutes.post('/config/reset-defaults', async (c) => {
+  const user = c.get('user');
+  const defaultRiskProfile = JSON.stringify({
+    preset: 'balanced',
+    marketBias: 'neutral',
+    preferredSession: 'automatic',
+    entryStyle: 'balanced',
+    maxSpread: 0.5,
+    cooldownMinutes: 10,
+    trailingStop: true,
+    trailingDistance: 2.0,
+  });
+
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
+  ).bind(user.id, randomId('wh')).run().catch(() => {});
+
+  await c.env.DB.prepare(
+    `UPDATE bot_configs SET
+       strategy_key = 'dollarino_v01',
+       symbol = 'BTCUSDT',
+       entry_timeframe = '15m',
+       higher_timeframe = '1h',
+       margin_pct = 10,
+       max_leverage = 10,
+       daily_max_loss_pct = 5,
+       market_type = 'FUTURES',
+       direction_mode = 'BOTH',
+       hedge_mode = 0,
+       scan_scope = 'TOP_COINS',
+       auto_scan_top = 1,
+       max_open_positions = 4,
+       tp1_close_pct = 50,
+       tp2_close_pct = 25,
+       tp3_close_pct = 25,
+       auto_breakeven_on_tp1 = 1,
+       move_sl_to_tp1_on_tp2 = 1,
+       trailing_stop_enabled = 1,
+       trailing_stop_pct = 2.0,
+       trail_after_tp1 = 1,
+       kbos_params_json = ?,
+       risk_profile_json = ?,
+       updated_at = datetime('now')
+     WHERE user_id = ?`
+  ).bind(JSON.stringify(DEFAULT_KBOS_PARAMS), defaultRiskProfile, user.id).run();
+
+  await logAudit(c.env.DB, user.id, 'BOT', 'INFO', 'تنظیمات ربات به بهترین حالت پیش‌فرض دلارینو بازگردانی شد.');
+  const updated = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first();
+  return c.json({ ok: true, config: updated, message: 'تنظیمات ربات با موفقیت به بهترین پیش‌فرض دلارینو بازگردانی شد ✅' });
 });
 
 tradingRoutes.post('/bot/stop', async (c) => {

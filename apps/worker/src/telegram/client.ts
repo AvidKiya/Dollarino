@@ -186,27 +186,34 @@ export class TelegramBotClient {
     ok: boolean;
     botUsername?: string;
     channelTitle?: string;
+    chatId?: number;
+    chatType?: string;
     status?: string;
     canPostMessages?: boolean;
     error?: string;
   }> {
     try {
+      const target = String(channelHandle || '').trim();
+      const normalized: string | number = /^-?\d+$/.test(target) ? Number(target) : target;
       const me = await this.getMe();
-      const chat = await this.getChat(channelHandle);
-      const member = await this.getChatMember(channelHandle, me.id);
+      const chat = await this.getChat(normalized);
+      const member = await this.getChatMember(chat.id, me.id);
       const isAdmin = member.status === 'creator' || member.status === 'administrator';
-      const canPost = member.status === 'creator' || member.can_post_messages !== false;
+      const isGroup = chat.type === 'group' || chat.type === 'supergroup';
+      const canPost = member.status === 'creator' || isGroup || member.can_post_messages !== false;
       return {
         ok: isAdmin && canPost,
         botUsername: me.username,
-        channelTitle: chat.title || channelHandle,
+        channelTitle: chat.title || target,
+        chatId: chat.id,
+        chatType: chat.type,
         status: member.status,
         canPostMessages: canPost,
         error: isAdmin
           ? canPost
             ? undefined
             : 'ربات ادمین کانال هست ولی دسترسی ارسال پیام (Post Messages) ندارد.'
-          : `ربات @${me.username} هنوز در کانال ${channelHandle} ادمین نشده است (وضعیت: ${member.status}).`,
+          : `ربات @${me.username} هنوز در ${isGroup ? 'گروه' : 'کانال'} ${chat.title || target} ادمین نشده است (وضعیت: ${member.status}).`,
       };
     } catch (err) {
       return {
@@ -216,11 +223,58 @@ export class TelegramBotClient {
     }
   }
 
+  deleteMessage(chatId: string | number, messageId: number) {
+    return this.call<boolean>('deleteMessage', {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
+  restrictChatMember(
+    chatId: string | number,
+    userId: string | number,
+    permissions: {
+      can_send_messages?: boolean;
+      can_send_audios?: boolean;
+      can_send_documents?: boolean;
+      can_send_photos?: boolean;
+      can_send_videos?: boolean;
+      can_send_video_notes?: boolean;
+      can_send_voice_notes?: boolean;
+      can_send_polls?: boolean;
+      can_send_other_messages?: boolean;
+      can_add_web_page_previews?: boolean;
+    },
+    untilDateSec?: number
+  ) {
+    return this.call<boolean>('restrictChatMember', {
+      chat_id: chatId,
+      user_id: Number(userId),
+      permissions,
+      until_date: untilDateSec,
+    });
+  }
+
+  banChatMember(chatId: string | number, userId: string | number) {
+    return this.call<boolean>('banChatMember', {
+      chat_id: chatId,
+      user_id: Number(userId),
+    });
+  }
+
+  unbanChatMember(chatId: string | number, userId: string | number) {
+    return this.call<boolean>('unbanChatMember', {
+      chat_id: chatId,
+      user_id: Number(userId),
+      only_if_banned: true,
+    });
+  }
+
   setWebhook(url: string, secretToken?: string) {
     return this.call('setWebhook', {
       url,
       secret_token: secretToken,
-      allowed_updates: ['message', 'callback_query', 'channel_post', 'my_chat_member'],
+      allowed_updates: ['message', 'edited_message', 'callback_query', 'channel_post', 'my_chat_member'],
     });
   }
 

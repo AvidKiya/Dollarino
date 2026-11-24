@@ -16,6 +16,13 @@ import {
   isValidTron,
 } from '../routes/trustwallet.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { resolveTelegramBotToken } from '../telegram/token.js';
+import {
+  buildV2SwapExactEthForTokensCalldata,
+  EVM_CHAIN_CONFIG,
+  signAndBroadcastEvmTx,
+} from './evm-tx.js';
+import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
 import {
   buildMultiDappRoutes,
   buildTrustWalletSwapLinks,
@@ -164,6 +171,7 @@ export interface TokenRugSafetyReport {
   top10HoldersPct: number;
   devHoldPct: number;
   liquidityUsd: number;
+  tokenAgeHours: number | null;
   flags: string[];
   verdict: 'SAFE' | 'CAUTION' | 'DANGER';
   sourcesUsed: string[];
@@ -610,6 +618,14 @@ export async function runTokenRugAndSafetyScan(
     flags.add('نقدینگی استخر زیر ۱۰ هزار دلار');
   }
 
+  const pairCreatedMs = Number(pair?.pairCreatedAt || 0);
+  const tokenAgeHours =
+    pairCreatedMs > 0 ? Math.max(0.1, Number(((Date.now() - pairCreatedMs) / 3600_000).toFixed(1))) : null;
+  if (tokenAgeHours !== null && tokenAgeHours < 6) {
+    safetyScore -= 8;
+    flags.add(`توکن بسیار تازه (${tokenAgeHours} ساعت از ساخت استخر)`);
+  }
+
   const finalScore = isHoneypot ? Math.min(18, Math.max(0, safetyScore)) : Math.max(5, Math.min(99, Math.round(safetyScore)));
   const verdict: TokenRugSafetyReport['verdict'] =
     isHoneypot || finalScore < 45 ? 'DANGER' : finalScore < 70 ? 'CAUTION' : 'SAFE';
@@ -626,6 +642,7 @@ export async function runTokenRugAndSafetyScan(
     top10HoldersPct,
     devHoldPct,
     liquidityUsd: liqUsd,
+    tokenAgeHours,
     flags: [...flags],
     verdict,
     sourcesUsed,
@@ -1506,6 +1523,228 @@ async function executeLiveSolanaVaultJupiterSwap(
   }
 }
 
+export async function executeLiveEvmVaultSwap(
+  env: Env,
+  userId: string,
+  chainIdName: string,
+  tokenAddress: string,
+  usdAmount: number,
+  slippagePct = 10
+): Promise<{ executedOnchain: boolean; txHash: string | null; note: string }> {
+  const chainKey = chainIdName.toLowerCase();
+  const cfg = EVM_CHAIN_CONFIG[chainKey];
+  if (!cfg) {
+    return { executedOnchain: false, txHash: null, note: `رصد خودکار خزانه (${chainIdName})` };
+  }
+
+  try {
+    const keys = await exportUserCopyVaultKeys(env, userId);
+    const nativeBal = await fetchEvmNativeBalance(cfg.rpcUrls[0]!, keys.evmAddress);
+    const minReserve = chainKey === 'bsc' ? 0.003 : 0.0015;
+    if (nativeBal === null || nativeBal <= minReserve * 1.5) {
+      return {
+        executedOnchain: false,
+        txHash: null,
+        note: `شبیه‌ساز زنده خزانه (موجودی ${cfg.nativeSymbol} خزانه ${nativeBal?.toFixed(5) ?? '0'} — برای اجرای آن‌چین روی ${chainKey.toUpperCase()} خزانه را شارژ کنید)`,
+      };
+    }
+
+    const pools = await getDexTokenPools(chainKey, cfg.wrappedNative).catch(() => []);
+    const nativeUsd = Number(pools[0]?.priceUsd || (chainKey === 'bsc' ? 600 : 3000));
+    const desiredNative = usdAmount / Math.max(10, nativeUsd);
+    const spendNative = Math.min(desiredNative, Math.max(0, nativeBal - minReserve));
+    if (spendNative <= 0.0005) {
+      return {
+        executedOnchain: false,
+        txHash: null,
+        note: `شبیه‌ساز زنده خزانه (موجودی آزاد ${cfg.nativeSymbol} کافی نیست)`,
+      };
+    }
+
+    const valueWei = BigInt(Math.floor(spendNative * 1e9)) * 1_000_000_000n;
+    const oneInchCfg = await resolveOnchainApiKey(env, 'oneinch').catch(() => ({ apiKey: null, isActive: false }));
+
+    let txTo = cfg.v2Router;
+    let txData: string | undefined;
+    let txValue = valueWei;
+
+    if (oneInchCfg?.isActive && oneInchCfg.apiKey) {
+      const swapUrl =
+        `https://api.1inch.dev/swap/v6.0/${cfg.chainId}/swap?src=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE` +
+        `&dst=${encodeURIComponent(tokenAddress)}&amount=${valueWei.toString()}&from=${keys.evmAddress}` +
+        `&slippage=${Math.max(1, Math.min(49, Math.round(slippagePct)))}&disableEstimate=true`;
+      const res = await fetch(swapUrl, {
+        headers: { Authorization: `Bearer ${oneInchCfg.apiKey}` },
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null);
+      if (res?.ok) {
+        const j = (await res.json()) as { tx?: { to: string; data: string; value?: string } };
+        if (j.tx?.to && j.tx?.data) {
+          txTo = j.tx.to;
+          txData = j.tx.data;
+          if (j.tx.value) txValue = BigInt(j.tx.value);
+        }
+      }
+    }
+
+    if (!txData && cfg.v2Router) {
+      txTo = cfg.v2Router;
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      txData = buildV2SwapExactEthForTokensCalldata(0n, [cfg.wrappedNative, tokenAddress], keys.evmAddress, deadline);
+    }
+
+    if (!txTo || !txData) {
+      return {
+        executedOnchain: false,
+        txHash: null,
+        note: `مسیر روتر ${chainKey.toUpperCase()} نیاز به کلید فعال 1inch دارد (ثبت ردیابی خزانه)`,
+      };
+    }
+
+    const sent = await signAndBroadcastEvmTx({
+      chainIdName: chainKey,
+      privateKeyHex: keys.evmPrivateKeyHex,
+      to: txTo,
+      valueWei: txValue,
+      dataHex: txData,
+    });
+
+    return {
+      executedOnchain: true,
+      txHash: sent.txHash,
+      note: `✅ خرید واقعی آن‌چین ${chainKey.toUpperCase()} اجرا شد (${spendNative.toFixed(4)} ${cfg.nativeSymbol})`,
+    };
+  } catch (err) {
+    return {
+      executedOnchain: false,
+      txHash: null,
+      note: `شبیه‌ساز زنده EVM (${err instanceof Error ? err.message : 'Vault check'})`,
+    };
+  }
+}
+
+export async function withdrawCopyVaultToTrustWallet(
+  env: Env,
+  userId: string,
+  input: { chainId: string; toAddress: string; amountNative: number }
+): Promise<{ ok: boolean; txHash: string; explorerUrl: string; amountSent: number; symbol: string }> {
+  const chainKey = input.chainId.toLowerCase().trim();
+  const to = input.toAddress.trim();
+  const amount = Number(input.amountNative);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('مبلغ برداشت باید بزرگ‌تر از صفر باشد.');
+  }
+
+  const keys = await exportUserCopyVaultKeys(env, userId);
+
+  if (chainKey === 'solana') {
+    if (!isValidSolana(to)) throw new Error('آدرس مقصد سولانا نامعتبر است.');
+    const bal = await fetchSolanaBalance(keys.solanaAddress);
+    if (bal === null || bal < amount + 0.001) {
+      throw new Error(`موجودی SOL خزانه (${bal?.toFixed(4) ?? '0'}) برای ارسال + کارمزد شبکه کافی نیست.`);
+    }
+
+    const helius = await resolveOnchainApiKey(env, 'helius').catch(() => ({ apiKey: null, isActive: false }));
+    const rpcUrl =
+      helius.isActive && helius.apiKey
+        ? `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(helius.apiKey)}`
+        : 'https://api.mainnet-beta.solana.com';
+
+    const bhRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestBlockhash', params: [{ commitment: 'finalized' }] }),
+      signal: AbortSignal.timeout(7000),
+    });
+    const bhJson = (await bhRes.json().catch(() => ({}))) as { result?: { value?: { blockhash?: string } } };
+    const blockhash = bhJson.result?.value?.blockhash;
+    if (!blockhash) throw new Error('دریافت بلاک‌هش شبکه سولانا ناموفق بود.');
+
+    const fromPub = decodeBase58(keys.solanaAddress);
+    const toPub = decodeBase58(to);
+    const sysProg = new Uint8Array(32); // 11111111111111111111111111111111
+    const bhBytes = decodeBase58(blockhash);
+
+    const lamports = BigInt(Math.floor(amount * 1e9));
+    const ixData = new Uint8Array(12);
+    const view = new DataView(ixData.buffer);
+    view.setUint32(0, 2, true); // SystemProgram::Transfer
+    view.setBigUint64(4, lamports, true);
+
+    const msg = new Uint8Array(3 + 1 + 32 * 3 + 32 + 1 + 1 + 3 + 1 + 12);
+    let off = 0;
+    msg.set([1, 0, 1], off); off += 3; // header
+    msg[off++] = 3; // 3 accounts
+    msg.set(fromPub, off); off += 32;
+    msg.set(toPub, off); off += 32;
+    msg.set(sysProg, off); off += 32;
+    msg.set(bhBytes, off); off += 32;
+    msg[off++] = 1; // 1 instruction
+    msg[off++] = 2; // programId index (sysProg)
+    msg[off++] = 2; // 2 account indices
+    msg[off++] = 0; // from
+    msg[off++] = 1; // to
+    msg[off++] = 12; // data len
+    msg.set(ixData, off);
+
+    const seed32 = decodeBase58(keys.solanaSecretBase58).slice(0, 32);
+    const sig64 = ed25519.sign(msg, seed32);
+    const fullTx = new Uint8Array(1 + 64 + msg.length);
+    fullTx[0] = 1;
+    fullTx.set(sig64, 1);
+    fullTx.set(msg, 65);
+
+    let bin = '';
+    for (let i = 0; i < fullTx.length; i++) bin += String.fromCharCode(fullTx[i]!);
+    const b64 = btoa(bin);
+
+    const sendRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'sendTransaction', params: [b64, { encoding: 'base64' }] }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const sendJson = (await sendRes.json().catch(() => ({}))) as { result?: string; error?: { message?: string } };
+    if (!sendJson.result) {
+      throw new Error(sendJson.error?.message || 'ارسال تراکنش سولانا ناموفق بود.');
+    }
+    return {
+      ok: true,
+      txHash: sendJson.result,
+      explorerUrl: `https://solscan.io/tx/${sendJson.result}`,
+      amountSent: amount,
+      symbol: 'SOL',
+    };
+  }
+
+  const cfg = EVM_CHAIN_CONFIG[chainKey];
+  if (!cfg) throw new Error(`شبکه ${chainKey} برای برداشت مستقیم پشتیبانی نمی‌شود.`);
+  if (!isValidEvm(to)) throw new Error('آدرس مقصد EVM نامعتبر است (باید با 0x شروع شود).');
+
+  const bal = await fetchEvmNativeBalance(cfg.rpcUrls[0]!, keys.evmAddress);
+  const feeBuf = chainKey === 'bsc' ? 0.0005 : 0.0003;
+  if (bal === null || bal < amount + feeBuf) {
+    throw new Error(`موجودی ${cfg.nativeSymbol} خزانه (${bal?.toFixed(5) ?? '0'}) برای برداشت + گس کافی نیست.`);
+  }
+
+  const valueWei = BigInt(Math.floor(amount * 1e9)) * 1_000_000_000n;
+  const sent = await signAndBroadcastEvmTx({
+    chainIdName: chainKey,
+    privateKeyHex: keys.evmPrivateKeyHex,
+    to,
+    valueWei,
+    gasLimitOverride: 21_000n,
+  });
+
+  return {
+    ok: true,
+    txHash: sent.txHash,
+    explorerUrl: sent.explorerUrl,
+    amountSent: amount,
+    symbol: cfg.nativeSymbol,
+  };
+}
+
 async function evaluateAiGuardForToken(
   env: Env,
   pair: DexTokenEnriched,
@@ -1599,6 +1838,18 @@ export async function executeSmartCopySignalForRule(
       status: 'COPY_SELL_EXECUTED',
       message: `${closedCount} پوزیشن همراه با فروش تریدر بسته شد.`,
     };
+  }
+
+  // 0. Check 5% server profit-fee lock before opening new LIVE copy-vault trades
+  if (rule.execution_mode !== 'TRUST_ONE_CLICK') {
+    const feeCheck = await checkLiveFeeEnforcement(env.DB, rule.user_id);
+    if (!feeCheck.allowed) {
+      return {
+        ok: false,
+        status: 'FEE_SETTLEMENT_REQUIRED',
+        message: feeCheck.reasonFa || 'کپی‌ترید لایو به دلیل کارمزد ۵٪ معوق قفل شده است.',
+      };
+    }
   }
 
   // 1. Check daily loss limit & isolated margin availability
@@ -1759,18 +2010,19 @@ export async function executeSmartCopySignalForRule(
       );
       txHash = liveSwap.txHash;
       aiNote = `${aiNote} | ${liveSwap.note}`;
+    } else if (!rule.reverse_copy && EVM_CHAIN_CONFIG[signal.chainId.toLowerCase()]) {
+      const evmSwap = await executeLiveEvmVaultSwap(
+        env,
+        rule.user_id,
+        signal.chainId,
+        signal.tokenAddress,
+        desiredMargin,
+        Number(rule.max_slippage_pct || 10)
+      );
+      txHash = evmSwap.txHash;
+      aiNote = `${aiNote} | ${evmSwap.note}`;
     } else {
-      const evmId = EVM_CHAIN_HEX_MAP[signal.chainId.toLowerCase()];
-      const oneInchCfg = evmId ? await resolveOnchainApiKey(env, 'oneinch').catch(() => ({ apiKey: null, isActive: false })) : null;
-      let routeNote = 'رصد خودکار خزانه با قیمت لحظه‌ای DexScreener';
-      if (evmId && oneInchCfg?.isActive && oneInchCfg.apiKey) {
-        const qRes = await fetch(
-          `https://api.1inch.dev/swap/v6.0/${evmId}/quote?src=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&dst=${encodeURIComponent(signal.tokenAddress)}&amount=10000000000000000`,
-          { headers: { Authorization: `Bearer ${oneInchCfg.apiKey}` }, signal: AbortSignal.timeout(4500) }
-        ).catch(() => null);
-        if (qRes?.ok) routeNote = 'مسیر نقدینگی و نرخ توسط 1inch v6 تایید شد (رصد قیمت زنده خزانه)';
-      }
-      aiNote = `${aiNote} | ${routeNote}`;
+      aiNote = `${aiNote} | رصد خودکار خزانه با قیمت لحظه‌ای DexScreener`;
     }
   }
 
@@ -1833,8 +2085,9 @@ export async function executeSmartCopySignalForRule(
     .first<{ telegram_id: string | null }>()
     .catch(() => null);
 
-  if (tgUser?.telegram_id && env.TELEGRAM_BOT_TOKEN) {
-    const tgClient = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const botToken = tgUser?.telegram_id ? await resolveTelegramBotToken(env) : '';
+  if (tgUser?.telegram_id && botToken) {
+    const tgClient = new TelegramBotClient(botToken);
     const msg =
       `${isOneClickTrust ? '🐋 **سیگنال کپی‌ترید آماده امضا در Trust Wallet**' : '⚡ **کپی‌ترید خودکار انجام شد**'}\n\n` +
       `👤 تریدر: **${rule.trader_label}**\n` +
@@ -1898,6 +2151,16 @@ export async function closeCopyPositionV2(
        WHERE id = ?`
     ).bind(pos.margin_usd, Number(lossIncrement.toFixed(2)), pos.rule_id),
   ]);
+
+  await recordProfitShareServerFee(env.DB, {
+    userId: pos.user_id,
+    tradeId: pos.id,
+    source: 'COPY_V2_LIVE',
+    symbol: pos.token_symbol,
+    mode: pos.execution_mode === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE',
+    realizedPnlUsd: finalUsd,
+    tradeAmountUsd: Number(pos.margin_usd || 0),
+  }).catch(() => {});
 }
 
 export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promise<number> {

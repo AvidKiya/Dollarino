@@ -685,7 +685,7 @@ export function StrategyIdePanel({
                   },
                   { l: isFa ? 'کل معاملات' : 'Trades', v: String(evalRes.backtestSummary.metrics.totalTrades), c: 'text-main' },
                   { l: isFa ? 'نرخ برد' : 'Win Rate', v: `${evalRes.backtestSummary.metrics.winRatePct.toFixed(1)}%`, c: 'text-goldsoft' },
-                  { l: 'Profit Factor', v: evalRes.backtestSummary.metrics.profitFactor.toFixed(2), c: 'text-jade' },
+                  { l: 'Profit Factor', v: evalRes.backtestSummary.metrics.profitFactor >= 90 ? '∞' : evalRes.backtestSummary.metrics.profitFactor.toFixed(2), c: 'text-jade' },
                   { l: 'Sharpe', v: evalRes.backtestSummary.metrics.sharpeEstimate.toFixed(2), c: 'text-brand' },
                   { l: isFa ? 'حداکثر افت' : 'Max DD', v: `${evalRes.backtestSummary.metrics.maxDrawdownPct.toFixed(2)}%`, c: 'text-loss' },
                 ].map((m) => (
@@ -695,9 +695,14 @@ export function StrategyIdePanel({
                   </div>
                 ))}
               </div>
-              {evalRes.backtestSummary.equityCurve.length > 2 && (
-                <div className="h-36 rounded-2xl bg-black/20 border hairline p-3">
-                  <AreaChart values={evalRes.backtestSummary.equityCurve.map((p) => p.equity)} height={116} />
+              {evalRes.backtestSummary.equityCurve.length >= 2 && (
+                <div className="h-52 rounded-2xl surface-soft border hairline p-3">
+                  <AreaChart
+                    values={evalRes.backtestSummary.equityCurve.map((p) => p.equity)}
+                    points={evalRes.backtestSummary.equityCurve.map((p) => ({ time: p.time, equity: p.equity }))}
+                    baseline={1000}
+                    height={180}
+                  />
                 </div>
               )}
             </div>

@@ -227,14 +227,14 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
 
   const quickPrompts = isFa
     ? [
-        'چطور صرافی Toobit یا KCEX را وصل کنم؟',
-        'نحوه اتصال Trust Wallet و خرید توکن DEX چیست؟',
-        'چطور ربات هوش مصنوعی را برای ترید خودکار روشن کنم؟',
+        'چطور ربات را با تایید دستی یا تمام‌اتوترید ۲۴ ساعته روی Trust Wallet اجرا کنم؟',
+        'نحوه اتصال Trust Wallet و خرید توکن DEX یا Perp DEX چیست؟',
+        'چطور از حساب دمو $10,000 شبیه‌ساز استفاده کنم؟',
       ]
     : [
-        'How do I connect Toobit or KCEX safely?',
-        'How does Trust Wallet & DexScreener swap work?',
-        'How do I start AI auto-trading?',
+        'How do I switch between Manual Approval and 24/7 Full Auto-Trade on Trust Wallet?',
+        'How does multi-chain Trust Wallet & DexScreener swap work?',
+        'How does the $10,000 Trust Wallet Demo Simulator work?',
       ];
 
   return (
@@ -253,7 +253,7 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
               <div className="flex items-center gap-3 min-w-0">
                 <div className="relative h-12 w-12 rounded-2xl overflow-hidden shrink-0 border hairline shadow-lg">
                   <img
-                    src="/images/support-concierge.png"
+                    src="/images/support-concierge.webp"
                     alt="Dollarino Support"
                     className="h-full w-full object-cover"
                   />
@@ -441,7 +441,7 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
             <div className="py-4 space-y-4">
               <div className="surface-soft rounded-3xl p-4 border hairline flex flex-col sm:flex-row items-center gap-4 text-center sm:text-start">
                 <img
-                  src="/images/support-concierge.png"
+                  src="/images/support-concierge.webp"
                   alt="Dollarino AI Concierge"
                   className="w-28 h-20 rounded-2xl object-cover border hairline shadow-md shrink-0"
                 />
@@ -456,8 +456,8 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
                   </p>
                   <p className="text-[11px] text-dim leading-relaxed">
                     {isFa
-                      ? 'درباره اتصال Toobit / Bitunix / KCEX، کیف‌پول چندزنجیره‌ای Trust Wallet، ربات AI، اشتراک یا اکستنشن سوال بپرسید.'
-                      : 'Ask about Toobit/Bitunix/KCEX, multi-chain Trust Wallet, AI bots, or plans.'}
+                      ? 'درباره اتصال چندزنجیره‌ای Trust Wallet، شبیه‌ساز دمو $10K، حالت ۲۴/۷ اتوترید یا اکستنشن سوال بپرسید.'
+                      : 'Ask about multi-chain Trust Wallet, $10K Demo Simulator, 24/7 Auto-Trade, or plans.'}
                   </p>
                 </div>
               </div>
@@ -465,9 +465,9 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
               <div className="grid sm:grid-cols-2 gap-2.5">
                 {[
                   {
-                    badge: isFa ? 'صرافی‌ها' : 'Exchanges',
-                    title: isFa ? 'اتصال Toobit، Bitunix یا KCEX' : 'Connect Toobit, Bitunix or KCEX',
-                    prompt: isFa ? 'چطور صرافی Toobit یا Bitunix یا KCEX را وصل کنم؟' : 'How do I connect Toobit, Bitunix or KCEX safely?',
+                    badge: isFa ? 'اتوترید ۲۴/۷' : '24/7 Auto',
+                    title: isFa ? 'تایید دستی یا اتوترید ۲۴ ساعته' : 'Manual vs 24/7 Auto-Trade',
+                    prompt: isFa ? 'چطور ربات را روی Trust Wallet با تایید دستی یا اتوترید ۲۴ ساعته تنظیم کنم؟' : 'How do I switch between Manual Approval and 24/7 Full Auto-Trade?',
                   },
                   {
                     badge: isFa ? 'کیف‌پول و DEX' : 'Wallet & DEX',

@@ -437,8 +437,9 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(String(welcomeCall!.body.text)).not.toContain('**');
     expect(welcomeCall!.body.parse_mode).toBe('HTML');
     const kbText = JSON.stringify(welcomeCall!.body.reply_markup);
-    expect(kbText).toContain('اتصال به صرافی 🔗');
-    expect(kbText).toContain('Trust Wallet و DEX');
+    expect(kbText).toContain('🛡 اتصال Trust Wallet');
+    expect(kbText).toContain('⚡ رفتن به حالت حرفه‌ای');
+    expect(kbText).toContain('💰 کارمزد ۵٪ سود (رایگان)');
     expect(kbText).toContain('راهنما 📚');
 
     // Help text must never emit literal backslash-n or giant 10-row inline menu
@@ -512,22 +513,14 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
        VALUES ('sub_live_1', 'usr_web_link_1', 'pro_monthly', 'ACTIVE', datetime('now'), datetime('now', '+30 days'))`
     ).run();
 
+    // V10: Direct Trust Wallet connection & TP split configuration (no CEX API keys)
     tgCalls = [];
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
       update_id: 12,
-      message: { message_id: 22, from: { id: 1002009 }, chat: { id: 1002009, type: 'private' }, text: 'KCEX (کی‌سی‌ای‌ایکس - ۰٪ کارمزد) 🔵' },
+      message: { message_id: 22, from: { id: 1002009 }, chat: { id: 1002009, type: 'private' }, text: '🛡 اتصال Trust Wallet' },
     });
-    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
-      update_id: 13,
-      message: { message_id: 23, from: { id: 1002009 }, chat: { id: 1002009, type: 'private' }, text: 'kcex_key_123456' },
-    });
-    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
-      update_id: 14,
-      message: { message_id: 24, from: { id: 1002009 }, chat: { id: 1002009, type: 'private' }, text: 'kcex_secret_7890' },
-    });
-
-    const kcexOk = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('اتصال به KCEX') && String(c.body.text).includes('Free:'));
-    expect(kcexOk).toBeTruthy();
+    const twPrompt = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('Trust Wallet'));
+    expect(twPrompt).toBeTruthy();
 
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
       update_id: 15,
@@ -754,7 +747,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       tp1: '92000',
       leverage: 10,
     });
-    expect(lossCard).toContain('ضرر هم جزئی از بازار🥲');
+    expect(lossCard).toContain('بسته‌شدن معامله با مدیریت ریسک 🛡');
   });
 
   it('enforces paid-only gating, collapsible colored inline menus, My AI training, and unified Online Support', async () => {
@@ -785,7 +778,9 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       update_id: 62,
       callback_query: { id: 'cq_gate', from: { id: 2002002 }, message: { chat: { id: 2002002 }, message_id: 71 }, data: 'tg_mode_simple_ai' },
     });
-    expect(tgCalls.some((c) => String(c.body.text).includes('تعرفه‌های فعال'))).toBe(true);
+    // V10: Zero paid subscription gate — tapping AI mode activates immediately without paywall!
+    expect(tgCalls.some((c) => String(c.body.text).includes('تعرفه‌های فعال'))).toBe(false);
+    expect(tgCalls.some((c) => String(c.body.text || '').length > 10)).toBe(true);
 
     // Train Personal Raw AI ("هوش مصنوعی من")
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
@@ -1071,6 +1066,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(JSON.stringify(tgCalls[0]?.body.reply_markup)).toContain('tg_profit_issue:1Y:horizontal');
 
     const followerRow = await db.prepare(`SELECT id FROM users WHERE telegram_id = '2002002'`).first<{ id: string }>();
+    await db.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', strategy_key = 'copy_trade' WHERE user_id = ?`).bind(followerRow!.id).run();
     await db.prepare(
       `INSERT INTO user_subscriptions (id, user_id, plan_code, status, expires_at) VALUES ('sub_f1', ?, 'pro_monthly', 'ACTIVE', datetime('now', '+30 days'))`
     ).bind(followerRow!.id).run();

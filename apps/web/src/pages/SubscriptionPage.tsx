@@ -1,71 +1,72 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowUpRight,
-  Award,
   CheckCircle2,
   Clock,
   Copy,
-  CreditCard,
-  Crown,
-  Eye,
+  Download,
   Gift,
-  ImagePlus,
+  Info,
+  Link2,
+  Lock,
+  MessageSquareText,
   Send,
+  Share2,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Users,
   Wallet,
-  X,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
-import { buildTrustWalletDappOpenUrl, sendBep20UsdtViaTrustWallet } from '../lib/trustwallet';
-import { ExchangeLogo, WalletLogo } from '../components/BrandLogos';
-import { compressChartImageFile } from '../components/FloatingAiChat';
+import { formatTomanEq } from '../lib/format';
+import { tgNotifyHaptic } from '../lib/telegram';
 
-export interface UserEntitlement {
-  hasPaidPlan: boolean;
-  planCode: string;
-  planNameFa: string;
-  planNameEn: string;
-  status: string;
-  allowPaperDemo: boolean;
-  allowAiTrading: boolean;
-  allowCodexbot: boolean;
-  allowCopyTrade: boolean;
-  allowLiveTrading: boolean;
-  daysRemaining: number;
-  expiresAt: string | null;
-  subscriptionRequired: boolean;
-}
-
-interface PlanRow {
-  code: string;
-  name_fa: string;
-  name_en: string;
-  description_fa: string | null;
-  description_en: string | null;
-  price_usd: number;
-  price_toman: number;
-  duration_days: number;
-  features_json: string;
-  is_popular: number;
-}
-
-interface SubOrder {
+interface ServerFeeEntry {
   id: string;
-  plan_code: string;
-  name_fa?: string;
-  name_en?: string;
-  status: string;
-  payment_method: string;
-  payment_reference: string | null;
-  receipt_image_url?: string | null;
-  amount_usd: number;
-  admin_note: string | null;
-  expires_at: string | null;
+  trade_id: string | null;
+  source: string;
+  symbol: string;
+  realized_pnl_usd: number;
+  fee_pct: number;
+  fee_usd: number;
+  status: 'ACCRUED' | 'PENDING_VERIFY' | 'SETTLED_ONCHAIN' | 'SETTLED_PREPAID' | 'REJECTED' | 'WAIVED';
+  tx_hash: string | null;
+  note: string | null;
   created_at: string;
+}
+
+interface FeeEnforcementInfo {
+  allowed: boolean;
+  lockStatus: 'ACTIVE' | 'WARNING' | 'PENDING_REVIEW' | 'LOCKED';
+  reasonFa?: string;
+  reasonEn?: string;
+  accruedUsd: number;
+  pendingVerifyUsd: number;
+  penaltyUsd: number;
+  totalDueUsd: number;
+  prepaidCreditUsd: number;
+  graceLimitUsd: number;
+  graceDeadline: string | null;
+  hoursRemaining: number | null;
+  latePenaltyPct: number;
+  autoLockEnabled: boolean;
+}
+
+interface ServerFeePayload {
+  feePct: number;
+  totalProfitablePnlUsd: number;
+  totalFeeUsd: number;
+  accruedFeeUsd: number;
+  pendingVerifyFeeUsd?: number;
+  settledFeeUsd: number;
+  profitableTradesCount: number;
+  enforcement?: FeeEnforcementInfo;
+  entries: ServerFeeEntry[];
+  receivers: Record<string, string>;
+  honestArchitectureNoteFa: string;
+  honestArchitectureNoteEn: string;
 }
 
 export function SubscriptionPage({
@@ -76,1149 +77,785 @@ export function SubscriptionPage({
   onRefreshDashboard: () => Promise<void>;
 }) {
   const isFa = lang === 'fa';
-  const [entitlement, setEntitlement] = useState<UserEntitlement | null>(null);
-  const [plans, setPlans] = useState<PlanRow[]>([]);
-  const [orders, setOrders] = useState<SubOrder[]>([]);
-  const [payCfg, setPayCfg] = useState<Record<string, string>>({});
-  const [selectedPlan, setSelectedPlan] = useState<PlanRow | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'TRUST_WALLET_BEP20' | 'USDT_TRC20' | 'CARD_TO_CARD'>('USDT_TRC20');
-  const [paymentRef, setPaymentRef] = useState('');
-  const [receiptImage, setReceiptImage] = useState<string | null>(null);
-  const [lightboxReceipt, setLightboxReceipt] = useState<string | null>(null);
-  const [payerNote, setPayerNote] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [copied, setCopied] = useState('');
+  const [ledger, setLedger] = useState<ServerFeePayload | null>(null);
+  const [iranRate, setIranRate] = useState<number>(74500);
+  const [txHash, setTxHash] = useState('');
+  const [prepayAmount, setPrepayAmount] = useState('10');
+  const [prepayTxHash, setPrepayTxHash] = useState('');
   const [giftCode, setGiftCode] = useState('');
-  const [redeeming, setRedeeming] = useState(false);
-  const [redeemUsd, setRedeemUsd] = useState('5');
-  const [wdAmount, setWdAmount] = useState('10');
-  const [wdNetwork, setWdNetwork] = useState<'BEP20' | 'TRC20'>('BEP20');
-  const [wdWallet, setWdWallet] = useState('');
-  const [refBusy, setRefBusy] = useState(false);
-  const receiptInputRef = useRef<HTMLInputElement | null>(null);
-  const checkoutRef = useRef<HTMLDivElement | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState('');
   const [referral, setReferral] = useState<{
     referralCode: string;
     inviteUrl?: string;
     telegramInviteUrl?: string;
-    tier?: 'BRONZE' | 'SILVER' | 'GOLD' | string;
+    inviteTextFa?: string;
+    inviteTextEn?: string;
+    tier?: string;
     commissionPct?: number;
-    renewalPct?: number;
+    nonWithdrawable?: boolean;
+    minFriendBalanceUsd?: number;
+    activationBonusReferrerUsd?: number;
+    activationBonusFriendUsd?: number;
+    feeCreditBalanceUsd?: number;
+    referralFeeCreditEarnedUsd?: number;
+    nonWithdrawablePolicyFa?: string;
+    nonWithdrawablePolicyEn?: string;
     balanceUsd?: number;
     totalEarnedUsd?: number;
     totalReferred: number;
     qualifiedReferred?: number;
     flaggedCount?: number;
-    rewardDaysEarned: number;
     referrals: Array<{
       id?: string;
       username: string;
-      reward_days?: number;
       commission_usd?: number;
       status?: string;
-      fraud_flag?: number;
-      phone_verified?: boolean;
-      created_at: string;
-    }>;
-    withdrawals?: Array<{
-      id: string;
-      amount_usd: number;
-      target_type: string;
-      wallet_address?: string | null;
-      network?: string | null;
-      status: string;
-      tx_hash?: string | null;
-      admin_note?: string | null;
-      created_at: string;
+      qualificationStatus?: 'QUALIFIED_ACTIVE' | 'PENDING_BALANCE_OR_TRADE' | 'FLAGGED_DUPLICATE';
+      friendHasMinBalance?: boolean;
+      friendLiveTradesCount?: number;
     }>;
   } | null>(null);
+  const [bannerBusy, setBannerBusy] = useState(false);
 
-  const loadData = async () => {
-    const [res, refRes] = await Promise.all([
-      apiFetch<{
-        entitlement: UserEntitlement;
-        plans: PlanRow[];
-        orders: SubOrder[];
-        paymentConfig: Record<string, string>;
-      }>('/api/subscriptions/me'),
-      apiFetch<NonNullable<typeof referral>>('/api/subscriptions/referrals').catch(() => null),
-    ]);
-    setEntitlement(res.entitlement);
-    setPlans(res.plans);
-    setOrders(res.orders);
-    setPayCfg(res.paymentConfig);
-    if (refRes) setReferral(refRes);
-    if (!selectedPlan) {
-      const def = res.plans.find((p) => p.code === 'pro_monthly') || res.plans.find((p) => p.price_usd > 0) || null;
-      setSelectedPlan(def);
-    }
-  };
-
-  const handleRedeemRefBalance = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRefBusy(true);
-    setMsg(null);
+  const loadAll = async () => {
     try {
-      const amt = Number(redeemUsd || 0);
-      const r = await apiFetch<{ ok: boolean; convertedUsd: number; daysGranted: number }>('/api/subscriptions/referrals/redeem-balance', {
-        method: 'POST',
-        body: JSON.stringify({ amountUsd: amt }),
-      });
-      setMsg(
-        isFa
-          ? `$${r.convertedUsd.toFixed(2)} از موجودی رفرال شما تبدیل به +${r.daysGranted} روز اشتراک پرو شد!`
-          : `Converted $${r.convertedUsd.toFixed(2)} referral balance to +${r.daysGranted} Pro days!`
-      );
-      await loadData();
-      await onRefreshDashboard();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Redeem failed');
-    } finally {
-      setRefBusy(false);
-    }
-  };
-
-  const handleWithdrawRef = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRefBusy(true);
-    setMsg(null);
-    try {
-      const amt = Number(wdAmount || 0);
-      const r = await apiFetch<{ ok: boolean; withdrawalId: string }>('/api/subscriptions/referrals/withdraw', {
-        method: 'POST',
-        body: JSON.stringify({
-          amountUsd: amt,
-          network: wdNetwork,
-          walletAddress: wdWallet.trim(),
-        }),
-      });
-      setWdWallet('');
-      setMsg(
-        isFa
-          ? `درخواست برداشت $${amt.toFixed(2)} USDT (${wdNetwork}) ثبت شد (کد پیگیری: ${r.withdrawalId}). پس از تایید امنیتی ادمین واریز می‌شود.`
-          : `Withdrawal request $${amt.toFixed(2)} USDT (${wdNetwork}) submitted (#${r.withdrawalId}).`
-      );
-      await loadData();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Withdrawal failed');
-    } finally {
-      setRefBusy(false);
-    }
-  };
-
-  const redeemGift = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!giftCode.trim()) return;
-    setRedeeming(true);
-    setMsg(null);
-    try {
-      const r = await apiFetch<{ ok: boolean; durationDays: number; expiresAt: string }>('/api/subscriptions/redeem-gift', {
-        method: 'POST',
-        body: JSON.stringify({ code: giftCode.trim() }),
-      });
-      setGiftCode('');
-      setMsg(
-        isFa
-          ? `کد هدیه فعال شد! ${r.durationDays} روز اشتراک به حساب شما اضافه گردید.`
-          : `Gift code redeemed! +${r.durationDays} days added to your subscription.`
-      );
-      await loadData();
-      await onRefreshDashboard();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Gift code invalid');
-    } finally {
-      setRedeeming(false);
+      const [feeRes, rateRes, refRes] = await Promise.all([
+        apiFetch<ServerFeePayload>('/api/subscriptions/server-fees'),
+        apiFetch<{ usdtIrt: number }>('/api/public/usdt-irt-rate').catch(() => ({ usdtIrt: 74500 })),
+        apiFetch<typeof referral>('/api/subscriptions/referrals').catch(() => null),
+      ]);
+      setLedger(feeRes);
+      if (rateRes?.usdtIrt) setIranRate(rateRes.usdtIrt);
+      if (refRes) setReferral(refRes);
+    } catch {
+      /* ignore */
     }
   };
 
   useEffect(() => {
-    void loadData();
+    void loadAll();
   }, []);
 
+  const handleSettle = async () => {
+    if (txHash.trim().length < 32) {
+      setMsg(isFa ? 'فرمت هش تراکنش (TX Hash) معتبر نیست — هش واقعی بلاکچین را وارد کنید.' : 'Enter a valid blockchain TX Hash.');
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch<{ ok: boolean; settledCount: number; status?: string }>('/api/subscriptions/server-fees/settle', {
+        method: 'POST',
+        body: JSON.stringify({ txHash }),
+      });
+      tgNotifyHaptic('success');
+      setMsg(
+        res.status === 'PENDING_VERIFY'
+          ? isFa
+            ? 'تراکنش شما ثبت شد و در انتظار تایید آن‌چین / ادمین جهت بازگشایی حساب قرار گرفت ⏳'
+            : 'Settlement TX submitted and queued for verification ⏳'
+          : isFa
+            ? `${res.settledCount} ردیف کارمزد سرور تسویه و حساب کاملاً آزاد شد ✅`
+            : `Settled ${res.settledCount} fee entries ✅`
+      );
+      setTxHash('');
+      await loadAll();
+      await onRefreshDashboard();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Settlement failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePrepay = async () => {
+    const amt = Number(prepayAmount || 0);
+    if (!Number.isFinite(amt) || amt < 1) {
+      setMsg(isFa ? 'حداقل مبلغ شارژ اعتبار کارمزد ۱ دلار است.' : 'Minimum credit top-up is $1.');
+      return;
+    }
+    if (prepayTxHash.trim().length < 32) {
+      setMsg(isFa ? 'لطفاً هش تراکنش معتبر شارژ اعتبار را وارد کنید.' : 'Enter valid prepay TX Hash.');
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch<{ ok: boolean; autoConfirmed: boolean }>('/api/subscriptions/server-fees/prepay', {
+        method: 'POST',
+        body: JSON.stringify({ amountUsd: amt, txHash: prepayTxHash }),
+      });
+      tgNotifyHaptic('success');
+      setMsg(
+        res.autoConfirmed
+          ? isFa
+            ? `اعتبار پیش‌پرداخت $${amt} تایید و شارژ شد ✅`
+            : `$${amt} prepaid fee credit confirmed ✅`
+          : isFa
+            ? `درخواست شارژ $${amt} ثبت شد و پس از تایید، کارمزد ۵٪ خودکار از آن کسر می‌شود ⏳`
+            : `Prepay request ($${amt}) submitted for verification ⏳`
+      );
+      setPrepayTxHash('');
+      await loadAll();
+      await onRefreshDashboard();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Prepay failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRedeemGift = async () => {
+    if (!giftCode.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch<{ ok: boolean }>('/api/subscriptions/redeem-gift', {
+        method: 'POST',
+        body: JSON.stringify({ code: giftCode }),
+      });
+      if (res.ok) {
+        setMsg(isFa ? 'کد هدیه با موفقیت ثبت شد ✅' : 'Gift code redeemed ✅');
+        setGiftCode('');
+        await onRefreshDashboard();
+      }
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Invalid code');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const copyText = (val: string, key: string) => {
-    void navigator.clipboard?.writeText(val);
+    void navigator.clipboard.writeText(val);
     setCopied(key);
     setTimeout(() => setCopied(''), 1800);
   };
 
-  const handleReceiptFile = async (file?: File | null) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setMsg(isFa ? 'فقط تصویر معتبر (PNG/JPG/WebP) به عنوان عکس رسید پذیرفته می‌شود.' : 'Please select a valid receipt image.');
-      return;
-    }
-    try {
-      const compressed = await compressChartImageFile(file);
-      setReceiptImage(compressed);
-      setMsg(null);
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Receipt upload failed');
-    }
-  };
-
-  const submitCheckout = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedPlan || selectedPlan.price_usd <= 0) return;
-    if (!receiptImage && paymentRef.trim().length < 5) {
-      setMsg(isFa ? 'لطفاً عکس رسید واریز را آپلود کنید یا کد پیگیری / TXID وارد نمایید.' : 'Please upload a receipt photo or enter a TXID.');
-      return;
-    }
-    setSubmitting(true);
-    setMsg(null);
-    try {
-      const res = await apiFetch<{ ok?: boolean; autoVerified?: boolean; message?: string }>('/api/subscriptions/checkout', {
-        method: 'POST',
-        body: JSON.stringify({
-          planCode: selectedPlan.code,
-          paymentMethod,
-          paymentReference: paymentRef.trim(),
-          receiptImageDataUrl: receiptImage,
-          payerNote: payerNote.trim(),
-        }),
-      });
-      setPaymentRef('');
-      setReceiptImage(null);
-      setPayerNote('');
-      setMsg(
-        res.autoVerified
-          ? isFa
-            ? 'تراکنش بلاک‌چین تایید خودکار شد و اشتراک شما هم‌اکنون فعال گردید!'
-            : 'Blockchain transaction auto-verified! Your subscription is now ACTIVE.'
-          : res.message ||
-            (isFa
-              ? 'پرداخت و رسید شما با موفقیت ثبت شد! پس از تایید سریع مدیریت، اشتراک شما فعال می‌شود.'
-              : 'Payment submitted! Once verified by admin, your Pro/VIP license activates immediately.')
-      );
-      await loadData();
-      await onRefreshDashboard();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Checkout failed');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleInstantTrustWalletPay = async () => {
-    if (!selectedPlan || selectedPlan.price_usd <= 0) return;
-    const toAddr = (payCfg.trust_wallet_evm_receiver || '').trim();
-    if (!toAddr || !toAddr.startsWith('0x')) {
-      setMsg(
-        isFa
-          ? 'آدرس دریافت BEP20 در پنل ادمین تنظیم نشده است. لطفاً روش TRC20 یا کارت به کارت را انتخاب کنید.'
-          : 'Platform BEP20 receiver address is not configured yet.'
-      );
-      return;
-    }
-    setSubmitting(true);
-    setMsg(null);
-    try {
-      const txHash = await sendBep20UsdtViaTrustWallet({ toAddress: toAddr, amountUsdt: selectedPlan.price_usd });
-      setPaymentRef(txHash);
-      const res = await apiFetch<{ ok?: boolean; autoVerified?: boolean; message?: string }>('/api/subscriptions/checkout', {
-        method: 'POST',
-        body: JSON.stringify({
-          planCode: selectedPlan.code,
-          paymentMethod: 'TRUST_WALLET_BEP20',
-          paymentReference: txHash,
-          payerNote: 'Instant Trust Wallet DApp Pay',
-        }),
-      });
-      setMsg(
-        res.autoVerified
-          ? isFa
-            ? `پرداخت Trust Wallet با TX ${txHash.slice(0, 12)}... تایید آن‌چین شد و اشتراک فعال گردید!`
-            : `Trust Wallet payment verified on-chain (${txHash.slice(0, 12)}...)!`
-          : res.message ||
-            (isFa
-              ? `تراکنش ${txHash.slice(0, 12)}... ارسال و ثبت شد! پس از تایید بلاک BSC اشتراک فوراً فعال می‌شود.`
-              : `Transaction submitted (${txHash.slice(0, 12)}...).`)
-      );
-      await loadData();
-      await onRefreshDashboard();
-    } catch (err) {
-      const code = err instanceof Error ? err.message : '';
-      if (code === 'NO_INJECTED_WALLET') {
-        window.open(buildTrustWalletDappOpenUrl(`${window.location.origin}/?tab=pricing`), '_blank', 'noopener,noreferrer');
-        setMsg(
-          isFa
-            ? 'در مرورگر فعلی افزونه کیف‌پول یافت نشد؛ صفحه در اپلیکیشن Trust Wallet DApp باز می‌شود یا پس از واریز، هش تراکنش (TXID) را ثبت کنید.'
-            : 'Opening inside Trust Wallet DApp Browser...'
-        );
-      } else {
-        setMsg(code || 'Trust Wallet payment cancelled');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const enf = ledger?.enforcement;
 
   return (
-    <div className="space-y-6">
-      {/* Hero License Banner */}
-      <div className="hero-cobalt p-6 text-white flex flex-col lg:flex-row lg:items-center justify-between gap-4 overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <img
-            src="/images/vip-club-banner.png"
-            alt="Dollarino VIP Subscriptions"
-            className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl object-cover border border-white/20 shadow-lg shrink-0 mx-auto sm:mx-0"
-          />
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Crown className={`w-5 h-5 ${entitlement?.hasPaidPlan ? 'text-[#55ff94]' : 'text-[#fde047]'}`} />
-              <h1 className="text-lg font-black">
-                {isFa ? entitlement?.planNameFa || 'وضعیت اشتراک' : entitlement?.planNameEn || 'Subscription Status'}
-              </h1>
-              <span className="px-3 py-0.5 rounded-full text-[11px] font-bold bg-white/15">
-                {entitlement?.hasPaidPlan
-                  ? isFa
-                    ? `فعال · ${entitlement.daysRemaining} روز`
-                    : `ACTIVE · ${entitlement.daysRemaining}d`
-                  : isFa
-                    ? 'بدون اشتراک فعال'
-                    : 'Subscription Required'}
-              </span>
-            </div>
-            <p className="text-xs text-white/85 mt-1.5 leading-relaxed max-w-2xl">
-              {entitlement?.hasPaidPlan
-                ? isFa
-                  ? 'دسترسی کامل به ترید هوشمند اتومات، هوش مصنوعی من، کپی‌ترید تاییدشده، استراتژی شخصی و صرافی‌های Toobit، Bitunix و KCEX فعال است.'
-                  : 'Full access unlocked: Auto AI Trading, My Trainable AI, Verified Copy-Trade, Custom IDE & Live Toobit/Bitunix/KCEX.'
-                : isFa
-                  ? 'برای استفاده از ترید هوشمند، هوش مصنوعی من، کپی‌ترید تاییدشده و استراتژی شخصی، ابتدا یکی از اشتراک‌های زیر را انتخاب و فعال کنید.'
-                  : 'Activate a subscription plan below to unlock Auto AI Trading, My AI, Verified Copy-Trade, and Custom Strategies.'}
-            </p>
+    <div className="space-y-6 pb-8">
+      {/* Hero Banner: Free Forever + 5% Only On Real Profit */}
+      <div className="panel rounded-3xl p-6 border hairline flex flex-col md:flex-row items-center gap-6">
+        <img
+          src="/images/transparent/rocket-profit-3d.png"
+          alt="Dollarino 5% Profit Only"
+          className="h-28 w-28 object-contain shrink-0"
+        />
+        <div className="flex-1 text-center md:text-start space-y-2">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] text-xs font-black">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{isFa ? 'اشتراک ماهانه حذف شد · ۱۰۰٪ رایگان برای همه' : 'Zero Monthly Subscriptions · 100% Free Access'}</span>
           </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 text-xs">
-          {[
-            { ok: entitlement?.hasPaidPlan, label: isFa ? 'ترید هوشمند اتومات AI' : 'Auto AI Trading' },
-            { ok: entitlement?.allowAiTrading, label: isFa ? 'هوش مصنوعی من' : 'My Trainable AI' },
-            { ok: entitlement?.allowCopyTrade, label: isFa ? 'کپی‌ترید تاییدشده' : 'Verified Copy-Trade' },
-            { ok: entitlement?.allowLiveTrading, label: isFa ? 'صرافی Toobit / Bitunix / KCEX' : 'Live Toobit / Bitunix / KCEX' },
-          ].map((e) => (
-            <span
-              key={e.label}
-              className={`px-3 py-1 rounded-xl inline-flex items-center gap-1 font-bold ${
-                e.ok ? 'bg-[#059669] text-white shadow' : 'bg-white/10 text-white/60'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" /> {e.label}
-            </span>
-          ))}
+          <h1 className="text-xl sm:text-2xl font-black text-main">
+            {isFa
+              ? 'فقط ۵٪ کارمزد سرور از سود معاملات واقعی (اشتراک و دمو = رایگان!)'
+              : '5% Server Fee Strictly on Real Profits (Subscription & Demo = $0)'}
+          </h1>
+          <p className="text-xs sm:text-sm text-sub leading-relaxed">
+            {isFa
+              ? 'در دلارینو تمام امکانات رایگان است و ۹۵٪ سود معاملات متعلق به شماست. تا سقف ۲ دلار بدهی (معادل ۴۰ دلار سود واقعی!) کاملاً آزاد هستید و پس از آن ۷۲ ساعت فرصت تسویه دارید؛ در صورت عدم تسویه، ربات لایو تا تسویه یا شارژ اعتبار قفل می‌شود و جریمه دیرکرد اعمال می‌گردد.'
+              : 'All tools are 100% free and you keep 95% of real profits. You get a $2.00 fee grace limit ($40+ real profits) + 72h settlement window; unpaid overdue balances pause LIVE trading and apply a late surcharge until settled.'}
+          </p>
         </div>
       </div>
 
-      {msg && (
-        <div className="surface-card p-4 border-brand text-xs text-main font-semibold">
-          {msg}
-        </div>
-      )}
-
-      {/* Paid & Free Plans Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {plans.filter((p) => p.price_usd > 0).map((p) => {
-          let feats: string[] = [];
-          try {
-            feats = JSON.parse(p.features_json) as string[];
-          } catch {
-            feats = [];
-          }
-          const isSelected = selectedPlan?.code === p.code;
-          const isCurrent = entitlement?.planCode === p.code;
-
-          return (
-            <div
-              key={p.code}
-              className={`p-6 rounded-3xl flex flex-col justify-between gap-4 panel-hover ${
-                p.is_popular ? 'hero-cobalt text-white' : 'surface-card'
-              } ${isSelected && !p.is_popular ? 'ring-2 ring-[#1464F6]' : ''}`}
-            >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className={`font-black text-base ${p.is_popular ? 'text-white' : 'text-main'}`}>
-                    {isFa ? p.name_fa : p.name_en}
-                  </span>
-                  {p.is_popular ? (
-                    <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-black">
-                      {isFa ? 'محبوب‌ترین' : 'POPULAR'}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div>
-                  <div className="flex items-baseline gap-2 font-mono-num">
-                    <span className={`text-3xl font-black ${p.is_popular ? 'text-white' : 'text-main'}`}>
-                      ${p.price_usd}
-                    </span>
-                    <span className={`text-xs ${p.is_popular ? 'text-white/75' : 'text-dim'}`}>
-                      / {p.duration_days} {isFa ? 'روز' : 'days'}
-                    </span>
-                  </div>
-                  {p.price_toman > 0 && (
-                    <p className={`text-xs font-extrabold mt-1 ${p.is_popular ? 'text-[#7dffb0]' : 'text-signal'}`}>
-                      {p.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}
-                    </p>
-                  )}
-                </div>
-
-                <p className={`text-xs leading-relaxed ${p.is_popular ? 'text-white/85' : 'text-sub'}`}>
-                  {isFa ? p.description_fa : p.description_en}
-                </p>
-
-                <ul className={`space-y-2 pt-3 border-t text-xs ${p.is_popular ? 'border-white/20' : ''}`}>
-                  {feats.map((f, i) => (
-                    <li key={i} className={`flex items-start gap-2 ${p.is_popular ? 'text-white' : 'text-sub'}`}>
-                      <CheckCircle2 className={`w-4 h-4 shrink-0 mt-0.5 ${p.is_popular ? 'text-[#55ff94]' : 'text-signal'}`} />
-                      <span>{f}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <button
-                onClick={() => {
-                  setSelectedPlan(p);
-                  setTimeout(() => checkoutRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-                }}
-                className={`w-full py-3 rounded-2xl font-extrabold text-xs transition ${
-                  p.is_popular
-                    ? 'bg-[#059669] hover:bg-[#047857] text-white shadow'
-                    : isSelected
-                      ? 'btn-emerald'
-                      : 'btn-cobalt'
-                }`}
-              >
-                {isSelected
-                  ? isFa ? 'انتخاب‌شده برای پرداخت ↓' : 'Selected ↓'
-                  : isCurrent
-                    ? isFa ? 'تمدید این پلن' : 'Renew Plan'
-                    : isFa ? 'خرید و فعال‌سازی اشتراک' : 'Select Plan'}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Gift Code + Referral Invite Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <form onSubmit={redeemGift} className="panel rounded-[26px] p-5 space-y-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl btn-gold grid place-items-center shrink-0">
-              <Gift className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-sm text-main">
-                {isFa ? 'کد هدیه یا تخفیف دارید؟' : 'Have a Gift Code?'}
-              </h3>
-              <p className="text-[11px] text-dim">
-                {isFa ? 'کد را وارد کنید تا اشتراک شما فوراً فعال شود' : 'Redeem your instant activation code'}
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <input
-              value={giftCode}
-              onChange={(e) => setGiftCode(e.target.value.toUpperCase())}
-              placeholder="DLRXXXXXX"
-              dir="ltr"
-              className="field font-mono-num text-xs flex-1"
-            />
-            <button
-              type="submit"
-              disabled={redeeming || !giftCode.trim()}
-              className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black shrink-0"
-            >
-              {redeeming ? '...' : isFa ? 'فعالسازی' : 'Redeem'}
-            </button>
-          </div>
-        </form>
-
-        <div className="panel rounded-[26px] p-5 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl btn-cobalt grid place-items-center shrink-0">
-                <Users className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="font-display font-bold text-sm text-main">
-                    {isFa ? 'باشگاه همکاران رفرال دلارینو' : 'Dollarino Partner & Referral Hub'}
-                  </h3>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-400">
-                    {referral?.tier || 'BRONZE'} · {referral?.commissionPct ?? 15}%
-                  </span>
-                </div>
-                <p className="text-[11px] text-dim">
-                  {isFa
-                    ? `${referral?.qualifiedReferred ?? 0} خرید موفق از ${referral?.totalReferred ?? 0} دعوت · +${referral?.rewardDaysEarned ?? 0} روز هدیه`
-                    : `${referral?.qualifiedReferred ?? 0}/${referral?.totalReferred ?? 0} qualified · +${referral?.rewardDaysEarned ?? 0} bonus days`}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              readOnly
-              dir="ltr"
-              value={
-                referral?.inviteUrl ||
-                (typeof window !== 'undefined' && referral?.referralCode
-                  ? `${window.location.origin}/?ref=${referral.referralCode}`
-                  : 'Loading...')
-              }
-              className="field font-mono-num text-xs flex-1"
-            />
-            <button
-              type="button"
-              onClick={() =>
-                copyText(
-                  referral?.inviteUrl ||
-                    (typeof window !== 'undefined' && referral?.referralCode
-                      ? `${window.location.origin}/?ref=${referral.referralCode}`
-                      : ''),
-                  'ref'
-                )
-              }
-              className="btn-cobalt px-3.5 py-2.5 rounded-xl text-xs font-black shrink-0 inline-flex items-center gap-1"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>{copied === 'ref' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'لینک وب' : 'Web Link'}</span>
-            </button>
-            {referral?.telegramInviteUrl && (
-              <button
-                type="button"
-                onClick={() => copyText(referral.telegramInviteUrl || '', 'reftg')}
-                className="btn-gold px-3 py-2.5 rounded-xl text-xs font-black shrink-0 inline-flex items-center gap-1"
-                title={isFa ? 'کپی لینک مستقیم ربات تلگرام' : 'Copy Telegram Invite'}
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{copied === 'reftg' ? (isFa ? 'کپی شد!' : 'Copied!') : isFa ? 'لینک تلگرام' : 'TG'}</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Expanded Tiered Referral Cashout, Subscription Conversion & Anti-Abuse Dashboard */}
-      {referral && (
-        <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5 border border-blue-500/20">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl btn-gold grid place-items-center shrink-0">
-                <Award className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="font-display font-bold text-base text-main">
-                  {isFa ? 'کسب درآمد دلاری و مدیریت کمیسیون دعوت دوستان' : 'Referral Earnings, Tiers & Instant Cashout'}
-                </h2>
-                <p className="text-xs text-sub">
-                  {isFa
-                    ? 'برنز (۱۵٪) → نقره‌ای در ۵ خرید موفق (۱۸٪) → طلایی در ۱۵ خرید موفق (۲۲٪) + ۱۰٪ پورسانت تمدیدها + ۷ روز اشتراک هدیه'
-                    : 'Bronze (15%) → Silver @ 5 paid (18%) → Gold @ 15 paid (22%) + 10% renewals + 7 Pro days per friend'}
-                </p>
-              </div>
-            </div>
-            {(referral.flaggedCount ?? 0) > 0 && (
-              <span className="px-3 py-1 rounded-full bg-rose-500/15 text-loss text-[11px] font-black inline-flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>
-                  {isFa ? `${referral.flaggedCount} دعوت مسدودشده ضدتقلب` : `${referral.flaggedCount} flagged duplicate`}
-                </span>
-              </span>
-            )}
-          </div>
-
-          {/* 3 KPI Stat Cards + Tier Progress */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-            <div className="surface-soft rounded-2xl p-3.5 border hairline">
-              <span className="text-[10.5px] text-dim block">{isFa ? 'موجودی قابل برداشت' : 'Available Balance'}</span>
-              <strong dir="ltr" className="font-num text-xl font-black text-jade">
-                ${(referral.balanceUsd ?? 0).toFixed(2)}
-              </strong>
-            </div>
-            <div className="surface-soft rounded-2xl p-3.5 border hairline">
-              <span className="text-[10.5px] text-dim block">{isFa ? 'مجموع درآمد تا امروز' : 'Total Earned'}</span>
-              <strong dir="ltr" className="font-num text-xl font-black text-main">
-                ${(referral.totalEarnedUsd ?? 0).toFixed(2)}
-              </strong>
-            </div>
-            <div className="surface-soft rounded-2xl p-3.5 border hairline">
-              <span className="text-[10.5px] text-dim block">{isFa ? 'سطح همکاری شما' : 'Partner Tier'}</span>
-              <strong className="text-base font-black text-[var(--gold)]">
-                {referral.tier || 'BRONZE'} · {referral.commissionPct ?? 15}%
-              </strong>
-            </div>
-            <div className="surface-soft rounded-2xl p-3.5 border hairline">
-              <span className="text-[10.5px] text-dim block">
-                {isFa ? 'پیشرفت تا سطح بعدی' : 'Next Tier Progress'}
-              </span>
-              {(() => {
-                const q = referral.qualifiedReferred ?? 0;
-                const nextTarget = q >= 15 ? 15 : q >= 5 ? 15 : 5;
-                const pct = Math.min(100, Math.round((q / nextTarget) * 100));
-                return (
-                  <div className="space-y-1.5 mt-1">
-                    <div className="flex justify-between font-num text-[11px] font-bold">
-                      <span>{q >= 15 ? (isFa ? 'حداکثر سطح طلایی!' : 'Max Gold!') : `${q} / ${nextTarget}`}</span>
-                      <span>{pct}%</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-black/25 overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-[#1652F0] to-[#F5B731]" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          {/* 2 Action Forms: Convert to Pro Days OR Withdraw USDT */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-            <form onSubmit={handleRedeemRefBalance} className="surface-soft rounded-2xl p-4 space-y-3 border hairline">
-              <div className="flex items-center justify-between">
-                <h4 className="font-black text-main flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-[#0D9455]" />
-                  <span>{isFa ? 'تبدیل آنی کمیسیون به اشتراک پرو' : 'Convert Commission to Pro Days'}</span>
-                </h4>
-                <span className="text-[10px] text-dim">{isFa ? 'هر ۱ دلار = ۲ روز اشتراک (حداقل ۵$)' : '$1 = 2 Pro days (min $5)'}</span>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step="0.5"
-                  min={5}
-                  value={redeemUsd}
-                  onChange={(e) => setRedeemUsd(e.target.value)}
-                  dir="ltr"
-                  className="field font-num flex-1"
-                  placeholder="5.00"
-                />
-                <button
-                  type="submit"
-                  disabled={refBusy || (referral.balanceUsd ?? 0) < 5}
-                  className="btn-emerald px-4 py-2 rounded-xl font-black shrink-0 disabled:opacity-50"
-                >
-                  {isFa ? `دریافت +${Math.max(10, Math.round(Number(redeemUsd || 5) * 2))} روز Pro` : 'Redeem Pro'}
-                </button>
-              </div>
-            </form>
-
-            <form onSubmit={handleWithdrawRef} className="surface-soft rounded-2xl p-4 space-y-3 border hairline">
-              <div className="flex items-center justify-between">
-                <h4 className="font-black text-main flex items-center gap-1.5">
-                  <ArrowUpRight className="w-4 h-4 text-[var(--gold)]" />
-                  <span>{isFa ? 'درخواست برداشت نقدی USDT (حداقل ۱۰$)' : 'Withdraw Commission (USDT · Min $10)'}</span>
-                </h4>
-                <span className="text-[10px] text-amber-400 font-bold">{isFa ? 'نیازمند تایید شماره تلگرام' : 'Phone KYC Required'}</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <select
-                  value={wdNetwork}
-                  onChange={(e) => setWdNetwork(e.target.value as 'BEP20' | 'TRC20')}
-                  className="field"
-                >
-                  <option value="BEP20">BEP20 (Trust Wallet)</option>
-                  <option value="TRC20">TRC20 (Tron USDT)</option>
-                </select>
-                <input
-                  type="number"
-                  step="1"
-                  min={10}
-                  value={wdAmount}
-                  onChange={(e) => setWdAmount(e.target.value)}
-                  dir="ltr"
-                  placeholder="10"
-                  className="field font-num"
-                />
-                <button
-                  type="submit"
-                  disabled={refBusy || (referral.balanceUsd ?? 0) < 10}
-                  className="btn-gold py-2 rounded-xl font-black disabled:opacity-50"
-                >
-                  {isFa ? 'ثبت برداشت' : 'Request Payout'}
-                </button>
-              </div>
-              <input
-                required
-                dir="ltr"
-                value={wdWallet}
-                onChange={(e) => setWdWallet(e.target.value)}
-                placeholder={wdNetwork === 'BEP20' ? '0x... (BSC / Trust Wallet Address)' : 'T... (TRC20 Address)'}
-                className="field font-mono-num w-full"
-              />
-            </form>
-          </div>
-
-          {/* Security Rule Banner + Referral & Withdrawal Logs */}
-          <div className="rounded-2xl bg-blue-500/10 border border-blue-500/25 px-3.5 py-2.5 text-[11px] text-sub flex items-start gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#1652F0] shrink-0 mt-0.5" />
-            <span>
+      {/* Live Fee Enforcement Status Alert (Lock / Warning / Pending Review / Active Credit) */}
+      {enf && enf.lockStatus === 'LOCKED' && (
+        <div className="rounded-3xl p-5 bg-rose-500/15 border border-rose-500/40 flex items-start gap-3">
+          <Lock className="w-6 h-6 text-[#DC2626] dark:text-[#FB7185] shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <p className="font-black text-sm text-[#DC2626] dark:text-[#FB7185]">
               {isFa
-                ? 'سپر ضدسوءاستفاده دلارینو: دعوت از خود، ساخت اکانت تکراری روی یک دستگاه/شماره/کیف‌پول یا استفاده از کد هدیه رایگان پورسانت نقدی آزاد نمی‌کند. پورسانت تنها پس از پرداخت تاییدشده و واقعی فعال می‌شود.'
-                : 'Anti-Abuse Shield: Self-referrals, duplicate devices/phones/wallets, and $0 gift redemptions never unlock cash commissions. Only verified paid orders earn USD rewards.'}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-            <div className="space-y-2">
-              <h4 className="font-black text-main">{isFa ? `دوستان دعوت‌شده (${referral.referrals.length})` : `Invited Users (${referral.referrals.length})`}</h4>
-              <div className="max-h-44 overflow-y-auto space-y-1.5">
-                {referral.referrals.length === 0 ? (
-                  <p className="text-dim py-3">{isFa ? 'هنوز کاربری با لینک شما ثبت‌نام نکرده است.' : 'No referrals yet.'}</p>
-                ) : (
-                  referral.referrals.map((r, idx) => (
-                    <div key={r.id || idx} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
-                      <div>
-                        <span className="font-bold text-main" dir="ltr">{r.username}</span>
-                        <span className="text-[10px] text-dim block">{r.created_at.slice(0, 10)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {Number(r.commission_usd || 0) > 0 && (
-                          <span dir="ltr" className="font-num font-black text-jade">+${Number(r.commission_usd).toFixed(2)}</span>
-                        )}
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[9.5px] font-black ${
-                            r.status === 'REWARDED'
-                              ? 'badge-signal'
-                              : r.status === 'FLAGGED_DUPLICATE'
-                                ? 'bg-rose-500/15 text-loss'
-                                : 'bg-white/10 text-dim'
-                          }`}
-                        >
-                          {r.status === 'REWARDED'
-                            ? isFa ? 'پورسانت واریز شد' : 'Rewarded'
-                            : r.status === 'FLAGGED_DUPLICATE'
-                              ? isFa ? 'تکراری/مسدود' : 'Flagged'
-                              : isFa ? 'در انتظار خرید' : 'Pending Pay'}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h4 className="font-black text-main">
-                {isFa ? `تاریخچه تسویه و برداشت‌ها (${referral.withdrawals?.length || 0})` : `Payout & Redemption History (${referral.withdrawals?.length || 0})`}
-              </h4>
-              <div className="max-h-44 overflow-y-auto space-y-1.5">
-                {!referral.withdrawals || referral.withdrawals.length === 0 ? (
-                  <p className="text-dim py-3">{isFa ? 'هنوز برداشتی ثبت نکرده‌اید.' : 'No payouts yet.'}</p>
-                ) : (
-                  referral.withdrawals.map((w) => (
-                    <div key={w.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="font-num font-black text-main">
-                          ${Number(w.amount_usd).toFixed(2)} · {w.target_type === 'SUBSCRIPTION_CREDIT' ? (isFa ? 'تبدیل به Pro' : 'Pro Credit') : w.network}
-                        </div>
-                        {w.wallet_address && (
-                          <div dir="ltr" className="text-[10px] text-dim font-mono truncate max-w-[200px]">
-                            {w.wallet_address}
-                          </div>
-                        )}
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[9.5px] font-black shrink-0 ${
-                          w.status === 'APPROVED'
-                            ? 'badge-signal'
-                            : w.status === 'REJECTED'
-                              ? 'bg-rose-500/15 text-loss'
-                              : 'bg-amber-500/15 text-amber-400'
-                        }`}
-                      >
-                        {w.status}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+                ? `🔒 معاملات واقعی تا تسویه $${enf.totalDueUsd.toFixed(2)} قفل شد (بدهی: $${enf.accruedUsd.toFixed(2)} + جریمه دیرکرد: $${enf.penaltyUsd.toFixed(2)})`
+                : `🔒 Live Trading Locked ($${enf.totalDueUsd.toFixed(2)} overdue: $${enf.accruedUsd.toFixed(2)} + $${enf.penaltyUsd.toFixed(2)} late fee)`}
+            </p>
+            <p className="text-main leading-relaxed">
+              {isFa ? enf.reasonFa : enf.reasonEn}
+            </p>
           </div>
         </div>
       )}
 
-      {/* Clear Step-by-Step Simplified Checkout Panel */}
-      {selectedPlan && selectedPlan.price_usd > 0 && (
-        <div ref={checkoutRef} className="surface-card p-5 sm:p-6 space-y-5 border-brand/30">
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b hairline">
-            <div className="space-y-0.5">
-              <h2 className="text-base sm:text-lg font-black text-main flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-brand" />
-                <span>
-                  {isFa
-                    ? `تکمیل خرید پلن ${selectedPlan.name_fa}`
-                    : `Checkout: ${selectedPlan.name_en}`}
-                </span>
-              </h2>
-              <p className="text-xs text-sub">
-                {isFa
-                  ? `مبلغ قابل پرداخت: $${selectedPlan.price_usd} تتر یا ${selectedPlan.price_toman.toLocaleString()} تومان`
-                  : `Total: $${selectedPlan.price_usd} USDT or ${selectedPlan.price_toman.toLocaleString()} Toman`}
-              </p>
-            </div>
-            <span className="text-[11px] px-3 py-1 rounded-full surface-soft border hairline text-sub font-bold">
-              {isFa
-                ? `پشتیبانی رسمی: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`
-                : `Support Bot: ${payCfg.telegram_support && !/Dollarino_admin/i.test(payCfg.telegram_support) ? payCfg.telegram_support : '@Dollarino_bot'}`}
-            </span>
-          </div>
-
-          {/* Step-by-Step Visual Checkout Guide */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-            {[
-              {
-                n: '۱',
-                t: isFa ? 'انتخاب روش پرداخت' : '1. Pick Method',
-                d: isFa ? 'تتر TRC20 (تایید خودکار)، Trust Wallet BEP20 (کم‌کارمزد) یا کارت به کارت.' : 'Auto TRC20, low-fee BEP20 Trust Wallet, or Card-to-Card.',
-              },
-              {
-                n: '۲',
-                t: isFa ? 'واریز دقیق و کپی TXID' : '2. Transfer & Copy TXID',
-                d: isFa ? 'مبلغ را به آدرس نمایش‌داده‌شده بزنید و کد پیگیری یا عکس رسید را بگذارید.' : 'Send exact amount and paste TXID or screenshot.',
-              },
-              {
-                n: '۳',
-                t: isFa ? 'فعال‌سازی فوری اشتراک' : '3. Instant Activation',
-                d: isFa ? 'تراکنش TRC20/BEP20 روی بلاک‌چین خودکار چک و اشتراک همان لحظه فعال می‌شود.' : 'On-chain TXID activates Pro/VIP immediately.',
-              },
-            ].map((st) => (
-              <div key={st.n} className="surface-soft rounded-2xl p-3 border hairline flex items-start gap-2.5">
-                <span className="h-6 w-6 rounded-full btn-cobalt text-[11px] font-black grid place-items-center shrink-0">
-                  {st.n}
-                </span>
-                <div>
-                  <p className="font-black text-main">{st.t}</p>
-                  <p className="text-[10.5px] text-dim leading-relaxed mt-0.5">{st.d}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Step 1: Select Payment Method */}
-          <div className="space-y-2">
-            <p className="text-xs font-black text-main">
-              {isFa ? '۱) روش پرداخت را انتخاب کنید:' : '1) Choose Payment Method:'}
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('USDT_TRC20')}
-                className={`p-3.5 rounded-2xl border text-start flex items-center gap-3 transition ${
-                  paymentMethod === 'USDT_TRC20' ? 'btn-emerald ring-2 ring-emerald-400/40' : 'surface-soft text-sub hover:border-[var(--line-strong)]'
-                }`}
-              >
-                <Wallet className="w-5 h-5 shrink-0" />
-                <div>
-                  <div className="font-extrabold">{isFa ? 'تتر (USDT · TRC20)' : 'Tether USDT (TRC20)'}</div>
-                  <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('TRUST_WALLET_BEP20')}
-                className={`p-3.5 rounded-2xl border text-start flex items-center gap-3 transition ${
-                  paymentMethod === 'TRUST_WALLET_BEP20' ? 'btn-gold ring-2 ring-blue-400/40' : 'surface-soft text-sub hover:border-[var(--line-strong)]'
-                }`}
-              >
-                <WalletLogo wallet="trustwallet" size={26} />
-                <div>
-                  <div className="font-extrabold">Trust Wallet (BEP20)</div>
-                  <div className="text-[11px] opacity-90">${selectedPlan.price_usd} USDT · {isFa ? 'کارمزد خیلی کم' : 'Low fee'}</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('CARD_TO_CARD')}
-                className={`p-3.5 rounded-2xl border text-start flex items-center gap-3 transition ${
-                  paymentMethod === 'CARD_TO_CARD' ? 'btn-cobalt ring-2 ring-blue-400/40' : 'surface-soft text-sub hover:border-[var(--line-strong)]'
-                }`}
-              >
-                <CreditCard className="w-5 h-5 shrink-0" />
-                <div>
-                  <div className="font-extrabold">{isFa ? 'کارت به کارت (تومانی)' : 'Card-to-Card (Toman)'}</div>
-                  <div className="text-[11px] opacity-90">{selectedPlan.price_toman.toLocaleString()} {isFa ? 'تومان' : 'Toman'}</div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* Step 2: Copy Address / Card or Pay Direct */}
-          <div className="space-y-2">
-            <p className="text-xs font-black text-main">
-              {isFa ? '۲) مبلغ را به مقصد زیر واریز کنید:' : '2) Transfer to the destination below:'}
-            </p>
-            <div className="p-4 rounded-2xl surface-soft border border-[var(--line-strong)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              {paymentMethod === 'TRUST_WALLET_BEP20' ? (
-                <div className="space-y-1 min-w-0">
-                  <div className="text-sub font-bold">{isFa ? 'آدرس ولت BEP20 (شبکه بایننس اسمارت چین):' : 'USDT BEP20 Address:'}</div>
-                  <div className="font-mono-num text-sm sm:text-base font-black text-main break-all select-all" dir="ltr">
-                    {payCfg.trust_wallet_evm_receiver || (isFa ? 'هنوز در پنل ادمین تنظیم نشده' : 'Set trust_wallet_evm_receiver in Admin')}
-                  </div>
-                </div>
-              ) : paymentMethod === 'USDT_TRC20' ? (
-                <div className="space-y-1 min-w-0">
-                  <div className="text-sub font-bold">{isFa ? 'آدرس ولت تتر TRC20:' : 'USDT TRC20 Address:'}</div>
-                  <div className="font-mono-num text-sm sm:text-base font-black text-main break-all select-all" dir="ltr">
-                    {payCfg.usdt_trc20_wallet || 'Set USDT wallet in Admin Panel'}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-1 min-w-0">
-                  <div className="text-sub font-bold">
-                    {isFa ? `شماره کارت به نام «${payCfg.iran_card_holder || 'مدیریت دلارینو'}»:` : `Card (${payCfg.iran_card_holder || 'Admin'}):`}
-                  </div>
-                  <div className="font-mono-num text-base sm:text-lg font-black text-main tracking-wider select-all" dir="ltr">
-                    {payCfg.iran_card_number || '6037-9975-0000-0000'}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-2 shrink-0">
-                {paymentMethod === 'TRUST_WALLET_BEP20' && (
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => void handleInstantTrustWalletPay()}
-                    className="px-4 py-2.5 rounded-xl btn-gold font-black inline-flex items-center gap-1.5"
-                  >
-                    <Wallet className="w-4 h-4" />
-                    <span>{isFa ? 'پرداخت خودکار Trust Wallet' : 'Instant Trust Wallet Pay'}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    copyText(
-                      paymentMethod === 'TRUST_WALLET_BEP20'
-                        ? payCfg.trust_wallet_evm_receiver || ''
-                        : paymentMethod === 'USDT_TRC20'
-                          ? payCfg.usdt_trc20_wallet || ''
-                          : payCfg.iran_card_number || '',
-                      'addr'
-                    )
-                  }
-                  className="px-4 py-2.5 rounded-xl btn-cobalt font-black inline-flex items-center gap-1.5"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>{copied === 'addr' ? (isFa ? 'کپی شد ✓' : 'Copied ✓') : isFa ? 'کپی مقصد' : 'Copy Address'}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Step 3: Upload Receipt Photo and/or Enter Tracking Code */}
-          <form onSubmit={submitCheckout} className="space-y-4">
-            <p className="text-xs font-black text-main">
-              {isFa ? '۳) عکس رسید واریزی را بفرستید یا کد پیگیری را وارد کنید:' : '3) Upload receipt photo and/or enter TXID:'}
-            </p>
-
-            <input
-              ref={receiptInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = '';
-                void handleReceiptFile(file);
-              }}
-            />
-
-            {!receiptImage ? (
-              <button
-                type="button"
-                onClick={() => receiptInputRef.current?.click()}
-                className="w-full p-5 rounded-2xl border-2 border-dashed border-[var(--line-strong)] hover:border-[var(--gold)] bg-[var(--soft)]/60 flex flex-col items-center justify-center gap-2 text-center transition"
-              >
-                <div className="h-11 w-11 rounded-2xl bg-[var(--cobalt)]/15 text-[var(--gold)] grid place-items-center">
-                  <ImagePlus className="w-6 h-6" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-xs sm:text-sm font-black text-main">
-                    {isFa ? '📸 آپلود عکس رسید / اسکرین‌شات واریزی (پیشنهادی)' : '📸 Upload Payment Receipt Screenshot'}
-                  </p>
-                  <p className="text-[11px] text-dim">
-                    {isFa ? 'با ارسال عکس رسید، نوشتن کد پیگیری اختیاری می‌شود.' : 'Uploading a receipt makes TXID optional.'}
-                  </p>
-                </div>
-              </button>
-            ) : (
-              <div className="flex items-center gap-3 p-3 rounded-2xl surface-soft border border-emerald-500/40">
-                <button
-                  type="button"
-                  onClick={() => setLightboxReceipt(receiptImage)}
-                  className="shrink-0 rounded-xl overflow-hidden border hairline"
-                >
-                  <img src={receiptImage} alt="Receipt preview" className="h-16 w-24 object-cover" />
-                </button>
-                <div className="flex-1 min-w-0 space-y-0.5">
-                  <p className="text-xs font-black text-jade">
-                    {isFa ? '✓ عکس رسید واریز آماده ارسال شد' : '✓ Receipt photo attached'}
-                  </p>
-                  <p className="text-[11px] text-dim">
-                    {isFa ? 'می‌توانید همین الان دکمه ثبت نهایی را بزنید یا کد پیگیری را هم بنویسید.' : 'Ready to submit.'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setReceiptImage(null)}
-                  className="h-8 w-8 rounded-full btn-ghost text-rose-400 grid place-items-center shrink-0"
-                  title={isFa ? 'حذف تصویر' : 'Remove image'}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-sub">
-                  {receiptImage
-                    ? isFa
-                      ? 'کد پیگیری / TXID (اختیاری)'
-                      : 'Tracking Code / TXID (Optional)'
-                    : isFa
-                      ? 'کد پیگیری یا هش تراکنش (TXID)'
-                      : 'Tracking Code / TXID'}
-                </label>
-                <input
-                  required={!receiptImage}
-                  value={paymentRef}
-                  onChange={(e) => setPaymentRef(e.target.value)}
-                  placeholder={
-                    paymentMethod === 'TRUST_WALLET_BEP20'
-                      ? isFa
-                        ? 'هش تراکنش BEP20 (0x...) یا خالی اگر عکس فرستادید'
-                        : 'BSC TX Hash (0x...)'
-                      : paymentMethod === 'USDT_TRC20'
-                        ? isFa
-                          ? 'هش تراکنش TXID (یا خالی اگر عکس رسید فرستادید)'
-                          : 'USDT TRC20 TXID'
-                        : isFa
-                          ? 'شماره پیگیری / ۴ رقم آخر کارت'
-                          : 'Tracking code or last 4 digits'
-                  }
-                  className="w-full surface-input rounded-xl px-3.5 py-2.5 font-mono-num"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-sub">
-                  {isFa ? 'آیدی تلگرام یا یادداشت (اختیاری)' : 'Telegram @handle or Note (Optional)'}
-                </label>
-                <input
-                  value={payerNote}
-                  onChange={(e) => setPayerNote(e.target.value)}
-                  placeholder={isFa ? 'مثلاً @my_id یا زمان واریز...' : '@handle or note...'}
-                  className="w-full surface-input rounded-xl px-3.5 py-2.5"
-                />
-              </div>
-            </div>
-
-            <button
-              disabled={submitting || (!receiptImage && paymentRef.trim().length < 5)}
-              type="submit"
-              className="w-full py-3.5 px-6 rounded-2xl btn-emerald font-black text-sm flex items-center justify-center gap-2 disabled:opacity-45 shadow-lg"
-            >
-              <ShieldCheck className="w-5 h-5" />
-              <span>{submitting ? (isFa ? 'در حال ثبت...' : 'Submitting...') : isFa ? 'ثبت نهایی پرداخت و ارسال برای فعال‌سازی' : 'Submit Payment & Receipt'}</span>
-            </button>
-
-            <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[10.5px] leading-relaxed text-sub flex items-center gap-2">
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+      {enf && enf.lockStatus === 'WARNING' && (
+        <div className="rounded-3xl p-5 bg-amber-500/15 border border-amber-500/40 flex items-start gap-3">
+          <AlertTriangle className="w-6 h-6 text-[#D97706] dark:text-[#FBBF24] shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <p className="font-black text-sm text-[#D97706] dark:text-[#FBBF24] flex items-center gap-1.5">
+              <Clock className="w-4 h-4" />
               <span>
                 {isFa
-                  ? 'نکته امنیتی: دلارینو هیچ پیوی شخصی برای دریافت وجه ندارد؛ فقط از همین فرم یا ربات @Dollarino_bot اقدام کنید.'
-                  : 'Security: Dollarino has NO personal DM support. Use only this checkout or @Dollarino_bot.'}
+                  ? `⏳ مهلت تسویه کارمزد ۵٪: ${enf.hoursRemaining ?? 72} ساعت تا قفل شدن ربات واقعی و اعمال جریمه ${enf.latePenaltyPct}%!`
+                  : `⏳ Settlement Grace Window: ${enf.hoursRemaining ?? 72}h remaining before LIVE lock & ${enf.latePenaltyPct}% late fee!`}
               </span>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {orders.length > 0 && (
-        <div className="surface-card p-5 space-y-3 text-xs">
-          <h3 className="font-black text-sm text-main flex items-center gap-2">
-            <Clock className="w-4 h-4 text-brand" />
-            <span>{isFa ? 'سوابق سفارش اشتراک' : 'Subscription Orders'}</span>
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="text-[11px] text-dim border-b">
-                <tr>
-                  <th className="py-2 text-start">{isFa ? 'پلن' : 'Plan'}</th>
-                  <th className="py-2 text-start">{isFa ? 'روش' : 'Method'}</th>
-                  <th className="py-2 text-start">{isFa ? 'کد پیگیری / رسید' : 'Reference / Receipt'}</th>
-                  <th className="py-2 text-start">{isFa ? 'وضعیت' : 'Status'}</th>
-                  <th className="py-2 text-end">{isFa ? 'تاریخ' : 'Date'}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y font-mono-num">
-                {orders.map((o) => (
-                  <tr key={o.id}>
-                    <td className="py-2.5 font-sans font-bold text-main">{isFa ? o.name_fa || o.plan_code : o.name_en || o.plan_code}</td>
-                    <td className="py-2.5 text-sub">{o.payment_method}</td>
-                    <td className="py-2.5 text-sub max-w-[220px]">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate">{o.payment_reference || '-'}</span>
-                        {o.receipt_image_url && (
-                          <button
-                            type="button"
-                            onClick={() => setLightboxReceipt(o.receipt_image_url || null)}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 font-sans text-[10px] font-bold shrink-0"
-                          >
-                            <Eye className="w-3 h-3" />
-                            <span>{isFa ? 'رسید' : 'Receipt'}</span>
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-2.5">
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-sans font-bold ${
-                          o.status === 'ACTIVE'
-                            ? 'badge-signal'
-                            : o.status === 'PENDING_REVIEW'
-                              ? 'bg-[#FF8A00]/15 text-flame'
-                              : 'bg-rose-500/15 text-loss'
-                        }`}
-                      >
-                        {o.status}
-                      </span>
-                    </td>
-                    <td className="py-2.5 text-end text-dim">{o.created_at.slice(0, 16)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            </p>
+            <p className="text-main">
+              {isFa
+                ? `مبلغ کارمزد معوق شما به سقف $${enf.graceLimitUsd.toFixed(2)} رسیده است ($${enf.accruedUsd.toFixed(2)} معوق). لطفاً پیش از پایان مهلت تسویه کنید.`
+                : `Your unpaid 5% fees ($${enf.accruedUsd.toFixed(2)}) reached the $${enf.graceLimitUsd.toFixed(2)} grace cap. Settle before deadline to avoid auto-pause.`}
+            </p>
           </div>
         </div>
       )}
 
-      {lightboxReceipt && (
-        <div
-          className="fixed inset-0 z-[90] bg-black/85 flex items-center justify-center p-4"
-          onClick={() => setLightboxReceipt(null)}
-        >
-          <button
-            type="button"
-            onClick={() => setLightboxReceipt(null)}
-            className="absolute top-4 end-4 h-10 w-10 rounded-full bg-white/15 text-white grid place-items-center"
-          >
-            <X className="w-5 h-5" />
-          </button>
-          <img
-            src={lightboxReceipt}
-            alt="Payment receipt"
-            className="max-w-full max-h-[88vh] rounded-2xl object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
+      {enf && enf.lockStatus === 'PENDING_REVIEW' && (
+        <div className="rounded-3xl p-5 bg-sky-500/15 border border-sky-500/35 flex items-start gap-3">
+          <Clock className="w-5 h-5 text-[#0D47A1] dark:text-[#60A5FA] shrink-0 mt-0.5" />
+          <div className="text-xs text-main">
+            <p className="font-black">
+              {isFa
+                ? `⏳ تراکنش تسویه به مبلغ $${enf.pendingVerifyUsd.toFixed(2)} ثبت شده و در صف تایید است.`
+                : `⏳ Settlement TX ($${enf.pendingVerifyUsd.toFixed(2)}) is awaiting verification.`}
+            </p>
+          </div>
         </div>
       )}
+
+      {/* Honest Non-Custodial Technical Architecture Disclosure */}
+      <div className="rounded-3xl p-5 bg-sky-500/10 border border-sky-500/30 flex items-start gap-3">
+        <ShieldCheck className="w-5 h-5 text-[#0D47A1] dark:text-[#60A5FA] shrink-0 mt-0.5" />
+        <div className="space-y-1 text-xs">
+          <p className="font-black text-main">
+            {isFa ? 'توضیح فنی کاملاً صادقانه درباره امنیت Trust Wallet، سقف بدهی و کنترل کارمزد:' : 'Honest Non-Custodial Security & Fee Enforcement Model:'}
+          </p>
+          <p className="text-sub leading-relaxed">
+            {isFa
+              ? `دلارینو هیچ‌گاه به کلید خصوصی Trust Wallet شما دسترسی ندارد و نمی‌تواند خودسرانه پول برداشت کند. برای عدالت و جلوگیری از سوءاستفاده، تا سقف $${enf?.graceLimitUsd ?? 2} کارمزد معوق آزاد است؛ اگر پس از ۷۲ ساعت تسویه نشود، جریمه ${enf?.latePenaltyPct ?? 25}% اعمال و اجرای معاملات واقعی خودکار متوقف می‌شود (شبیه‌ساز دمو $10,000 همیشه آزاد است). همچنین می‌توانید اعتبار پیش‌پرداخت شارژ کنید تا هیچ‌وقت متوقف نشوید.`
+              : `Dollarino never accesses your Trust Wallet keys. To prevent abuse, users receive a $${enf?.graceLimitUsd ?? 2} grace credit + 72h settlement window. Overdue balances trigger a ${enf?.latePenaltyPct ?? 25}% late surcharge and automatically pause LIVE execution until settled (Demo remains free).`}
+          </p>
+        </div>
+      </div>
+
+      {/* KPI Metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="panel rounded-3xl p-4 border hairline space-y-1">
+          <p className="text-[11px] font-bold text-dim">{isFa ? 'اعتبار پیش‌پرداخت کارمزد' : 'Prepaid Fee Credit'}</p>
+          <p className="text-2xl font-black text-[#059669] dark:text-[#34D399]" dir="ltr">
+            ${(enf?.prepaidCreditUsd ?? 0).toFixed(2)}
+          </p>
+          <p className="text-[10px] text-dim">{isFa ? 'کسر اتومات ۵٪ از اعتبار' : 'Auto-deducts 5% fees'}</p>
+        </div>
+        <div className="panel rounded-3xl p-4 border hairline space-y-1">
+          <p className="text-[11px] font-bold text-dim">{isFa ? 'معاملات سودده واقعی' : 'Winning Live Trades'}</p>
+          <p className="text-2xl font-black text-main" dir="ltr">{ledger?.profitableTradesCount ?? 0}</p>
+          <p className="text-[10px] text-dim" dir="ltr">+${(ledger?.totalProfitablePnlUsd ?? 0).toFixed(2)} PnL</p>
+        </div>
+        <div className="panel rounded-3xl p-4 border hairline space-y-1">
+          <p className="text-[11px] font-bold text-dim">{isFa ? 'کارمزد معوق + جریمه' : 'Due (Fee + Penalty)'}</p>
+          <p className={`text-2xl font-black ${(enf?.totalDueUsd ?? 0) >= (enf?.graceLimitUsd ?? 2) ? 'text-[#DC2626] dark:text-[#FB7185]' : 'text-[#D97706] dark:text-[#FBBF24]'}`} dir="ltr">
+            ${(enf?.totalDueUsd ?? ledger?.accruedFeeUsd ?? 0).toFixed(2)}
+          </p>
+          <p className="text-[10px] text-dim">
+            {isFa ? `معادل ${formatTomanEq(enf?.totalDueUsd ?? ledger?.accruedFeeUsd ?? 0, iranRate)} تومان` : `≈ ${formatTomanEq(enf?.totalDueUsd ?? 0, iranRate)} IRT`}
+          </p>
+        </div>
+        <div className="panel rounded-3xl p-4 border hairline space-y-1">
+          <p className="text-[11px] font-bold text-dim">{isFa ? 'سقف آزاد بدهی' : 'Grace Limit'}</p>
+          <p className="text-2xl font-black text-main" dir="ltr">${(enf?.graceLimitUsd ?? 2).toFixed(2)}</p>
+          <p className="text-[10px] text-dim">{isFa ? 'سپس ۷۲ ساعت مهلت تسویه' : 'Then 72h grace window'}</p>
+        </div>
+        <div className="panel rounded-3xl p-4 border hairline space-y-1">
+          <p className="text-[11px] font-bold text-dim">{isFa ? 'کل تسویه‌شده' : 'Settled Total'}</p>
+          <p className="text-2xl font-black text-main" dir="ltr">${(ledger?.settledFeeUsd ?? 0).toFixed(2)}</p>
+          <p className="text-[10px] text-dim">{isFa ? 'تاییدشده روی بلاکچین' : 'Verified on-chain'}</p>
+        </div>
+      </div>
+
+      {/* Settle Accrued Fee OR Prepay Credit via Trust Wallet */}
+      <div className="panel rounded-3xl p-5 border hairline space-y-5">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-[#0D47A1] dark:text-[#60A5FA]" />
+            <span>{isFa ? 'تسویه بدهی یا شارژ اعتبار پیش‌پرداخت کارمزد ۵٪ (Trust Wallet)' : 'Settle Fee Debt or Top-Up Prepaid Credit'}</span>
+          </h2>
+          <span className="text-[11px] font-bold text-dim">
+            {isFa ? `نرخ لحظه‌ای تتر ایران: ${iranRate.toLocaleString('en-US')} تومان` : `Iran Rate: ${iranRate.toLocaleString('en-US')} IRT`}
+          </span>
+        </div>
+
+        {ledger?.receivers?.trust_wallet_evm_receiver || (ledger?.receivers?.usdt_trc20_wallet && !ledger.receivers.usdt_trc20_wallet.includes('YourTRC20WalletAddress')) ? (
+          <div className="grid sm:grid-cols-2 gap-3 text-xs">
+            {ledger?.receivers?.trust_wallet_evm_receiver && (
+              <div className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-bold text-dim">BEP20 / EVM Trust Wallet</p>
+                  <p dir="ltr" className="font-mono text-main truncate">{ledger.receivers.trust_wallet_evm_receiver}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyText(ledger.receivers.trust_wallet_evm_receiver!, 'evm')}
+                  className="px-2.5 py-1 rounded-xl bg-[#0D47A1] text-white text-[10px] font-black shrink-0"
+                >
+                  {copied === 'evm' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            )}
+            {ledger?.receivers?.usdt_trc20_wallet && !ledger.receivers.usdt_trc20_wallet.includes('YourTRC20WalletAddress') && (
+              <div className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-bold text-dim">USDT TRC20</p>
+                  <p dir="ltr" className="font-mono text-main truncate">{ledger.receivers.usdt_trc20_wallet}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyText(ledger.receivers.usdt_trc20_wallet!, 'trc')}
+                  className="px-2.5 py-1 rounded-xl bg-[#0D47A1] text-white text-[10px] font-black shrink-0"
+                >
+                  {copied === 'trc' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-2xl p-3.5 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-500 font-bold">
+            {isFa
+              ? '⚠️ آدرس ولت دریافت کارمزد (TRC20 / BEP20) هنوز توسط مدیر پلتفرم ثبت نشده است.'
+              : '⚠️ Settlement receiver wallet (TRC20 / BEP20) has not been configured in Admin yet.'}
+          </div>
+        )}
+
+        <div className="grid lg:grid-cols-2 gap-4">
+          {/* Settle Unpaid Debt */}
+          <div className="rounded-2xl p-4 surface-soft border hairline space-y-2.5">
+            <p className="text-xs font-black text-main flex items-center gap-1.5">
+              <ShieldAlert className="w-4 h-4 text-[#D97706]" />
+              <span>{isFa ? '۱. تسویه بدهی معوق + باز کردن قفل حساب:' : '1. Settle Accrued Balance & Unlock:'}</span>
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                dir="ltr"
+                value={txHash}
+                onChange={(e) => setTxHash(e.target.value)}
+                placeholder={isFa ? 'هش تراکنش واقعی (0x... یا TRC20/SOL)' : 'Real Settlement TX Hash'}
+                className="input-pro flex-1 rounded-xl px-3 py-2 text-xs font-mono"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handleSettle()}
+                className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-black inline-flex items-center justify-center gap-1.5 shrink-0"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{isFa ? 'ثبت تسویه' : 'Submit TX'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Prepay Fee Credit */}
+          <div className="rounded-2xl p-4 surface-soft border hairline space-y-2.5">
+            <p className="text-xs font-black text-main flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-[#059669]" />
+              <span>{isFa ? '۲. شارژ اعتبار پیش‌پرداخت (کسر خودکار ۵٪ بدون توقف):' : '2. Top-Up Prepaid Credit (Never Pauses):'}</span>
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                dir="ltr"
+                value={prepayAmount}
+                onChange={(e) => setPrepayAmount(e.target.value)}
+                className="input-pro w-20 rounded-xl px-3 py-2 text-xs font-mono font-bold"
+              />
+              <input
+                dir="ltr"
+                value={prepayTxHash}
+                onChange={(e) => setPrepayTxHash(e.target.value)}
+                placeholder={isFa ? 'هش تراکنش شارژ اعتبار ($)' : 'Credit Top-up TX Hash'}
+                className="input-pro flex-1 rounded-xl px-3 py-2 text-xs font-mono"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void handlePrepay()}
+                className="px-4 py-2 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white text-xs font-black shrink-0"
+              >
+                {isFa ? 'شارژ اعتبار' : 'Add Credit'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {msg && (
+          <div className="rounded-2xl px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/30 text-xs font-bold text-main">
+            {msg}
+          </div>
+        )}
+
+        {/* Ledger Entries */}
+        <div className="space-y-2 pt-2">
+          <p className="text-xs font-black text-main">{isFa ? 'تاریخچه دقیق کارمزد ۵٪ معاملات سودده و اعتبار:' : '5% Profit-Share & Credit Ledger:'}</p>
+          {ledger?.entries && ledger.entries.length > 0 ? (
+            <div className="space-y-2">
+              {ledger.entries.map((item) => (
+                <div key={item.id} className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-3 flex-wrap text-xs">
+                  <div>
+                    <p className="font-black text-main">
+                      {item.symbol} <span className="text-dim font-normal">({item.source})</span>
+                    </p>
+                    <p className="text-[11px] text-dim">{item.note || item.created_at}</p>
+                  </div>
+                  <div className="text-end" dir="ltr">
+                    <p className="font-black text-[#059669] dark:text-[#34D399]">
+                      {item.source === 'PREPAY_CREDIT'
+                        ? `Credit +$${Number(item.fee_usd).toFixed(2)}`
+                        : `Profit +$${Number(item.realized_pnl_usd).toFixed(2)} → 5% Fee: $${Number(item.fee_usd).toFixed(4)}`}
+                    </p>
+                    <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      item.status === 'SETTLED_ONCHAIN' || item.status === 'SETTLED_PREPAID'
+                        ? 'bg-emerald-500/15 text-[#059669]'
+                        : item.status === 'REJECTED'
+                          ? 'bg-rose-500/15 text-[#DC2626]'
+                          : item.status === 'PENDING_VERIFY'
+                            ? 'bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA]'
+                            : 'bg-amber-500/15 text-[#D97706]'
+                    }`}>
+                      {item.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl p-4 surface-soft border hairline text-xs text-dim flex items-center gap-2">
+              <Info className="w-4 h-4 shrink-0" />
+              <span>
+                {isFa
+                  ? 'هنوز کارمزد ۵٪ معوقی ثبت نشده است (تمام ابزارهای تحلیل و شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری کاملاً رایگان هستند).'
+                  : 'No accrued 5% server fees yet—the $10,000 Demo Simulator and all analytics tools remain 100% free.'}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Referral Banner, Invite Kit & Anti-Fraud Prepaid Fee Credit Hub */}
+      <div className="panel rounded-3xl p-5 sm:p-6 border hairline space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] text-[11px] font-black mb-1.5">
+              <Users className="w-3.5 h-3.5" />
+              <span>{isFa ? 'دعوت دوستان · پاداش اعتبار پیش‌پرداخت کارمزد ۵٪' : 'Invite Friends · Non-Withdrawable 5% Fee Credit'}</span>
+            </div>
+            <h2 className="font-display font-black text-lg text-main">
+              {isFa ? 'دوستانت را دعوت کن؛ کارمزد معاملاتت رایگان شود!' : 'Invite Real Traders & Earn Free 5% Fee Credits'}
+            </h2>
+            <p className="text-xs text-sub mt-1 leading-relaxed max-w-3xl">
+              {isFa
+                ? referral?.nonWithdrawablePolicyFa ||
+                  'جوایز رفرال نقدی و قابل برداشت نیستند و فقط به اعتبار پیش‌پرداخت کارمزد ۵٪ سود شما اضافه می‌شوند. پاداش زمانی آزاد می‌شود که دوست دعوت‌شده حداقل ۱۰ دلار موجودی واقعی داشته باشد و معامله واقعی (LIVE) انجام دهد؛ حساب‌های تکراری مسدود می‌شوند.'
+                : referral?.nonWithdrawablePolicyEn ||
+                  'Referral rewards are strictly non-withdrawable and go directly to your Prepaid 5% Fee Credit once your invited friend holds >= $10 real balance and completes a real LIVE trade.'}
+            </p>
+          </div>
+          {referral && (
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="surface-soft rounded-2xl px-3.5 py-2 border hairline text-center">
+                <p className="text-[10px] text-dim font-bold">{isFa ? 'اعتبار کارمزد رفرال' : 'Earned Credit'}</p>
+                <p dir="ltr" className="font-num font-black text-sm text-[#059669] dark:text-[#34D399]">
+                  +${Number(referral.referralFeeCreditEarnedUsd ?? 0).toFixed(2)}
+                </p>
+              </div>
+              <div className="surface-soft rounded-2xl px-3.5 py-2 border hairline text-center">
+                <p className="text-[10px] text-dim font-bold">{isFa ? 'دوستان فعال / کل' : 'Active / Total'}</p>
+                <p dir="ltr" className="font-num font-black text-sm text-main">
+                  {referral.qualifiedReferred ?? 0} / {referral.totalReferred ?? 0}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Visual Promo Banner + Download Personalized PNG Banner */}
+        <div
+          dir="ltr"
+          className="relative rounded-3xl overflow-hidden border hairline shadow-lg bg-[#061233] min-h-[250px] sm:min-h-[270px] flex items-stretch justify-end"
+        >
+          <img
+            src="/images/referral-invite-banner.png?v=105"
+            alt="Dollarino Referral Banner"
+            className="absolute inset-0 w-full h-full object-cover object-left opacity-30 sm:opacity-100 pointer-events-none select-none"
+          />
+          <div className="relative z-10 w-full sm:w-[64%] bg-gradient-to-l from-[#061233]/95 via-[#061233]/75 to-transparent p-5 sm:p-7 flex flex-col justify-between items-end gap-4">
+            <div dir={isFa ? 'rtl' : 'ltr'} className="max-w-md text-start space-y-2 text-white">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-black">
+                <Sparkles className="w-3 h-3" />
+                <span>{isFa ? 'بدون اشتراک ماهانه · شبیه‌ساز $۱۰,۰۰۰ رایگان' : '$0 Monthly Sub · Free $10K Demo'}</span>
+              </span>
+              <h3 className="font-display font-black text-base sm:text-xl leading-snug text-white">
+                {isFa
+                  ? '+۲ دلار اعتبار کارمزد برای شما و +۱ دلار برای دوستتان!'
+                  : '+$2.00 Fee Credit For You & +$1.00 For Your Friend!'}
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-200 leading-relaxed">
+                {isFa
+                  ? '+ ۲۰٪ سهم اعتبار از کارمزد معاملات سودده واقعی دوستتان (اعتبار غیرقابل برداشت، پس از شارژ ۱۰$ و اولین ترید واقعی)'
+                  : '+ 20% fee-credit share from your friend’s profitable live trades (non-withdrawable; requires >=$10 balance & live trade)'}
+              </p>
+            </div>
+            <div dir={isFa ? 'rtl' : 'ltr'} className="flex flex-wrap items-center justify-end gap-2">
+              <span
+                dir="ltr"
+                className="px-3.5 py-2 rounded-xl bg-white/15 backdrop-blur-md border border-white/25 font-mono-num font-black text-xs text-white"
+              >
+                CODE: {referral?.referralCode || 'DLRXHSOW'}
+              </span>
+              <button
+                type="button"
+                disabled={bannerBusy || !referral}
+                onClick={async () => {
+                  if (!referral) return;
+                  setBannerBusy(true);
+                  try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 1200;
+                    canvas.height = 630;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) {
+                      const img = new window.Image();
+                      img.crossOrigin = 'anonymous';
+                      await new Promise<void>((res) => {
+                        img.onload = () => res();
+                        img.onerror = () => res();
+                        img.src = '/images/referral-invite-banner.png?v=105';
+                      });
+                      ctx.fillStyle = '#061233';
+                      ctx.fillRect(0, 0, 1200, 630);
+                      if (img.naturalWidth > 0) {
+                        ctx.drawImage(img, 0, 0, 1200, 630);
+                      }
+                      const grad = ctx.createLinearGradient(480, 0, 1200, 0);
+                      grad.addColorStop(0, 'rgba(6, 18, 51, 0.0)');
+                      grad.addColorStop(0.45, 'rgba(6, 18, 51, 0.86)');
+                      grad.addColorStop(1, 'rgba(6, 18, 51, 0.98)');
+                      ctx.fillStyle = grad;
+                      ctx.fillRect(0, 0, 1200, 630);
+
+                      ctx.fillStyle = '#34D399';
+                      ctx.font = 'bold 26px sans-serif';
+                      ctx.textAlign = 'right';
+                      ctx.fillText('DOLLARINO V10 · AI + TRUST WALLET', 1135, 95);
+
+                      ctx.fillStyle = '#FFFFFF';
+                      ctx.font = 'bold 46px sans-serif';
+                      ctx.fillText(isFa ? 'ترید هوشمند روی Trust Wallet شخصی' : 'Smart Auto-Trading on Trust Wallet', 1135, 175);
+
+                      ctx.fillStyle = '#E2E8F0';
+                      ctx.font = '26px sans-serif';
+                      ctx.fillText(isFa ? 'اشتراک ماهانه صفر · ۹۵٪ سود برای شما (فقط ۵٪ کارمزد سرور)' : '$0 Subscription · 5% Fee Only on Real Profit (Keep 95%)', 1135, 235);
+                      ctx.fillText(isFa ? 'هدیه اعتبار کارمزد با اولین ترید واقعی ($۱۰+)' : '+$1.00 Welcome Fee Credit on First Live Trade ($10+)', 1135, 285);
+
+                      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+                      ctx.fillRect(620, 355, 515, 92);
+                      ctx.strokeStyle = 'rgba(52,211,153,0.75)';
+                      ctx.lineWidth = 2;
+                      ctx.strokeRect(620, 355, 515, 92);
+
+                      ctx.fillStyle = '#FBBF24';
+                      ctx.font = 'bold 34px monospace';
+                      ctx.fillText(`CODE: ${referral.referralCode}`, 1105, 415);
+
+                      ctx.fillStyle = '#93C5FD';
+                      ctx.font = '22px monospace';
+                      ctx.fillText('@Dollarino_bot  |  @Dollarino_official', 1135, 540);
+
+                      const a = document.createElement('a');
+                      a.download = `dollarino-invite-${referral.referralCode}.png`;
+                      a.href = canvas.toDataURL('image/png');
+                      a.click();
+                      tgNotifyHaptic('success');
+                    }
+                  } finally {
+                    setBannerBusy(false);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black inline-flex items-center gap-1.5 shadow-lg transition"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{bannerBusy ? '...' : isFa ? 'دانلود تصویر بنر اختصاصی (PNG)' : 'Download Banner PNG'}</span>
+              </button>
+              {referral?.telegramInviteUrl && (
+                <a
+                  href={`https://t.me/share/url?url=${encodeURIComponent(referral.telegramInviteUrl)}&text=${encodeURIComponent(isFa ? referral.inviteTextFa || '' : referral.inviteTextEn || '')}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-2 rounded-xl bg-[#0EA5E9] hover:bg-[#0284C7] text-white text-xs font-black inline-flex items-center gap-1.5 shadow-lg transition"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'ارسال مستقیم در تلگرام' : 'Share on Telegram'}</span>
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Copyable Code, Links & Ready Invite Text + Gift Code Redeem */}
+        {referral && (
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div className="surface-soft rounded-2xl p-4 border hairline space-y-3 text-xs min-w-0 overflow-hidden">
+              <p className="font-black text-main flex items-center gap-1.5">
+                <Link2 className="w-4 h-4 text-[#0D47A1] dark:text-[#60A5FA]" />
+                <span>{isFa ? 'کد معرف و لینک‌های اختصاصی شما' : 'Your Personal Invite Code & Links'}</span>
+              </p>
+
+              <div className="flex items-center justify-between gap-2 panel rounded-xl p-2.5 border hairline">
+                <span className="font-bold text-dim">{isFa ? 'کد دعوت:' : 'Invite Code:'}</span>
+                <div className="flex items-center gap-2">
+                  <code dir="ltr" className="font-mono-num font-black text-main text-sm">{referral.referralCode}</code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(referral.referralCode, 'ref_code')}
+                    className="px-2.5 py-1 rounded-lg bg-[#059669] text-white text-[10px] font-bold inline-flex items-center gap-1"
+                  >
+                    {copied === 'ref_code' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    <span>{copied === 'ref_code' ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 panel rounded-xl p-2.5 border hairline">
+                <span className="font-bold text-dim shrink-0">{isFa ? 'لینک ربات تلگرام:' : 'Telegram Link:'}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <code dir="ltr" className="font-mono-num text-[11px] text-sub truncate">{referral.telegramInviteUrl}</code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(referral.telegramInviteUrl || '', 'ref_tg')}
+                    className="px-2.5 py-1 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold shrink-0"
+                  >
+                    {copied === 'ref_tg' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 panel rounded-xl p-2.5 border hairline">
+                <span className="font-bold text-dim shrink-0">{isFa ? 'لینک وب‌سایت:' : 'Web Invite Link:'}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <code dir="ltr" className="font-mono-num text-[11px] text-sub truncate">{referral.inviteUrl}</code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(referral.inviteUrl || '', 'ref_web')}
+                    className="px-2.5 py-1 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold shrink-0"
+                  >
+                    {copied === 'ref_web' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-1">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-bold text-dim inline-flex items-center gap-1">
+                    <MessageSquareText className="w-3.5 h-3.5 text-[#F59E0B]" />
+                    <span>{isFa ? 'متن آماده ارسال به دوستان:' : 'Ready-to-Share Invite Message:'}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyText(isFa ? referral.inviteTextFa || '' : referral.inviteTextEn || '', 'ref_text')}
+                    className="px-3 py-1 rounded-lg btn-emerald text-[10px] font-black inline-flex items-center gap-1"
+                  >
+                    {copied === 'ref_text' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    <span>{copied === 'ref_text' ? (isFa ? 'متن کپی شد!' : 'Copied!') : isFa ? 'کپی کل متن دعوت' : 'Copy Invite Text'}</span>
+                  </button>
+                </div>
+                <pre className="panel rounded-xl p-3 border hairline text-[11px] text-sub whitespace-pre-wrap leading-relaxed font-sans max-h-40 overflow-y-auto">
+                  {isFa ? referral.inviteTextFa : referral.inviteTextEn}
+                </pre>
+              </div>
+            </div>
+
+            <div className="space-y-4 min-w-0">
+              {/* Invited Friends Anti-Fraud Qualification Status */}
+              <div className="surface-soft rounded-2xl p-4 border hairline space-y-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-black text-main flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-[#059669] dark:text-[#34D399]" />
+                    <span>{isFa ? 'وضعیت دوستان دعوت‌شده و کنترل ضدتقلب' : 'Invited Friends & Anti-Fraud Status'}</span>
+                  </p>
+                  <span className="text-[10px] font-bold text-dim">
+                    {isFa ? 'شرط: ≥$۱۰ + ترید واقعی' : 'Rule: ≥$10 + Live Trade'}
+                  </span>
+                </div>
+
+                {referral.referrals.length === 0 ? (
+                  <p className="text-dim py-4 text-center">
+                    {isFa
+                      ? 'هنوز دوستی با کد شما وارد نشده است. بنر بالا یا متن آماده را به اشتراک بگذارید!'
+                      : 'No invited friends yet—share your banner or invite message above!'}
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                    {referral.referrals.map((fr, idx) => {
+                      const qStatus = fr.qualificationStatus || (fr.status === 'REWARDED' ? 'QUALIFIED_ACTIVE' : fr.status === 'FLAGGED_DUPLICATE' ? 'FLAGGED_DUPLICATE' : 'PENDING_BALANCE_OR_TRADE');
+                      return (
+                        <div key={fr.id || idx} className="panel rounded-xl px-3 py-2 border hairline flex items-center justify-between gap-2">
+                          <div>
+                            <span className="font-bold text-main">{fr.username}</span>
+                            <span className="block text-[10px] text-dim">
+                              {isFa
+                                ? `موجودی ≥۱۰$: ${fr.friendHasMinBalance ? 'بله ✅' : 'خیر'} · ترید واقعی: ${fr.friendLiveTradesCount ?? 0}`
+                                : `Bal ≥$10: ${fr.friendHasMinBalance ? 'Yes' : 'No'} · Live Trades: ${fr.friendLiveTradesCount ?? 0}`}
+                            </span>
+                          </div>
+                          <div className="text-end">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                qStatus === 'QUALIFIED_ACTIVE'
+                                  ? 'bg-emerald-500/15 text-[#059669] dark:text-[#34D399]'
+                                  : qStatus === 'FLAGGED_DUPLICATE'
+                                    ? 'bg-rose-500/15 text-[#DC2626] dark:text-[#FB7185]'
+                                    : 'bg-amber-500/15 text-[#D97706] dark:text-[#FBBF24]'
+                              }`}
+                            >
+                              {qStatus === 'QUALIFIED_ACTIVE'
+                                ? isFa
+                                  ? `فعال (+$${Number(fr.commission_usd || 0).toFixed(2)})`
+                                  : `Active (+$${Number(fr.commission_usd || 0).toFixed(2)})`
+                                : qStatus === 'FLAGGED_DUPLICATE'
+                                  ? isFa
+                                    ? 'حساب تکراری (مسدود)'
+                                    : 'Duplicate Blocked'
+                                  : isFa
+                                    ? 'در انتظار شارژ ۱۰$ و ترید'
+                                    : 'Needs $10+ & Live Trade'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Promo / Fee Credit Code */}
+              <div className="surface-soft rounded-2xl p-4 border hairline space-y-2.5 text-xs">
+                <p className="font-black text-main flex items-center gap-2">
+                  <Gift className="w-4 h-4 text-[#F59E0B]" />
+                  <span>{isFa ? 'کد هدیه یا اعتبار کارمزد ۵٪' : 'Promo / Fee Credit Code'}</span>
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    dir="ltr"
+                    value={giftCode}
+                    onChange={(e) => setGiftCode(e.target.value)}
+                    placeholder="DOLLARINO2026"
+                    className="input-pro flex-1 rounded-xl px-3 py-2 text-xs font-mono uppercase"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void handleRedeemGift()}
+                    className="px-4 py-2 rounded-xl bg-[#0D47A1] text-white text-xs font-black"
+                  >
+                    {isFa ? 'اعمال کد' : 'Apply'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

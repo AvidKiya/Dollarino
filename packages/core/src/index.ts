@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './decimal.js';
 export * from './signal-parser.js';
 export * from './indicators.js';
+export * from './tv-alerts.js';
 export * from './kiya-bot.js';
 export * from './strategies.js';
 export * from './risk-engine.js';

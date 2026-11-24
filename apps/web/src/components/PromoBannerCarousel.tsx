@@ -18,7 +18,7 @@ const FALLBACK_BANNERS: PromoBannerItem[] = [
     cta_label_fa: 'شروع کپی‌ترید ولت‌ها',
     cta_label_en: 'Open Smart Copy V2',
     cta_target: 'copy',
-    image_url: '/images/smart-wallet-radar.png',
+    image_url: '/images/smart-wallet-radar.webp',
     accent_theme: 'gold',
     placement: 'BOTH',
     sort_order: 1,
@@ -37,7 +37,7 @@ const FALLBACK_BANNERS: PromoBannerItem[] = [
     cta_label_fa: 'ورود به هاب DEX و فیوچرز',
     cta_label_en: 'Launch DEX & Perps',
     cta_target: 'dex',
-    image_url: '/images/antirug-shield-dapp.png',
+    image_url: '/images/antirug-shield-dapp.webp',
     accent_theme: 'emerald',
     placement: 'BOTH',
     sort_order: 2,
@@ -182,7 +182,7 @@ export function PromoBannerCarousel({
       >
         <div className="relative w-full md:w-64 lg:w-72 h-36 sm:h-40 rounded-2xl overflow-hidden shrink-0 border hairline shadow-lg">
           <img
-            src={current.image_url || '/images/smart-wallet-radar.png'}
+            src={current.image_url || '/images/smart-wallet-radar.webp'}
             alt={isFa ? current.title_fa : current.title_en}
             className="w-full h-full object-cover transition-transform duration-700 hover:scale-105"
           />

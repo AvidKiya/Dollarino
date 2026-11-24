@@ -38,9 +38,14 @@ export function formatUsdPrice(px: number): string {
   return px.toFixed(4);
 }
 
-export function formatTomanEq(usd: number, rate = 70000): string {
+export function formatTomanEq(usd: number, rate = 74500): string {
   if (!Number.isFinite(usd)) return '0';
   return Math.round(usd * rate).toLocaleString('fa-IR');
+}
+
+export function formatRialEq(usd: number, rate = 74500): string {
+  if (!Number.isFinite(usd)) return '0';
+  return Math.round(usd * rate * 10).toLocaleString('fa-IR');
 }
 
 export function getPersianToday(): string {

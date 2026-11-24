@@ -110,7 +110,7 @@ export function WeeklyCardPage({
           netPnlUsd: Number(r.net_pnl_usd || 0),
           roiPct: Number(r.roi_pct || 0),
           profitFactor: Number(r.profit_factor || 0),
-          exchangeProvider: String(r.exchange_provider || 'TOOBIT'),
+          exchangeProvider: String(r.exchange_provider || 'TRUST WALLET'),
           strategyName: String(r.strategy_name || 'dollarino_v01'),
           cardStyle: p.cardStyle || 'dark',
           symbol: p.symbol,
@@ -710,7 +710,7 @@ export function WeeklyCardPage({
               </div>
             </>
           ) : (
-            <div className="w-full max-w-[520px] aspect-[16/10] rounded-[26px] border border-dashed border-white/20 p-7 flex flex-col items-center justify-center text-center gap-3 surface-soft">
+            <div className="w-full max-w-[520px] aspect-[16/10] rounded-[26px] border-2 border-dashed hairline p-7 flex flex-col items-center justify-center text-center gap-3 surface-soft">
               <QrCode className="w-10 h-10 text-dim" />
               <p className="text-sm font-black text-main">
                 {isFa ? 'هنوز کارت سودی صادر نشده است' : 'No Profit Card Issued Yet'}
@@ -738,7 +738,7 @@ export function WeeklyCardPage({
                 type="button"
                 onClick={() => setIssuedCard(c)}
                 className={`p-3.5 rounded-2xl border text-start transition ${
-                  issuedCard?.id === c.id ? 'border-[var(--gold)] bg-white/5' : 'surface-soft hover:border-white/25'
+                  issuedCard?.id === c.id ? 'border-[var(--gold)] bg-amber-500/10' : 'surface-soft hairline hover:border-[var(--brand)]'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">

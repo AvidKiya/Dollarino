@@ -780,8 +780,8 @@ export function TerminalPage({
           </div>
           <p className="text-[10.5px] text-dim text-center">
             {isFa
-              ? 'نکته: این پایانه روی صرافی متمرکز (Toobit/Bitunix/KCEX یا دمو) معامله می‌زند. برای فیوچرز بدون KYC مستقیماً از کیف‌پول (Hyperliquid / Jupiter Perps) به بخش «DEX و تراست‌ولت ← فیوچرز Perp DEX» بروید.'
-              : 'Tip: This terminal executes on CEX/Paper. For No-KYC wallet futures (Hyperliquid / Jupiter Perps), open DEX & Trust Wallet → Perp DEX.'}
+              ? 'نکته: این پایانه روی شبیه‌ساز دمو $10K یا مسیر Perp DEX تراست‌ولت اجرا می‌شود. برای سوآپ توکن‌ها و فیوچرز آنچین بدون KYC به تب «DEX و تراست‌ولت» بروید.'
+              : 'Tip: Executes on $10K Demo Simulator or Trust Wallet Perp DEX. For multi-chain DEX swaps & No-KYC perps, visit DEX & Trust Wallet.'}
           </p>
         </div>
 
@@ -1363,7 +1363,7 @@ export function TerminalPage({
                         SL ${p.current_stop_loss} · TP1 ${p.tp1}
                       </span>
                       <span dir="ltr" className={`ms-auto font-num font-bold ${u >= 0 ? 'text-jade' : 'text-loss'}`}>
-                        {u >= 0 ? '+' : ''}${u.toFixed(2)}
+                        {u >= 0 ? `+$${u.toFixed(2)}` : `-$${Math.abs(u).toFixed(2)}`}
                       </span>
                       <button
                         type="button"
@@ -1803,7 +1803,7 @@ export function TerminalPage({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${al.is_active ? 'bg-jade/15 text-jade' : 'bg-white/10 text-dim'}`}>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${al.is_active ? 'bg-jade/15 text-jade' : 'bg-[var(--soft)] border hairline text-dim'}`}>
                           {al.is_active ? (isFa ? 'فعال' : 'Active') : isFa ? 'عمل‌کرده' : 'Triggered'}
                         </span>
                         <button type="button" onClick={() => void deletePriceAlert(al.id)} className="text-dim hover:text-loss">

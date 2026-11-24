@@ -530,7 +530,7 @@ export function MarketsPage({
                 </div>
 
                 <div className="hidden md:flex items-center gap-2">
-                  <div className="relative flex-1 h-1.5 rounded-full bg-white/10">
+                  <div className="relative flex-1 h-1.5 rounded-full bg-[var(--soft)] border hairline">
                     <span
                       className="absolute top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full"
                       style={{

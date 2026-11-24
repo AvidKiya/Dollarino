@@ -19,6 +19,7 @@ import {
 } from '../dex/perp-dex.js';
 import type { AuthUser, Env } from '../env.js';
 import { enforceRateLimit } from '../security.js';
+import { checkLiveFeeEnforcement } from '../services/server-fee.js';
 
 export const dexRoutes = new Hono<{ Bindings: Env; Variables: { user: AuthUser } }>();
 
@@ -258,6 +259,14 @@ dexRoutes.post('/perp-connect', requireAuth, async (c) => {
 
 dexRoutes.post('/perp-order', requireAuth, async (c) => {
   const user = c.get('user');
+  const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
+  if (!feeCheck.allowed) {
+    return c.json({
+      error: feeCheck.reasonFa || 'سفارش واقعی Perp DEX به دلیل عدم تسویه کارمزد ۵٪ معوق قفل است.',
+      code: 'FEE_SETTLEMENT_REQUIRED',
+      enforcement: feeCheck,
+    }, 402);
+  }
   const body = (await c.req.json().catch(() => ({}))) as {
     venue?: PerpVenueId;
     provider?: string;

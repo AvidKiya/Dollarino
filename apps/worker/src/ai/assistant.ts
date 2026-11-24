@@ -553,7 +553,7 @@ function buildDedicatedSystemPrompt(hasImage: boolean, langHint: 'fa' | 'en'): s
     `شما **هوش مصنوعی اختصاصی دلارینو (Dollarino Dedicated AI)** هستید؛ یک دستیار هوشمند همه‌فن‌حریف، دقیق، صمیمی و حرفه‌ای در قلب پلتفرم معاملاتی دلارینو.\n` +
     `${creatorBlock}\n\n` +
     `رفتار و وظایف شما:\n` +
-    `۱. دقیقاً مثل پیشرفته‌ترین هوش‌های مصنوعی دنیا (مانند ChatGPT، Claude و Gemini) با کاربر رفتار کن: در هر موضوعی از تحلیل بازار کریپتو و فارکس گرفته تا نوشتن استراتژی Pine Script / پایتون، مدیریت ریسک، اقتصاد، برنامه‌نویسی، سوال‌های روزمره و راهنمای امکانات دلارینو (Toobit، Bitunix، KCEX، Trust Wallet، رادار DEX و کپی‌ترید) کامل، منظم و روان به فارسی پاسخ بده.\n` +
+    `۱. دقیقاً مثل پیشرفته‌ترین هوش‌های مصنوعی دنیا (مانند ChatGPT، Claude و Gemini) با کاربر رفتار کن: در هر موضوعی از تحلیل بازار کریپتو و فارکس گرفته تا نوشتن استراتژی Pine Script / پایتون، مدیریت ریسک، اقتصاد، برنامه‌نویسی، سوال‌های روزمره و راهنمای امکانات دلارینو (اتصال انحصاری به Trust Wallet در تمام شبکه‌ها، شبیه‌ساز دمو مشابه تراست‌ولت، تایید دستی یا تمام‌اتوترید ۲۴/۷، Perp DEX تا ۱۰۰x، رادار DEX و کپی‌ترید هوشمند) کامل، منظم و روان به فارسی پاسخ بده.\n` +
     (hasImage
       ? `۲. کاربر **تصویر چارت / اسکرین‌شات** فرستاده است! تمام جزئیات قابل مشاهده در عکس شامل تایم‌فریم، روند غالب، ساختار بازار (BOS/CHoCH)، سطوح کلیدی حمایت و مقاومت، نقدینگی و اردربلاک، الگوی کندل‌ها و اندیکاتورها را با دقت بالا تحلیل کن.\n` +
         `۳. در ادامه حتماً یک **ستاپ معاملاتی شفاف و حرفه‌ای** بده شامل:\n` +
@@ -682,7 +682,7 @@ async function buildBuiltInLiveAIResponse(
           `• **تلگرام:** ${DOLLARINO_CREATOR_INFO.telegram} (${DOLLARINO_CREATOR_INFO.telegramUrl})\n` +
           `• **اینستاگرام:** ${DOLLARINO_CREATOR_INFO.instagram} (${DOLLARINO_CREATOR_INFO.instagramUrl})\n` +
           `• **توییتر (X):** ${DOLLARINO_CREATOR_INFO.twitter} (${DOLLARINO_CREATOR_INFO.twitterUrl})\n\n` +
-          `دلارینو شامل موتور ترید هوشمند ۲۴/۷، هوش مصنوعی تحلیل چارت، استراتژی شکار دُرنا V1، کپی‌ترید تاییدشده و رادار DEX متصل به Toobit، Bitunix، KCEX و Trust Wallet است.`;
+          `دلارینو شامل موتور ترید هوشمند ۲۴/۷، هوش مصنوعی تحلیل چارت، استراتژی شکار دُرنا V1، کپی‌ترید هوشمند ولت‌ها و رادار DEX با اتصال مستقیم و غیرامانی به Trust Wallet و شبیه‌ساز دمو مشابه تراست‌ولت است.`;
   }
 
   // 2) Pine Script / Strategy Code request
@@ -817,19 +817,19 @@ async function buildBuiltInLiveAIResponse(
           `• **روش ۲:** یک کلید API دارای Vision در بخش اتصالات یا پنل مدیریت ثبت کنید تا مستقیم خطوط روی عکس اسکرین‌شات خوانده شوند.`;
   }
 
-  // 6) Exchange / Wallet / Platform guidance
-  if (/toobit|bitunix|kcex|trust|wallet|dex|صرافی|کیف\s*پول|تراست|کپی\s*ترید|اشتراک|ربات|تلگرام/i.test(lower)) {
+  // 6) Trust Wallet / Execution Mode / Platform guidance
+  if (/toobit|bitunix|kcex|trust|wallet|dex|صرافی|کیف\s*پول|تراست|کپی\s*ترید|اشتراک|ربات|تلگرام|دستی|اتومات/i.test(lower)) {
     return isEn
       ? `🤖 **Dollarino Platform Guide:**\n` +
-          `• **Exchanges:** Connect **Toobit**, **Bitunix**, or **KCEX** with Trade-only API keys (keep Withdraw OFF) or start risk-free in **Paper Mode**.\n` +
-          `• **Trust Wallet & DEX:** Add your public wallet address (EVM / Solana / TRON) in **Trust Wallet & DEX** and scan trending tokens via **DexScreener Radar**.\n` +
-          `• **4 Trading Engines:** Central Multi-AI, My Personal AI, Hunting Strategy (Dorna V1 / Pine Script), and Verified Copy Trade.\n` +
+          `• **Exclusive Trust Wallet Connection:** Connect your non-custodial **Trust Wallet** across EVM, Solana, TON & TRON, or test risk-free with our **$10,000 Trust Wallet Simulator**.\n` +
+          `• **Manual vs Full 24/7 Auto-Trade:** Pick **Manual 1-Click Confirmation** inside Trust Wallet, or enable **Full 24/7 Autonomous Auto-Trade** via Trade-Only Perp Agent Key + budget-capped 24/7 Copy-Vault.\n` +
+          `• **4 Trading Engines:** Central Multi-AI, My Personal AI, Hunting Strategy (Dorna V1 / Pine Script), and Smart Copy-Trade V2.\n` +
           `• **Telegram Bot:** \`@Dollarino_bot\` & Official Channel \`@Dollarino_official\`.\n` +
           `• **Creator:** ${DOLLARINO_CREATOR_INFO.nameEn} (${DOLLARINO_CREATOR_INFO.telegram})`
-      : `🤖 **راهنمای کامل امکانات دلارینو:**\n\n` +
-          `• **اتصال صرافی‌ها:** پشتیبانی از **Toobit**، **Bitunix** و **KCEX** با کلید API فقط با دسترسی معامله (بدون دسترسی برداشت) + حالت آزمایشی **Paper Mode** با قیمت لحظه‌ای.\n` +
-          `• **کیف‌پول Trust Wallet و رادار DEX:** ثبت آدرس عمومی (EVM / Solana / TRON) بدون نیاز به ۱۲ کلمه و اسکن توکن‌های داغ در DexScreener.\n` +
-          `• **۴ موتور معاملاتی هوشمند:** هوش مصنوعی مرکزی، هوش مصنوعی شخصی خام، استراتژی شکار دُرنا V1 / کدنویسی شخصی و کپی‌ترید تاییدشده.\n` +
+      : `🤖 **راهنمای کامل امکانات دلارینو (مبتنی بر Trust Wallet):**\n\n` +
+          `• **اتصال انحصاری Trust Wallet + شبیه‌ساز دمو:** اتصال امن به کیف‌پول **Trust Wallet** (شبکه‌های ETH، BSC، Base، Arbitrum، Solana، TON و TRON) یا تست بدون ریسک با **شبیه‌ساز ۱۰,۰۰۰ دلاری مشابه تراست‌ولت**.\n` +
+          `• **انتخاب تایید دستی یا تمام‌اتوترید ۲۴/۷:** می‌توانید هر معامله را با ۱ کلیک در Trust Wallet تایید کنید یا با فعال‌سازی **Perp Agent Key** و **Copy-Vault ۲۴/۷** تمام معاملات اسپات، میم‌کوین، کپی‌ترید و فیوچرز ۱۰۰x را بدون نیاز به تایید دستی، شبانه‌روزی اجرا کنید.\n` +
+          `• **۴ موتور معاملاتی هوشمند:** هوش مصنوعی مرکزی، هوش مصنوعی شخصی خام، استراتژی شکار دُرنا V1 / کدنویسی شخصی و کپی‌ترید هوشمند ولت‌ها.\n` +
           `• **چت و تحلیل بازار زنده:** اسم هر ارزی مثل **«تحلیل BTC»** یا **«ستاپ SOL 1h»** را همین‌جا بفرستید تا قیمت لحظه‌ای و Entry/SL/TP به شما بدهم!\n\n` +
           `👨‍💻 سازنده پروژه: **${DOLLARINO_CREATOR_INFO.nameFa}** (${DOLLARINO_CREATOR_INFO.telegram})`;
   }
@@ -841,13 +841,13 @@ async function buildBuiltInLiveAIResponse(
         `• **"Analyze BTC 15m"** or **"SOL 1h setup"** for live market price & Entry/SL/TP1-3\n` +
         `• **"Calculate position size for $500 with 2% risk"**\n` +
         `• **"Write an EMA + RSI Pine Script strategy"**\n` +
-        `• Or ask anything about Dollarino, Toobit/Bitunix/KCEX, Trust Wallet DEX, or creator **${DOLLARINO_CREATOR_INFO.nameEn}**!`
+        `• Or ask anything about Dollarino, Trust Wallet Auto-Trade, DEX Radar, or creator **${DOLLARINO_CREATOR_INFO.nameEn}**!`
     : `👋 سلام! **هوش مصنوعی دلارینو** کاملاً فعال و آماده پاسخ‌گویی به شماست.\n\n` +
         `همین الان می‌توانید هر کدام از این موارد را از من بخواهید:\n` +
-        `• 📊 **تحلیل لحظه‌ای و ستاپ معاملاتی هر ارز:** مثلاً بنویسید *«تحلیل بیت‌کوین»* یا *«ستاپ SOL 15m»*\n` +
-        `• 🛡 **محاسبه حجم و مدیریت ریسک:** مثلاً *«با ۵۰۰ دلار و ۲٪ ریسک چقدر حجم بگیرم؟»*\n` +
-        `• 🧠 **نوشتن کد استراتژی:** مثلاً *«کد Pine Script استراتژی EMA و RSI بنویس»*\n` +
-        `• ⚙️ **راهنمای اتصال صرافی، Trust Wallet DEX، ربات تلگرام و آشنایی با سازنده (${DOLLARINO_CREATOR_INFO.nameFa})**`;
+        `• 📊 **تحلیل لحظه‌ای و ستاپ معاملاتی هر ارز:** مثلاً بنویسید **«تحلیل بیت‌کوین»** یا **«ستاپ SOL 15m»**\n` +
+        `• 🛡 **محاسبه حجم و مدیریت ریسک:** مثلاً **«با ۵۰۰ دلار و ۲٪ ریسک چقدر حجم بگیرم؟»**\n` +
+        `• 🧠 **نوشتن کد استراتژی:** مثلاً **«کد Pine Script استراتژی EMA و RSI بنویس»**\n` +
+        `• ⚙️ **راهنمای اتصال Trust Wallet، تایید دستی / تمام‌اتوترید ۲۴/۷ و آشنایی با سازنده (${DOLLARINO_CREATOR_INFO.nameFa})**`;
 }
 
 async function executeAIWithFailover(

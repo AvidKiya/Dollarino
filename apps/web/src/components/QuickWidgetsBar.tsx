@@ -203,8 +203,7 @@ export function QuickWidgetsBar({
                 <p dir="ltr" className="text-xs font-num font-black text-main mt-1.5">
                   ${Number(dashboard.balance.total || 0).toFixed(0)}{' '}
                   <span className={openPnl >= 0 ? 'text-jade' : 'text-loss'}>
-                    ({openPnl >= 0 ? '+' : ''}
-                    ${openPnl.toFixed(1)})
+                    ({openPnl >= 0 ? `+$${openPnl.toFixed(1)}` : `-$${Math.abs(openPnl).toFixed(1)}`})
                   </span>
                 </p>
               </button>
@@ -421,7 +420,7 @@ export function QuickLauncherModal({
             {isFa ? 'موجودی:' : 'Balance:'} <strong dir="ltr" className="text-main">${Number(dashboard.balance.total || 0).toFixed(2)}</strong> ·{' '}
             {isFa ? 'سود باز:' : 'Open PnL:'}{' '}
             <strong dir="ltr" className={openPnl >= 0 ? 'text-jade' : 'text-loss'}>
-              {openPnl >= 0 ? '+' : ''}${openPnl.toFixed(2)}
+              {openPnl >= 0 ? `+$${openPnl.toFixed(2)}` : `-$${Math.abs(openPnl).toFixed(2)}`}
             </strong>
           </p>
         </div>

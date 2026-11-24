@@ -420,7 +420,7 @@ export function HybridLab({
                     +${model.profit.toLocaleString('en-US')}
                   </span>
                 </div>
-                <AreaChart values={model.curve} color={chartColor} height={110} />
+                <AreaChart values={model.curve} color={chartColor} tone="dark" height={156} />
               </div>
             </div>
           </div>
