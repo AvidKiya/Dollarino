@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Cpu,
   ImagePlus,
-  Lock,
   Play,
   RotateCcw,
   Send,
@@ -227,7 +226,7 @@ export function MyAiPage({
       <div className="panel rounded-[28px] p-5 sm:p-7 flex flex-col lg:flex-row lg:items-center justify-between gap-5 overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <img
-            src="/images/my-ai-brain.png"
+            src="/images/my-ai-brain.webp"
             alt="My Personal Trainable AI"
             className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl object-cover border hairline shadow-lg shrink-0 mx-auto sm:mx-0"
           />
@@ -257,32 +256,21 @@ export function MyAiPage({
             <RotateCcw className="w-3.5 h-3.5" />
             <span>{isFa ? 'ریست به هوش خام' : 'Reset Blank AI'}</span>
           </button>
-          {!hasPaidPlan ? (
-            <button
-              type="button"
-              onClick={() => onNavigate('pricing')}
-              className="btn-gold px-5 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>{isFa ? 'خرید اشتراک برای فعال‌سازی' : 'Upgrade to Activate'}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void toggleActivate(true)}
-              className={`px-5 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5 ${
-                isActive ? 'btn-emerald' : 'btn-lime'
-              }`}
-            >
-              <Zap className="w-4 h-4" />
-              <span>
-                {isActive
-                  ? isFa ? 'فعال روی ربات (اجرا مجدد)' : 'Active & Trading 24/7'
-                  : isFa ? 'فعال‌سازی ترید با هوش مصنوعی من' : 'Activate & Start My AI'}
-              </span>
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void toggleActivate(true)}
+            className={`px-5 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5 ${
+              isActive ? 'btn-emerald' : 'btn-lime'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            <span>
+              {isActive
+                ? isFa ? 'فعال روی ربات (اجرا مجدد)' : 'Active & Trading 24/7'
+                : isFa ? 'فعال‌سازی ترید با هوش مصنوعی من' : 'Activate & Start My AI'}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -293,10 +281,10 @@ export function MyAiPage({
           }`}
         >
           <span>{notice.text}</span>
-          {!hasPaidPlan && !notice.ok && (
+          {!notice.ok && (
             <button
               type="button"
-              onClick={() => onNavigate('pricing')}
+              onClick={() => onNavigate('dex')}
               className="btn-gold px-3.5 py-1.5 rounded-xl text-[11px] shrink-0"
             >
               {isFa ? 'مشاهده پلن‌ها' : 'View Plans'}
@@ -308,7 +296,7 @@ export function MyAiPage({
       <div className="grid lg:grid-cols-[1.25fr_0.95fr] gap-5 items-start">
         {/* Conversational Training Chat */}
         <div className="panel rounded-[28px] overflow-hidden flex flex-col min-h-[520px] max-h-[680px]">
-          <div className="px-5 py-3.5 border-b hairline flex items-center justify-between gap-2 bg-white/[0.02]">
+          <div className="px-5 py-3.5 border-b hairline flex items-center justify-between gap-2 bg-[var(--soft)]">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-[#1652f0]/15 border border-[#1652f0]/30 grid place-items-center">
                 <Bot className="w-4.5 h-4.5 text-brand" />
@@ -538,9 +526,13 @@ export function MyAiPage({
                       <p className="text-[10px] text-dim">{isFa ? 'تعداد ترید' : 'Trades'}</p>
                     </div>
                   </div>
-                  {testResult.backtest.equityCurve.length > 2 && (
-                    <div className="h-28 rounded-2xl bg-black/20 border hairline p-2">
-                      <AreaChart values={testResult.backtest.equityCurve.map((x) => x.equity)} height={92} />
+                  {testResult.backtest.equityCurve.length >= 2 && (
+                    <div className="h-44 rounded-2xl surface-soft border hairline p-3">
+                      <AreaChart
+                        values={testResult.backtest.equityCurve.map((x) => x.equity)}
+                        baseline={testResult.backtest.equityCurve[0]?.equity}
+                        height={150}
+                      />
                     </div>
                   )}
                 </>

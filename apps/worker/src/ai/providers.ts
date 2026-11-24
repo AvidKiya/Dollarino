@@ -1817,8 +1817,8 @@ export async function generateSupportAIReply(
   const primary = ensemble.engines[0];
   if (primary) {
     const sysPrompt = isEn
-      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely about Dollarino platform features (Toobit & KCEX Exchange connections, Trust Wallet non-custodial Web3 & DEX Screener radar, Central Multi-AI Autonomous Trading, My Custom AI, Dorna V1 strategy, Copy Trading, Browser Extension, Subscriptions, and Anti-Scam safety). Never ask for passwords or seed phrases. If the user asks about billing verification, account refunds, or complex manual issues, advise them they can click "Speak with Human Admins" anytime.`
-      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. به زبان فارسی روان، محترمانه، دقیق و کوتاه پاسخ بدهید. اطلاعات کامل پلتفرم: اتصال امن صرافی‌های Toobit و KCEX (بدون دسترسی برداشت)، اتصال غیرحضانتی Trust Wallet روی شبکه‌های EVM/BSC و Solana و TRON، اسکنر توکن‌های DEX (DexScreener)، موتورهای ترید خودکار (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا V1، کپی‌ترید)، افزونه کروم/اج و اشتراک‌ها. هرگز رمز یا ۱۲ کلمه بازیابی نخواهید. در پایان یا در موارد تایید دستی/مالی یادآوری کنید در صورت نیاز می‌توانند دکمه «گفتگو با مدیران انسانی» را بزنند.`;
+      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely about Dollarino platform features (exclusive Trust Wallet non-custodial Web3 integration across EVM/Solana/TON/TRON, $10,000 Trust Wallet Demo Simulator, choice between Manual Confirmation and Full 24/7 Autonomous Auto-Trade via Perp Agent Key + Copy-Vault, DEX Screener radar, Central Multi-AI, My Custom AI, Dorna V1 strategy, Smart Copy V2, Browser Extension, Subscriptions, and Anti-Scam safety). Never ask for passwords or seed phrases. If the user asks about billing verification, account refunds, or complex manual issues, advise them they can click "Speak with Human Admins" anytime.`
+      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. به زبان فارسی روان، محترمانه، دقیق و کوتاه پاسخ بدهید. اطلاعات کامل پلتفرم: اتصال انحصاری و غیرامانی به Trust Wallet روی تمام شبکه‌های EVM/BSC/Base/Solana/TON/TRON به‌همراه شبیه‌ساز دمو ۱۰ هزار دلاری مشابه تراست‌ولت، امکان انتخاب بین تایید دستی یا تمام‌اتوترید خودکار ۲۴/۷ (از طریق Perp Agent Key و Copy-Vault بدون حق برداشت)، اسکنر ضدراگ و توکن‌های DEX، ۴ موتور معاملاتی (هوش مصنوعی مرکزی، هوش مصنوعی من، استراتژی دُرنا V1، کپی‌ترید هوشمند ولت‌ها)، افزونه کروم و اشتراک‌ها. هرگز رمز یا ۱۲ کلمه بازیابی نخواهید. در پایان یا در موارد تایید دستی/مالی یادآوری کنید در صورت نیاز می‌توانند دکمه «گفتگو با مدیران انسانی» را بزنند.`;
 
     const historyText = (params.recentMessages ?? [])
       .slice(-6)
@@ -1855,12 +1855,12 @@ export async function generateSupportAIReply(
         : `برای استفاده از کیف‌پول Trust Wallet و ترید غیرمتمرکز (DEX) در دلارینو:\n۱. از منوی «تراست‌ولت و DEX» آدرس عمومی شبکه BSC/ETH (با 0x) یا TRON/Solana خود را ثبت کنید (هرگز ۱۲ کلمه بازیابی را وارد نکنید).\n۲. در رادار DexScreener توکن‌های جدید و امتیاز ایمنی آن‌ها را بررسی کنید.\n۳. با دکمه «سوآپ در تراست‌ولت» معامله را مستقیماً داخل اپلیکیشن Trust Wallet خودتان امضا کنید.\n\nاگر نیاز به راهنمایی بیشتر دارید، می‌توانید همین‌جا ادامه دهید یا دکمه «ارتباط با مدیران انسانی» را بزنید.`,
     };
   }
-  if (/toobit|kcex|صرافی|api|اتصال|فیوچرز|اسپات/.test(lower)) {
+  if (/toobit|kcex|صرافی|api|اتصال|فیوچرز|اسپات|تراست|trust|ولت|دستی|اتومات/.test(lower)) {
     return {
       usedModel: 'Dollarino AI Support Core',
       reply: isEn
-        ? `To connect Toobit or KCEX safely:\n1) Create an API Key in your exchange with ONLY Trade/Futures permission enabled — leave Withdraw disabled.\n2) Go to Settings / Connections in Dollarino and test the connection.\n3) Use Paper Mode anytime to simulate live prices before switching to Live.\n\nNeed direct admin help? Click "Speak with Human Admins".`
-        : `برای اتصال امن صرافی Toobit یا KCEX:\n۱. در صرافی خود یک API Key بسازید که فقط دسترسی معامله (Trade/Futures) داشته باشد و تیک برداشت (Withdraw) حتماً خاموش باشد.\n۲. در بخش «تنظیمات و اتصال» یا منوی ربات تلگرام کلید را وارد و دکمه تست اتصال را بزنید.\n۳. تا زمانی که در حالت Paper Mode باشید، معاملات با قیمت لحظه‌ای واقعی ولی با موجودی آزمایشی انجام می‌شوند.\n\nدر صورت خطای اتصال، می‌توانید متن خطا را بفرستید یا دکمه «ارتباط با مدیران انسانی» را انتخاب کنید.`,
+        ? `To connect Trust Wallet & choose execution mode safely:\n1) Connect your Trust Wallet public address (EVM / Solana / TON / TRON) in Trust Wallet Connect — zero 12-word seed phrases ever!\n2) Choose Manual Approval (1-click sign in Trust Wallet) OR Full 24/7 Autonomous Auto-Trade via Trade-Only Perp Agent Key + Copy-Vault.\n3) Use the $10,000 Trust Wallet Demo Simulator anytime to test risk-free.\n\nNeed direct admin help? Click "Speak with Human Admins".`
+        : `برای اتصال امن Trust Wallet و انتخاب حالت معامله:\n۱. در بخش «اتصال تراست‌ولت» آدرس کیف‌پول خود (EVM / Solana / TON / TRON) را بدون وارد کردن ۱۲ کلمه بازیابی متصل کنید.\n۲. حالت اجرا را انتخاب کنید: «تایید دستی با یک کلیک در تراست‌ولت» یا «تمام‌اتوترید خودکار ۲۴/۷» (از طریق Perp Agent Key بدون حق برداشت + Copy-Vault با سقف بودجه).\n۳. قبل از معامله واقعی، می‌توانید با «شبیه‌ساز دمو ۱۰,۰۰۰ دلاری مشابه تراست‌ولت» کاملاً رایگان تست بگیرید.\n\nدر صورت نیاز به راهنمایی بیشتر، دکمه «گفتگو با مدیران انسانی» را بزنید.`,
     };
   }
   if (/ai|هوش|سیگنال|ربات|شروع|ترید|bot|signal/.test(lower)) {
@@ -1883,8 +1883,8 @@ export async function generateSupportAIReply(
   return {
     usedModel: 'Dollarino AI Support Core',
     reply: isEn
-      ? `Hello ${params.username}! I am the Dollarino AI Support Assistant.\n${params.contextSummary ? `Your current status: ${params.contextSummary}\n` : ''}Ask me anything about connecting Toobit/KCEX, Trust Wallet & DEX, AI auto-trading, browser extension, or subscriptions — or tap "Speak with Human Admins" anytime to chat directly with our management team.`
-      : `سلام ${params.username} عزیز! من دستیار هوشمند پشتیبانی دلارینو هستم.\n${params.contextSummary ? `وضعیت فعلی حساب شما: ${params.contextSummary}\n` : ''}هر سوالی درباره اتصال صرافی (Toobit/KCEX)، کیف‌پول Trust Wallet و توکن‌های DEX، فعال‌سازی ربات هوش مصنوعی، اکستنشن کروم یا اشتراک دارید بپرسید تا فوراً راهنمایی‌تان کنم. همچنین هر زمان خواستید می‌توانید با دکمه «گفتگو با مدیران انسانی» مستقیماً با تیم مدیریت صحبت کنید.`,
+      ? `Hello ${params.username}! I am the Dollarino AI Support Assistant.\n${params.contextSummary ? `Your current status: ${params.contextSummary}\n` : ''}Ask me anything about Trust Wallet connection, Manual vs 24/7 Auto-Trade, DEX & Perp Futures, AI bots, or subscriptions — or tap "Speak with Human Admins" anytime to chat directly with our management team.`
+      : `سلام ${params.username} عزیز! من دستیار هوشمند پشتیبانی دلارینو هستم.\n${params.contextSummary ? `وضعیت فعلی حساب شما: ${params.contextSummary}\n` : ''}هر سوالی درباره اتصال Trust Wallet، انتخاب تایید دستی یا تمام‌اتوترید ۲۴/۷، شبیه‌ساز دمو، معاملات DEX/Perp یا فعال‌سازی اشتراک دارید بپرسید تا فوراً راهنمایی‌تان کنم. همچنین هر زمان خواستید می‌توانید با دکمه «گفتگو با مدیران انسانی» مستقیماً با تیم مدیریت صحبت کنید.`,
   };
 }
 

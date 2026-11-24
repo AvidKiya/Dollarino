@@ -158,7 +158,7 @@ function SetupActionCard({
             {setup.symbol} · {setup.direction}
           </span>
           {setup.timeframe && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/20 text-dim">
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full surface-soft border hairline text-dim">
               {setup.timeframe}
             </span>
           )}
@@ -640,11 +640,11 @@ export function DedicatedAiChatSurface({
           )}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="relative w-9 h-9 rounded-full overflow-hidden border border-cyan-400/50 shadow-[0_0_12px_rgba(22,82,240,0.4)] shrink-0">
+              <div className="relative w-10 h-10 rounded-full overflow-hidden dz-logo-pill p-1 shrink-0 grid place-items-center">
                 <img
-                  src="/images/ai-orb-avatar.png"
-                  alt="Dollarino AI Core"
-                  className="w-full h-full object-cover scale-[1.28]"
+                  src="/logo.png"
+                  alt="Dollarino Logo"
+                  className="w-full h-full object-contain drop-shadow-[0_2px_6px_rgba(22,82,240,0.3)]"
                 />
               </div>
               <div className="min-w-0">
@@ -743,7 +743,7 @@ export function DedicatedAiChatSurface({
         <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center py-4 px-2 space-y-4">
-              <DollarinoRobotLogoIcon size={52} />
+              <DollarinoRobotLogoIcon size={82} />
               <div className="space-y-1 max-w-md">
                 <h4 className="font-display font-bold text-sm sm:text-base text-main">
                   {isFa ? 'ربات هوش مصنوعی دلارینو آماده است' : 'Dollarino AI is Ready'}
@@ -786,7 +786,7 @@ export function DedicatedAiChatSurface({
                     />
                   )}
                   {m.hasImage && !m.previewImageUrl && (
-                    <div className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-black/20 mb-1.5">
+                    <div className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg surface-soft border hairline mb-1.5">
                       <ImagePlus className="w-3 h-3" />
                       <span>{isFa ? 'تصویر چارت پیوست شد' : 'Chart image attached'}</span>
                     </div>
@@ -949,61 +949,81 @@ export function DedicatedAiChatSurface({
   );
 }
 
-/* Custom Dollarino Logo-Inspired Robot Avatar SVG (Hexagon Cobalt + Visor + Green Candles) */
-export function DollarinoRobotLogoIcon({ size = 34 }: { size?: number }) {
+/* Liquid Glass Hero Orb Avatar: Animated Floating-Orb Robot + Animated Candlesticks Behind */
+export function DollarinoRobotLogoIcon({ size = 82 }: { size?: number }) {
   return (
-    <svg
-      viewBox="0 0 64 64"
-      width={size}
-      height={size}
-      className="shrink-0 select-none pointer-events-none"
+    <div
+      className="dz-hero-orb shrink-0 pointer-events-none"
+      style={{ width: size, height: size }}
       aria-hidden="true"
     >
-      <defs>
-        <linearGradient id="dlrHexBg" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#2563EB" />
-          <stop offset="55%" stopColor="#1652F0" />
-          <stop offset="100%" stopColor="#092E96" />
-        </linearGradient>
-        <linearGradient id="dlrHelmet" x1="20" y1="16" x2="44" y2="48" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#FFFFFF" />
-          <stop offset="100%" stopColor="#DBEAFE" />
-        </linearGradient>
-      </defs>
-      {/* Dollarino Hexagon Badge */}
-      <polygon
-        points="32,4 56,18 56,46 32,60 8,46 8,18"
-        fill="url(#dlrHexBg)"
-        stroke="#00C8FF"
-        strokeWidth="2.6"
-        strokeLinejoin="round"
-      />
-      {/* Antenna with Dollarino Emerald Tip */}
-      <line x1="32" y1="11" x2="32" y2="17" stroke="#E2E8F0" strokeWidth="2.4" strokeLinecap="round" />
-      <circle cx="32" cy="9.5" r="2.8" fill="#16E664" />
-      {/* Robot Ear Pods (Matching Astronaut Helmet Pods) */}
-      <rect x="13.5" y="27" width="4.5" height="11" rx="2.2" fill="#00C8FF" />
-      <rect x="46" y="27" width="4.5" height="11" rx="2.2" fill="#00C8FF" />
-      {/* Robot White Rounded Head */}
-      <rect x="17" y="17" width="30" height="27" rx="11" fill="url(#dlrHelmet)" />
-      {/* Dark Glossy Visor */}
-      <rect x="20.5" y="22.5" width="23" height="14.5" rx="6.5" fill="#07122D" />
-      {/* Glowing Cyan/Emerald Robot Eyes */}
-      <circle cx="27" cy="29.5" r="2.7" fill="#00E5FF" />
-      <circle cx="37" cy="29.5" r="2.7" fill="#16E664" />
-      {/* Subtle Digital Smile */}
-      <path d="M29.2 33.6Q32 35.4 34.8 33.6" stroke="#93C5FD" strokeWidth="1.6" strokeLinecap="round" fill="none" />
-      {/* 3 Ascending Mini Green Candles (Signature Logo Motif) */}
-      <rect x="24" y="48.5" width="3.8" height="4.5" rx="1" fill="#10D856" />
-      <rect x="30.1" y="46.5" width="3.8" height="6.5" rx="1" fill="#10D856" />
-      <rect x="36.2" y="44.2" width="3.8" height="8.8" rx="1" fill="#16E664" />
-    </svg>
+      <div className="dz-hero-shell">
+        {/* Animated Candlesticks Behind the Robot */}
+        <svg className="dz-hero-candles" viewBox="0 0 64 64" fill="none">
+          <g className="dz-candle dz-candle-1">
+            <line x1="10" y1="26" x2="10" y2="54" stroke="#10D856" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.65" />
+            <rect x="7.5" y="34" width="5" height="14" rx="1.5" fill="#10D856" fillOpacity="0.45" />
+          </g>
+          <g className="dz-candle dz-candle-2">
+            <line x1="21" y1="18" x2="21" y2="50" stroke="#38BDF8" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.6" />
+            <rect x="18.5" y="25" width="5" height="17" rx="1.5" fill="#38BDF8" fillOpacity="0.38" />
+          </g>
+          <g className="dz-candle dz-candle-3">
+            <line x1="32" y1="13" x2="32" y2="47" stroke="#16E664" strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.7" />
+            <rect x="29.5" y="20" width="5" height="19" rx="1.5" fill="#16E664" fillOpacity="0.44" />
+          </g>
+          <g className="dz-candle dz-candle-4">
+            <line x1="43" y1="16" x2="43" y2="49" stroke="#10D856" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.65" />
+            <rect x="40.5" y="23" width="5" height="16" rx="1.5" fill="#10D856" fillOpacity="0.42" />
+          </g>
+          <g className="dz-candle dz-candle-5">
+            <line x1="54" y1="9" x2="54" y2="44" stroke="#16E664" strokeWidth="1.6" strokeLinecap="round" strokeOpacity="0.75" />
+            <rect x="51.5" y="15" width="5" height="20" rx="1.5" fill="#16E664" fillOpacity="0.52" />
+          </g>
+        </svg>
+
+        {/* Cute Animated Floating-Orb Robot Foreground */}
+        <svg className="dz-hero-bot" viewBox="0 0 24 24">
+          <defs>
+            <linearGradient id="dzHeroRb" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#4f8dff" />
+              <stop offset="100%" stopColor="#1a43c8" />
+            </linearGradient>
+          </defs>
+          <circle className="dz-ant" cx="12" cy="2.6" r="1.5" fill="#10b981" />
+          <path d="M12 4v2.4" stroke="#2563eb" strokeWidth="1.5" strokeLinecap="round" />
+          <rect x="1.6" y="10" width="2.4" height="5.4" rx="1.2" fill="#2f5fe0" />
+          <rect x="20" y="10" width="2.4" height="5.4" rx="1.2" fill="#2f5fe0" />
+          <rect x="4" y="6" width="16" height="13" rx="5" fill="url(#dzHeroRb)" />
+          <rect x="6" y="8" width="12" height="8.6" rx="3.6" fill="#0b1f6e" fillOpacity=".62" />
+          <circle className="dz-eye" cx="9.6" cy="12.2" r="1.7" fill="#7dffd0" />
+          <circle className="dz-eye" cx="14.4" cy="12.2" r="1.7" fill="#7dffd0" />
+          <path d="M10.2 15.2q1.8 1.1 3.6 0" fill="none" stroke="#fff" strokeWidth="1" strokeLinecap="round" opacity=".92" />
+          <path d="M6.2 7.6q2-1.1 5-1" fill="none" stroke="#fff" strokeWidth="1" strokeLinecap="round" opacity=".5" />
+        </svg>
+
+        {/* Liquid Glass Specular Highlights */}
+        <span className="dz-hero-top" />
+        <span className="dz-hero-sheen" />
+      </div>
+
+      {/* Sparkling Star Matching Floating Orb */}
+      <svg className="dz-hero-spark" viewBox="0 0 24 24">
+        <defs>
+          <linearGradient id="dzHeroSp" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#7dffd0" />
+            <stop offset="100%" stopColor="#10b981" />
+          </linearGradient>
+        </defs>
+        <path fill="url(#dzHeroSp)" d="M12 1c.8 6 3 9.2 11 11-8 1.8-10.2 5-11 11-.8-6-3-9.2-11-11 8-1.8 10.2-5 11-11z" />
+      </svg>
+    </div>
   );
 }
 
 const ORB_STORAGE_KEY = 'dollarino_ai_orb_pos_v3';
-const ORB_SIZE = 74;
-const ORB_MARGIN = 14;
+const ORB_SIZE = 58;
+const ORB_MARGIN = 12;
 const ORB_IDLE_MS = 2800;
 
 const LIQUID_ORB_LOGO_DATA_URI =
@@ -1028,19 +1048,19 @@ function defaultOrbSide(lang: Lang): 'left' | 'right' {
 
 function loadSavedOrbPos(lang: Lang): OrbPos {
   const fallbackSide = defaultOrbSide(lang);
-  if (typeof window === 'undefined') return { side: fallbackSide, y: 320 };
+  if (typeof window === 'undefined') return { side: fallbackSide, y: 640 };
   try {
     const raw = localStorage.getItem(ORB_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<OrbPos>;
       const side = parsed.side === 'left' || parsed.side === 'right' ? parsed.side : fallbackSide;
-      const y = clampOrbY(typeof parsed.y === 'number' ? parsed.y : window.innerHeight * 0.45);
+      const y = clampOrbY(typeof parsed.y === 'number' ? parsed.y : window.innerHeight - 135);
       return { side, y };
     }
   } catch {
     // ignore storage limits
   }
-  return { side: fallbackSide, y: clampOrbY(window.innerHeight * 0.45) };
+  return { side: fallbackSide, y: clampOrbY(window.innerHeight - 135) };
 }
 
 export function FloatingAiChat({

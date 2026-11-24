@@ -23,6 +23,7 @@ import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS } from '../exchanges/markets.js';
 import { compileTrainedRulesToVisualDef, DEFAULT_TRAINED_RULES, type TrainedAIRules } from '../routes/my-ai.js';
 import { publishSignalBroadcast, publishSignalClosedCard } from '../telegram/publisher.js';
+import { checkLiveFeeEnforcement } from '../services/server-fee.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -240,6 +241,20 @@ export class TradingBotCoordinator implements DurableObject {
       .bind(userId).first<UserBotConfigRow>();
     if (!cfg || (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE')) {
       return;
+    }
+
+    if (cfg.trading_mode === 'LIVE') {
+      const feeCheck = await checkLiveFeeEnforcement(this.env.DB, userId).catch(() => ({ allowed: true, totalDueUsd: 0 }));
+      if (!feeCheck.allowed) {
+        const due = `$${Number(feeCheck.totalDueUsd || 0).toFixed(2)}`;
+        await this.env.DB.prepare(
+          `UPDATE bot_configs SET bot_state = 'STOPPED', last_ai_reason = ? WHERE user_id = ?`
+        ).bind(`قفل کارمزد ۵٪ سود واقعی (${due}) — پس از تسویه ربات لایو مجدد آزاد می‌شود.`, userId).run().catch(() => {});
+        await logAudit(this.env.DB, userId, 'RISK', 'WARN', `LIVE bot paused automatically due to overdue 5% fee settlement (${due}).`);
+        await pushNotification(this.env.DB, userId, 'SUBSCRIPTION', 'قفل موقت ربات لایو (تسویه کارمزد ۵٪)', `مبلغ معوق ${due} است؛ شبیه‌ساز دمو همچنان رایگان و باز است.`).catch(() => {});
+        await notifyUserTelegram(this.env, userId, `🔒 ربات لایو شما به دلیل عبور از سقف و مهلت تسویه کارمزد ۵٪ (${due}) متوقف شد.\nاز منوی کارمزد ۵٪ تسویه را ثبت کنید تا فوری باز شود.`).catch(() => {});
+        return;
+      }
     }
 
     // Strict Single-Engine Mutual Exclusion: if Copy Trade is active, autonomous strategies/AI do not trade

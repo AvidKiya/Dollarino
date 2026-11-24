@@ -283,15 +283,15 @@ export function CoinIcon({ symbol, size = 28, className = '', imageUrl, showPair
   if (!STOCK_AND_COMMODITY_SET.has(base)) {
     sources.push(
       `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/${lower}.svg`,
-      `https://assets.coincap.io/assets/icons/${lower}@2x.png`,
-      `https://bin.bnbstatic.com/static/assets/logos/${base}.png`,
-      `https://cdn.jsdelivr.net/gh/vadimmalykhin/binance-icons/crypto/${lower}.svg`
+      `https://assets.coincap.io/assets/icons/${lower}@2x.png`
     );
   }
 
   const [srcIdx, setSrcIdx] = useState(0);
+  const [imgLoaded, setImgLoaded] = useState(false);
   useEffect(() => {
     setSrcIdx(0);
+    setImgLoaded(false);
   }, [base, imageUrl]);
 
   const bg = PALETTE[base] ?? '#3B82F6';
@@ -299,31 +299,39 @@ export function CoinIcon({ symbol, size = 28, className = '', imageUrl, showPair
 
   const primaryBadge = (
     <div
-      className={`rounded-full shrink-0 inline-flex items-center justify-center overflow-hidden shadow-sm ring-1 ring-white/15 ${className}`}
-      style={{ width: size, height: size, background: inlineSvg ? 'transparent' : showImg ? 'rgba(255,255,255,0.06)' : bg }}
+      className={`relative rounded-full shrink-0 inline-flex items-center justify-center overflow-hidden shadow-sm ring-1 ring-white/15 ${className}`}
+      style={{ width: size, height: size, background: inlineSvg ? 'transparent' : imgLoaded ? 'rgba(255,255,255,0.06)' : bg }}
       aria-label={base}
       title={base}
     >
       {inlineSvg ? (
         inlineSvg
-      ) : showImg ? (
-        <img
-          src={sources[srcIdx]}
-          alt={base}
-          width={size}
-          height={size}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          className="w-full h-full object-cover rounded-full"
-          onError={() => setSrcIdx((i) => i + 1)}
-        />
       ) : (
-        <span
-          className="font-display font-black text-white select-none leading-none tracking-tight"
-          style={{ fontSize: Math.max(8, Math.round(size * (base.length >= 4 ? 0.28 : 0.34))) }}
-        >
-          {base.slice(0, 4)}
-        </span>
+        <>
+          <span
+            className="font-display font-black text-white select-none leading-none tracking-tight"
+            style={{ fontSize: Math.max(8, Math.round(size * (base.length >= 4 ? 0.28 : 0.34))) }}
+          >
+            {base.slice(0, 4)}
+          </span>
+          {showImg && (
+            <img
+              src={sources[srcIdx]}
+              alt={base}
+              width={size}
+              height={size}
+              referrerPolicy="no-referrer"
+              onLoad={() => setImgLoaded(true)}
+              onError={() => {
+                setImgLoaded(false);
+                setSrcIdx((i) => i + 1);
+              }}
+              className={`absolute inset-0 w-full h-full object-cover rounded-full transition-opacity duration-150 ${
+                imgLoaded ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+          )}
+        </>
       )}
     </div>
   );

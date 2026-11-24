@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  AlertTriangle,
   Bot,
   BrainCircuit,
   Check,
@@ -11,7 +10,6 @@ import {
   Link2,
   Play,
   Plus,
-  RefreshCw,
   Save,
   ShieldCheck,
   Sliders,
@@ -21,21 +19,11 @@ import {
   Users,
 } from 'lucide-react';
 import { formatDollarinoSignal } from '@dollarino/core';
-import { ExchangeLogo } from '../components/BrandLogos';
 import { SmartCopyProHub } from '../components/SmartCopyProHub';
+import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { DashboardPayload, EntitlementSummary, NavTab } from '../lib/types';
-
-interface ExchangeConn {
-  id: string;
-  provider: string;
-  label: string;
-  is_active: number;
-  api_key_masked: string;
-  proxy_url?: string;
-  last_test_status: string;
-}
 
 interface PlatformAISummary {
   configured: boolean;
@@ -140,20 +128,8 @@ export function CopyConnectPage({
   const [tgToken, setTgToken] = useState('');
   const [tgChannel, setTgChannel] = useState(data.config.signal_channel_handle || '@Dollarino_official');
 
-  // Exchanges & Platform AI
-  const [exchanges, setExchanges] = useState<ExchangeConn[]>([]);
+  // Platform AI
   const [platformAI, setPlatformAI] = useState<PlatformAISummary | null>(null);
-  const [proxyEdits, setProxyEdits] = useState<Record<string, string>>({});
-  const [showAdvancedEx, setShowAdvancedEx] = useState(false);
-  const [exForm, setExForm] = useState({
-    provider: 'toobit' as 'toobit' | 'bitunix' | 'kcex',
-    label: '',
-    apiKey: '',
-    apiSecret: '',
-    webSessionToken: '',
-    proxyUrl: '',
-    proxySecret: '',
-  });
 
   // Full Risk Studio Controls
   const [riskForm, setRiskForm] = useState({
@@ -177,8 +153,7 @@ export function CopyConnectPage({
 
   const loadConnections = async () => {
     setLoadingTraders(true);
-    const [ex, ai, tg, ct] = await Promise.all([
-      apiFetch<{ connections: ExchangeConn[] }>('/api/connections/exchanges').catch(() => ({ connections: [] })),
+    const [ai, tg, ct] = await Promise.all([
       apiFetch<{ platformAI: PlatformAISummary }>('/api/connections/platform-ai').catch(() => ({ platformAI: null })),
       apiFetch<{ bots: TgBot[] }>('/api/connections/telegram-bots').catch(() => ({ bots: [] })),
       apiFetch<{
@@ -194,11 +169,6 @@ export function CopyConnectPage({
         }>;
       }>('/api/copy-trade/traders').catch(() => ({ traders: [], pendingConfirmTrades: [] })),
     ]);
-    setExchanges(
-      ex.connections.filter(
-        (c) => c.provider === 'toobit' || c.provider === 'bitunix' || c.provider === 'kcex' || c.provider === 'paper'
-      )
-    );
     setPlatformAI(ai.platformAI);
     setTgBots(tg.bots);
     setTraders(ct.traders || []);
@@ -289,53 +259,6 @@ export function CopyConnectPage({
     await onRefresh();
   };
 
-  const addExchange = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const res = await apiFetch<{ test: { ok: boolean; message: string }; requiresSubscription?: boolean }>('/api/connections/exchanges', {
-        method: 'POST',
-        body: JSON.stringify(exForm),
-      });
-      flash(
-        res.requiresSubscription
-          ? isFa
-            ? 'صرافی ذخیره شد. برای معامله واقعی، اشتراک Pro را فعال کنید.'
-            : 'Saved. Upgrade to Pro for live execution.'
-          : res.test.message,
-        !res.requiresSubscription && !res.test.ok
-      );
-      setExForm({ provider: 'toobit', label: '', apiKey: '', apiSecret: '', webSessionToken: '', proxyUrl: '', proxySecret: '' });
-      await loadConnections();
-      await onRefresh();
-    } catch (err) {
-      flash(err instanceof Error ? err.message : 'Failed', true);
-    }
-  };
-
-  const activateExchange = async (id: string) => {
-    try {
-      await apiFetch(`/api/connections/exchanges/${id}/activate`, { method: 'POST' });
-      flash(isFa ? 'حساب صرافی فعال شد' : 'Active exchange switched');
-      await loadConnections();
-      await onRefresh();
-    } catch (err) {
-      flash(err instanceof Error ? err.message : 'Upgrade required', true);
-    }
-  };
-
-  const updateExchangeProxy = async (id: string) => {
-    try {
-      const res = await apiFetch<{ test: { ok: boolean; message: string } }>(`/api/connections/exchanges/${id}/proxy`, {
-        method: 'PATCH',
-        body: JSON.stringify({ proxyUrl: proxyEdits[id] ?? '' }),
-      });
-      flash(res.test.message, !res.test.ok);
-      await loadConnections();
-    } catch (err) {
-      flash(err instanceof Error ? err.message : 'Proxy update failed', true);
-    }
-  };
-
   const addTelegramBot = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -383,17 +306,17 @@ export function CopyConnectPage({
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2" style={{ color: 'var(--gold)' }}>
-            COPY-TRADE · EXCHANGES · RISK ENGINE
+            SMART COPY · TRUST WALLET · RISK ENGINE
           </p>
           <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-            {isFa ? 'کپی‌ترید، اتصال صرافی و سپر ریسک' : 'Copy-Trade, Exchanges & Risk'}
+            {isFa ? 'کپی‌ترید، اتصال تراست‌ولت و سپر ریسک' : 'Copy-Trade, Trust Wallet & Risk'}
           </h2>
         </div>
 
-        <div className="inline-flex p-1 panel rounded-full overflow-x-auto no-scrollbar">
+        <div className="tab-bar w-full sm:w-auto">
           {[
             { id: 'copy' as const, icon: Bot, l: isFa ? 'کپی‌ترید و وب‌هوک' : 'Copy & Webhooks' },
-            { id: 'exchanges' as const, icon: Link2, l: isFa ? 'اتصال صرافی واقعی' : 'Exchanges' },
+            { id: 'exchanges' as const, icon: Link2, l: isFa ? 'اتصال و دسترسی تراست‌ولت' : 'Trust Wallet & 24/7 Mode' },
             { id: 'risk' as const, icon: Sliders, l: isFa ? 'سپر ریسک و ۳ تارگت' : 'Risk Shield' },
           ].map((x) => {
             const Icon = x.icon;
@@ -402,11 +325,9 @@ export function CopyConnectPage({
                 key={x.id}
                 type="button"
                 onClick={() => setTab(x.id)}
-                className={`px-4 py-2 rounded-full text-xs font-black transition inline-flex items-center gap-1.5 whitespace-nowrap ${
-                  tab === x.id ? 'btn-gold' : 'text-dim hover:text-main'
-                }`}
+                className={`tab-pill flex-1 sm:flex-initial ${tab === x.id ? 'tab-pill-active' : ''}`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-4 h-4 shrink-0" />
                 <span>{x.l}</span>
               </button>
             );
@@ -433,7 +354,7 @@ export function CopyConnectPage({
               </span>
             </div>
             <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black shrink-0">
-              {isFa ? 'CEX + ولت‌های آن‌چین V2' : 'VIP CEX + Smart Wallets V2'}
+              {isFa ? 'Trust Wallet + ولت‌های آن‌چین V2' : 'Trust Wallet + Smart Wallets V2'}
             </span>
           </div>
           {pendingConfirmTrades.length > 0 && (
@@ -515,7 +436,7 @@ export function CopyConnectPage({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <img
-                  src="/images/copytrade-trophy.png"
+                  src="/images/copytrade-trophy.webp"
                   alt="Verified Copy Traders"
                   className="w-24 h-16 rounded-2xl object-cover border hairline shrink-0 hidden sm:block"
                 />
@@ -533,11 +454,13 @@ export function CopyConnectPage({
                   </p>
                 </div>
               </div>
-              {!entitlement?.hasPaidPlan && (
-                <button type="button" onClick={() => onNavigate('pricing')} className="btn-gold px-4 py-2 rounded-xl text-xs font-black">
-                  {isFa ? 'فعال‌سازی اشتراک برای کپی ←' : 'Subscribe to Copy →'}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => onNavigate('pricing')}
+                className="badge-signal px-3.5 py-2 rounded-xl text-[11px] font-black shrink-0 hover:opacity-90 transition"
+              >
+                {isFa ? '۱۰۰٪ رایگان · ۹۵٪ سود برای شما ←' : '100% Free · Keep 95% Profit →'}
+              </button>
             </div>
 
             {loadingTraders ? (
@@ -770,196 +693,40 @@ export function CopyConnectPage({
       )}
 
       {tab === 'exchanges' && (
-        <div className="grid lg:grid-cols-2 gap-4 tab-enter">
-          <div className="space-y-4">
-            {/* Platform Multi-AI Status Card (restored from ConnectionsPage) */}
-            <div className="panel rounded-[26px] p-5 space-y-2.5 text-xs">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
-                  <BrainCircuit className="w-4 h-4 text-jade" />
-                  <span>{isFa ? 'هوش مصنوعی مرکزی دلارینو (دُرّبین)' : 'Platform Central Multi-AI'}</span>
-                </h3>
-                <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
-                  {platformAI?.configured ? (isFa ? 'فعال و مدیریت‌شده' : 'MANAGED ONLINE') : 'READY'}
-                </span>
-              </div>
-              <p className="text-dim">
-                {platformAI
-                  ? isFa
-                    ? platformAI.effectiveModeLabelFa
-                    : platformAI.effectiveModeLabelEn
-                  : isFa
-                    ? 'تمام کلیدهای هوش مصنوعی توسط پلتفرم مدیریت می‌شوند؛ نیازی به تهیه کلید شخصی نیست.'
-                    : 'Zero personal LLM keys needed — consensus engines run centrally.'}
-              </p>
-              {platformAI?.engines?.length ? (
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {platformAI.engines.map((eng) => (
-                    <span key={eng.id} className="surface-soft rounded-lg px-2.5 py-1 text-[10px] font-bold text-main">
-                      {eng.label || eng.provider} · {eng.model}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
+        <div className="space-y-5 tab-enter">
+          <div className="panel rounded-[26px] p-5 space-y-2.5 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4 text-jade" />
+                <span>{isFa ? 'هوش مصنوعی مرکزی دلارینو (دُرّبین)' : 'Platform Central Multi-AI'}</span>
+              </h3>
+              <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
+                {platformAI?.configured ? (isFa ? 'فعال و مدیریت‌شده' : 'MANAGED ONLINE') : 'READY'}
+              </span>
             </div>
-
-            <div className="panel rounded-[26px] p-5 space-y-3">
-              <div className="flex items-center gap-3">
-                <img
-                  src="/images/exchange-api-hub.png"
-                  alt="Dollarino Exchange API Hub"
-                  className="w-20 h-14 rounded-2xl object-cover border hairline shrink-0"
-                />
-                <div>
-                  <h3 className="font-display font-bold text-lg text-main">{isFa ? 'حساب‌های صرافی متصل شما' : 'Connected Exchange Accounts'}</h3>
-                  <p className="text-[11px] text-dim">{isFa ? 'Toobit · Bitunix · KCEX Mirror · Paper' : 'Toobit · Bitunix · KCEX Mirror · Paper'}</p>
-                </div>
-              </div>
-              <div className="space-y-3">
-                {exchanges.map((c) => (
-                  <div key={c.id} className="surface-soft rounded-2xl p-4 space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <ExchangeLogo provider={c.provider} size={30} />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-main">{c.label || c.provider.toUpperCase()}</span>
-                            {c.is_active === 1 && <span className="px-2 py-0.5 rounded-full badge-signal text-[10px] font-black">{isFa ? 'فعال' : 'ACTIVE'}</span>}
-                          </div>
-                          <p dir="ltr" className="font-mono text-[11px] text-dim mt-0.5">{c.api_key_masked} · {c.last_test_status}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {c.is_active !== 1 && (
-                          <button type="button" onClick={() => void activateExchange(c.id)} className="btn-gold px-3 py-1.5 rounded-xl text-[11px]">
-                            {isFa ? 'فعال‌سازی' : 'Activate'}
-                          </button>
-                        )}
-                        {c.provider !== 'paper' && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void apiFetch(`/api/connections/exchanges/${c.id}/test`, { method: 'POST' }).then((r) => {
-                                const d = r as { ok: boolean; message: string };
-                                flash(d.message, !d.ok);
-                              })}
-                              className="btn-ghost p-2 rounded-xl"
-                              title="Test"
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void apiFetch(`/api/connections/exchanges/${c.id}`, { method: 'DELETE' }).then(loadConnections)}
-                              className="btn-ghost p-2 rounded-xl text-loss"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    {c.provider !== 'paper' && (
-                      <div className="flex gap-1.5 pt-1 border-t hairline">
-                        <input
-                          value={proxyEdits[c.id] ?? c.proxy_url ?? ''}
-                          onChange={(e) => setProxyEdits((p) => ({ ...p, [c.id]: e.target.value }))}
-                          dir="ltr"
-                          placeholder="Relay Proxy URL (optional)"
-                          className="field py-1.5 text-[11px] font-mono"
-                        />
-                        <button type="button" onClick={() => void updateExchangeProxy(c.id)} className="btn-ghost px-3 py-1.5 rounded-xl text-[11px] font-bold shrink-0">
-                          {isFa ? 'ذخیره رله' : 'Relay'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+            <p className="text-dim">
+              {platformAI
+                ? isFa
+                  ? platformAI.effectiveModeLabelFa
+                  : platformAI.effectiveModeLabelEn
+                : isFa
+                  ? 'تمام کلیدهای هوش مصنوعی توسط پلتفرم مدیریت می‌شوند؛ نیازی به تهیه کلید شخصی نیست.'
+                  : 'Zero personal LLM keys needed — consensus engines run centrally.'}
+            </p>
+            {platformAI?.engines?.length ? (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {platformAI.engines.map((eng) => (
+                  <span key={eng.id} className="surface-soft rounded-lg px-2.5 py-1 text-[10px] font-bold text-main">
+                    {eng.label || eng.provider} · {eng.model}
+                  </span>
                 ))}
               </div>
-            </div>
+            ) : null}
           </div>
 
-          <form onSubmit={addExchange} className="panel rounded-[26px] p-5 space-y-3 text-xs self-start">
-            <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
-              <KeyRound className="w-4 h-4" style={{ color: 'var(--gold)' }} />
-              <span>{isFa ? 'افزودن صرافی واقعی (Toobit · Bitunix · KCEX)' : 'Connect Exchange API'}</span>
-            </h3>
-            <p className="text-dim leading-relaxed">
-              {isFa
-                ? 'فقط دسترسی «معامله Futures» را فعال کنید — گزینه برداشت (Withdraw) حتماً خاموش بماند.'
-                : 'Use Trade-Only Futures API keys — never enable withdrawal permissions.'}
-            </p>
-
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { id: 'toobit' as const, label: 'Toobit' },
-                { id: 'bitunix' as const, label: 'Bitunix' },
-                { id: 'kcex' as const, label: 'KCEX' },
-              ]).map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setExForm((f) => ({ ...f, provider: p.id }))}
-                  className={`py-2 px-2 rounded-xl font-black uppercase inline-flex items-center justify-center gap-1.5 ${
-                    exForm.provider === p.id ? 'btn-gold' : 'btn-ghost text-dim'
-                  }`}
-                >
-                  <ExchangeLogo provider={p.id} size={18} />
-                  <span>{p.label}</span>
-                </button>
-              ))}
-            </div>
-
-            {exForm.provider === 'kcex' && (
-              <div className="rounded-2xl p-3 bg-amber-500/10 border border-amber-500/35 text-[11px] leading-relaxed text-amber-200 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-                <span>
-                  {isFa
-                    ? 'شفافیت فنی: صرافی KCEX در حال حاضر API عمومی معامله خودکار ارائه نمی‌دهد. می‌توانید بدون نیاز به API Key صرافی KCEX را در حالت Signal-Mirror (محاسبه کارمزد واقعی ۰.۰۱٪ + دکمه ۱-کلیکی باز کردن در KCEX) فعال کنید.'
-                    : 'KCEX operates in Signal-Mirror mode without requiring mandatory API keys (0.01% taker simulation + 1-tap KCEX deep links).'}
-                </span>
-              </div>
-            )}
-
-            <input value={exForm.label} onChange={(e) => setExForm((f) => ({ ...f, label: e.target.value }))} placeholder={isFa ? 'نام دلخواه (مثلاً حساب اصلی)' : 'Account Label'} className="field" />
-            <input
-              value={exForm.apiKey}
-              onChange={(e) => setExForm((f) => ({ ...f, apiKey: e.target.value }))}
-              required={exForm.provider !== 'kcex'}
-              dir="ltr"
-              placeholder={exForm.provider === 'kcex' ? 'API Key (Optional for KCEX Mirror)' : 'API Key'}
-              className="field font-mono"
-            />
-            <input
-              type="password"
-              value={exForm.apiSecret}
-              onChange={(e) => setExForm((f) => ({ ...f, apiSecret: e.target.value }))}
-              required={exForm.provider !== 'kcex'}
-              dir="ltr"
-              placeholder={exForm.provider === 'kcex' ? 'API Secret (Optional for KCEX Mirror)' : 'API Secret'}
-              className="field font-mono"
-            />
-
-            <button type="button" onClick={() => setShowAdvancedEx((v) => !v)} className="inline-flex items-center gap-1 text-dim hover:text-main font-bold">
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAdvancedEx ? 'rotate-180' : ''}`} />
-              <span>{isFa ? 'تنظیمات پیشرفته شبکه (پروکسی / سشن وب)' : 'Advanced Proxy / Web Session'}</span>
-            </button>
-
-            {showAdvancedEx && (
-              <div className="space-y-2 pt-1">
-                {exForm.provider === 'kcex' && (
-                  <input value={exForm.webSessionToken} onChange={(e) => setExForm((f) => ({ ...f, webSessionToken: e.target.value }))} dir="ltr" placeholder="KCEX Web Token (optional)" className="field font-mono" />
-                )}
-                <input value={exForm.proxyUrl} onChange={(e) => setExForm((f) => ({ ...f, proxyUrl: e.target.value }))} dir="ltr" placeholder="https://your-relay.vercel.app (optional)" className="field font-mono" />
-                <input type="password" value={exForm.proxySecret} onChange={(e) => setExForm((f) => ({ ...f, proxySecret: e.target.value }))} dir="ltr" placeholder="Proxy Secret (optional)" className="field font-mono" />
-              </div>
-            )}
-
-            <button type="submit" className="btn-emerald w-full py-3 rounded-xl text-xs font-black">
-              {isFa ? 'ذخیره رمزنگاری‌شده و تست اتصال' : 'Encrypt & Test Connection'}
-            </button>
-          </form>
+          <div className="panel rounded-[26px] p-5">
+            <TrustWalletConnectInline lang={lang} onMsg={flash} onRefresh={onRefresh} />
+          </div>
         </div>
       )}
 

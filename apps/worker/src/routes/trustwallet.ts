@@ -3,6 +3,7 @@ import { requireAuth } from '../auth.js';
 import { randomId } from '../crypto.js';
 import { buildTrustWalletSwapLinks, getDexTokenPools } from '../dex/screener.js';
 import type { AuthUser, Env } from '../env.js';
+import { checkLiveFeeEnforcement } from '../services/server-fee.js';
 
 export const trustWalletRoutes = new Hono<{ Bindings: Env; Variables: { user: AuthUser } }>();
 
@@ -221,6 +222,38 @@ trustWalletRoutes.post('/connect', async (c) => {
       trust_wallet_connected_at = datetime('now')
      WHERE id = ?`
   ).bind(evm, tron, sol, ton, verified, user.id).run();
+
+  // Anti-abuse: if this wallet address matches another user's connected Trust Wallet (including referrer), flag referral
+  const addrs = [evm, tron, sol, ton].filter((a): a is string => Boolean(a)).map((a) => a.toLowerCase());
+  if (addrs.length > 0) {
+    const others = await c.env.DB.prepare(
+      `SELECT id FROM users
+       WHERE id != ? AND (
+         LOWER(COALESCE(trust_wallet_address, '')) = ?
+         OR LOWER(COALESCE(trust_wallet_tron, '')) = ?
+         OR LOWER(COALESCE(trust_wallet_solana, '')) = ?
+         OR LOWER(COALESCE(trust_wallet_ton, '')) = ?
+       ) LIMIT 1`
+    )
+      .bind(
+        user.id,
+        (evm || '__none__').toLowerCase(),
+        (tron || '__none__').toLowerCase(),
+        (sol || '__none__').toLowerCase(),
+        (ton || '__none__').toLowerCase()
+      )
+      .first<{ id: string }>()
+      .catch(() => null);
+    if (others) {
+      await c.env.DB.prepare(
+        `UPDATE referrals SET fraud_flag = 1, status = 'FLAGGED_DUPLICATE', fraud_reason = 'SHARED_TRUST_WALLET_SELF_REFERRAL'
+         WHERE referred_user_id = ? AND status != 'REWARDED'`
+      )
+        .bind(user.id)
+        .run()
+        .catch(() => {});
+    }
+  }
 
   await c.env.DB.prepare(
     `INSERT INTO audit_logs (id, user_id, category, level, message, details_json) VALUES (?, ?, 'EXCHANGE', 'INFO', ?, ?)`
@@ -466,3 +499,269 @@ trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
 
   return c.json({ ok: true, id, exitPriceUsd: exitPx, realizedPnlUsd: Number(pnlUsd.toFixed(2)), realizedPnlPct: Number(pnlPct.toFixed(2)) });
 });
+
+trustWalletRoutes.get('/execution-mode', async (c) => {
+  const user = c.get('user');
+  const [u, cfg, perpRow, vaultRow] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified
+       FROM users WHERE id = ?`
+    ).bind(user.id).first<{
+      trust_wallet_address: string | null;
+      trust_wallet_tron: string | null;
+      trust_wallet_solana: string | null;
+      trust_wallet_ton: string | null;
+      trust_wallet_verified: number;
+    }>(),
+    c.env.DB.prepare(
+      `SELECT trading_mode, trade_execution_mode, paper_balance FROM bot_configs WHERE user_id = ?`
+    ).bind(user.id).first<{ trading_mode: string; trade_execution_mode: string; paper_balance: string }>().catch(() => null),
+    c.env.DB.prepare(
+      `SELECT venue, master_address, agent_address, is_active FROM perp_dex_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`
+    ).bind(user.id).first<{ venue: string; master_address: string; agent_address: string | null; is_active: number }>().catch(() => null),
+    c.env.DB.prepare(
+      `SELECT id, evm_address, solana_address, allowance_limit_usd, auto_withdraw_to_trust FROM user_copy_vaults WHERE user_id = ? LIMIT 1`
+    ).bind(user.id).first<{
+      id: string;
+      evm_address: string;
+      solana_address: string;
+      allowance_limit_usd: number;
+      auto_withdraw_to_trust: number;
+    }>().catch(() => null),
+  ]);
+
+  const trustWalletConnected = Boolean(
+    u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana || u?.trust_wallet_ton
+  );
+
+  return c.json({
+    ok: true,
+    executionMode: cfg?.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO',
+    tradingMode: cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER',
+    demoSimulatorBalance: Number(cfg?.paper_balance ?? 10000),
+    permissions: {
+      trustWalletConnected,
+      trustWalletVerified: Boolean(u?.trust_wallet_verified),
+      perpAgentConnected: Boolean(perpRow?.agent_address || perpRow?.master_address),
+      perpProvider: perpRow?.venue ?? null,
+      copyVaultReady: Boolean(vaultRow && Number(vaultRow.allowance_limit_usd || 0) > 0),
+      copyVaultAllowanceUsd: Number(vaultRow?.allowance_limit_usd ?? 0),
+    },
+  });
+});
+
+export const MIN_LIVE_TRUST_USD = 10;
+
+export async function getTrustWalletLiveTotalUsd(
+  db: D1Database,
+  userId: string
+): Promise<{
+  hasWallet: boolean;
+  totalUsd: number;
+  rpcReachable: boolean;
+  meetsMinimum: boolean;
+  minRequiredUsd: number;
+  breakdown: Record<string, number>;
+}> {
+  const [u, perpRow, vaultRow, minSetting] = await Promise.all([
+    db.prepare(
+      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, wallet_balance_usdt
+       FROM users WHERE id = ?`
+    ).bind(userId).first<{
+      trust_wallet_address: string | null;
+      trust_wallet_tron: string | null;
+      trust_wallet_solana: string | null;
+      trust_wallet_ton: string | null;
+      wallet_balance_usdt: number | null;
+    }>(),
+    db.prepare(
+      `SELECT id, equity_usd, margin_available_usd FROM perp_dex_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`
+    ).bind(userId).first<{ id: string; equity_usd?: number; margin_available_usd?: number }>().catch(() => null),
+    db.prepare(
+      `SELECT id, allowance_limit_usd FROM user_copy_vaults WHERE user_id = ? LIMIT 1`
+    ).bind(userId).first<{ id: string; allowance_limit_usd: number }>().catch(() => null),
+    db.prepare(`SELECT value FROM system_settings WHERE key = 'min_live_trust_usd'`).first<{ value: string }>().catch(() => null),
+  ]);
+
+  const minRequiredUsd = Math.max(10, Number(minSetting?.value || MIN_LIVE_TRUST_USD) || MIN_LIVE_TRUST_USD);
+  const hasWallet = Boolean(
+    u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana || u?.trust_wallet_ton || perpRow || vaultRow
+  );
+  if (!hasWallet) {
+    return { hasWallet: false, totalUsd: 0, rpcReachable: true, meetsMinimum: false, minRequiredUsd, breakdown: {} };
+  }
+
+  let totalUsd = 0;
+  let rpcReachable = false;
+  const breakdown: Record<string, number> = {};
+
+  if (Number(u?.wallet_balance_usdt || 0) > 0) {
+    const wb = Number(u!.wallet_balance_usdt);
+    breakdown.internalUsd = wb;
+    totalUsd += wb;
+  }
+  const perpUsd = Number(perpRow?.equity_usd || perpRow?.margin_available_usd || 0);
+  if (perpUsd > 0) {
+    breakdown.perpUsd = perpUsd;
+    totalUsd += perpUsd;
+  }
+
+  const tasks: Array<Promise<void>> = [];
+  if (u?.trust_wallet_address && isValidEvm(u.trust_wallet_address)) {
+    const addr = u.trust_wallet_address;
+    tasks.push(
+      fetchBscUsdtBalance(addr).then((v: number | null) => {
+        if (v !== null) {
+          rpcReachable = true;
+          breakdown.bscUsdt = v;
+          totalUsd += v;
+        }
+      }),
+      fetchEvmNativeBalance('https://bsc-dataseed.binance.org', addr).then((bnb) => {
+        if (bnb !== null) {
+          rpcReachable = true;
+          const usd = bnb * 620;
+          breakdown.bscBnbUsd = Number(usd.toFixed(2));
+          totalUsd += usd;
+        }
+      }),
+      fetchEvmNativeBalance('https://eth.llamarpc.com', addr).then((eth) => {
+        if (eth !== null) {
+          rpcReachable = true;
+          const usd = eth * 2600;
+          breakdown.ethUsd = Number(usd.toFixed(2));
+          totalUsd += usd;
+        }
+      })
+    );
+  }
+  if (u?.trust_wallet_tron && isValidTron(u.trust_wallet_tron)) {
+    tasks.push(
+      fetchTronBalances(u.trust_wallet_tron).then((tr) => {
+        if (tr !== null) {
+          rpcReachable = true;
+          const usd = tr.usdt + tr.trx * 0.25;
+          breakdown.tronUsd = Number(usd.toFixed(2));
+          totalUsd += usd;
+        }
+      })
+    );
+  }
+  if (u?.trust_wallet_solana && isValidSolana(u.trust_wallet_solana)) {
+    tasks.push(
+      fetchSolanaBalance(u.trust_wallet_solana).then((sol) => {
+        if (sol !== null) {
+          rpcReachable = true;
+          const usd = sol * 180;
+          breakdown.solanaUsd = Number(usd.toFixed(2));
+          totalUsd += usd;
+        }
+      })
+    );
+  }
+  if (u?.trust_wallet_ton && isValidTon(u.trust_wallet_ton)) {
+    tasks.push(
+      fetchTonBalance(u.trust_wallet_ton).then((ton) => {
+        if (ton !== null) {
+          rpcReachable = true;
+          const usd = ton * 5;
+          breakdown.tonUsd = Number(usd.toFixed(2));
+          totalUsd += usd;
+        }
+      })
+    );
+  }
+
+  await Promise.allSettled(tasks);
+
+  // When RPC succeeded (or explicit zero recorded balance), enforce >= $10 USD minimum strictly.
+  // If user connected only Perp/Vault without an external address query returning zero, honor vault/perp balance check.
+  const meetsMinimum = rpcReachable ? totalUsd >= minRequiredUsd : totalUsd >= minRequiredUsd || Boolean(perpRow);
+
+  return {
+    hasWallet,
+    totalUsd: Number(totalUsd.toFixed(2)),
+    rpcReachable,
+    meetsMinimum,
+    minRequiredUsd,
+    breakdown,
+  };
+}
+
+trustWalletRoutes.post('/execution-mode', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    executionMode?: 'AUTO' | 'MANUAL_CONFIRM';
+    tradingMode?: 'PAPER' | 'LIVE';
+    syncCopyRules?: boolean;
+  };
+
+  const nextExec = body.executionMode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';
+  const sets = [`trade_execution_mode = ?`, `updated_at = datetime('now')`];
+  const vals: unknown[] = [nextExec];
+
+  let liveBalanceUsd = 0;
+  if (body.tradingMode === 'LIVE' || body.tradingMode === 'PAPER') {
+    if (body.tradingMode === 'LIVE') {
+      const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
+      if (!feeCheck.allowed) {
+        return c.json({
+          error: feeCheck.reasonFa || 'حساب معاملات واقعی تا تسویه کارمزد ۵٪ معوق قفل شده است.',
+          code: 'FEE_SETTLEMENT_REQUIRED',
+          enforcement: feeCheck,
+        }, 402);
+      }
+      const readiness = await getTrustWalletLiveTotalUsd(c.env.DB, user.id);
+      if (!readiness.hasWallet) {
+        return c.json({
+          error: 'ابتدا کیف‌پول Trust Wallet خود را متصل کنید (یا برای تست بدون ریسک روی شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری بمانید).',
+          code: 'NO_TRUST_WALLET',
+        }, 400);
+      }
+      if (!readiness.meetsMinimum) {
+        return c.json({
+          error: `برای اجرای ربات روی کیف‌پول واقعی، حداقل موجودی ${readiness.minRequiredUsd} دلار (USDT/BNB/SOL/TRX) در Trust Wallet لازم است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}). فعلاً می‌توانید رایگان از شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری استفاده کنید.`,
+          code: 'MIN_BALANCE_10_USD',
+          currentUsd: readiness.totalUsd,
+          minRequiredUsd: readiness.minRequiredUsd,
+        }, 400);
+      }
+      liveBalanceUsd = readiness.totalUsd;
+    }
+    sets.push(`trading_mode = ?`);
+    vals.push(body.tradingMode);
+  }
+
+  vals.push(user.id);
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
+  ).bind(user.id, randomId('wh')).run().catch(() => {});
+  await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
+
+  if (body.syncCopyRules) {
+    const copyMode = nextExec === 'AUTO' ? 'AUTO_COPY_VAULT' : 'TRUST_ONE_CLICK';
+    await c.env.DB.prepare(
+      `UPDATE copy_follow_rules SET execution_mode = ?, updated_at = datetime('now') WHERE user_id = ?`
+    ).bind(copyMode, user.id).run().catch(() => {});
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO audit_logs (id, user_id, category, level, message) VALUES (?, ?, 'BOT', 'INFO', ?)`
+  ).bind(
+    randomId('aud'),
+    user.id,
+    `حالت اجرای Trust Wallet روی ${nextExec === 'AUTO' ? 'تمام‌اتوترید خودکار ۲۴/۷' : 'تایید دستی قبل از اجرا'} (${body.tradingMode === 'LIVE' ? `کیف‌پول واقعی · $${liveBalanceUsd}` : 'شبیه‌ساز دمو'}) تنظیم شد.`
+  ).run().catch(() => {});
+
+  return c.json({
+    ok: true,
+    executionMode: nextExec,
+    tradingMode: body.tradingMode ?? undefined,
+    liveBalanceUsd: body.tradingMode === 'LIVE' ? liveBalanceUsd : undefined,
+    message:
+      nextExec === 'AUTO'
+        ? 'حالت تمام‌اتوترید خودکار ۲۴/۷ فعال شد (بدون نیاز به تایید دستی هر معامله).'
+        : 'حالت تایید دستی فعال شد (هر معامله قبل از ثبت، با یک کلیک در Trust Wallet تایید می‌شود).',
+  });
+});
+

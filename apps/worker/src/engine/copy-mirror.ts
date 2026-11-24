@@ -3,6 +3,7 @@ import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { resolveTelegramBotToken } from '../telegram/token.js';
 import {
   getSystemSettingValue,
   publishSignalBroadcast,
@@ -110,7 +111,8 @@ export async function confirmAndMirrorCopyTrade(
 
   let mirroredCount = 0;
   let skippedCount = 0;
-  const tg = env.TELEGRAM_BOT_TOKEN ? new TelegramBotClient(env.TELEGRAM_BOT_TOKEN) : null;
+  const botToken = await resolveTelegramBotToken(env);
+  const tg = botToken ? new TelegramBotClient(botToken) : null;
 
   for (const f of followers.results) {
     try {

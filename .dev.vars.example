@@ -1,0 +1,12 @@
+# Copy to `.dev.vars` in project root for `npx wrangler dev`
+# Generate secure values with:
+#   openssl rand -hex 32
+#   openssl rand -base64 32
+
+SESSION_JWT_SECRET=replace_with_64_char_random_hex
+MASTER_ENCRYPTION_KEY=replace_with_32_byte_base64_key
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_WEBHOOK_SECRET=
+HILINKUP_API_KEY=
+PUBLIC_WEB_URL=http://127.0.0.1:8787
+ALLOW_LIVE_TRADING=true

@@ -4,7 +4,7 @@
 
 html,
 body {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100%;
 }
 
@@ -27,24 +27,24 @@ html.theme-light {
   --bg: #eef3fc;
   --bg-art: linear-gradient(180deg, #f4f7fd 0%, #eaeff8 100%);
   --panel: #ffffff;
-  --panel-translucent: rgba(255, 255, 255, 0.84);
-  --glass-a: rgba(255, 255, 255, 0.72);
-  --glass-b: rgba(255, 255, 255, 0.34);
-  --glass-border: rgba(255, 255, 255, 0.88);
+  --panel-translucent: rgba(255, 255, 255, 0.90);
+  --glass-a: rgba(255, 255, 255, 0.85);
+  --glass-b: rgba(241, 245, 252, 0.55);
+  --glass-border: rgba(30, 58, 138, 0.14);
   --rim: rgba(255, 255, 255, 0.96);
-  --rim-soft: rgba(255, 255, 255, 0.58);
-  --hairline-glass: rgba(80, 105, 150, 0.18);
+  --rim-soft: rgba(30, 58, 138, 0.16);
+  --hairline-glass: rgba(30, 58, 138, 0.22);
   --accent-soft: #fde2ad;
-  --ink: #1e293b;
+  --ink: #0f172a;
   --solid: #f3f6fc;
-  --header-glass: rgba(238, 243, 252, 0.90);
+  --header-glass: rgba(238, 243, 252, 0.94);
 
-  --soft: rgba(255, 255, 255, 0.62);
+  --soft: rgba(15, 23, 42, 0.045);
   --text: #0f172a;
-  --muted: #475569;
-  --faint: #64748b;
-  --line: rgba(80, 105, 150, 0.13);
-  --line-strong: rgba(22, 82, 240, 0.28);
+  --muted: #334155;
+  --faint: #475569;
+  --line: rgba(30, 58, 138, 0.16);
+  --line-strong: rgba(22, 82, 240, 0.34);
 
   --gold: #1652f0;
   --gold-soft: #2563eb;
@@ -53,24 +53,24 @@ html.theme-light {
   --gold-b: #1652f0;
   --gold-c: #0b3bb8;
 
-  --amber: #f5a524;
+  --amber: #d97706;
   --jade: #0d9455;
-  --rose: #ef4444;
-  --blue: #0ea5e9;
-  --lime: #10b981;
-  --flame: #f97316;
+  --rose: #dc2626;
+  --blue: #0284c7;
+  --lime: #059669;
+  --flame: #ea580c;
 
   --bg-app: #eef3fc;
   --bg-surface: #ffffff;
-  --bg-soft: rgba(255, 255, 255, 0.65);
-  --border-app: rgba(80, 105, 150, 0.13);
-  --border-strong: rgba(22, 82, 240, 0.28);
+  --bg-soft: rgba(15, 23, 42, 0.045);
+  --border-app: rgba(30, 58, 138, 0.14);
+  --border-strong: rgba(22, 82, 240, 0.34);
   --text-main: #0f172a;
-  --text-sub: #475569;
-  --text-dim: #64748b;
+  --text-sub: #334155;
+  --text-dim: #475569;
   --brand: #1652f0;
   --signal: #0d9455;
-  --loss: #ef4444;
+  --loss: #dc2626;
 }
 
 html[data-theme='cosmic'],
@@ -78,50 +78,50 @@ html.dark {
   --bg: #0b1220;
   --bg-art: linear-gradient(180deg, #0b1220 0%, #0d1628 100%);
   --panel: #111b33;
-  --panel-translucent: rgba(17, 27, 51, 0.84);
-  --glass-a: rgba(60, 78, 120, 0.52);
-  --glass-b: rgba(28, 40, 70, 0.26);
-  --glass-border: rgba(255, 255, 255, 0.13);
+  --panel-translucent: rgba(17, 27, 51, 0.88);
+  --glass-a: rgba(60, 78, 120, 0.56);
+  --glass-b: rgba(28, 40, 70, 0.30);
+  --glass-border: rgba(148, 163, 184, 0.22);
   --rim: rgba(255, 255, 255, 0.55);
-  --rim-soft: rgba(255, 255, 255, 0.18);
-  --hairline-glass: rgba(0, 0, 0, 0.38);
+  --rim-soft: rgba(148, 163, 184, 0.24);
+  --hairline-glass: rgba(148, 163, 184, 0.24);
   --accent-soft: #5a4216;
-  --ink: #e5e7eb;
+  --ink: #f1f5f9;
   --solid: #1b2640;
-  --header-glass: rgba(11, 18, 32, 0.88);
+  --header-glass: rgba(11, 18, 32, 0.92);
 
-  --soft: rgba(255, 255, 255, 0.07);
+  --soft: rgba(255, 255, 255, 0.08);
   --text: #f8fafc;
-  --muted: #cbd5e1;
-  --faint: #8b93a1;
-  --line: rgba(255, 255, 255, 0.12);
-  --line-strong: rgba(56, 189, 248, 0.34);
+  --muted: #dbe4f3;
+  --faint: #9eb0cc;
+  --line: rgba(148, 163, 184, 0.20);
+  --line-strong: rgba(56, 189, 248, 0.38);
 
-  --gold: #2563eb;
-  --gold-soft: #38bdf8;
-  --gold-deep: #1d4ed8;
+  --gold: #3b82f6;
+  --gold-soft: #60a5fa;
+  --gold-deep: #2563eb;
   --gold-a: #38bdf8;
   --gold-b: #2563eb;
   --gold-c: #1d4ed8;
 
-  --amber: #f5a524;
-  --jade: #10e066;
-  --rose: #ff4d6d;
+  --amber: #fbbf24;
+  --jade: #34d399;
+  --rose: #fb7185;
   --blue: #38bdf8;
-  --lime: #12e35d;
-  --flame: #ff8200;
+  --lime: #34d399;
+  --flame: #fb923c;
 
   --bg-app: #0b1220;
   --bg-surface: #111b33;
   --bg-soft: rgba(255, 255, 255, 0.08);
-  --border-app: rgba(255, 255, 255, 0.12);
-  --border-strong: rgba(56, 189, 248, 0.34);
+  --border-app: rgba(148, 163, 184, 0.20);
+  --border-strong: rgba(56, 189, 248, 0.38);
   --text-main: #f8fafc;
-  --text-sub: #cbd5e1;
-  --text-dim: #8b93a1;
-  --brand: #3b82f6;
-  --signal: #10e066;
-  --loss: #ff4d6d;
+  --text-sub: #dbe4f3;
+  --text-dim: #9eb0cc;
+  --brand: #60a5fa;
+  --signal: #34d399;
+  --loss: #fb7185;
 }
 
 @layer base {
@@ -200,6 +200,11 @@ html[data-theme='cosmic'] .panel {
   box-shadow: 0 16px 36px -18px rgba(22, 82, 240, 0.22);
 }
 
+.panel-soft {
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+
 /* Dark Console Surface (HybridLab on LandingPage — ALWAYS high-contrast dark instrument) */
 .console-lab {
   position: relative;
@@ -247,15 +252,168 @@ html[data-theme='cosmic'] .panel {
   box-shadow: 0 6px 18px -6px rgba(22, 82, 240, 0.52);
 }
 
-/* Kifpool & Apple Wallet Hero Card (Vibrant Logo Cobalt) */
+/* Crisp Non-Clipping Apple Segmented Tab Bar (Desktop inline, Mobile auto-wraps cleanly) */
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 22px;
+  background: var(--panel);
+  border: 1px solid var(--border-app);
+  box-shadow:
+    0 6px 20px -10px rgba(15, 23, 42, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@media (min-width: 640px) {
+  .tab-bar {
+    display: inline-flex;
+    flex-wrap: wrap;
+    border-radius: 9999px;
+  }
+}
+
+.tab-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border-radius: 15px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--text-sub);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.2s ease, opacity 0.15s ease;
+}
+
+@media (min-width: 640px) {
+  .tab-pill {
+    border-radius: 9999px;
+  }
+}
+
+.tab-pill:hover {
+  color: var(--text-main);
+  background: var(--soft);
+  border-color: var(--line);
+}
+
+.tab-pill:active {
+  opacity: 0.88;
+}
+
+.tab-pill:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.tab-pill-active {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #2563eb 0%, #1652f0 55%, #0b3bb8 100%) !important;
+  border-color: rgba(147, 197, 253, 0.38) !important;
+  box-shadow: 0 6px 16px -5px rgba(22, 82, 240, 0.48);
+}
+
+.tab-pill-active:hover {
+  filter: brightness(1.06);
+}
+
+/* Kifpool & Apple Wallet Hero Balance Card (Royal Blue & Gold 3D Glass + Trust Wallet Artwork) */
 .ios-wallet-card {
-  background:
-    radial-gradient(280px 180px at 88% 12%, rgba(56, 189, 248, 0.32), transparent 70%),
-    radial-gradient(220px 150px at 14% 92%, rgba(16, 185, 129, 0.22), transparent 70%),
-    linear-gradient(135deg, #2563eb 0%, #1652f0 52%, #0a34a6 100%);
-  border: 1px solid rgba(147, 197, 253, 0.35);
-  box-shadow: 0 20px 44px -18px rgba(22, 82, 240, 0.55);
+  position: relative;
+  overflow: hidden;
+  background-color: #091d54;
+  background-image:
+    linear-gradient(115deg, rgba(5, 13, 38, 0.88) 0%, rgba(10, 29, 86, 0.68) 54%, rgba(8, 22, 66, 0.28) 100%),
+    url('/images/balance-card-bg.webp');
+  background-size: cover;
+  background-position: left center;
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  box-shadow:
+    0 24px 52px -18px rgba(10, 30, 95, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
   color: #ffffff;
+}
+
+/* Safe Vault & Multi-Chain Wallet Card (Cosmic Vault Artwork) */
+.ios-vault-card {
+  position: relative;
+  overflow: hidden;
+  background-color: #071640;
+  background-image:
+    linear-gradient(115deg, rgba(4, 12, 34, 0.88) 0%, rgba(11, 30, 88, 0.68) 54%, rgba(7, 20, 56, 0.25) 100%),
+    url('/images/wallet-vault-bg.webp');
+  background-size: cover;
+  background-position: left center;
+  border: 1px solid rgba(96, 165, 250, 0.36);
+  box-shadow:
+    0 24px 52px -18px rgba(7, 24, 78, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+/* iOS Frosted Glass Action Controls & Pills inside Hero Cards */
+.ios-glass-btn {
+  background: rgba(255, 255, 255, 0.13);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+  box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.ios-glass-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.42);
+  transform: translateY(-1px);
+}
+.ios-glass-btn:active {
+  transform: scale(0.97);
+}
+
+.ios-glass-gold-btn {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.92), rgba(217, 119, 6, 0.92));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(254, 240, 138, 0.55);
+  color: #0b1220;
+  font-weight: 900;
+  box-shadow: 0 10px 26px -10px rgba(245, 158, 11, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+.ios-glass-gold-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.ios-glass-emerald-btn {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.9), rgba(5, 150, 105, 0.94));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(167, 243, 208, 0.48);
+  color: #ffffff;
+  font-weight: 900;
+  box-shadow: 0 10px 26px -10px rgba(16, 185, 129, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+.ios-glass-emerald-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.ios-glass-stat {
+  background: rgba(5, 14, 42, 0.48);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 @layer components {
@@ -760,9 +918,9 @@ input[type='range']::-webkit-slider-thumb {
    LIQUID GLASS FLOATING AI ORB & SHEET — LOGO + ROBOT ASSISTIVETOUCH
    ========================================================================== */
 .dz-orb {
-  --size: 74px;
-  --edge: 12px;
-  --dock: 48px;
+  --size: 58px;
+  --edge: 10px;
+  --dock: 34px;
   position: fixed;
   z-index: 170;
   direction: ltr;
@@ -817,7 +975,7 @@ input[type='range']::-webkit-slider-thumb {
   border: 0;
   background: none;
   cursor: inherit;
-  border-radius: 24px;
+  border-radius: 19px;
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .dz-orb:hover .dz-btn {
@@ -880,9 +1038,9 @@ input[type='range']::-webkit-slider-thumb {
 
 .dz-ai {
   position: absolute;
-  bottom: -11px;
-  width: 34px;
-  height: 34px;
+  bottom: -8px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -899,17 +1057,17 @@ input[type='range']::-webkit-slider-thumb {
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .dz-orb[data-side='left'] .dz-ai {
-  right: -13px;
+  right: -9px;
 }
 .dz-orb[data-side='right'] .dz-ai {
-  left: -13px;
+  left: -9px;
 }
 .dz-orb:hover .dz-ai {
   transform: scale(1.12);
 }
 .dz-bot {
-  width: 22px;
-  height: 22px;
+  width: 17px;
+  height: 17px;
   display: block;
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
   transform-origin: 50% 80%;
@@ -956,6 +1114,151 @@ input[type='range']::-webkit-slider-thumb {
   }
 }
 
+/* Center Liquid Glass Hero Orb with Animated Candlesticks & Cute Orb Robot */
+.dz-hero-orb {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 30%;
+  animation: dzFloat 5.2s ease-in-out infinite;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.dz-hero-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(110% 85% at 28% 14%, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.14) 55%, rgba(22, 82, 240, 0.24) 100%),
+    linear-gradient(155deg, rgba(255, 255, 255, 0.42) 0%, rgba(56, 189, 248, 0.18) 52%, rgba(22, 82, 240, 0.34) 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  -webkit-backdrop-filter: blur(18px) saturate(210%);
+  backdrop-filter: blur(18px) saturate(210%);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.92),
+    inset 0 -8px 16px rgba(22, 82, 240, 0.3),
+    0 16px 34px -8px rgba(15, 35, 120, 0.48),
+    0 4px 12px rgba(0, 200, 255, 0.22),
+    0 0 0 1px rgba(37, 99, 235, 0.18);
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dz-hero-orb:hover .dz-hero-shell {
+  transform: scale(1.06);
+}
+.dz-hero-orb:hover .dz-hero-bot {
+  transform: rotate(-8deg) scale(1.05);
+}
+html[data-theme='cosmic'] .dz-hero-shell {
+  background:
+    radial-gradient(110% 85% at 28% 14%, rgba(255, 255, 255, 0.34), rgba(56, 189, 248, 0.14) 52%, rgba(22, 82, 240, 0.34) 100%),
+    linear-gradient(155deg, rgba(24, 52, 130, 0.58) 0%, rgba(14, 165, 233, 0.2) 52%, rgba(15, 32, 88, 0.68) 100%);
+  border-color: rgba(255, 255, 255, 0.44);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.52),
+    inset 0 -8px 18px rgba(37, 99, 235, 0.45),
+    0 18px 38px -8px rgba(4, 12, 42, 0.72),
+    0 4px 16px rgba(0, 200, 255, 0.26),
+    0 0 0 1px rgba(56, 189, 248, 0.22);
+}
+.dz-logo-pill {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.86) 0%, rgba(224, 242, 254, 0.48) 55%, rgba(37, 99, 235, 0.16) 100%);
+  border: 1.25px solid rgba(255, 255, 255, 0.85);
+  -webkit-backdrop-filter: blur(14px) saturate(190%);
+  backdrop-filter: blur(14px) saturate(190%);
+  box-shadow:
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.92),
+    inset 0 -3px 8px rgba(22, 82, 240, 0.2),
+    0 6px 14px -4px rgba(15, 35, 120, 0.28);
+}
+html[data-theme='cosmic'] .dz-logo-pill {
+  background: linear-gradient(155deg, rgba(37, 99, 235, 0.36) 0%, rgba(15, 35, 95, 0.6) 60%, rgba(7, 18, 48, 0.8) 100%);
+  border-color: rgba(255, 255, 255, 0.36);
+  box-shadow:
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.45),
+    inset 0 -4px 10px rgba(22, 82, 240, 0.4),
+    0 6px 16px rgba(0, 200, 255, 0.22);
+}
+.dz-hero-candles {
+  position: absolute;
+  inset: 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+  z-index: 1;
+  opacity: 0.9;
+  pointer-events: none;
+}
+.dz-candle {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: dzCandleWave 2.8s ease-in-out infinite;
+}
+.dz-candle-1 { animation-delay: 0s; }
+.dz-candle-2 { animation-delay: 0.35s; }
+.dz-candle-3 { animation-delay: 0.7s; }
+.dz-candle-4 { animation-delay: 1.05s; }
+.dz-candle-5 { animation-delay: 1.4s; }
+@keyframes dzCandleWave {
+  0%, 100% {
+    transform: translateY(2px) scaleY(0.84);
+    opacity: 0.68;
+  }
+  50% {
+    transform: translateY(-2.5px) scaleY(1.16);
+    opacity: 1;
+  }
+}
+.dz-hero-top {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(255, 255, 255, 0.14) 34%, transparent 56%);
+}
+.dz-hero-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(
+      115deg,
+      transparent 28%,
+      rgba(255, 255, 255, 0.6) 46%,
+      rgba(255, 255, 255, 0.08) 54%,
+      transparent 70%
+    )
+    0 0 / 260% 100%;
+  background-position: 140% 0;
+  animation: dzSheen 6s ease-in-out infinite;
+  mix-blend-mode: soft-light;
+}
+.dz-hero-bot {
+  position: relative;
+  z-index: 2;
+  width: 58%;
+  height: 58%;
+  display: block;
+  transform-origin: 50% 80%;
+  filter: drop-shadow(0 5px 10px rgba(10, 26, 86, 0.38));
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dz-hero-spark {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 20px;
+  height: 20px;
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 5px rgba(16, 185, 129, 0.6));
+  animation: dzTw 3.2s ease-in-out infinite;
+}
+
 .ticker-edge-fade {
   -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 28px, #000 calc(100% - 28px), transparent 100%);
   mask-image: linear-gradient(90deg, transparent 0%, #000 28px, #000 calc(100% - 28px), transparent 100%);
@@ -987,7 +1290,9 @@ input[type='range']::-webkit-slider-thumb {
   .btn-lime,
   .btn-ghost,
   .dz-orb,
-  .dz-orb * {
+  .dz-orb *,
+  .dz-hero-orb,
+  .dz-hero-orb * {
     animation: none !important;
     transition: none !important;
   }
@@ -1099,4 +1404,107 @@ input[type='range']::-webkit-slider-thumb {
   transform-origin: left center;
   animation: bannerProgressBar 5.5s linear infinite;
 }
+
+/* ==========================================================================
+   V10.2 STRICT CONTRAST GUARANTEES — LIGHT MODE LINES & DARK MODE LEGIBILITY
+   ========================================================================== */
+.input-pro {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.input-pro:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
+}
+.input-pro::placeholder {
+  color: var(--text-dim);
+}
+
+/* Dark Mode: never leave dark-blue / dark-slate / dark-green text or icons dim on dark surfaces */
+html[data-theme='cosmic'] .text-\[\#1652F0\],
+html.dark .text-\[\#1652F0\],
+html[data-theme='cosmic'] .text-\[\#1652f0\],
+html.dark .text-\[\#1652f0\],
+html[data-theme='cosmic'] .text-\[\#0D47A1\],
+html.dark .text-\[\#0D47A1\],
+html[data-theme='cosmic'] .text-\[\#0b3bb8\],
+html.dark .text-\[\#0b3bb8\] {
+  color: #60a5fa !important;
+}
+html[data-theme='cosmic'] .bg-white .text-\[\#0b3bb8\],
+html.dark .bg-white .text-\[\#0b3bb8\],
+html[data-theme='cosmic'] .bg-white .text-\[\#1652F0\],
+html.dark .bg-white .text-\[\#1652F0\] {
+  color: #0b3bb8 !important;
+}
+html[data-theme='cosmic'] .text-\[\#059669\],
+html.dark .text-\[\#059669\],
+html[data-theme='cosmic'] .text-\[\#0D9455\],
+html.dark .text-\[\#0D9455\] {
+  color: #34d399 !important;
+}
+html[data-theme='cosmic'] .text-\[\#0284C7\],
+html.dark .text-\[\#0284C7\] {
+  color: #38bdf8 !important;
+}
+html[data-theme='cosmic'] .text-\[\#D97706\],
+html.dark .text-\[\#D97706\] {
+  color: #fbbf24 !important;
+}
+html[data-theme='cosmic'] .text-\[\#DC2626\],
+html.dark .text-\[\#DC2626\] {
+  color: #fb7185 !important;
+}
+html[data-theme='cosmic'] .panel .text-slate-700,
+html.dark .panel .text-slate-700,
+html[data-theme='cosmic'] .panel .text-slate-800,
+html.dark .panel .text-slate-800,
+html[data-theme='cosmic'] .panel .text-slate-900,
+html.dark .panel .text-slate-900,
+html[data-theme='cosmic'] .surface-card .text-slate-700,
+html.dark .surface-card .text-slate-700,
+html[data-theme='cosmic'] .surface-card .text-slate-800,
+html.dark .surface-card .text-slate-800,
+html[data-theme='cosmic'] .surface-card .text-slate-900,
+html.dark .surface-card .text-slate-900 {
+  color: #e2e8f0;
+}
+
+/* Light Mode: ensure white-opacity utilities inside light panels remain crisply visible */
+html.theme-light .panel .bg-white\/5,
+html.theme-light .surface-card .bg-white\/5,
+html.theme-light .panel .bg-white\/10,
+html.theme-light .surface-card .bg-white\/10 {
+  background-color: rgba(15, 23, 42, 0.055);
+}
+html.theme-light .panel .border-white\/15,
+html.theme-light .surface-card .border-white\/15,
+html.theme-light .panel .border-white\/20,
+html.theme-light .surface-card .border-white\/20,
+html.theme-light .panel .border-white\/25,
+html.theme-light .surface-card .border-white\/25 {
+  border-color: rgba(30, 58, 138, 0.16);
+}
+html.theme-light .ios-wallet-card .bg-white\/5,
+html.theme-light .ios-wallet-card .bg-white\/10,
+html.theme-light .ios-vault-card .bg-white\/5,
+html.theme-light .ios-vault-card .bg-white\/10,
+html.theme-light .hero-cobalt .bg-white\/10,
+html.theme-light .hero-cobalt .bg-white\/15,
+html.theme-light .hero-cobalt .bg-white\/20 {
+  background-color: rgba(255, 255, 255, 0.16);
+}
+html.theme-light .ios-wallet-card .border-white\/15,
+html.theme-light .ios-wallet-card .border-white\/20,
+html.theme-light .ios-wallet-card .border-white\/25,
+html.theme-light .ios-vault-card .border-white\/15,
+html.theme-light .ios-vault-card .border-white\/20,
+html.theme-light .hero-cobalt .border-white\/20,
+html.theme-light .hero-cobalt .border-white\/25 {
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
 

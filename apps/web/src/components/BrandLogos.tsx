@@ -10,50 +10,21 @@ export function ExchangeLogo({
   className?: string;
 }) {
   const p = provider.toLowerCase();
-  if (p === 'toobit') {
+  if (p === 'trustwallet' || p === 'hyperliquid' || p === 'live') {
     return (
       <svg viewBox="0 0 36 36" width={size} height={size} className={`shrink-0 ${className}`} aria-hidden="true">
         <defs>
-          <linearGradient id="exToobit" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#1652F0" />
-            <stop offset="100%" stopColor="#091E5A" />
+          <linearGradient id="exTw" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#0500FF" />
+            <stop offset="100%" stopColor="#1652F0" />
           </linearGradient>
         </defs>
-        <rect width="36" height="36" rx="11" fill="url(#exToobit)" />
-        <path d="M9 11.5h18v4.2h-6.8V26h-4.4V15.7H9v-4.2Z" fill="#FFFFFF" />
-        <circle cx="25.5" cy="23.5" r="3" fill="#10E066" />
+        <rect width="36" height="36" rx="11" fill="url(#exTw)" />
+        <path d="M18 7.5 10.5 10.8v6.1c0 5.3 3.2 9.9 7.5 11.6 4.3-1.7 7.5-6.3 7.5-11.6v-6.1L18 7.5Z" fill="none" stroke="#FFFFFF" strokeWidth="2.4" strokeLinejoin="round" />
       </svg>
     );
   }
-  if (p === 'bitunix') {
-    return (
-      <svg viewBox="0 0 36 36" width={size} height={size} className={`shrink-0 ${className}`} aria-hidden="true">
-        <defs>
-          <linearGradient id="exBitunix" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#141824" />
-            <stop offset="100%" stopColor="#080B12" />
-          </linearGradient>
-        </defs>
-        <rect width="36" height="36" rx="11" fill="url(#exBitunix)" stroke="#232B3E" strokeWidth="1" />
-        <path d="M11 10l6.2 8-6.2 8h4.5l4-5.2 4 5.2H28l-6.2-8L28 10h-4.5l-4 5.2-4-5.2H11Z" fill="#A3E635" />
-      </svg>
-    );
-  }
-  if (p === 'kcex') {
-    return (
-      <svg viewBox="0 0 36 36" width={size} height={size} className={`shrink-0 ${className}`} aria-hidden="true">
-        <defs>
-          <linearGradient id="exKcex" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#10B981" />
-            <stop offset="100%" stopColor="#047857" />
-          </linearGradient>
-        </defs>
-        <rect width="36" height="36" rx="11" fill="url(#exKcex)" />
-        <path d="M11 10v16h3.6v-6.2l5.8 6.2H25l-6.8-7.4L24.8 10h-4.6l-5.6 6V10H11Z" fill="#FFFFFF" />
-      </svg>
-    );
-  }
-  // Paper / Simulator
+  // Paper / $10K Trust Wallet Simulator
   return (
     <svg viewBox="0 0 36 36" width={size} height={size} className={`shrink-0 ${className}`} aria-hidden="true">
       <defs>

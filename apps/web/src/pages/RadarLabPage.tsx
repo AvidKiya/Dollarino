@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Activity,
   BarChart3,
+  BellRing,
   Calendar,
   CheckCircle2,
   ChevronDown,
@@ -35,6 +36,7 @@ import { AreaChart, ConsensusGauge } from '../components/DollarinoViz';
 import { HybridLab } from '../components/HybridLab';
 import { StrategyIdePanel } from '../components/StrategyIdePanel';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
+import { TradingViewAlertsHub } from '../components/TradingViewAlertsHub';
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -66,7 +68,7 @@ export function RadarLabPage({
   onRefresh: () => Promise<void>;
 }) {
   const isFa = lang === 'fa';
-  const [subTab, setSubTab] = useState<'radar' | 'lab' | 'backtest' | 'ide'>('radar');
+  const [subTab, setSubTab] = useState<'radar' | 'tvalerts' | 'lab' | 'backtest' | 'ide'>('radar');
   const [sourceFilter, setSourceFilter] = useState<'ALL' | 'AI' | 'DORNA' | 'TELEGRAM' | 'TRADINGVIEW'>('ALL');
   const [expandedRaw, setExpandedRaw] = useState<Record<string, boolean>>({});
   const [scanning, setScanning] = useState(false);
@@ -349,17 +351,20 @@ export function RadarLabPage({
           <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
             {subTab === 'radar'
               ? isFa ? 'رادار سیگنال زنده و اسکنر' : 'AI Signal Radar & Scanner'
-              : subTab === 'lab'
-                ? isFa ? 'آزمایشگاه ترکیب و تنظیمات KBOS' : 'Hybrid Lab & KBOS Tuner'
-                : subTab === 'ide'
-                  ? isFa ? 'محیط کدنویسی Pine Script و Python' : 'Pine Script & Python Strategy IDE'
-                  : isFa ? 'بک‌تستر تاریخی و جدول حرارتی' : 'Historical Backtester'}
+              : subTab === 'tvalerts'
+                ? isFa ? 'آلرت‌ها و اندیکاتورهای رایگان TradingView' : 'Free TradingView Indicators & Alerts'
+                : subTab === 'lab'
+                  ? isFa ? 'آزمایشگاه ترکیب و تنظیمات KBOS' : 'Hybrid Lab & KBOS Tuner'
+                  : subTab === 'ide'
+                    ? isFa ? 'محیط کدنویسی Pine Script و Python' : 'Pine Script & Python Strategy IDE'
+                    : isFa ? 'بک‌تستر تاریخی و جدول حرارتی' : 'Historical Backtester'}
           </h2>
         </div>
 
-        <div className="inline-flex p-1 panel rounded-full overflow-x-auto no-scrollbar">
+        <div className="tab-bar w-full sm:w-auto">
           {[
             { id: 'radar' as const, icon: Radar, l: isFa ? 'رادار و اسکن' : 'Live Radar' },
+            { id: 'tvalerts' as const, icon: BellRing, l: isFa ? 'آلرت رایگان TradingView' : 'TV Free Alerts' },
             { id: 'ide' as const, icon: Code2, l: isFa ? 'Pine / Python IDE' : 'Pine / Python IDE' },
             { id: 'lab' as const, icon: SlidersHorizontal, l: isFa ? 'آزمایشگاه و KBOS' : 'Lab & KBOS' },
             { id: 'backtest' as const, icon: BarChart3, l: isFa ? 'بک‌تست ۹۰۰ کندل' : 'Backtester' },
@@ -370,11 +375,9 @@ export function RadarLabPage({
                 key={t.id}
                 type="button"
                 onClick={() => setSubTab(t.id)}
-                className={`px-4 py-2 rounded-full text-xs font-black transition inline-flex items-center gap-1.5 whitespace-nowrap ${
-                  subTab === t.id ? 'btn-gold' : 'text-dim hover:text-main'
-                }`}
+                className={`tab-pill flex-1 sm:flex-initial ${subTab === t.id ? 'tab-pill-active' : ''}`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-4 h-4 shrink-0" />
                 <span>{t.l}</span>
               </button>
             );
@@ -396,7 +399,7 @@ export function RadarLabPage({
               { icon: Activity, l: isFa ? 'کل سیگنال‌ها' : 'Signals Logged', v: String(signals.length), c: 'text-goldsoft' },
               { icon: Trophy, l: isFa ? 'وین‌ریت حساب' : 'Win Rate', v: `${data.stats.winRate.toFixed(1)}%`, c: 'text-jade' },
               { icon: Crosshair, l: isFa ? 'آستانه اطمینان' : 'Min Confidence', v: `${data.config.ai_min_confidence}%`, c: 'text-brand' },
-              { icon: Target, l: isFa ? 'سود کل' : 'Total PnL', v: `${data.stats.totalPnl >= 0 ? '+' : ''}$${data.stats.totalPnl.toFixed(0)}`, c: data.stats.totalPnl >= 0 ? 'text-jade' : 'text-loss' },
+              { icon: Target, l: isFa ? 'سود کل' : 'Total PnL', v: data.stats.totalPnl >= 0 ? `+$${data.stats.totalPnl.toFixed(0)}` : `-$${Math.abs(data.stats.totalPnl).toFixed(0)}`, c: data.stats.totalPnl >= 0 ? 'text-jade' : 'text-loss' },
             ].map((s) => {
               const Icon = s.icon;
               return (
@@ -505,15 +508,15 @@ export function RadarLabPage({
                         </div>
 
                         <div className="grid grid-cols-3 gap-2 text-center text-[11px] font-num" dir="ltr">
-                          <div className="rounded-xl bg-black/20 border hairline py-1.5">
+                          <div className="rounded-xl surface-soft border hairline py-1.5">
                             <span className="text-[9px] text-dim block">ENTRY</span>
                             <span className="font-bold text-main">{lv.entry ? `$${lv.entry}` : '—'}</span>
                           </div>
-                          <div className="rounded-xl bg-black/20 border hairline py-1.5">
+                          <div className="rounded-xl surface-soft border hairline py-1.5">
                             <span className="text-[9px] text-dim block">TP1</span>
                             <span className="font-bold text-jade">{lv.tp1 ? `$${lv.tp1}` : '—'}</span>
                           </div>
-                          <div className="rounded-xl bg-black/20 border hairline py-1.5">
+                          <div className="rounded-xl surface-soft border hairline py-1.5">
                             <span className="text-[9px] text-dim block">SL</span>
                             <span className="font-bold text-loss">{lv.sl ? `$${lv.sl}` : '—'}</span>
                           </div>
@@ -524,7 +527,7 @@ export function RadarLabPage({
                           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
                         </button>
                         {open && (
-                          <pre dir="ltr" className="text-[11px] font-mono text-sub bg-black/25 rounded-xl p-3 border hairline whitespace-pre-wrap">
+                          <pre dir="ltr" className="text-[11px] font-mono text-sub surface-soft rounded-xl p-3 border hairline whitespace-pre-wrap">
                             {s.raw_text || formatDollarinoSignal({ symbol: s.symbol, direction: isLong ? 'LONG' : 'SHORT', timeframe: '15m', price: s.price, stopLoss: String(lv.sl || ''), leverage: 10, tp1: String(lv.tp1 || '') })}
                           </pre>
                         )}
@@ -552,7 +555,7 @@ export function RadarLabPage({
                     return (
                       <button key={c.symbol} type="button" onClick={() => onTradeSymbol(c.symbol)} className="w-full flex items-center gap-2 text-xs hover:opacity-80">
                         <span className="font-bold text-main w-12 text-start">{c.base}</span>
-                        <div className="flex-1 h-2 rounded-full bg-white/10 overflow-hidden">
+                        <div className="flex-1 h-2 rounded-full bg-[var(--soft)] border hairline overflow-hidden">
                           <div className={`h-full rounded-full ${ch >= 0 ? 'bg-jade' : 'bg-rose-500'}`} style={{ width: `${Math.min(100, Math.abs(ch) * 10)}%` }} />
                         </div>
                         <span dir="ltr" className={`font-num font-bold w-14 text-end ${ch >= 0 ? 'text-jade' : 'text-loss'}`}>
@@ -705,7 +708,7 @@ export function RadarLabPage({
                   { l: isFa ? 'بازده خالص' : 'Net Return', v: `${btResult.metrics.netReturnPct >= 0 ? '+' : ''}${btResult.metrics.netReturnPct.toFixed(2)}%`, c: btResult.metrics.netReturnPct >= 0 ? 'text-jade' : 'text-loss' },
                   { l: isFa ? 'معاملات' : 'Trades', v: String(btResult.metrics.totalTrades), c: 'text-main' },
                   { l: isFa ? 'وین‌ریت' : 'Win Rate', v: `${btResult.metrics.winRatePct.toFixed(1)}%`, c: 'text-goldsoft' },
-                  { l: 'Profit Factor', v: btResult.metrics.profitFactor.toFixed(2), c: 'text-jade' },
+                  { l: 'Profit Factor', v: btResult.metrics.profitFactor >= 90 ? '∞' : btResult.metrics.profitFactor.toFixed(2), c: 'text-jade' },
                   { l: 'Sharpe', v: btResult.metrics.sharpeEstimate.toFixed(2), c: 'text-brand' },
                   { l: isFa ? 'حداکثر افت' : 'Max DD', v: `${btResult.metrics.maxDrawdownPct.toFixed(2)}%`, c: 'text-loss' },
                 ].map((m) => (
@@ -722,14 +725,21 @@ export function RadarLabPage({
                   <div dir="ltr" className="flex gap-4 font-num font-bold text-main">
                     <span>Return: {compareResult.metrics.netReturnPct.toFixed(2)}%</span>
                     <span>WR: {compareResult.metrics.winRatePct.toFixed(1)}%</span>
-                    <span>PF: {compareResult.metrics.profitFactor.toFixed(2)}</span>
+                    <span>PF: {compareResult.metrics.profitFactor >= 90 ? '∞' : compareResult.metrics.profitFactor.toFixed(2)}</span>
                   </div>
                 </div>
               )}
 
-              {btResult.equityCurve.length > 2 && (
-                <div className="h-44 rounded-2xl bg-black/20 border hairline p-3">
-                  <AreaChart values={btResult.equityCurve.map((p) => p.equity)} height={152} />
+              {btResult.equityCurve.length >= 2 && (
+                <div className="h-[280px] rounded-2xl surface-soft border hairline p-3.5">
+                  <AreaChart
+                    values={btResult.equityCurve.map((p) => p.equity)}
+                    points={btResult.equityCurve.map((p) => ({ time: p.time, equity: p.equity }))}
+                    compareValues={compareResult?.equityCurve.map((p) => p.equity)}
+                    compareLabel={compareStrategy.toString().toUpperCase()}
+                    baseline={btCapital}
+                    height={250}
+                  />
                 </div>
               )}
 
@@ -944,6 +954,14 @@ export function RadarLabPage({
             })()}
           </div>
         </div>
+      )}
+
+      {subTab === 'tvalerts' && (
+        <TradingViewAlertsHub
+          lang={lang}
+          defaultSymbol={data.config.symbol || 'BTCUSDT'}
+          onRefresh={onRefresh}
+        />
       )}
     </div>
   );

@@ -16,12 +16,26 @@ import {
   resolveChannelAndBotConfig,
 } from '../telegram/publisher.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
+import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-intel.js';
 import {
   listOnchainApiProviders,
   saveOnchainApiProviderKey,
   testOnchainApiProvider,
   type OnchainProviderId,
 } from '../dex/smart-copy.js';
+import { getFounderProfile, saveFounderProfile, type FounderProfile } from '../services/founder-profile.js';
+import {
+  discoverTopSiteTraders,
+  getSiteTraderAutoConfig,
+  promoteSiteTraderToCopyList,
+  syncAutoTopSiteTraders,
+} from '../services/site-traders.js';
+import {
+  clearDbTelegramBotToken,
+  getTelegramBotTokenStatus,
+  resolveTelegramBotToken,
+  saveAndConfigureTelegramBot,
+} from '../telegram/token.js';
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 adminRoutes.use('*', requireAuth);
@@ -81,7 +95,10 @@ adminRoutes.get('/overview', async (c) => {
   ]);
 
   const settingsMap: Record<string, string> = {};
-  for (const s of settings.results) settingsMap[s.key] = s.value;
+  for (const s of settings.results) {
+    if (s.key === 'telegram_bot_token_enc' || s.key === 'telegram_webhook_secret_auto') continue;
+    settingsMap[s.key] = s.value;
+  }
 
   const activeSubByUser = new Map<string, { plan_code: string; expires_at: string | null }>();
   for (const s of subs.results) {
@@ -97,8 +114,13 @@ adminRoutes.get('/overview', async (c) => {
     };
   });
 
-  const phoneVerifiedCount = enrichedUsers.filter((u) => u.phone_verified === 1).length;
-  const trustWalletConnectedCount = enrichedUsers.filter((u) => Boolean(u.trust_wallet_address || u.trust_wallet_tron || u.trust_wallet_solana || u.trust_wallet_ton)).length;
+  const [phoneVerifiedCount, trustWalletConnectedCount] = [
+    enrichedUsers.filter((u) => u.phone_verified === 1).length,
+    enrichedUsers.filter((u) => Boolean(u.trust_wallet_address || u.trust_wallet_tron || u.trust_wallet_solana || u.trust_wallet_ton)).length,
+  ];
+  const serverFeeAgg = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(fee_usd), 0) as total_fee_usd, COALESCE(SUM(CASE WHEN status = 'ACCRUED' THEN fee_usd ELSE 0 END), 0) as accrued_fee_usd FROM server_fee_ledger`
+  ).first<{ total_fee_usd: number; accrued_fee_usd: number }>().catch(() => ({ total_fee_usd: 0, accrued_fee_usd: 0 }));
 
   return c.json({
     users: enrichedUsers,
@@ -106,8 +128,10 @@ adminRoutes.get('/overview', async (c) => {
       totalUsers: enrichedUsers.length,
       phoneVerifiedCount,
       trustWalletConnectedCount,
-      activeSubscriptions: activeSubByUser.size,
+      activeSubscriptions: enrichedUsers.length,
       totalRevenueUsd: Number(revRow?.total_usd || 0),
+      serverFeeTotalUsd: Number(serverFeeAgg?.total_fee_usd || 0),
+      serverFeeAccruedUsd: Number(serverFeeAgg?.accrued_fee_usd || 0),
       openSupportTickets: openSupport?.cnt ?? 0,
       copyTradersCount: copyTraders?.cnt ?? 0,
       dexTradesTotal: dexStats?.total ?? 0,
@@ -384,6 +408,32 @@ adminRoutes.put('/settings', async (c) => {
   return c.json({ ok: true });
 });
 
+adminRoutes.get('/founder-profile', async (c) => {
+  const profile = await getFounderProfile(c.env.DB);
+  return c.json({ ok: true, profile });
+});
+
+adminRoutes.put('/founder-profile', async (c) => {
+  const body = await c.req.json<Partial<FounderProfile>>().catch(() => ({} as Partial<FounderProfile>));
+  const result = await saveFounderProfile(c.env.DB, body);
+  if (!result.ok) {
+    return c.json({ error: result.error }, 400);
+  }
+  const actor = c.get('user');
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'UPDATE_FOUNDER_PROFILE', 'system_settings', 'founder_profile', ?)`
+  )
+    .bind(
+      randomId('aud'),
+      actor.id,
+      JSON.stringify({ updatedFields: Object.keys(body), hasPhoto: Boolean(result.profile.photoUrl) })
+    )
+    .run()
+    .catch(() => {});
+  return c.json({ ok: true, profile: result.profile });
+});
+
 export async function executeAdminBroadcast(
   env: Env,
   opts: { title: string; message: string; deliverTelegram: boolean; deliverInApp: boolean }
@@ -392,8 +442,9 @@ export async function executeAdminBroadcast(
   let totalTelegram = 0;
   let deliveredInApp = 0;
 
-  if (opts.deliverTelegram && env.TELEGRAM_BOT_TOKEN) {
-    const client = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const botToken = opts.deliverTelegram ? await resolveTelegramBotToken(env) : '';
+  if (opts.deliverTelegram && botToken) {
+    const client = new TelegramBotClient(botToken);
     const targets = await env.DB.prepare('SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL AND is_blocked = 0')
       .all<{ telegram_id: string }>();
     totalTelegram = targets.results.length;
@@ -490,8 +541,9 @@ adminRoutes.post('/broadcast', async (c) => {
   const deliverTelegram = body.deliverTelegram !== false;
   const deliverInApp = body.deliverInApp !== false;
 
-  if (deliverTelegram && !deliverInApp && !c.env.TELEGRAM_BOT_TOKEN && !body.scheduledAt) {
-    return c.json({ error: 'Global TELEGRAM_BOT_TOKEN not configured' }, 400);
+  const botToken = await resolveTelegramBotToken(c.env);
+  if (deliverTelegram && !deliverInApp && !botToken && !body.scheduledAt) {
+    return c.json({ error: 'توکن ربات تلگرام هنوز تنظیم نشده است.' }, 400);
   }
 
   let scheduledIso: string | null = null;
@@ -672,11 +724,68 @@ adminRoutes.post('/users/:id/wallet', async (c) => {
 // =========================================================================
 
 adminRoutes.get('/copy-traders', async (c) => {
-  const [traders, trades] = await Promise.all([
-    c.env.DB.prepare(`SELECT * FROM copy_traders ORDER BY created_at DESC`).all().catch(() => ({ results: [] })),
+  await syncAutoTopSiteTraders(c.env.DB).catch(() => {});
+  const [traders, trades, candidates, autoConfig] = await Promise.all([
+    c.env.DB.prepare(`SELECT * FROM copy_traders ORDER BY is_active DESC, roi_30d_pct DESC, created_at DESC`).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(`SELECT * FROM copy_trader_trades ORDER BY opened_at DESC LIMIT 100`).all().catch(() => ({ results: [] })),
+    discoverTopSiteTraders(c.env.DB, 30),
+    getSiteTraderAutoConfig(c.env.DB),
   ]);
-  return c.json({ traders: traders.results, trades: trades.results });
+  return c.json({ traders: traders.results, trades: trades.results, candidates, autoConfig });
+});
+
+adminRoutes.get('/site-traders/top', async (c) => {
+  const [candidates, autoConfig] = await Promise.all([
+    discoverTopSiteTraders(c.env.DB, 35),
+    getSiteTraderAutoConfig(c.env.DB),
+  ]);
+  return c.json({ ok: true, candidates, autoConfig });
+});
+
+adminRoutes.post('/site-traders/:userId/promote', async (c) => {
+  const targetUserId = c.req.param('userId');
+  const body = (await c.req.json().catch(() => ({}))) as { active?: boolean; askConfirm?: boolean };
+  const res = await promoteSiteTraderToCopyList(c.env.DB, targetUserId, {
+    active: body.active !== false,
+    askConfirm: body.askConfirm !== false,
+  });
+  if (!res.ok) return c.json(res, 404);
+  const [candidates, traders] = await Promise.all([
+    discoverTopSiteTraders(c.env.DB, 35),
+    c.env.DB.prepare(`SELECT * FROM copy_traders ORDER BY is_active DESC, roi_30d_pct DESC`).all().catch(() => ({ results: [] })),
+  ]);
+  return c.json({ ...res, candidates, traders: traders.results });
+});
+
+adminRoutes.post('/site-traders/sync-auto', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    enabled?: boolean;
+    minWinRate?: number;
+    maxCount?: number;
+  };
+  const updates: Array<[string, string]> = [];
+  if (typeof body.enabled === 'boolean') updates.push(['auto_publish_top_traders', body.enabled ? 'true' : 'false']);
+  if (typeof body.minWinRate === 'number' && Number.isFinite(body.minWinRate)) {
+    updates.push(['auto_publish_min_win_rate', String(Math.max(0, Math.min(95, body.minWinRate)))]);
+  }
+  if (typeof body.maxCount === 'number' && Number.isFinite(body.maxCount)) {
+    updates.push(['auto_publish_max_count', String(Math.max(1, Math.min(20, Math.round(body.maxCount))))]);
+  }
+  for (const [k, v] of updates) {
+    await c.env.DB.prepare(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    )
+      .bind(k, v)
+      .run();
+  }
+  const syncRes = await syncAutoTopSiteTraders(c.env.DB, true);
+  const [candidates, autoConfig, traders] = await Promise.all([
+    discoverTopSiteTraders(c.env.DB, 35),
+    getSiteTraderAutoConfig(c.env.DB),
+    c.env.DB.prepare(`SELECT * FROM copy_traders ORDER BY is_active DESC, roi_30d_pct DESC`).all().catch(() => ({ results: [] })),
+  ]);
+  return c.json({ ok: true, ...syncRes, candidates, autoConfig, traders: traders.results });
 });
 
 adminRoutes.post('/copy-traders', async (c) => {
@@ -922,8 +1031,9 @@ adminRoutes.post('/support/:ticketId/reply', async (c) => {
     `UPDATE support_tickets SET status = ?, last_message_at = datetime('now') WHERE id = ?`
   ).bind(body.close ? 'CLOSED' : 'ANSWERED', ticketId).run();
 
-  if (ticket.telegram_id && c.env.TELEGRAM_BOT_TOKEN) {
-    const tg = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
+  const botToken = ticket.telegram_id ? await resolveTelegramBotToken(c.env) : '';
+  if (ticket.telegram_id && botToken) {
+    const tg = new TelegramBotClient(botToken);
     const caption = `💬 <b>پاسخ پشتیبانی آنلاین دلارینو:</b>\n\n${displayMsg}`;
     if (imageDataUrl) {
       await tg.sendDataUrlPhoto(ticket.telegram_id, imageDataUrl, caption).catch(() => tg.sendMessage(ticket.telegram_id!, caption).catch(() => {}));
@@ -947,17 +1057,145 @@ adminRoutes.patch('/support/:ticketId/status', async (c) => {
 // =========================================================================
 
 adminRoutes.get('/telegram/channel-status', async (c) => {
-  const cfg = await resolveChannelAndBotConfig(c.env);
-  if (!c.env.TELEGRAM_BOT_TOKEN) {
-    return c.json({ ok: false, channelHandle: cfg.channelHandle, error: 'TELEGRAM_BOT_TOKEN تنظیم نشده است.' });
+  const [cfg, botToken, tokenStatus, autoSig, autoNews, autoPubSig] = await Promise.all([
+    resolveChannelAndBotConfig(c.env),
+    resolveTelegramBotToken(c.env),
+    getTelegramBotTokenStatus(c.env),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'always_on_signals_enabled' LIMIT 1`).first<{ value: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'always_on_ai_broadcast_enabled' LIMIT 1`).first<{ value: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'auto_publish_signals_to_channel' LIMIT 1`).first<{ value: string }>().catch(() => null),
+  ]);
+  if (!botToken) {
+    return c.json({
+      ok: false,
+      channelHandle: cfg.channelHandle,
+      tokenStatus,
+      channels: {
+        signals: { target: cfg.signalsChannelId || cfg.channelHandle, enabled: cfg.signalsEnabled },
+        results: { target: cfg.resultsChannelId || cfg.channelHandle, enabled: cfg.resultsEnabled },
+        news: { target: cfg.newsChannelId || cfg.channelHandle, enabled: cfg.newsEnabled },
+        education: { target: cfg.educationChannelId || cfg.channelHandle, enabled: cfg.educationEnabled },
+        alerts: { target: cfg.alertsChannelId || cfg.channelHandle, enabled: cfg.alertsEnabled },
+        community: { target: cfg.communityGroupId, invite: cfg.communityGroupInvite },
+      },
+      automation: {
+        alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
+        alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
+        autoPublishSignalsToChannel: (autoPubSig?.value ?? 'true') !== 'false',
+      },
+      error: 'توکن ربات تلگرام هنوز تنظیم نشده است. می‌توانید همین‌جا از پنل ادمین توکن ربات را وارد و ذخیره کنید.',
+    });
   }
-  const tg = new TelegramBotClient(c.env.TELEGRAM_BOT_TOKEN);
-  const status = await tg.checkChannelAdminReadiness(cfg.channelHandle);
+  const tg = new TelegramBotClient(botToken);
+  const [status, webhookInfo] = await Promise.all([
+    tg.checkChannelAdminReadiness(cfg.signalsChannelId || cfg.channelHandle),
+    tg.getWebhookInfo().catch(() => null),
+  ]);
   return c.json({
     ...status,
     channelHandle: cfg.channelHandle,
     botUsername: status.botUsername || cfg.botUsername,
+    tokenStatus,
+    webhookInfo,
+    automation: {
+      alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
+      alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
+      autoPublishSignalsToChannel: (autoPubSig?.value ?? 'true') !== 'false',
+    },
+    channels: {
+      signals: { target: cfg.signalsChannelId || cfg.channelHandle, enabled: cfg.signalsEnabled },
+      results: { target: cfg.resultsChannelId || cfg.channelHandle, enabled: cfg.resultsEnabled },
+      news: { target: cfg.newsChannelId || cfg.channelHandle, enabled: cfg.newsEnabled },
+      education: { target: cfg.educationChannelId || cfg.channelHandle, enabled: cfg.educationEnabled },
+      alerts: { target: cfg.alertsChannelId || cfg.channelHandle, enabled: cfg.alertsEnabled },
+      community: { target: cfg.communityGroupId, invite: cfg.communityGroupInvite },
+    },
   });
+});
+
+adminRoutes.post('/telegram/bot-token', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    botToken?: string;
+    webhookBaseUrl?: string;
+    webAppUrl?: string;
+    clearOverride?: boolean;
+  };
+  if (body.clearOverride) {
+    await clearDbTelegramBotToken(c.env);
+    const tokenStatus = await getTelegramBotTokenStatus(c.env);
+    return c.json({ ok: true, cleared: true, tokenStatus });
+  }
+  const origin = new URL(c.req.url).origin;
+  const res = await saveAndConfigureTelegramBot(c.env, {
+    botToken: body.botToken,
+    webhookBaseUrl: body.webhookBaseUrl || c.env.PUBLIC_WEB_URL || origin,
+    webAppUrl: body.webAppUrl || c.env.PUBLIC_WEB_URL || origin,
+  });
+  const tokenStatus = await getTelegramBotTokenStatus(c.env);
+  return c.json({ ...res, tokenStatus }, res.ok ? 200 : 400);
+});
+
+adminRoutes.post('/channels/test', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    channelKey?: 'signals' | 'results' | 'news' | 'education' | 'alerts' | 'community';
+    customTarget?: string;
+  };
+  const botToken = await resolveTelegramBotToken(c.env);
+  if (!botToken) {
+    return c.json({ ok: false, error: 'توکن ربات تلگرام هنوز تنظیم نشده است. ابتدا توکن ربات را در بخش بالای کانال‌ها ست کنید.' }, 400);
+  }
+  const cfg = await resolveChannelAndBotConfig(c.env);
+  const labels: Record<string, { title: string; target: string }> = {
+    signals: { title: '📡 کانال سیگنال‌های معاملاتی', target: cfg.signalsChannelId || cfg.channelHandle },
+    results: { title: '🏆 کانال نتایج و کارت سود', target: cfg.resultsChannelId || cfg.channelHandle },
+    news: { title: '📰 کانال اخبار فوری کریپتو', target: cfg.newsChannelId || cfg.channelHandle },
+    education: { title: '🎓 کانال آموزش و راهنمای مبتدی‌ها', target: cfg.educationChannelId || cfg.channelHandle },
+    alerts: { title: '🚨 کانال رادار نهنگ‌ها و آلرت TradingView', target: cfg.alertsChannelId || cfg.channelHandle },
+    community: { title: '👥 گروه کامیونیتی و پشتیبانی دلارینو', target: cfg.communityGroupId },
+  };
+  const key = body.channelKey && labels[body.channelKey] ? body.channelKey : 'signals';
+  const rawTarget = (body.customTarget || labels[key]!.target || '').trim();
+  if (!rawTarget) {
+    return c.json({ ok: false, error: 'آیدی عددی (-100...) یا یوزرنیم (@channel) هنوز وارد نشده است.' }, 400);
+  }
+  const target: string | number = /^-?\d+$/.test(rawTarget) ? Number(rawTarget) : rawTarget;
+  try {
+    const tg = new TelegramBotClient(botToken);
+    const readiness = await tg.checkChannelAdminReadiness(rawTarget);
+    const res = await tg.sendMessage(
+      target,
+      `✅ تست اتصال دلارینو موفق بود!\n📌 بخش: ${labels[key]!.title}\n🆔 مقصد: \`${rawTarget}\`\n🛡 Trust Wallet Only · کارمزد ۵٪ فقط از سود واقعی`
+    );
+    return c.json({
+      ok: true,
+      target: rawTarget,
+      chatTitle: readiness.channelTitle,
+      messageId: res.message_id,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return c.json(
+      {
+        ok: false,
+        target: rawTarget,
+        error: `${errMsg} — نکته: برای کانال یا گروه خصوصی، ربات را ادمین کنید و آیدی عددی (-100...) را وارد نمایید.`,
+      },
+      400
+    );
+  }
+});
+
+adminRoutes.post('/automation/run-now', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    kind?: 'SIGNALS' | 'NEWS' | 'ANALYSIS' | 'EDUCATION' | 'PROMO' | 'ALERT';
+  };
+  const kind = body.kind || 'NEWS';
+  if (kind === 'SIGNALS') {
+    const res = await runAlwaysOnSignalRadar(c.env, { fromCron: false, force: true });
+    return c.json({ ok: true, kind, ...res });
+  }
+  const res = await runAlwaysOnAiIntel(c.env, { forceKind: kind });
+  return c.json({ ok: true, ...res });
 });
 
 adminRoutes.post('/channel/publish-signal', async (c) => {
@@ -1278,7 +1516,7 @@ adminRoutes.post('/banners', async (c) => {
       String(body.cta_label_fa || 'مشاهده و شروع').slice(0, 60),
       String(body.cta_label_en || body.cta_label_fa || 'Explore').slice(0, 60),
       String(body.cta_target || 'copy').slice(0, 200),
-      String(body.image_url || '/images/smart-wallet-radar.png').slice(0, 500),
+      String(body.image_url || '/images/smart-wallet-radar.webp').slice(0, 500),
       String(body.accent_theme || 'gold').slice(0, 24),
       String(body.placement || 'BOTH').toUpperCase(),
       Number(body.sort_order || 1),
@@ -1329,6 +1567,8 @@ adminRoutes.get('/system-health', async (c) => {
     auditCount,
     activeBanners,
     activeProviders,
+    activeAiEngines,
+    trc20Row,
   ] = await Promise.all([
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE status = 'OPEN'`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
@@ -1339,7 +1579,14 @@ adminRoutes.get('/system-health', async (c) => {
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM audit_logs`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM promo_banners WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM onchain_api_providers WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM platform_ai_engines WHERE is_active = 1`).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'usdt_trc20_wallet' LIMIT 1`).first<{ value: string }>().catch(() => null),
   ]);
+
+  const jwtSec = (c.env.SESSION_JWT_SECRET || '').trim();
+  const encKey = (c.env.MASTER_ENCRYPTION_KEY || '').trim();
+  const trc20Val = (trc20Row?.value || '').trim();
+  const feeWalletOk = Boolean(trc20Val) && !trc20Val.includes('YourTRC20WalletAddress');
 
   return c.json({
     ok: true,
@@ -1354,6 +1601,15 @@ adminRoutes.get('/system-health', async (c) => {
       activeBanners: activeBanners?.cnt ?? 0,
       activeOnchainProviders: activeProviders?.cnt ?? 0,
       cronIntervalSec: 60,
+      productionChecks: {
+        jwtSecretOk: jwtSec.length >= 24 && !jwtSec.includes('dev-secret'),
+        encryptionKeyOk: encKey.length >= 32,
+        telegramBotConfigured: Boolean(await resolveTelegramBotToken(c.env)),
+        aiEngineConfigured: Boolean(c.env.HILINKUP_API_KEY?.trim()) || (activeAiEngines?.cnt ?? 0) > 0,
+        feeReceiverWalletConfigured: feeWalletOk,
+        allowLiveTrading: c.env.ALLOW_LIVE_TRADING === 'true',
+        publicWebUrl: c.env.PUBLIC_WEB_URL || '',
+      },
       timestamp: new Date().toISOString(),
     },
   });

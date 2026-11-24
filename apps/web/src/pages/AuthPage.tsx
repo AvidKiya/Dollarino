@@ -201,7 +201,7 @@ export function AuthPage({
                     dir="ltr"
                     value={referralCode}
                     onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                    placeholder={isFa ? 'مثلاً DLR-XXXXXX' : 'e.g. DLR-XXXXXX'}
+                    placeholder={isFa ? 'مثلاً DLRXHSOW' : 'e.g. DLRXHSOW'}
                     className="field pl-10 pr-3.5 text-xs font-mono-num text-left"
                   />
                 </div>

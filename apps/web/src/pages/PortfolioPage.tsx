@@ -65,10 +65,12 @@ export function PortfolioPage({
 
   const coachStats = useMemo(() => {
     const trades = data.closedTrades || [];
+    const openCount = (data.openTrades || []).length;
     const total = trades.length;
     if (total === 0) {
       return {
         total: 0,
+        openCount,
         winRate: 0,
         longWinRate: 0,
         shortWinRate: 0,
@@ -82,9 +84,13 @@ export function PortfolioPage({
         worstSymbol: '—',
         worstSymbolPnl: 0,
         insightFa:
-          'هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین معاملات، مربی هوش مصنوعی الگوی برد و باخت، بهترین ارز و توصیه بهینه‌سازی را اینجا نشان می‌دهد.',
+          openCount > 0
+            ? `شما اکنون ${openCount} پوزیشن باز دارید، اما هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین پوزیشن‌ها، مربی هوش مصنوعی نرخ برد واقعی، نسبت R:R و نقاط ضعف/قوت شما را محاسبه می‌کند.`
+            : 'هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین معاملات، مربی هوش مصنوعی الگوی برد و باخت، بهترین ارز و توصیه بهینه‌سازی را اینجا نشان می‌دهد.',
         insightEn:
-          'No closed trades yet. Once your first trades close, AI Performance Coach analyzes your win rate, direction bias, and R:R discipline.',
+          openCount > 0
+            ? `You currently have ${openCount} open position(s), with 0 closed trades yet. Once your first trades close, AI Coach calculates your real Win Rate, R:R, and edge.`
+            : 'No closed trades yet. Once your first trades close, AI Performance Coach analyzes your win rate, direction bias, and R:R discipline.',
       };
     }
 
@@ -129,29 +135,33 @@ export function PortfolioPage({
     const shortWinRate = shortCount > 0 ? (shortWins / shortCount) * 100 : 0;
 
     const symList = [...bySym.entries()].sort((a, b) => b[1] - a[1]);
-    const bestSymbol = symList[0]?.[0] ?? '—';
-    const bestSymbolPnl = symList[0]?.[1] ?? 0;
-    const worstSymbol = symList[symList.length - 1]?.[0] ?? '—';
-    const worstSymbolPnl = symList[symList.length - 1]?.[1] ?? 0;
+    const bestEntry = symList[0];
+    const worstEntry = symList.length > 1 ? symList[symList.length - 1] : undefined;
+    const bestSymbol = bestEntry?.[0] ?? '—';
+    const bestSymbolPnl = bestEntry?.[1] ?? 0;
+    const worstSymbol = worstEntry?.[0] ?? (bestSymbolPnl < 0 ? bestSymbol : '—');
+    const worstSymbolPnl = worstEntry?.[1] ?? (bestSymbolPnl < 0 ? bestSymbolPnl : 0);
+    const fmtUsd = (n: number) => (n >= 0 ? `+$${n.toFixed(1)}` : `-$${Math.abs(n).toFixed(1)}`);
 
     let insightFa = '';
     let insightEn = '';
     if (shortCount >= 2 && shortPnl < -Math.abs(longPnl) * 0.5 && longPnl >= 0) {
-      insightFa = `پیشنهاد مربی AI: در جهت LONG عملکرد قوی دارید (${longWinRate.toFixed(0)}% برد)، اما معاملات SHORT عامل اصلی افت شما بوده‌اند (${shortPnl.toFixed(1)}$). پیشنهاد می‌شود موقتاً جهت ربات را روی «فقط لانگ» بگذارید یا تایم‌فریم ورود را بالاتر ببرید.`;
-      insightEn = `AI Coach Advice: Your LONG trades perform strongly (${longWinRate.toFixed(0)}% WR), while SHORT trades caused $${Math.abs(shortPnl).toFixed(1)} loss. Consider switching to Long Only or higher timeframe confirmation.`;
+      insightFa = `پیشنهاد مربی AI: در جهت LONG عملکرد قوی دارید (${longWinRate.toFixed(0)}% برد)، اما معاملات SHORT عامل افت شما بوده‌اند (${fmtUsd(shortPnl)}). پیشنهاد می‌شود موقتاً جهت ربات را روی «فقط لانگ» بگذارید یا تایم‌فریم ورود را بالاتر ببرید.`;
+      insightEn = `AI Coach Advice: Your LONG trades perform strongly (${longWinRate.toFixed(0)}% WR), while SHORT trades caused ${fmtUsd(shortPnl)} loss. Consider switching to Long Only or higher timeframe confirmation.`;
     } else if (avgLoss > avgWin * 1.25 && lossCount > 0) {
-      insightFa = `پیشنهاد مربی AI: میانگین ضرر شما ($${avgLoss.toFixed(1)}) از میانگین سود ($${avgWin.toFixed(1)}) بیشتر است. نسبت R:R فعلی (${rrRatio.toFixed(2)}) نیاز به نزدیک‌تر کردن استاپ‌لاس یا ذخیره سود در TP2/TP3 دارد.`;
+      insightFa = `پیشنهاد مربی AI: میانگین ضرر ($${avgLoss.toFixed(1)}) از میانگین سود ($${avgWin.toFixed(1)}) بیشتر است. نسبت R:R فعلی (${rrRatio.toFixed(2)}) نیاز به نزدیک‌تر کردن حد ضرر یا ذخیره سود در TP2/TP3 دارد.`;
       insightEn = `AI Coach Advice: Avg loss ($${avgLoss.toFixed(1)}) exceeds avg win ($${avgWin.toFixed(1)}). Tighten stop-loss or trail winners toward TP2/TP3 to lift R:R above 1.5.`;
     } else if (winRate >= 55 && rrRatio >= 1.1) {
-      insightFa = `تبریک! انضباط معاملاتی شما عالی است: وین‌ریت ${winRate.toFixed(0)}% با نسبت سود به ضرر ${rrRatio.toFixed(2)}. بهترین عملکرد شما روی ${bestSymbol} (+$${bestSymbolPnl.toFixed(1)}) ثبت شده است.`;
-      insightEn = `Great discipline: ${winRate.toFixed(0)}% Win Rate with ${rrRatio.toFixed(2)} R:R. Top performer: ${bestSymbol} (+$${bestSymbolPnl.toFixed(1)}).`;
+      insightFa = `تبریک! انضباط معاملاتی شما عالی است: وین‌ریت ${winRate.toFixed(0)}% با نسبت سود به ضرر ${rrRatio.toFixed(2)}. بهترین عملکرد شما روی ${bestSymbol} (${fmtUsd(bestSymbolPnl)}) ثبت شده است.`;
+      insightEn = `Great discipline: ${winRate.toFixed(0)}% Win Rate with ${rrRatio.toFixed(2)} R:R. Top performer: ${bestSymbol} (${fmtUsd(bestSymbolPnl)}).`;
     } else {
-      insightFa = `تحلیل عملکرد: از ${total} معامله، ${winRate.toFixed(0)}% با موفقیت بسته شده‌اند. بهترین نماد ${bestSymbol} و پرریسک‌ترین نماد ${worstSymbol} بوده است.`;
-      insightEn = `Summary: ${winRate.toFixed(0)}% win rate over ${total} trades. Best: ${bestSymbol}, Weakest: ${worstSymbol}.`;
+      insightFa = `خلاصه ${total} معامله بسته${openCount > 0 ? ` (+ ${openCount} پوزیشن باز)` : ''}: نرخ برد ${winRate.toFixed(0)}% · ${bestSymbolPnl >= 0 ? `بهترین ارز ${bestSymbol} (${fmtUsd(bestSymbolPnl)})` : `نیاز به بازبینی ریسک روی ${worstSymbol} (${fmtUsd(worstSymbolPnl)})`}.`;
+      insightEn = `Summary over ${total} closed${openCount > 0 ? ` (+ ${openCount} open)` : ''}: ${winRate.toFixed(0)}% WR. ${bestSymbolPnl >= 0 ? `Best: ${bestSymbol} (${fmtUsd(bestSymbolPnl)})` : `Review risk on ${worstSymbol} (${fmtUsd(worstSymbolPnl)})`}.`;
     }
 
     return {
       total,
+      openCount,
       winRate,
       longWinRate,
       shortWinRate,
@@ -167,7 +177,7 @@ export function PortfolioPage({
       insightFa,
       insightEn,
     };
-  }, [data.closedTrades]);
+  }, [data.closedTrades, data.openTrades]);
 
   const askAiCoachDeepAnalysis = async () => {
     setCoachAiBusy(true);
@@ -204,13 +214,26 @@ export function PortfolioPage({
   const totalEq = Number(data.balance.total || freeCash + usedMargin);
   const unreal = data.openTrades.reduce((s, t) => s + Number(t.unrealized_pnl || 0), 0);
 
-  const curvePoints = useMemo(() => {
+  const curveSeries = useMemo(() => {
     const raw = data.charts.equityCurve || [];
-    const arr = raw.length >= 4 ? raw.map((x) => Number(x.equity || 0)) : [totalEq * 0.94, totalEq * 0.96, totalEq * 0.95, totalEq * 0.98, totalEq];
-    if (range === '1D') return arr.slice(-8);
-    if (range === '1W') return arr.slice(-18);
-    return arr;
+    const pts =
+      raw.length >= 2
+        ? raw.map((x) => ({
+            time: x.time,
+            label: x.label,
+            equity: Number(x.equity || 0),
+          }))
+        : [
+            { time: Math.floor(Date.now() / 1000) - 3600, label: 'Start', equity: totalEq },
+            { time: Math.floor(Date.now() / 1000), label: 'Live Now', equity: totalEq },
+          ];
+    if (range === '1D') return pts.slice(-12);
+    if (range === '1W') return pts.slice(-36);
+    if (range === '1M') return pts.slice(-90);
+    return pts;
   }, [data.charts.equityCurve, range, totalEq]);
+
+  const curvePoints = useMemo(() => curveSeries.map((p) => p.equity), [curveSeries]);
 
   const slices = useMemo(() => {
     const bySym = new Map<string, number>();
@@ -308,23 +331,29 @@ export function PortfolioPage({
     <div className="space-y-5 max-w-3xl mx-auto">
       {notice && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{notice}</div>}
 
-      {/* 1. Curved Cobalt Wallet Card matching Screenshot 3 */}
-      <div
-        className="rounded-[28px] p-5 sm:p-6 text-white relative overflow-hidden shadow-lg space-y-4"
-        style={{ background: 'linear-gradient(135deg, #1652F0 0%, #0D3CC4 58%, #072275 100%)' }}
-      >
-        <div className="pointer-events-none absolute -top-12 -end-10 w-40 h-40 rounded-full bg-white/10" />
-        <div className="pointer-events-none absolute -bottom-14 -start-8 w-36 h-36 rounded-full bg-white/8" />
-
-        <div className="relative z-10 flex items-center justify-between gap-2">
-          <span className="px-3 py-1 rounded-full bg-white/15 text-[11px] font-black">
-            {data.config.trading_mode === 'PAPER' ? (isFa ? 'حساب شبیه‌ساز' : 'SIMULATED WALLET') : isFa ? 'کیف پول واقعی' : 'LIVE WALLET'}
-          </span>
+      {/* 1. Cosmic Safe Vault & Trust Wallet Hero Card */}
+      <div className="ios-vault-card rounded-[30px] p-5 sm:p-7 text-white relative overflow-hidden shadow-2xl space-y-5">
+        <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md border border-white/25 text-[11px] font-black inline-flex items-center gap-1.5">
+              <span>🛡</span>
+              <span>
+                {data.config.trading_mode === 'PAPER'
+                  ? isFa ? 'شبیه‌ساز دمو مشابه تراست‌ولت' : 'TRUST WALLET SIMULATOR'
+                  : isFa ? 'کیف‌پول Trust Wallet واقعی' : 'TRUST WALLET LIVE VAULT'}
+              </span>
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-amber-400/20 backdrop-blur-md border border-amber-300/35 text-[10px] font-black text-amber-100">
+              {data.config.trade_execution_mode === 'MANUAL_CONFIRM'
+                ? isFa ? 'تایید دستی' : 'Manual'
+                : isFa ? 'تمام‌اتومات ۲۴/۷' : '24/7 Auto'}
+            </span>
+          </div>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setHideBal((v) => !v)}
-              className="p-1.5 rounded-full bg-white/15 hover:bg-white/25 transition"
+              className="ios-glass-btn p-2 rounded-full"
               aria-label="Toggle balance"
             >
               {hideBal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -332,7 +361,7 @@ export function PortfolioPage({
             <button
               type="button"
               onClick={() => void onRefresh()}
-              className="p-1.5 rounded-full bg-white/15 hover:bg-white/25 transition"
+              className="ios-glass-btn p-2 rounded-full"
               aria-label="Refresh"
             >
               <RefreshCw className="w-4 h-4" />
@@ -340,45 +369,82 @@ export function PortfolioPage({
           </div>
         </div>
 
-        <div className="relative z-10 text-center space-y-1 py-1">
-          <p className="text-xs text-white/80 font-bold">{isFa ? 'موجودی کل' : 'Total Equity'}</p>
-          <p dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-white font-num">
+        <div className="relative z-10 text-center space-y-1.5 py-1">
+          <p className="text-xs text-white/80 font-bold">{isFa ? 'ارزش کل خزانه و دارایی متصل به تراست‌ولت' : 'Total Vault & Trust Wallet Equity'}</p>
+          <p dir="ltr" className="font-display font-bold text-4xl sm:text-5xl tabular text-white font-num drop-shadow">
             {hideBal ? '••••••' : `$${totalEq.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
           </p>
           {!hideBal && isFa && (
-            <p className="text-xs text-white/80 font-semibold">معادل {formatTomanEq(totalEq)} تومان</p>
+            <p className="text-xs text-white/85 font-semibold">معادل {formatTomanEq(totalEq)} تومان</p>
           )}
-          <div className="flex items-center justify-center gap-3 text-[11px] text-white/80 pt-1">
-            <span>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px]">
+            <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90">
               {isFa ? 'آزاد:' : 'Free:'}{' '}
-              <span dir="ltr" className="inline-block font-num font-bold">
+              <span dir="ltr" className="font-num font-black text-white">
                 ${freeCash.toLocaleString('en-US', { maximumFractionDigits: 0 })}
               </span>
             </span>
-            <span>·</span>
-            <span>
+            <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90">
               {isFa ? 'درگیر:' : 'Used:'}{' '}
-              <span dir="ltr" className="inline-block font-num font-bold">
+              <span dir="ltr" className="font-num font-black text-white">
                 ${usedMargin.toLocaleString('en-US', { maximumFractionDigits: 0 })}
               </span>
             </span>
-            <span>·</span>
-            <span dir="ltr" className={`inline-block font-bold font-num ${unreal >= 0 ? 'text-[#8EFFB6]' : 'text-rose-200'}`}>
+            <span dir="ltr" className={`ios-glass-stat px-3 py-1 rounded-full font-black font-num ${unreal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
               {unreal >= 0 ? `+$${unreal.toFixed(2)}` : `-$${Math.abs(unreal).toFixed(2)}`}
             </span>
           </div>
         </div>
 
-        {/* Carousel dashed bars matching image-4.png */}
-        <div className="relative z-10 flex items-center justify-center gap-1.5 pt-1">
-          <span className="h-1 w-3 rounded-full bg-white/35" />
-          <span className="h-1 w-3 rounded-full bg-white/35" />
-          <span className="h-1 w-5 rounded-full bg-white" />
-          <span className="h-1 w-3 rounded-full bg-white/35" />
+        {/* 4 iOS Frosted Glass Vault Action Pills */}
+        <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+          <button
+            type="button"
+            onClick={() => onOpenTerminal('BTCUSDT')}
+            className="ios-glass-gold-btn py-2.5 px-3 rounded-2xl text-xs inline-flex items-center justify-center gap-1.5"
+          >
+            <Zap className="w-4 h-4" />
+            <span>{isFa ? 'معامله سریع' : 'Quick Trade'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void resetDemo()}
+            className="ios-glass-btn py-2.5 px-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
+          >
+            <RotateCcw className="w-4 h-4 text-sky-300" />
+            <span>
+              {isFa ? (
+                <>
+                  ریست <span dir="ltr" className="inline-block font-num">$10K</span>
+                </>
+              ) : (
+                'Reset $10K'
+              )}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="ios-glass-btn py-2.5 px-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
+          >
+            <Download className="w-4 h-4 text-emerald-300" />
+            <span>{isFa ? 'خروجی CSV' : 'Export CSV'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void closeAll()}
+            className="ios-glass-btn py-2.5 px-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5 border-rose-300/35 hover:bg-rose-500/35"
+          >
+            <X className="w-4 h-4 text-rose-300" />
+            <span>{isFa ? 'بستن همه' : 'Settle All'}</span>
+          </button>
         </div>
       </div>
 
-      {/* 2. Open Dotted Allocation Strip + Color Legend matching image-4.png */}
+      {/* 2. Open Dotted Allocation Strip + Color Legend */}
       <div className="px-2 space-y-2">
         <div className="flex h-1.5 w-full gap-1 rounded-full overflow-hidden">
           {slices.map((s) => (
@@ -399,61 +465,6 @@ export function PortfolioPage({
             </span>
           ))}
         </div>
-      </div>
-
-      {/* 3. 4 Circular Action Buttons matching image-4.png (Primary Amber + 3 Clean White Circles) */}
-      <div className="grid grid-cols-4 gap-2 text-center py-1">
-        <button
-          type="button"
-          onClick={() => onOpenTerminal('BTCUSDT')}
-          className="flex flex-col items-center gap-1.5 group"
-        >
-          <span className="w-12 h-12 rounded-full bg-[#F59E0B] hover:bg-[#D97706] text-white grid place-items-center shadow-md transition">
-            <Zap className="w-5 h-5" />
-          </span>
-          <span className="text-[11px] font-extrabold text-main">{isFa ? 'معامله سریع' : 'Trade'}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => void resetDemo()}
-          className="flex flex-col items-center gap-1.5 group"
-        >
-          <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
-            <RotateCcw className="w-5 h-5" />
-          </span>
-          <span className="text-[11px] font-extrabold text-main">
-            {isFa ? (
-              <>
-                ریست <span dir="ltr" className="inline-block font-num">$10K</span>
-              </>
-            ) : (
-              'Reset $10K'
-            )}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={exportCsv}
-          className="flex flex-col items-center gap-1.5 group"
-        >
-          <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
-            <Download className="w-5 h-5" />
-          </span>
-          <span className="text-[11px] font-extrabold text-main">{isFa ? 'پورتفولیو CSV' : 'Export'}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => void closeAll()}
-          className="flex flex-col items-center gap-1.5 group"
-        >
-          <span className="w-12 h-12 rounded-full panel text-main grid place-items-center transition group-hover:scale-105">
-            <X className="w-5 h-5" />
-          </span>
-          <span className="text-[11px] font-extrabold text-main">{isFa ? 'بستن همه' : 'Settle All'}</span>
-        </button>
       </div>
 
       {/* 4. Filter Pills + Search Row + 2-Column Asset Cards matching image-4.png */}
@@ -520,13 +531,20 @@ export function PortfolioPage({
         </div>
       </div>
 
-      {/* 5. Compact Equity Growth Card */}
+      {/* 5. Pro TradingView Equity Growth Card */}
       <div className="panel rounded-[26px] p-5 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="font-display font-bold text-base text-main">{isFa ? 'نمودار رشد دارایی' : 'Equity Curve'}</h3>
-            <p className="text-[11px] text-dim">
-              {isFa ? `نرخ برد: ${data.stats.winRate.toFixed(0)}% · کل سود: $${data.stats.totalPnl.toFixed(2)}` : `Win Rate ${data.stats.winRate.toFixed(0)}%`}
+            <p className="text-[11px] text-dim flex items-center gap-1.5 flex-wrap">
+              <span>{isFa ? `نرخ برد: ${data.stats.winRate.toFixed(0)}% · کل سود:` : `Win Rate ${data.stats.winRate.toFixed(0)}% · Total PnL:`}</span>
+              <span
+                dir="ltr"
+                style={{ unicodeBidi: 'isolate' }}
+                className={`inline-block font-num font-black ${data.stats.totalPnl >= 0 ? 'text-jade' : 'text-loss'}`}
+              >
+                {data.stats.totalPnl >= 0 ? `+$${data.stats.totalPnl.toFixed(2)}` : `-$${Math.abs(data.stats.totalPnl).toFixed(2)}`}
+              </span>
             </p>
           </div>
           <div className="flex gap-1">
@@ -542,8 +560,13 @@ export function PortfolioPage({
             ))}
           </div>
         </div>
-        <div className="h-44">
-          <AreaChart values={curvePoints} height={170} />
+        <div className="h-[264px] rounded-2xl surface-soft border hairline p-3">
+          <AreaChart
+            values={curvePoints}
+            points={curveSeries}
+            baseline={curveSeries[0]?.equity ?? totalEq}
+            height={238}
+          />
         </div>
       </div>
 
@@ -591,16 +614,30 @@ export function PortfolioPage({
               </p>
             </div>
             <div className="surface-soft rounded-2xl p-2.5">
-              <p className="text-[10px] text-dim">{isFa ? 'بهترین ارز' : 'Best Coin'}</p>
-              <p dir="ltr" className="font-num font-black text-jade mt-0.5">
+              <p className="text-[10px] text-dim">
+                {coachStats.bestSymbolPnl >= 0
+                  ? isFa ? 'بهترین ارز' : 'Best Coin'
+                  : isFa ? 'کم‌ضررترین ارز' : 'Least Loss'}
+              </p>
+              <p dir="ltr" className={`font-num font-black mt-0.5 ${coachStats.bestSymbolPnl >= 0 ? 'text-jade' : 'text-amber-500'}`}>
                 {coachStats.bestSymbol.replace('USDT', '')}
               </p>
+              {coachStats.bestSymbol !== '—' && (
+                <p dir="ltr" className={`font-num text-[10px] font-bold ${coachStats.bestSymbolPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
+                  {coachStats.bestSymbolPnl >= 0 ? `+$${coachStats.bestSymbolPnl.toFixed(2)}` : `-$${Math.abs(coachStats.bestSymbolPnl).toFixed(2)}`}
+                </p>
+              )}
             </div>
             <div className="surface-soft rounded-2xl p-2.5">
               <p className="text-[10px] text-dim">{isFa ? 'پرضررترین ارز' : 'Weakest Coin'}</p>
-              <p dir="ltr" className="font-num font-black text-loss mt-0.5">
+              <p dir="ltr" className={`font-num font-black mt-0.5 ${coachStats.worstSymbolPnl < 0 ? 'text-loss' : 'text-main'}`}>
                 {coachStats.worstSymbol.replace('USDT', '')}
               </p>
+              {coachStats.worstSymbol !== '—' && (
+                <p dir="ltr" className={`font-num text-[10px] font-bold ${coachStats.worstSymbolPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
+                  {coachStats.worstSymbolPnl >= 0 ? `+$${coachStats.worstSymbolPnl.toFixed(2)}` : `-$${Math.abs(coachStats.worstSymbolPnl).toFixed(2)}`}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -613,7 +650,7 @@ export function PortfolioPage({
       {/* 6. Unified Open / Closed / Wallet Ledger / Activity Logs */}
       <div className="panel rounded-[26px] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex p-1 surface-soft rounded-xl overflow-x-auto no-scrollbar">
+          <div className="tab-bar w-full sm:w-auto">
             {[
               { id: 'open' as const, l: isFa ? `باز (${data.openTrades.length})` : `Open (${data.openTrades.length})` },
               { id: 'closed' as const, l: isFa ? `بسته‌شده (${data.closedTrades.length})` : `Closed (${data.closedTrades.length})` },
@@ -624,9 +661,7 @@ export function PortfolioPage({
                 key={t.id}
                 type="button"
                 onClick={() => setLedgerTab(t.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-black transition whitespace-nowrap ${
-                  ledgerTab === t.id ? 'btn-gold' : 'text-dim hover:text-main'
-                }`}
+                className={`tab-pill flex-1 sm:flex-initial ${ledgerTab === t.id ? 'tab-pill-active' : ''}`}
               >
                 {t.l}
               </button>
@@ -665,7 +700,7 @@ export function PortfolioPage({
                       </p>
                     </div>
                     <span dir="ltr" className={`ms-auto font-display font-bold text-base tabular ${u >= 0 ? 'text-jade' : 'text-loss'}`}>
-                      {u >= 0 ? '+' : ''}${u.toFixed(2)}
+                      {u >= 0 ? `+$${u.toFixed(2)}` : `-$${Math.abs(u).toFixed(2)}`}
                     </span>
                     <button
                       type="button"
@@ -702,7 +737,7 @@ export function PortfolioPage({
                       </div>
                     </div>
                     <span dir="ltr" className={`font-num font-bold ${pnl >= 0 ? 'text-jade' : 'text-loss'}`}>
-                      {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                      {pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`}
                     </span>
                   </div>
                 );
@@ -724,7 +759,7 @@ export function PortfolioPage({
                   </div>
                   <div dir="ltr" className="text-end font-num">
                     <span className={`font-bold ${w.amount_usd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                      {w.amount_usd >= 0 ? '+' : ''}${Number(w.amount_usd).toFixed(2)}
+                      {Number(w.amount_usd) >= 0 ? `+$${Number(w.amount_usd).toFixed(2)}` : `-$${Math.abs(Number(w.amount_usd)).toFixed(2)}`}
                     </span>
                     <p className="text-[10px] text-dim">Bal: ${Number(w.balance_after).toFixed(2)}</p>
                   </div>

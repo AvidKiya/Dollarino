@@ -1,4 +1,4 @@
-import { randomId } from '../crypto.js';
+import { generateReferralCode, randomId } from '../crypto.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-intel.js';
 import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
@@ -644,11 +644,11 @@ export async function handleAdminCallback(
   if (data === 'adm:gift_new') {
     await render('🎁 نوع کد هدیه جدید را انتخاب کنید:', [
       [
-        { text: '💎 اشتراک ماهانه (۳۰ روز)', callback_data: 'adm:gift_tpl:SUB:pro_monthly:30' },
-        { text: '👑 اشتراک ۳ ماهه (۹۰ روز)', callback_data: 'adm:gift_tpl:SUB:vip_quarterly:90' },
+        { text: '🎁 اعتبار ۱۰۰٪ تخفیف کارمزد (۳۰ روز)', callback_data: 'adm:gift_tpl:SUB:pro_monthly:30' },
+        { text: '👑 اعتبار ویژه ۵٪ (۹۰ روز)', callback_data: 'adm:gift_tpl:SUB:vip_quarterly:90' },
       ],
       [
-        { text: '🌟 اشتراک سالانه (۳۶۵ روز)', callback_data: 'adm:gift_tpl:SUB:pro_annual:365' },
+        { text: '🌟 اعتبار ۱ ساله (۳۶۵ روز)', callback_data: 'adm:gift_tpl:SUB:pro_annual:365' },
         { text: '💰 شارژ کیف پول (USDT)', callback_data: 'adm:gift_tpl:WALLET:wallet:0' },
       ],
       [{ text: '🔙 بازگشت', callback_data: 'adm:gifts' }],
@@ -1406,7 +1406,7 @@ export async function handleAdminStepInput(
 
   if (state.step === 'ADM_GIFT_CODE_NAME') {
     const code = text.trim().toLowerCase() === 'auto'
-      ? `DLR-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+      ? generateReferralCode()
       : text.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
     await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(actor.id).run();
     if (!code) {

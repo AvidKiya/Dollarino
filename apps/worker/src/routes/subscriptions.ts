@@ -1,12 +1,21 @@
 import { Hono } from 'hono';
 import { requireAuth, type AppVariables } from '../auth.js';
-import { randomId } from '../crypto.js';
+import { generateReferralCode, randomId } from '../crypto.js';
 import { logAudit } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
 import { enforceRateLimit, maskUsernameForReferral } from '../security.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { resolveTelegramBotToken } from '../telegram/token.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter.js';
 import { notifyAllAdmins, notifyAllAdminsPhoto } from '../telegram/publisher.js';
+import {
+  evaluateUserFeeStanding,
+  getFeePolicyConfig,
+  getUserServerFeeSummary,
+  isValidBlockchainTxHash,
+  SERVER_PROFIT_FEE_PCT,
+  tryVerifyEvmReceiptOnchain,
+} from '../services/server-fee.js';
 
 export interface SubscriptionPlanRow {
   code: string;
@@ -49,8 +58,8 @@ const FALLBACK_PUBLIC_PLANS: SubscriptionPlanRow[] = [
     code: 'pro_monthly',
     name_fa: 'اشتراک حرفه‌ای ماهانه (Pro)',
     name_en: 'Pro Monthly',
-    description_fa: 'دسترسی کامل به هوش مصنوعی دلارینو، استراتژی منتخب دلارینو و کپی ترید دلارینو',
-    description_en: 'Full Dollarino AI, Dollarino Select (Dorna V1) & Dollarino Copy-Trade on Toobit & KCEX',
+    description_fa: 'دسترسی کامل به هوش مصنوعی دلارینو، استراتژی دُرنا V1، کپی‌ترید هوشمند ولت‌ها و اتصال تمام‌اتومات Trust Wallet',
+    description_en: 'Full Dollarino AI, Dorna V1, Smart Copy-Trade & 24/7 Trust Wallet Automation',
     price_usd: 20,
     price_toman: 1400000,
     duration_days: 30,
@@ -60,10 +69,10 @@ const FALLBACK_PUBLIC_PLANS: SubscriptionPlanRow[] = [
     allow_copy_trade: 1,
     allow_live_trading: 1,
     features_json: JSON.stringify([
-      'ترید خودکار با هوش مصنوعی دلارینو (بدون نیاز به API شخصی)',
-      'استراتژی منتخب دلارینو با اسکن آزاد کل بازار (۳۰+ ارز)',
-      'کپی ترید دلارینو خودکار از کانال تلگرام و وب‌هوک',
-      'اتصال همزمان صرافی‌های Toobit و KCEX + حساب دمو',
+      'ترید خودکار ۲۴/۷ با هوش مصنوعی دلارینو روی Trust Wallet و شبیه‌ساز دمو',
+      'استراتژی منتخب دُرنا V1 با اسکن آزاد کل بازار (۳۰+ ارز)',
+      'کپی‌ترید هوشمند ۱۰ ولت برتر + تریدرهای تاییدشده با سپر ضدراگ',
+      'انتخاب تایید دستی یا تمام‌اتوترید خودکار روی اسپات، میم‌کوین و فیوچرز ۱۰۰x',
     ]),
     is_popular: 1,
     is_active: 1,
@@ -84,9 +93,9 @@ const FALLBACK_PUBLIC_PLANS: SubscriptionPlanRow[] = [
     allow_copy_trade: 1,
     allow_live_trading: 1,
     features_json: JSON.stringify([
-      '۹۰ روز دسترسی کامل به هوش مصنوعی، استراتژی منتخب و کپی ترید دلارینو',
+      '۹۰ روز دسترسی کامل به هوش مصنوعی، استراتژی دُرنا V1 و کپی‌ترید هوشمند ولت‌ها',
       'اولویت پردازش چندارزی و تا ۲۰ پوزیشن همزمان',
-      'راه‌اندازی اختصاصی رله Toobit و ربات تلگرام',
+      'راه‌اندازی اختصاصی Copy-Vault ۲۴/۷ و Perp Agent Key بدون حق برداشت',
       'پشتیبانی مستقیم مدیریت و بروزرسانی‌های جدید',
     ]),
     is_popular: 0,
@@ -97,8 +106,8 @@ const FALLBACK_PUBLIC_PLANS: SubscriptionPlanRow[] = [
     code: 'pro_semiannual',
     name_fa: 'اشتراک ۶ ماهه (نصف‌سال)',
     name_en: 'Semiannual (6 Months)',
-    description_fa: '۱۸۰ روز دسترسی کامل به اتوترید، کپی‌ترید، هوش مصنوعی و صرافی‌ها با ۲۵٪ تخفیف',
-    description_en: '180 days full AI, Strategy & Toobit/KCEX access (25% savings)',
+    description_fa: '۱۸۰ روز دسترسی کامل به اتوترید ۲۴/۷ Trust Wallet، کپی‌ترید و هوش مصنوعی با ۲۵٪ تخفیف',
+    description_en: '180 days full AI, Strategy & 24/7 Trust Wallet Auto-Trade (25% savings)',
     price_usd: 90,
     price_toman: 6200000,
     duration_days: 180,
@@ -159,28 +168,22 @@ export async function requirePaidEntitlement(
   user: AuthUser
 ): Promise<{ ok: true; entitlement: UserEntitlement } | { ok: false; entitlement: UserEntitlement; error: string }> {
   const entitlement = await resolveUserEntitlement(db, user);
-  if (entitlement.hasPaidPlan || !entitlement.subscriptionRequired) {
-    return { ok: true, entitlement };
-  }
-  return {
-    ok: false,
-    entitlement,
-    error: 'برای دسترسی به این قابلیت، ابتدا اشتراک دلارینو را خریداری و فعال کنید.',
-  };
+  return { ok: true, entitlement };
 }
 
 export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Promise<UserEntitlement> {
+  const isAdminUser = user.role === 'owner' || user.role === 'admin';
   const reqSetting = await db.prepare(
     `SELECT value FROM system_settings WHERE key = 'subscription_required'`
   ).first<{ value: string }>().catch(() => null);
-  const subscriptionRequired = (reqSetting?.value ?? 'true') !== 'false';
+  const subscriptionRequired = reqSetting?.value === 'true';
 
-  if (user.role === 'owner' || user.role === 'admin') {
+  if (isAdminUser) {
     return {
       hasPaidPlan: true,
       planCode: 'vip_owner',
-      planNameFa: 'دسترسی کامل مدیریت (VIP)',
-      planNameEn: 'Admin / Owner Full VIP',
+      planNameFa: 'دسترسی کامل مدیریت · بدون اشتراک (۵٪ کارمزد سود واقعی)',
+      planNameEn: 'Admin Full Access · Zero Subscription (5% Live Profit Fee)',
       status: 'ACTIVE',
       allowPaperDemo: true,
       allowAiTrading: true,
@@ -189,83 +192,24 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
       allowLiveTrading: true,
       daysRemaining: 9999,
       expiresAt: null,
-      subscriptionRequired,
-    };
-  }
-
-  const activeSub = await db.prepare(
-    `SELECT us.plan_code, us.expires_at, sp.name_fa, sp.name_en,
-            sp.allow_ai_trading, sp.allow_codexbot, sp.allow_copy_trade, sp.allow_live_trading
-     FROM user_subscriptions us
-     JOIN subscription_plans sp ON sp.code = us.plan_code
-     WHERE us.user_id = ? AND us.status = 'ACTIVE'
-       AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
-     ORDER BY us.expires_at DESC LIMIT 1`
-  ).bind(user.id).first<{
-    plan_code: string;
-    expires_at: string | null;
-    name_fa: string;
-    name_en: string;
-    allow_ai_trading: number;
-    allow_codexbot: number;
-    allow_copy_trade: number;
-    allow_live_trading: number;
-  }>().catch(() => null);
-
-  if (activeSub && activeSub.plan_code !== 'free_demo') {
-    const expMs = activeSub.expires_at
-      ? Date.parse(activeSub.expires_at.includes('T') ? activeSub.expires_at : `${activeSub.expires_at.replace(' ', 'T')}Z`)
-      : Date.now() + 30 * 86_400_000;
-    const daysRemaining = Math.max(1, Math.ceil((expMs - Date.now()) / 86_400_000));
-    return {
-      hasPaidPlan: true,
-      planCode: activeSub.plan_code,
-      planNameFa: activeSub.name_fa,
-      planNameEn: activeSub.name_en,
-      status: 'ACTIVE',
-      allowPaperDemo: true,
-      allowAiTrading: Boolean(activeSub.allow_ai_trading),
-      allowCodexbot: Boolean(activeSub.allow_codexbot),
-      allowCopyTrade: Boolean(activeSub.allow_copy_trade),
-      allowLiveTrading: Boolean(activeSub.allow_live_trading),
-      daysRemaining,
-      expiresAt: activeSub.expires_at,
-      subscriptionRequired,
-    };
-  }
-
-  if (!subscriptionRequired) {
-    return {
-      hasPaidPlan: true,
-      planCode: 'open_access',
-      planNameFa: 'دسترسی آزاد پلتفرم',
-      planNameEn: 'Open Platform Access',
-      status: 'ACTIVE',
-      allowPaperDemo: true,
-      allowAiTrading: true,
-      allowCodexbot: true,
-      allowCopyTrade: true,
-      allowLiveTrading: true,
-      daysRemaining: 365,
-      expiresAt: null,
       subscriptionRequired: false,
     };
   }
 
   return {
-    hasPaidPlan: false,
-    planCode: 'none',
-    planNameFa: 'بدون اشتراک فعال',
-    planNameEn: 'No Active Subscription',
-    status: 'UNSUBSCRIBED',
-    allowPaperDemo: false,
-    allowAiTrading: false,
-    allowCodexbot: false,
-    allowCopyTrade: false,
-    allowLiveTrading: false,
-    daysRemaining: 0,
+    hasPaidPlan: true,
+    planCode: 'free_5pct_profit',
+    planNameFa: 'رایگان برای همه · فقط ۵٪ کارمزد سرور از سود واقعی',
+    planNameEn: 'Free Forever · 5% Server Fee Only on Real Profit',
+    status: 'ACTIVE',
+    allowPaperDemo: true,
+    allowAiTrading: true,
+    allowCodexbot: true,
+    allowCopyTrade: true,
+    allowLiveTrading: true,
+    daysRemaining: 3650,
     expiresAt: null,
-    subscriptionRequired: true,
+    subscriptionRequired: subscriptionRequired && false,
   };
 }
 
@@ -432,8 +376,9 @@ export async function rewardReferrerIfEligible(
     .bind(ref.referrer_user_id)
     .first<{ telegram_id: string | null }>()
     .catch(() => null);
-  if (referrerTg?.telegram_id && env.TELEGRAM_BOT_TOKEN) {
-    const tg = new TelegramBotClient(env.TELEGRAM_BOT_TOKEN);
+  const botToken = referrerTg?.telegram_id ? await resolveTelegramBotToken(env) : '';
+  if (referrerTg?.telegram_id && botToken) {
+    const tg = new TelegramBotClient(botToken);
     await tg
       .sendMessage(
         referrerTg.telegram_id,
@@ -570,6 +515,12 @@ subscriptionRoutes.get('/me', async (c) => {
 
   const paymentConfig: Record<string, string> = {};
   for (const s of settings.results) paymentConfig[s.key] = s.value;
+  if (paymentConfig.usdt_trc20_wallet?.includes('YourTRC20WalletAddress')) {
+    paymentConfig.usdt_trc20_wallet = '';
+  }
+  if (paymentConfig.iran_card_number === '6037-9975-0000-0000') {
+    paymentConfig.iran_card_number = '';
+  }
   if (!paymentConfig.telegram_support || /Dollarino_admin/i.test(paymentConfig.telegram_support)) {
     paymentConfig.telegram_support = OFFICIAL_BOT_HANDLE;
   }
@@ -876,19 +827,46 @@ subscriptionRoutes.patch('/admin/config', async (c) => {
 
 subscriptionRoutes.get('/referrals', async (c) => {
   const user = c.get('user');
-  const code = `DLR-${user.id.slice(-6).toUpperCase()}`;
-  const [userBal, refs, withdrawals] = await Promise.all([
+  const existingRow = await c.env.DB.prepare(
+    `SELECT referral_code FROM users WHERE id = ? LIMIT 1`
+  )
+    .bind(user.id)
+    .first<{ referral_code: string | null }>()
+    .catch(() => null);
+  let code = (existingRow?.referral_code || '').trim().toUpperCase();
+  if (!/^DLR[A-Z0-9]{5}$/.test(code)) {
+    code = generateReferralCode();
+    await c.env.DB.prepare(`UPDATE users SET referral_code = ? WHERE id = ?`)
+      .bind(code, user.id)
+      .run()
+      .catch(() => {});
+  }
+  const [userBal, refFeeAgg, refs, withdrawals] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT COALESCE(referral_balance_usd, 0) as bal, COALESCE(referral_total_earned_usd, 0) as total, COALESCE(referral_tier, 'BRONZE') as tier
+      `SELECT COALESCE(referral_balance_usd, 0) as bal,
+              COALESCE(referral_total_earned_usd, 0) as total,
+              COALESCE(referral_tier, 'BRONZE') as tier,
+              COALESCE(fee_prepaid_credit_usd, 0) as fee_credit_usd
        FROM users WHERE id = ?`
     )
       .bind(user.id)
-      .first<{ bal: number; total: number; tier: string }>()
-      .catch(() => ({ bal: 0, total: 0, tier: 'BRONZE' })),
+      .first<{ bal: number; total: number; tier: string; fee_credit_usd: number }>()
+      .catch(() => ({ bal: 0, total: 0, tier: 'BRONZE', fee_credit_usd: 0 })),
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(fee_usd), 0) AS ref_credit_sum
+       FROM server_fee_ledger
+       WHERE user_id = ? AND source IN ('REFERRAL_FEE_CREDIT', 'REFERRAL_WELCOME_CREDIT')`
+    )
+      .bind(user.id)
+      .first<{ ref_credit_sum: number }>()
+      .catch(() => ({ ref_credit_sum: 0 })),
     c.env.DB.prepare(
       `SELECT r.id, r.reward_days, r.status, COALESCE(r.commission_usd, 0) as commission_usd,
               COALESCE(r.fraud_flag, 0) as fraud_flag, r.fraud_reason, r.created_at, r.unlocked_at,
-              u.username, COALESCE(u.phone_verified, 0) as phone_verified
+              u.username, COALESCE(u.phone_verified, 0) as phone_verified,
+              COALESCE(u.wallet_balance_usdt, 0) as friend_wallet_bal,
+              (SELECT COUNT(*) FROM trades t WHERE t.user_id = u.id AND t.mode = 'LIVE') as friend_live_trades,
+              (SELECT COUNT(*) FROM copy_positions_v2 p WHERE p.user_id = u.id AND p.execution_mode != 'PAPER_SIMULATOR') as friend_copy_trades
        FROM referrals r JOIN users u ON u.id = r.referred_user_id
        WHERE r.referrer_user_id = ? ORDER BY r.created_at DESC LIMIT 80`
     )
@@ -904,6 +882,9 @@ subscriptionRoutes.get('/referrals', async (c) => {
         unlocked_at: string | null;
         username: string;
         phone_verified: number;
+        friend_wallet_bal: number;
+        friend_live_trades: number;
+        friend_copy_trades: number;
       }>()
       .catch(() => ({ results: [] })),
     c.env.DB.prepare(
@@ -923,35 +904,85 @@ subscriptionRoutes.get('/referrals', async (c) => {
     .reduce((acc, r) => acc + Number(r.reward_days || 0), 0);
 
   let tier = 'BRONZE';
-  let commissionPct = 15;
+  let commissionPct = 20;
   if (qualifiedReferred >= 15) {
     tier = 'GOLD';
-    commissionPct = 22;
+    commissionPct = 25;
   } else if (qualifiedReferred >= 5) {
     tier = 'SILVER';
-    commissionPct = 18;
+    commissionPct = 22;
   }
 
   const webUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/+$/, '');
-  const sanitizedRefs = refs.results.map((r) => ({
-    id: r.id,
-    username: maskUsernameForReferral(r.username),
-    reward_days: r.reward_days,
-    commission_usd: Number(r.commission_usd || 0),
-    status: r.status,
-    fraud_flag: r.fraud_flag,
-    phone_verified: r.phone_verified === 1,
-    created_at: r.created_at,
-    unlocked_at: r.unlocked_at,
-  }));
+  const inviteUrl = `${webUrl}/?ref=${encodeURIComponent(code)}`;
+  const telegramInviteUrl = `https://t.me/Dollarino_bot?start=REF_${encodeURIComponent(code)}`;
+
+  const sanitizedRefs = refs.results.map((r) => {
+    const liveBalanceUsd = Number(r.friend_wallet_bal || 0);
+    const liveTradesCount = Number(r.friend_live_trades || 0) + Number(r.friend_copy_trades || 0);
+    const friendHasMinBalance = liveBalanceUsd >= 10;
+    const qualificationStatus =
+      r.fraud_flag === 1 || r.status === 'FLAGGED_DUPLICATE'
+        ? 'FLAGGED_DUPLICATE'
+        : r.status === 'REWARDED'
+          ? 'QUALIFIED_ACTIVE'
+          : 'PENDING_BALANCE_OR_TRADE';
+    return {
+      id: r.id,
+      username: maskUsernameForReferral(r.username),
+      reward_days: r.reward_days,
+      commission_usd: Number(r.commission_usd || 0),
+      status: r.status,
+      qualificationStatus,
+      friendHasMinBalance,
+      friendLiveTradesCount: liveTradesCount,
+      fraud_flag: r.fraud_flag,
+      fraud_reason: r.fraud_reason,
+      phone_verified: r.phone_verified === 1,
+      created_at: r.created_at,
+      unlocked_at: r.unlocked_at,
+    };
+  });
+
+  const inviteTextFa =
+    `🚀 من با هوش مصنوعی دلارینو (Dollarino) روی کیف‌پول شخصی Trust Wallet ترید خودکار و کپی‌ترید انجام می‌دم!\n` +
+    `✅ اشتراک ماهانه: صفر تومان (کاملاً رایگان)\n` +
+    `✅ شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان برای تمرین و تست استراتژی\n` +
+    `✅ فقط ۵٪ کارمزد سرور از سود خالص معاملات واقعی (۹۵٪ سود برای شما!)\n` +
+    `🎁 با کد دعوت من ثبت‌نام کن و پس از شارژ حداقل ۱۰ دلار و اولین ترید واقعی، ۱ دلار اعتبار کارمزد رایگان هدیه بگیر:\n\n` +
+    `🔑 کد دعوت: ${code}\n` +
+    `🤖 ورود از ربات تلگرام: ${telegramInviteUrl}\n` +
+    `🌐 لینک مستقیم سایت: ${inviteUrl}`;
+
+  const inviteTextEn =
+    `🚀 I'm trading with Dollarino AI & Smart Copy-Trade directly on self-custody Trust Wallet!\n` +
+    `✅ $0 Monthly Subscription — Free $10,000 Demo Simulator\n` +
+    `✅ Only 5% Server Fee Strictly on Real Profits (You keep 95%!)\n` +
+    `🎁 Join with my invite code & get +$1.00 non-withdrawable 5% Fee Credit after holding >= $10 and placing your first live trade:\n\n` +
+    `🔑 Invite Code: ${code}\n` +
+    `🤖 Telegram Bot: ${telegramInviteUrl}\n` +
+    `🌐 Web App: ${inviteUrl}`;
 
   return c.json({
     referralCode: code,
-    inviteUrl: `${webUrl}/?ref=${encodeURIComponent(code)}`,
-    telegramInviteUrl: `https://t.me/Dollarino_bot?start=REF_${encodeURIComponent(code)}`,
+    inviteUrl,
+    telegramInviteUrl,
+    inviteTextFa,
+    inviteTextEn,
     tier,
     commissionPct,
-    renewalPct: 10,
+    renewalPct: 20,
+    nonWithdrawable: true,
+    minFriendBalanceUsd: 10,
+    requireRealLiveTrade: true,
+    activationBonusReferrerUsd: 2.0,
+    activationBonusFriendUsd: 1.0,
+    feeCreditBalanceUsd: Number((userBal?.fee_credit_usd ?? 0).toFixed(4)),
+    referralFeeCreditEarnedUsd: Number((refFeeAgg?.ref_credit_sum ?? 0).toFixed(4)),
+    nonWithdrawablePolicyFa:
+      'جوایز رفرال نقدی و قابل برداشت نیستند و فقط به اعتبار پیش‌پرداخت کارمزد ۵٪ سود شما اضافه می‌شوند. جایزه زمانی آزاد می‌شود که دوست دعوت‌شده حداقل ۱۰ دلار موجودی واقعی داشته باشد و معامله واقعی (LIVE) انجام دهد؛ حساب‌های تکراری با IP/دستگاه/کیف‌پول مشترک خودکار مسدود می‌شوند.',
+    nonWithdrawablePolicyEn:
+      'Referral rewards are strictly non-withdrawable and go exclusively into your Prepaid 5% Profit-Fee Credit. Rewards unlock ONLY after the invited friend holds >= $10 real balance and executes a live trade; duplicate IPs/devices/Trust Wallets are automatically blocked.',
     balanceUsd: Number(userBal?.bal ?? 0),
     totalEarnedUsd: Number(userBal?.total ?? 0),
     totalReferred,
@@ -961,6 +992,37 @@ subscriptionRoutes.get('/referrals', async (c) => {
     referrals: sanitizedRefs,
     withdrawals: withdrawals.results,
   });
+});
+
+subscriptionRoutes.post('/referrals/apply-to-fee-credit', async (c) => {
+  const user = c.get('user');
+  const uRow = await c.env.DB.prepare(`SELECT COALESCE(referral_balance_usd, 0) as bal FROM users WHERE id = ?`)
+    .bind(user.id)
+    .first<{ bal: number }>()
+    .catch(() => ({ bal: 0 }));
+  const amt = Math.round(Number(uRow?.bal || 0) * 100) / 100;
+  if (amt <= 0) {
+    return c.json({ error: 'موجودی قابل تبدیل رفرال صفر است.' }, 400);
+  }
+  const upd = await c.env.DB.prepare(
+    `UPDATE users
+     SET referral_balance_usd = 0,
+         fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4)
+     WHERE id = ? AND COALESCE(referral_balance_usd, 0) >= ?`
+  )
+    .bind(amt, user.id, amt)
+    .run();
+  if (!upd.meta?.changes) {
+    return c.json({ error: 'تبدیل اعتبار انجام نشد.' }, 400);
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO server_fee_ledger (id, user_id, trade_id, source, symbol, realized_pnl_usd, fee_pct, fee_usd, status, note)
+     VALUES (?, ?, ?, 'REFERRAL_FEE_CREDIT', 'USDT', 0, 0, ?, 'SETTLED_PREPAID', ?)`
+  )
+    .bind(randomId('fee_rc'), user.id, `ref_conv:${Date.now()}`, amt, 'انتقال به اعتبار پیش‌پرداخت کارمزد ۵٪ (غیرقابل برداشت)')
+    .run()
+    .catch(() => {});
+  return c.json({ ok: true, transferredUsd: amt });
 });
 
 subscriptionRoutes.post('/referrals/redeem-balance', async (c) => {
@@ -1053,6 +1115,21 @@ subscriptionRoutes.post('/referrals/withdraw', async (c) => {
     .run();
 
   if (!ded.meta?.changes || ded.meta.changes < 1) {
+    const fcRow = await c.env.DB.prepare(
+      `SELECT COALESCE(fee_prepaid_credit_usd, 0) as fc FROM users WHERE id = ?`
+    )
+      .bind(user.id)
+      .first<{ fc: number }>()
+      .catch(() => null);
+    if ((fcRow?.fc ?? 0) > 0) {
+      return c.json(
+        {
+          error: 'پاداش رفرال دلارینو نقدی و قابل برداشت نیست و فقط به عنوان اعتبار پیش‌پرداخت کارمزد ۵٪ سود مصرف می‌شود.',
+          code: 'NON_WITHDRAWABLE_FEE_CREDIT',
+        },
+        400
+      );
+    }
     return c.json({ error: 'موجودی قابل برداشت کافی نیست.' }, 400);
   }
 
@@ -1127,6 +1204,238 @@ subscriptionRoutes.post('/admin/gift-codes', async (c) => {
   await c.env.DB.prepare(
     `INSERT OR REPLACE INTO gift_codes (code, plan_code, duration_days, max_uses, is_active, created_by)
      VALUES (?, ?, ?, ?, 1, ?)`
-  ).bind(code, body.planCode || 'pro_monthly', durationDays, maxUses, actor.id).run();
+  ).bind(code, body.planCode || 'free_1pct_profit', durationDays, maxUses, actor.id).run();
   return c.json({ ok: true, code, durationDays, maxUses }, 201);
 });
+
+subscriptionRoutes.get('/server-fees', async (c) => {
+  const user = c.get('user');
+  const [summary, settingsRows] = await Promise.all([
+    getUserServerFeeSummary(c.env.DB, user.id),
+    c.env.DB.prepare(
+      `SELECT key, value FROM system_settings WHERE key IN ('usdt_trc20_wallet', 'trust_wallet_evm_receiver', 'trust_wallet_sol_receiver', 'trust_wallet_ton_receiver')`
+    ).all<{ key: string; value: string }>().catch(() => ({ results: [] })),
+  ]);
+  const receivers: Record<string, string> = {};
+  for (const s of settingsRows.results) {
+    if (s.key === 'usdt_trc20_wallet' && s.value.includes('YourTRC20WalletAddress')) continue;
+    receivers[s.key] = s.value;
+  }
+
+  return c.json({
+    ...summary,
+    subscriptionModel: 'FREE_ZERO_SUBSCRIPTION',
+    profitSharePct: SERVER_PROFIT_FEE_PCT,
+    receivers,
+    honestArchitectureNoteFa:
+      'دارایی اصلی Trust Wallet شما ۱۰۰٪ غیرامانی (Non-Custodial) است و دلارینو هیچ‌گاه دسترسی برداشت خودکار از کیف‌پول اصلی شما ندارد؛ در معاملات واقعی و پرپ/کپی کارمزد ۵٪ فقط از سود خالص معاملات موفق ثبت می‌گردد (۹۵٪ سود برای شما).',
+    honestArchitectureNoteEn:
+      'Your main Trust Wallet remains 100% non-custodial—Dollarino never has permission to arbitrarily withdraw your wallet funds. Live perp/copy profits record a transparent 5% server-cost entry strictly on net profits (you keep 95%).',
+  });
+});
+
+subscriptionRoutes.post('/server-fees/settle', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ txHash?: string }>().catch(() => ({} as { txHash?: string }));
+  const txHash = (body.txHash || '').trim();
+  if (!isValidBlockchainTxHash(txHash)) {
+    return c.json(
+      { error: 'فرمت هش تراکنش (TX Hash) نامعتبر است. لطفاً هش واقعی تراکنش بلاکچین (۰x... یا سولانا/ترون) را وارد کنید.' },
+      400
+    );
+  }
+
+  const dup = await c.env.DB.prepare(
+    `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND user_id != ? LIMIT 1`
+  ).bind(txHash, user.id).first<{ id: string }>().catch(() => null);
+  const dupOwn = await c.env.DB.prepare(
+    `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND status IN ('SETTLED_ONCHAIN', 'PENDING_VERIFY') LIMIT 1`
+  ).bind(txHash).first<{ id: string }>().catch(() => null);
+  if (dup || dupOwn) {
+    return c.json({ error: 'این هش تراکنش قبلاً برای تسویه ثبت شده است و قابل استفاده مجدد نیست.' }, 409);
+  }
+
+  const receipt = await tryVerifyEvmReceiptOnchain(txHash);
+  if (receipt === 'FAILED') {
+    return c.json({ error: 'تراکنش در بلاکچین ناموفق (Reverted) بوده است. لطفاً تراکنش موفق ثبت کنید.' }, 400);
+  }
+
+  const standingBefore = await evaluateUserFeeStanding(c.env.DB, user.id);
+  const nextLedgerStatus = receipt === 'CONFIRMED' || standingBefore.lockStatus !== 'LOCKED' ? 'SETTLED_ONCHAIN' : 'PENDING_VERIFY';
+
+  const updated = await c.env.DB.prepare(
+    `UPDATE server_fee_ledger SET status = ?, tx_hash = ? WHERE user_id = ? AND status = 'ACCRUED'`
+  ).bind(nextLedgerStatus, txHash, user.id).run();
+
+  if (nextLedgerStatus === 'SETTLED_ONCHAIN') {
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
+    ).bind(user.id).run().catch(() => {});
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_lock_status = 'PENDING_REVIEW' WHERE id = ?`
+    ).bind(user.id).run().catch(() => {});
+  }
+
+  const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);
+  await notifyAllAdmins(
+    c.env,
+    `💳 ثبت تسویه کارمزد ۵٪ سرور\nکاربر: ${user.username}\nوضعیت: ${nextLedgerStatus === 'SETTLED_ONCHAIN' ? '✅ تایید و آزاد شد' : '⏳ در انتظار تایید ادمین (حساب قفل بود)'}\nTX: ${txHash}`
+  ).catch(() => {});
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Server fee settlement (${nextLedgerStatus}) txHash ${txHash}`);
+
+  return c.json({
+    ok: true,
+    status: nextLedgerStatus,
+    settledCount: updated.meta?.changes ?? 0,
+    txHash,
+    enforcement,
+  });
+});
+
+subscriptionRoutes.post('/server-fees/prepay', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ amountUsd?: number; txHash?: string }>().catch(() => ({} as { amountUsd?: number; txHash?: string }));
+  const amountUsd = Number(body.amountUsd || 0);
+  const txHash = (body.txHash || '').trim();
+  if (!Number.isFinite(amountUsd) || amountUsd < 1 || amountUsd > 5000) {
+    return c.json({ error: 'مبلغ شارژ اعتبار کارمزد باید بین ۱ تا ۵۰۰۰ دلار باشد.' }, 400);
+  }
+  if (!isValidBlockchainTxHash(txHash)) {
+    return c.json({ error: 'لطفاً هش تراکنش (TX Hash) معتبر شارژ اعتبار کارمزد را وارد کنید.' }, 400);
+  }
+
+  const dup = await c.env.DB.prepare(`SELECT id FROM server_fee_ledger WHERE tx_hash = ? LIMIT 1`)
+    .bind(txHash).first<{ id: string }>().catch(() => null);
+  if (dup) {
+    return c.json({ error: 'این هش تراکنش قبلاً ثبت شده است.' }, 409);
+  }
+
+  const receipt = await tryVerifyEvmReceiptOnchain(txHash);
+  if (receipt === 'FAILED') {
+    return c.json({ error: 'تراکنش در بلاکچین ناموفق بوده است.' }, 400);
+  }
+
+  // Record prepay ledger entry (auto-applies if receipt confirmed or submitted cleanly while not locked; admin can also inspect/revoke)
+  const autoConfirm = receipt === 'CONFIRMED';
+  await c.env.DB.prepare(
+    `INSERT INTO server_fee_ledger (id, user_id, trade_id, source, symbol, realized_pnl_usd, fee_pct, fee_usd, status, tx_hash, note)
+     VALUES (?, ?, ?, 'PREPAY_CREDIT', 'USDT', 0, 0, ?, ?, ?, ?)`
+  )
+    .bind(
+      randomId('fee_pre'),
+      user.id,
+      `prepay:${txHash}`,
+      Number(amountUsd.toFixed(2)),
+      autoConfirm ? 'SETTLED_PREPAID' : 'PENDING_VERIFY',
+      txHash,
+      `شارژ پیش‌پرداخت اعتبار کارمزد ۵٪ (${amountUsd.toFixed(2)}$)`
+    )
+    .run();
+
+  if (autoConfirm) {
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4), fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
+    ).bind(amountUsd, user.id).run();
+  }
+
+  await notifyAllAdmins(
+    c.env,
+    `🏦 درخواست شارژ اعتبار کارمزد ۵٪\nکاربر: ${user.username}\nمبلغ: $${amountUsd.toFixed(2)}\nوضعیت: ${autoConfirm ? '✅ تایید خودکار آن‌چین' : '⏳ در انتظار تایید ادمین'}\nTX: ${txHash}`
+  ).catch(() => {});
+
+  const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);
+  return c.json({
+    ok: true,
+    autoConfirmed: autoConfirm,
+    status: autoConfirm ? 'CONFIRMED' : 'PENDING_VERIFY',
+    enforcement,
+  });
+});
+
+subscriptionRoutes.get('/admin/server-fees', async (c) => {
+  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  const [policy, accounts, pendingEntries] = await Promise.all([
+    getFeePolicyConfig(c.env.DB),
+    c.env.DB.prepare(
+      `SELECT u.id, u.username, u.email, u.telegram_id,
+              COALESCE(u.fee_prepaid_credit_usd, 0) AS prepaid_credit_usd,
+              COALESCE(u.fee_penalty_usd, 0) AS penalty_usd,
+              COALESCE(u.fee_lock_status, 'ACTIVE') AS lock_status,
+              u.fee_grace_deadline,
+              COALESCE(SUM(CASE WHEN l.status = 'ACCRUED' THEN l.fee_usd ELSE 0 END), 0) AS accrued_usd,
+              COALESCE(SUM(CASE WHEN l.status = 'PENDING_VERIFY' THEN l.fee_usd ELSE 0 END), 0) AS pending_verify_usd,
+              COALESCE(SUM(CASE WHEN l.status IN ('SETTLED_ONCHAIN', 'SETTLED_PREPAID') THEN l.fee_usd ELSE 0 END), 0) AS settled_usd
+       FROM users u
+       LEFT JOIN server_fee_ledger l ON l.user_id = u.id
+       GROUP BY u.id
+       HAVING accrued_usd > 0 OR pending_verify_usd > 0 OR penalty_usd > 0 OR prepaid_credit_usd > 0 OR lock_status != 'ACTIVE'
+       ORDER BY (accrued_usd + penalty_usd) DESC`
+    ).all().catch(() => ({ results: [] })),
+    c.env.DB.prepare(
+      `SELECT l.*, u.username, u.email
+       FROM server_fee_ledger l
+       JOIN users u ON u.id = l.user_id
+       WHERE l.status = 'PENDING_VERIFY'
+       ORDER BY l.created_at DESC
+       LIMIT 50`
+    ).all().catch(() => ({ results: [] })),
+  ]);
+
+  return c.json({ policy, accounts: accounts.results, pendingEntries: pendingEntries.results });
+});
+
+subscriptionRoutes.post('/admin/server-fees/:userId/action', async (c) => {
+  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  const targetUserId = c.req.param('userId');
+  const body = await c.req.json<{
+    action: 'APPROVE_SETTLEMENT' | 'REJECT_TX' | 'APPLY_PENALTY' | 'LOCK' | 'UNLOCK' | 'GRANT_CREDIT';
+    amountUsd?: number;
+  }>();
+
+  if (body.action === 'APPROVE_SETTLEMENT') {
+    const prepayRows = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(fee_usd), 0) AS sum_pre FROM server_fee_ledger WHERE user_id = ? AND source = 'PREPAY_CREDIT' AND status = 'PENDING_VERIFY'`
+    ).bind(targetUserId).first<{ sum_pre: number }>().catch(() => ({ sum_pre: 0 }));
+    const addCredit = Number(prepayRows?.sum_pre || 0);
+
+    await c.env.DB.prepare(
+      `UPDATE server_fee_ledger SET status = CASE WHEN source = 'PREPAY_CREDIT' THEN 'SETTLED_PREPAID' ELSE 'SETTLED_ONCHAIN' END WHERE user_id = ? AND status IN ('PENDING_VERIFY', 'ACCRUED')`
+    ).bind(targetUserId).run();
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4), fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
+    ).bind(addCredit, targetUserId).run();
+  } else if (body.action === 'REJECT_TX') {
+    await c.env.DB.prepare(
+      `UPDATE server_fee_ledger SET status = CASE WHEN source = 'PREPAY_CREDIT' THEN 'REJECTED' ELSE 'ACCRUED' END WHERE user_id = ? AND status = 'PENDING_VERIFY'`
+    ).bind(targetUserId).run();
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_lock_status = 'LOCKED' WHERE id = ?`
+    ).bind(targetUserId).run();
+    await c.env.DB.prepare(
+      `UPDATE bot_configs SET bot_state = 'STOPPED' WHERE user_id = ? AND trading_mode = 'LIVE'`
+    ).bind(targetUserId).run().catch(() => {});
+  } else if (body.action === 'APPLY_PENALTY') {
+    const penalty = Math.max(0.5, Number(body.amountUsd || 1));
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_penalty_usd = ROUND(COALESCE(fee_penalty_usd, 0) + ?, 4), fee_lock_status = 'LOCKED' WHERE id = ?`
+    ).bind(penalty, targetUserId).run();
+    await c.env.DB.prepare(
+      `UPDATE bot_configs SET bot_state = 'STOPPED' WHERE user_id = ? AND trading_mode = 'LIVE'`
+    ).bind(targetUserId).run().catch(() => {});
+  } else if (body.action === 'LOCK') {
+    await c.env.DB.prepare(`UPDATE users SET fee_lock_status = 'LOCKED' WHERE id = ?`).bind(targetUserId).run();
+    await c.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED' WHERE user_id = ? AND trading_mode = 'LIVE'`).bind(targetUserId).run().catch(() => {});
+  } else if (body.action === 'UNLOCK') {
+    await c.env.DB.prepare(`UPDATE users SET fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`).bind(targetUserId).run();
+  } else if (body.action === 'GRANT_CREDIT') {
+    const credit = Math.max(1, Number(body.amountUsd || 5));
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4) WHERE id = ?`
+    ).bind(credit, targetUserId).run();
+  }
+
+  const standing = await evaluateUserFeeStanding(c.env.DB, targetUserId);
+  return c.json({ ok: true, standing });
+});
+

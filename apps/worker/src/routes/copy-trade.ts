@@ -15,6 +15,7 @@ import {
   reconcileCopyPositionsV2,
   runTokenRugAndSafetyScan,
   simulateWalletCopyBacktest,
+  withdrawCopyVaultToTrustWallet,
   type CopyFollowRuleRow,
   type CopyPositionV2Row,
   type SmartWalletTraderRow,
@@ -25,6 +26,7 @@ import { executeSignalForUser, logAudit, notifyUserTelegram } from '../engine/ex
 import type { Env } from '../env.js';
 import { requirePaidEntitlement } from './subscriptions.js';
 import { buildVerifiedCardCanonicalPayload } from './trading.js';
+import { syncAutoTopSiteTraders } from '../services/site-traders.js';
 import { fetchEvmNativeBalance, fetchSolanaBalance, fetchTronBalances } from './trustwallet.js';
 
 export interface CopyTraderRow {
@@ -74,6 +76,7 @@ copyTradeRoutes.use('*', requireAuth);
 
 copyTradeRoutes.get('/traders', async (c) => {
   const user = c.get('user');
+  await syncAutoTopSiteTraders(c.env.DB).catch(() => {});
 
   const [tradersRes, tradesRes, mySubsRes, pendingOwnRes] = await Promise.all([
     c.env.DB.prepare(
@@ -925,6 +928,96 @@ copyTradeRoutes.post('/vault/export-keys', async (c) => {
     keys,
     warning: 'کلیدها نمایش داده شد و هشدار امنیتی برای تلگرام شما ارسال گردید.',
   });
+});
+
+copyTradeRoutes.post('/vault/withdraw', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    chainId?: string;
+    toAddress?: string;
+    amountNative?: number;
+    password?: string;
+    pinCode?: string;
+  };
+
+  const chainId = String(body.chainId || 'bsc').toLowerCase().trim();
+  const toAddress = String(body.toAddress || '').trim();
+  const amountNative = Number(body.amountNative || 0);
+  if (!toAddress || !Number.isFinite(amountNative) || amountNative <= 0) {
+    return c.json({ error: 'شبکه، آدرس مقصد و مبلغ برداشت الزامی هستند.' }, 400);
+  }
+
+  // Enforce 2FA verification (account password OR 6-digit Telegram PIN)
+  const [uSec, vSec] = await Promise.all([
+    c.env.DB.prepare(`SELECT password_hash, has_custom_password FROM users WHERE id = ? LIMIT 1`)
+      .bind(user.id)
+      .first<{ password_hash: string; has_custom_password: number }>()
+      .catch(() => null),
+    c.env.DB.prepare(`SELECT vault_pin_hash, vault_pin_expires_at FROM user_copy_vaults WHERE user_id = ? LIMIT 1`)
+      .bind(user.id)
+      .first<{ vault_pin_hash: string | null; vault_pin_expires_at: string | null }>()
+      .catch(() => null),
+  ]);
+
+  const pinActive = Boolean(
+    vSec?.vault_pin_hash &&
+      vSec?.vault_pin_expires_at &&
+      Date.parse(`${vSec.vault_pin_expires_at.replace(' ', 'T')}Z`) > Date.now()
+  );
+
+  let verified = false;
+  if (body.pinCode && pinActive) {
+    const cand = await sha256Hex(`${user.id}:${String(body.pinCode).trim()}`);
+    if (cand === vSec?.vault_pin_hash) {
+      verified = true;
+      await c.env.DB.prepare(
+        `UPDATE user_copy_vaults SET vault_pin_hash = NULL, vault_pin_expires_at = NULL WHERE user_id = ?`
+      )
+        .bind(user.id)
+        .run()
+        .catch(() => {});
+    }
+  }
+  if (!verified && body.password && uSec?.has_custom_password && uSec.password_hash) {
+    verified = await verifyPassword(String(body.password), uSec.password_hash).catch(() => false);
+  }
+  if (!verified) {
+    return c.json(
+      {
+        ok: false,
+        code: 'VAULT_2FA_REQUIRED',
+        error: 'برای برداشت از خزانه ۲۴/۷، تایید رمز عبور حساب یا کد ۶ رقمی تلگرام الزامی است.',
+      },
+      403
+    );
+  }
+
+  try {
+    const res = await withdrawCopyVaultToTrustWallet(c.env, user.id, {
+      chainId,
+      toAddress,
+      amountNative,
+    });
+    await logAudit(
+      c.env.DB,
+      user.id,
+      'VAULT_WITHDRAW',
+      'INFO',
+      `Withdrew ${res.amountSent} ${res.symbol} on ${chainId} to ${toAddress} (TX: ${res.txHash})`
+    );
+    await notifyUserTelegram(
+      c.env,
+      user.id,
+      `💸 **برداشت موفق از خزانه ۲۴ ساعته دلارینو**\n` +
+        `• شبکه: ${chainId.toUpperCase()}\n` +
+        `• مبلغ: **${res.amountSent} ${res.symbol}**\n` +
+        `• مقصد: \`${toAddress}\`\n` +
+        `• تراکنش: ${res.explorerUrl}`
+    ).catch(() => {});
+    return c.json(res);
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : 'Withdrawal failed' }, 400);
+  }
 });
 
 copyTradeRoutes.post('/poll-now', async (c) => {

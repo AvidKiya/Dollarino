@@ -437,14 +437,15 @@ async function fetchPublicCryptoHeadlines(): Promise<Array<{ title: string; sour
  *  - ALERT: Extreme volatility / RSI overbought-oversold / funding-rate warnings
  *  - ANALYSIS: Multi-coin market structure, key S/R levels & AI outlook
  *  - NEWS: Live macro & crypto news summary translated & interpreted by AI
+ *  - EDUCATION: Daily beginner-friendly trading & Trust Wallet academy lesson
  *  - PROMO: Rotating Dollarino platform spotlight & feature showcase with banner graphics
  */
 export async function runAlwaysOnAiIntel(
   env: Env,
-  opts?: { forceKind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'PROMO'; fromCron?: boolean }
+  opts?: { forceKind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'EDUCATION' | 'PROMO'; fromCron?: boolean }
 ): Promise<{
   published: boolean;
-  kind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'PROMO';
+  kind?: 'ANALYSIS' | 'NEWS' | 'ALERT' | 'EDUCATION' | 'PROMO';
   usersNotified?: number;
   channelMessageId?: number;
   reason?: string;
@@ -458,6 +459,8 @@ export async function runAlwaysOnAiIntel(
     'intel_last_alert_at',
     'intel_last_news_at',
     'intel_last_analysis_at',
+    'intel_last_edu_at',
+    'intel_edu_cursor',
     'intel_last_promo_at',
     'intel_promo_cursor',
   ]);
@@ -594,6 +597,51 @@ export async function runAlwaysOnAiIntel(
     return { published: true, kind: 'ANALYSIS', usersNotified: res.usersNotified, channelMessageId: res.channelMessageId };
   }
 
+  // 3.5) Priority 3.5: Beginner-friendly Education Post every 8 hours (480 mins) -> Education Channel
+  const minsEdu = minsFromIso(aiSettings['intel_last_edu_at']);
+  if (fk === 'EDUCATION' || (!fk && minsEdu >= 480)) {
+    const eduCursor = (Number.parseInt(aiSettings['intel_edu_cursor'] || '0', 10) || 0) % 4;
+    await setSetting(env.DB, 'intel_edu_cursor', String((eduCursor + 1) % 4));
+    const lessons = [
+      {
+        title: 'آموزش ساده ۱: چرا باید فقط با Trust Wallet معامله کنیم؟',
+        body:
+          `فرض کن کیف‌پول مثل قلک شخصی خودت است؛ رمزش فقط دست خودت است و هیچ صرافی یا سایتی نمی‌تواند دارایی‌ات را بلوکه کند!\n\n` +
+          `✅ حداقل سرمایه برای شروع ترید واقعی فقط ۱۰ دلار است.\n` +
+          `✅ اگر فعلاً می‌خواهی بدون ریسک تمرین کنی، شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان آماده است.`,
+      },
+      {
+        title: 'آموزش ساده ۲: مدل ۵٪ کارمزد سود (چطور ممکن است اشتراک صفر باشد؟)',
+        body:
+          `در دلارینو هیچ اشتراک ماهانه‌ای پرداخت نمی‌کنی!\n` +
+          `• شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری و تمام ابزارهای تحلیل: کاملاً رایگان!\n` +
+          `• ۹۵٪ سود معاملات واقعی متعلق به خود شماست و فقط ۵٪ برای هزینه سرورهای کلود محاسبه می‌شود.`,
+      },
+      {
+        title: 'آموزش ساده ۳: ساخت آلرت رایگان TradingView با ۲۵+ اندیکاتور',
+        body:
+          `برای گرفتن هشدارهای SuperTrend، Ichimoku، RSI و MACD نیاز نیست اشتراک پولی تریدینگ‌ویو بخری!\n` +
+          `وارد تب رادار دلارینو شو و آلرت رایگان بساز تا هر ۵ دقیقه روی کلود بررسی و در تلگرام یا ربات اجرا شود.`,
+      },
+      {
+        title: 'آموزش ساده ۴: حد ضرر (SL) و ۳ تارگت سود (TP1/2/3) یعنی چه؟',
+        body:
+          `وقتی ربات معامله باز می‌کند، همزمان سقف ضرر (SL) می‌گذارد تا جلوی ضرر بزرگ گرفته شود و سود را در ۳ پله ذخیره می‌کند.\n` +
+          `با رسیدن به تارگت ۱، حد ضرر خودکار به نقطه ورود می‌آید تا معامله ریسک‌فری شود!`,
+      },
+    ];
+    const lesson = lessons[eduCursor]!;
+    const res = await publishChannelNews(env, {
+      category: 'EDUCATION',
+      title: lesson.title,
+      body: lesson.body,
+      notifyBotUsers: false,
+      createdBy: 'ai_intel_daemon',
+    });
+    await setSetting(env.DB, 'intel_last_edu_at', new Date().toISOString());
+    return { published: true, kind: 'EDUCATION', usersNotified: res.usersNotified, channelMessageId: res.channelMessageId };
+  }
+
   // 4) Priority 4: Rotating Dollarino Platform Showcase / Promotional Spotlight every 12 hours (720 mins)
   const minsPromo = minsFromIso(aiSettings['intel_last_promo_at']);
   if (fk === 'PROMO' || (!fk && minsPromo >= 720)) {
@@ -605,7 +653,7 @@ export async function runAlwaysOnAiIntel(
       {
         title: 'ترید خودکار ۲۴ ساعته + استراتژی دُرنا V1 و سپر ریسک ۳ تارگت',
         topic: 'معرفی موتور ترید خودکار دلارینو، ریسک‌فری خودکار در تارگت اول، استاپ تریلینگ و ارسال سیگنال حتی وقتی ربات تریدر کاربر خاموش است.',
-        banner: `${cfg.webAppUrl}/images/hero-quant-desk.png`,
+        banner: `${cfg.webAppUrl}/images/hero-quant-desk.jpg`,
         fallback:
           `چرا حرفه‌ای‌ها ۲۴ ساعته از دلارینو استفاده می‌کنند؟\n\n` +
           `✅ اسکن هوشمند کل بازار با استراتژی‌های غیرریپینت دُرنا V1 و KBOS Super\n` +
@@ -616,7 +664,7 @@ export async function runAlwaysOnAiIntel(
       {
         title: 'کیف‌پول چندزنجیره‌ای Trust Wallet و شکار توکن‌های انفجاری DEX',
         topic: 'معرفی اتصال یک‌کلیکی همه شبکه‌ها (EVM، BSC، Base، Solana، TON، TRON) و کشف توکن‌های جدید در تمام بسترها با امتیاز ایمنی AI و سوآپ غیرامانی.',
-        banner: `${cfg.webAppUrl}/images/trust-dex-hub.png`,
+        banner: `${cfg.webAppUrl}/images/trust-dex-hub.jpg`,
         fallback:
           `توکن‌های پُررشد را قبل از لیست‌شدن در صرافی‌های متمرکز شکار کنید!\n\n` +
           `🦊 اتصال مستقیم به Trust Wallet روی شبکه‌های BSC، Ethereum، Base، Arbitrum، Solana، TON و TRON\n` +
@@ -626,21 +674,21 @@ export async function runAlwaysOnAiIntel(
       {
         title: 'هوش مصنوعی شخصی «هوش مصنوعی من» و چارت‌خوان لحظه‌ای AI',
         topic: 'معرفی هوش مصنوعی خام قابل آموزش به زبان فارسی، ویرایشگر Pine Script / Python و دستیار پشتیبانی ۲۴ ساعته.',
-        banner: `${cfg.webAppUrl}/images/my-ai-brain.png`,
+        banner: `${cfg.webAppUrl}/images/my-ai-brain.jpg`,
         fallback:
           `استراتژی خودت را به زبان فارسی به هوش مصنوعی یاد بده!\n\n` +
           `🧠 در بخش «هوش مصنوعی من» کافیست مثل چت کردن قوانین ورود، اندیکاتورها و حد ضرر دلخواهت را بنویسی تا هوش مصنوعی دلارینو برایت تست بگیرد و ۲۴ ساعته ترید کند.\n` +
           `📊 به‌همراه تحلیلگر چارت AI و پشتیبانی آنلاین فوری داخل سایت و تلگرام.`,
       },
       {
-        title: 'اتصال به Toobit · Bitunix · KCEX + کپی‌ترید تاییدشده و درآمد دلاری رفرال',
-        topic: 'معرفی اتصال امن رمزنگاری‌شده AES-256 به صرافی‌های Toobit، Bitunix و KCEX، کپی‌تریدرهای تاییدشده و سیستم کسب درآمد ۱۵ تا ۲۲ درصدی دعوت دوستان.',
-        banner: `${cfg.webAppUrl}/images/vip-club-banner.png`,
+        title: 'اتصال انحصاری به Trust Wallet + شبیه‌ساز دمو ۱۰k و کارمزد ۵٪ فقط از سود',
+        topic: 'معرفی اتصال امن و غیرامانی به Trust Wallet (حداقل ۱۰ دلار) برای تمام معاملات، شبیه‌ساز دمو ۱۰ هزار دلاری رایگان، انتخاب تایید دستی یا اتوترید ۲۴/۷ و حذف کامل اشتراک ماهانه.',
+        banner: `${cfg.webAppUrl}/images/trust-wallet-connect-banner.webp`,
         fallback:
-          `یک پلتفرم کامل برای معامله و کسب درآمد:\n\n` +
-          `🔗 اتصال امن AES-256 به صرافی‌های Toobit، Bitunix و KCEX (بدون نیاز به مجوز برداشت)\n` +
-          `🏆 کپی‌ترید ۱-کلیکی از تریدرهای تاییدشده مدیریت دلارینو\n` +
-          `💎 دعوت دوستان با پورسانت دلاری قابل برداشت + ۷ روز اشتراک هدیه!`,
+          `یک پلتفرم کامل برای معامله غیرامانی و شفاف:\n\n` +
+          `🛡 اتصال انحصاری و امن به Trust Wallet (حداقل ۱۰ دلار) + شبیه‌ساز دمو ۱۰ هزار دلاری رایگان\n` +
+          `⚡ انتخاب آزاد بین «تایید دستی ۱-کلیکی» یا «تمام‌اتوترید خودکار ۲۴/۷» (بدون حق برداشت)\n` +
+          `💰 اشتراک ماهانه صفر تومان — ۹۵٪ سود برای شما و فقط ۵٪ کارمزد سرور از سود معاملات واقعی!`,
       },
     ];
 

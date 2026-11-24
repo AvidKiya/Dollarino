@@ -1,5 +1,6 @@
 import { decryptVaultJson, encryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import { signHyperliquidL1Action } from './evm-tx.js';
 
 export type PerpVenueId = 'hyperliquid' | 'jupiter_perps' | 'gmx' | 'dydx';
 
@@ -316,12 +317,108 @@ export async function recordPerpDexOrder(
     .catch(() => null);
 
   let agentNote = 'آماده امضا در Trust Wallet DApp (غیرحضانتی ۱۰۰٪ بدون حق برداشت)';
+  let executionKind = 'TRUST_DAPP';
+  let status = 'SUBMITTED';
+  let externalOrderId: string | null = null;
+
   if (conn?.encrypted_agent_secret) {
     const dec = await decryptVaultJson<{ agentPrivateKey?: string }>(
       conn.encrypted_agent_secret,
       env.MASTER_ENCRYPTION_KEY
     ).catch(() => null);
-    if (dec?.agentPrivateKey) {
+    if (dec?.agentPrivateKey && input.venue === 'hyperliquid') {
+      const cleanPriv = dec.agentPrivateKey.trim().replace(/^0x/i, '');
+      if (/^[a-fA-F0-9]{64}$/.test(cleanPriv)) {
+        try {
+          const metaRes = await fetch('https://api.hyperliquid.xyz/info', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
+            signal: AbortSignal.timeout(5000),
+          });
+          if (metaRes.ok) {
+            const [meta, ctxs] = (await metaRes.json()) as [
+              { universe: Array<{ name: string; szDecimals?: number }> },
+              Array<{ markPx?: string }>,
+            ];
+            const assetIdx = meta.universe.findIndex((u) => u.name.toUpperCase() === sym);
+            if (assetIdx >= 0) {
+              const szDec = Number(meta.universe[assetIdx]?.szDecimals ?? 3);
+              const markPx = Number(ctxs[assetIdx]?.markPx || entry || 0);
+              if (markPx > 0) {
+                const isBuy = input.side === 'LONG';
+                const slippedPx = markPx * (isBuy ? 1.015 : 0.985);
+                const pxStr = Number(slippedPx.toPrecision(5)).toString();
+                const rawSz = (margin * lev) / markPx;
+                const szStr = rawSz.toFixed(Math.max(0, Math.min(6, szDec)));
+                if (Number(szStr) > 0) {
+                  const nonce = Date.now();
+                  const action = {
+                    type: 'order',
+                    orders: [
+                      {
+                        a: assetIdx,
+                        b: isBuy,
+                        p: pxStr,
+                        s: szStr,
+                        r: false,
+                        t: { limit: { tif: 'Ioc' } },
+                      },
+                    ],
+                    grouping: 'na',
+                  };
+                  const signed = signHyperliquidL1Action({
+                    agentPrivateKeyHex: cleanPriv,
+                    action,
+                    nonce,
+                    isMainnet: true,
+                  });
+                  const exRes = await fetch('https://api.hyperliquid.xyz/exchange', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, nonce, signature: signed.signature }),
+                    signal: AbortSignal.timeout(7000),
+                  });
+                  const exJson = (await exRes.json().catch(() => ({}))) as {
+                    status?: string;
+                    response?: {
+                      type?: string;
+                      data?: {
+                        statuses?: Array<{
+                          filled?: { oid?: number; totalSz?: string; avgPx?: string };
+                          resting?: { oid?: number };
+                          error?: string;
+                        }>;
+                      };
+                    };
+                  };
+                  const st0 = exJson.response?.data?.statuses?.[0];
+                  if (exJson.status === 'ok' && st0?.filled?.oid) {
+                    externalOrderId = String(st0.filled.oid);
+                    status = 'FILLED';
+                    executionKind = 'HYPERLIQUID_AGENT_LIVE';
+                    agentNote = `✅ سفارش مستقیم Hyperliquid اجرا شد (OID #${externalOrderId} · حجم ${st0.filled.totalSz || szStr} @ $${st0.filled.avgPx || pxStr})`;
+                  } else if (exJson.status === 'ok' && st0?.resting?.oid) {
+                    externalOrderId = String(st0.resting.oid);
+                    status = 'OPEN';
+                    executionKind = 'HYPERLIQUID_AGENT_LIVE';
+                    agentNote = `✅ سفارش روی دفتر Hyperliquid ثبت شد (OID #${externalOrderId})`;
+                  } else {
+                    const hlErr = st0?.error || exJson.status || 'Agent authorization / margin check';
+                    executionKind = 'AGENT_WALLET_READY';
+                    agentNote = `پاسخ Hyperliquid: ${hlErr} (لینک مستقیم DApp آماده تایید)`;
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          executionKind = 'AGENT_WALLET_READY';
+          agentNote = `سفارش اهرم‌دار ${lev}x ثبت شد (ارتباط با نود Hyperliquid در دسترس نبود — از لینک DApp استفاده کنید)`;
+        }
+      }
+    } else if (dec?.agentPrivateKey) {
+      executionKind = 'AGENT_WALLET_READY';
       agentNote = `سفارش اهرم‌دار ${lev}x ثبت شد (${input.venue} Agent Wallet ${conn.agent_address || ''} + لینک تایید فوری DApp)`;
     }
   }
@@ -330,8 +427,8 @@ export async function recordPerpDexOrder(
   await env.DB.prepare(
     `INSERT INTO perp_dex_orders (
        id, user_id, venue, symbol, side, leverage, margin_usd, entry_price, tp_price, sl_price,
-       execution_kind, status, note
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?)`
+       execution_kind, external_order_id, status, note
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       orderId,
@@ -344,7 +441,9 @@ export async function recordPerpDexOrder(
       entry,
       input.tpPrice ?? null,
       input.slPrice ?? null,
-      conn?.encrypted_agent_secret ? 'AGENT_WALLET_READY' : 'TRUST_DAPP',
+      executionKind,
+      externalOrderId,
+      status,
       agentNote
     )
     .run();

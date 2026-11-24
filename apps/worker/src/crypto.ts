@@ -30,6 +30,21 @@ export function randomId(prefix = ''): string {
   return prefix ? `${prefix}_${toHex(bytes)}` : toHex(bytes);
 }
 
+const REF_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+/**
+ * Generates clean 8-character Dollarino referral codes: constant "DLR" prefix + 5 random uppercase chars (e.g. "DLRXHSOW").
+ */
+export function generateReferralCode(): string {
+  const bytes = new Uint8Array(5);
+  crypto.getRandomValues(bytes);
+  let suffix = '';
+  for (let i = 0; i < 5; i++) {
+    suffix += REF_CODE_ALPHABET[bytes[i]! % REF_CODE_ALPHABET.length];
+  }
+  return `DLR${suffix}`;
+}
+
 export function maskSecret(value: string): string {
   const clean = value.trim();
   if (clean.length <= 8) return '****';

@@ -259,6 +259,31 @@ export function DexTrustPage({
 
   const [dexTrades, setDexTrades] = useState<DexTradeItem[]>([]);
   const [tradeAmtUsd, setTradeAmtUsd] = useState(50);
+  const [execMode, setExecMode] = useState<'AUTO' | 'MANUAL_CONFIRM'>('AUTO');
+
+  const toggleTwExecutionMode = async (next: 'AUTO' | 'MANUAL_CONFIRM') => {
+    try {
+      await apiFetch('/api/trustwallet/execution-mode', {
+        method: 'POST',
+        body: JSON.stringify({ executionMode: next, syncCopyRules: true }),
+      });
+      setExecMode(next);
+      setMsg(
+        next === 'AUTO'
+          ? isFa ? 'حالت تمام‌اتوترید ۲۴/۷ فعال شد' : '24/7 Autonomous Auto-Trade enabled'
+          : isFa ? 'حالت تایید دستی در Trust Wallet فعال شد' : 'Manual Approval mode enabled'
+      );
+      await onUserRefresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+
+  useEffect(() => {
+    void apiFetch<{ executionMode: 'AUTO' | 'MANUAL_CONFIRM' }>('/api/trustwallet/execution-mode')
+      .then((r) => setExecMode(r.executionMode || 'AUTO'))
+      .catch(() => {});
+  }, []);
 
   const fetchPublicDexFallback = useCallback(async (searchQuery?: string): Promise<DexTokenCardItem[]> => {
     const buildItem = (p: {
@@ -699,8 +724,8 @@ export function DexTrustPage({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-1 min-w-0">
             <img
-              src="/images/trust-dex-hub.png"
-              alt="Trust Wallet & DEX Hub"
+              src="/images/trust-wallet-connect-banner.webp"
+              alt="Dollarino & Trust Wallet Multi-Chain Hub"
               className="w-full sm:w-44 h-28 rounded-2xl object-cover shrink-0 border hairline shadow-lg"
             />
             <div className="space-y-1.5 max-w-2xl">
@@ -718,14 +743,22 @@ export function DexTrustPage({
                 )}
               </div>
               <h2 className="font-display font-black text-xl md:text-2xl text-main">
-                {isFa
-                  ? 'اتصال همه شبکه‌ها (EVM · Solana · TON · TRON) و کشف تمام توکن‌های DEX'
-                  : 'Connect All Chains & Discover Tokens Across Every DEX'}
+                {isFa ? (
+                  <>
+                    اتصال همه شبکه‌ها <span dir="ltr" className="inline-block">(EVM · Solana · TON · TRON)</span> و کشف تمام توکن‌های DEX
+                  </>
+                ) : (
+                  'Connect All Chains & Discover Tokens Across Every DEX'
+                )}
               </h2>
               <p className="text-xs text-dim leading-relaxed">
-                {isFa
-                  ? 'توکن‌ها و جفت‌ارزهای کل بسترها (Ethereum، BSC، Solana، TON، Base، Arbitrum، Polygon، Avalanche، Sui و ...) را پیدا کنید و یکجا به کیف‌پول متصل و سوآپ کنید.'
-                  : 'Discover pairs across Ethereum, BSC, Solana, TON, Base, Arbitrum, Polygon, Avalanche, Sui & more and swap non-custodially.'}
+                {isFa ? (
+                  <>
+                    توکن‌ها و جفت‌ارزهای کل بسترها را از <span dir="ltr">Ethereum · BSC · Solana · TON · Base · Arbitrum · Polygon · Avalanche · Sui</span> پیدا کنید و یکجا به کیف‌پول متصل و سوآپ کنید.
+                  </>
+                ) : (
+                  'Discover pairs across Ethereum, BSC, Solana, TON, Base, Arbitrum, Polygon, Avalanche, Sui & more and swap non-custodially.'
+                )}
               </p>
             </div>
           </div>
@@ -757,6 +790,27 @@ export function DexTrustPage({
               <ExternalLink className="w-3.5 h-3.5" />
               <span>{isFa ? 'باز کردن در اپ Trust Wallet' : 'Open in Trust Wallet App'}</span>
             </a>
+
+            <div className="inline-flex rounded-2xl surface-soft border hairline p-1 gap-1">
+              <button
+                type="button"
+                onClick={() => void toggleTwExecutionMode('MANUAL_CONFIRM')}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition ${
+                  execMode === 'MANUAL_CONFIRM' ? 'btn-gold' : 'text-dim hover:text-main'
+                }`}
+              >
+                {isFa ? '✋ تایید دستی' : '✋ Manual'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void toggleTwExecutionMode('AUTO')}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition ${
+                  execMode === 'AUTO' ? 'btn-emerald' : 'text-dim hover:text-main'
+                }`}
+              >
+                {isFa ? '⚡ اتوترید ۲۴/۷' : '⚡ 24/7 Auto'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -824,7 +878,7 @@ export function DexTrustPage({
       )}
 
       {/* Navigation Tabs */}
-      <div className="flex flex-wrap gap-2">
+      <div className="tab-bar w-full sm:w-auto">
         {[
           { id: 'dex', icon: Search, fa: 'رادار زنده DexScreener', en: 'DexScreener Scanner' },
           { id: 'perps', icon: Gauge, fa: 'فیوچرز کیف‌پول (Perp DEX)', en: 'Wallet Leveraged Perps' },
@@ -837,11 +891,9 @@ export function DexTrustPage({
               key={t.id}
               type="button"
               onClick={() => setSubTab(t.id as typeof subTab)}
-              className={`px-4 py-2.5 rounded-2xl text-xs font-black transition inline-flex items-center gap-2 ${
-                subTab === t.id ? 'btn-gold shadow-sm' : 'panel text-dim hover:text-main'
-              }`}
+              className={`tab-pill flex-1 sm:flex-initial ${subTab === t.id ? 'tab-pill-active' : ''}`}
             >
-              <TabIcon className="w-4 h-4" />
+              <TabIcon className="w-4 h-4 shrink-0" />
               <span>{isFa ? t.fa : t.en}</span>
             </button>
           );
@@ -853,7 +905,7 @@ export function DexTrustPage({
         <div className="space-y-4 tab-enter">
           <div className="panel rounded-3xl p-4 border border-emerald-500/20 flex flex-col md:flex-row md:items-center gap-4">
             <img
-              src="/images/antirug-shield-dapp.png"
+              src="/images/antirug-shield-dapp.webp"
               alt="Anti-Rug & Multi-DApp Shield"
               className="w-full md:w-44 h-24 rounded-2xl object-cover shrink-0 border hairline"
             />
@@ -1023,11 +1075,11 @@ export function DexTrustPage({
                           {!t.isOnCentralizedHint && <Sparkles className="w-2.5 h-2.5" />}
                           {t.isOnCentralizedHint
                             ? isFa
-                              ? 'موجود در صرافی‌های اصلی'
-                              : 'On CEXs'
+                              ? 'جفت‌ارز پرحجم محبوب'
+                              : 'Blue-Chip Pair'
                             : isFa
-                              ? 'ویژه DEX (ناموجود در Toobit/KCEX)'
-                              : 'DEX-Exclusive'}
+                              ? 'جم و توکن آنچین DEX'
+                              : 'DEX On-Chain Gem'}
                         </span>
                         {t.riskFlags.slice(0, 2).map((rf) => (
                           <span key={rf} className="text-[10px] px-2 py-0.5 rounded-lg bg-rose-500/10 text-loss inline-flex items-center gap-0.5">
@@ -1165,13 +1217,14 @@ export function DexTrustPage({
               </h4>
 
               <div className="surface-soft rounded-2xl p-4 space-y-3 border hairline text-xs">
-                <div className="grid sm:grid-cols-4 gap-2.5">
-                  <div>
+                <div className="grid sm:grid-cols-5 gap-2.5">
+                  <div className="sm:col-span-2">
                     <label className="text-[10px] text-dim block mb-1">{isFa ? 'پروتکل' : 'Perp DEX'}</label>
                     <select
+                      dir="ltr"
                       value={perpOrderForm.provider}
                       onChange={(e) => setPerpOrderForm((f) => ({ ...f, provider: e.target.value }))}
-                      className="surface-input w-full rounded-xl px-2.5 py-2"
+                      className="surface-input w-full rounded-xl px-2.5 py-2 text-xs text-left"
                     >
                       <option value="HYPERLIQUID">Hyperliquid (50x)</option>
                       <option value="JUPITER_PERPS">Jupiter Perps SOL (100x)</option>
@@ -1182,9 +1235,10 @@ export function DexTrustPage({
                   <div>
                     <label className="text-[10px] text-dim block mb-1">{isFa ? 'ارز' : 'Coin'}</label>
                     <select
+                      dir="ltr"
                       value={perpOrderForm.symbol}
                       onChange={(e) => setPerpOrderForm((f) => ({ ...f, symbol: e.target.value }))}
-                      className="surface-input w-full rounded-xl px-2.5 py-2 font-bold"
+                      className="surface-input w-full rounded-xl px-2.5 py-2 text-xs text-left font-bold"
                     >
                       {(perpMarkets.length > 0 ? perpMarkets.slice(0, 12).map((m) => m.symbol) : ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'SUI', 'AVAX']).map((s) => (
                         <option key={s} value={s}>{s}-PERP</option>
@@ -1403,7 +1457,7 @@ export function DexTrustPage({
                             <p dir="ltr" className="text-[10px] text-dim">Entry ${pos.entryPrice.toFixed(2)}</p>
                           </div>
                           <span dir="ltr" className={`font-num font-black ${pos.unrealizedPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
-                            {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                            {pos.unrealizedPnl >= 0 ? `+$${pos.unrealizedPnl.toFixed(2)}` : `-$${Math.abs(pos.unrealizedPnl).toFixed(2)}`}
                           </span>
                         </div>
                       ))}
@@ -1594,8 +1648,8 @@ export function DexTrustPage({
                     <div>
                       <div className="flex items-center gap-2">
                         <strong className="text-sm text-main">{t.token_symbol}</strong>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-400 uppercase">{t.chain_id}</span>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-white/10 text-dim">{t.status}</span>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-blue-500/15 text-blue-600 dark:text-blue-400 uppercase">{t.chain_id}</span>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-[var(--soft)] border hairline text-dim">{t.status}</span>
                       </div>
                       <p dir="ltr" className="text-[11px] text-dim mt-1">
                         Size: ${t.amount_usd} · Entry: {fmtTokenPrice(t.entry_price_usd)} · Live: {fmtTokenPrice(t.live_price_usd)}
@@ -1743,7 +1797,7 @@ export function DexTrustPage({
                           {dappModal.safety.safetyScore}/100 ({dappModal.safety.verdict})
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-center">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] text-center">
                         <div className="surface-card rounded-xl p-2">
                           <span className="block text-[10px] text-dim">{isFa ? 'هانی‌پات' : 'Honeypot'}</span>
                           <strong className={dappModal.safety.isHoneypot ? 'text-loss' : 'text-jade'}>
@@ -1765,6 +1819,16 @@ export function DexTrustPage({
                         <div className="surface-card rounded-xl p-2">
                           <span className="block text-[10px] text-dim">{isFa ? 'تمرکز ۱۰ هولدر' : 'Top 10'}</span>
                           <strong dir="ltr">{dappModal.safety.top10HoldersPct}%</strong>
+                        </div>
+                        <div className="surface-card rounded-xl p-2">
+                          <span className="block text-[10px] text-dim">{isFa ? 'سن توکن' : 'Token Age'}</span>
+                          <strong dir="ltr" className={dappModal.safety.tokenAgeHours != null && dappModal.safety.tokenAgeHours < 6 ? 'text-loss' : 'text-main'}>
+                            {dappModal.safety.tokenAgeHours == null
+                              ? '—'
+                              : dappModal.safety.tokenAgeHours < 24
+                                ? `${dappModal.safety.tokenAgeHours}h`
+                                : `${Math.round(dappModal.safety.tokenAgeHours / 24)}d`}
+                          </strong>
                         </div>
                       </div>
                       {dappModal.safety.flags.length > 0 && (

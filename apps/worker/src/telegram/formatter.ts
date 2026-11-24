@@ -32,8 +32,12 @@ export function formatIranDateTime(isoInput?: string | null): string {
   }
 }
 
-export function formatToman(usdt: number, rate = 70000): string {
+export function formatToman(usdt: number, rate = 74500): string {
   return Math.round(usdt * rate).toLocaleString('en-US');
+}
+
+export function formatRial(usdt: number, rateIrr = 745000): string {
+  return Math.round(usdt * rateIrr).toLocaleString('en-US');
 }
 
 export function preAuthIntroMessage(firstName: string): string {
@@ -66,34 +70,45 @@ export function contactVerificationKeyboard(): ReplyKeyboardButton[][] {
 
 export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'simple', webAppUrl = 'https://dollarino.pages.dev'): string {
   const cleanWeb = webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
+  const modeSummary =
+    uiMode === 'simple'
+      ? `🌱 **حالت ساده فعال است:** همه‌چیز در ۳ دکمه! شبیه‌ساز ۱۰٬۰۰۰ دلاری رایگان، کارمزد ۵٪ فقط از سود واقعی (اشتراک ۰) و ربات تمام‌اتومات هوش مصنوعی.`
+      : `⚡ **حالت حرفه‌ای (Quant Pro) فعال است:** دسترسی کامل به شکار فوری AI، ۲۵+ آلرت رایگان TradingView، اسکنر DEX، کپی‌ترید V2 و استراتژی دُرنا V1.`;
   return (
     `🚀 به **دلارینو** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
-    `به دنیای ابزارهای هوشمند معاملاتی خوش آمدید.\n\n` +
-    `در دلارینو می‌توانید به مجموعه‌ای از امکانات معاملاتی دسترسی داشته باشید:\n\n` +
-    `🧠 **هوش مصنوعی اختصاصی دلارینو (چت + تحلیل عکس چارت)**\n` +
-    `چت آزاد مثل پیشرفته‌ترین AIها، انتخاب مدل و ارسال عکس چارت برای دریافت ستاپ\n\n` +
-    `🤖 **ترید هوشمند اتومات و استراتژی دُرنا V1**\n` +
-    `رصد ۲۴ ساعته بازار، مدیریت ریسک ۳ تارگت و کپی‌ترید تاییدشده\n\n` +
-    `━━━━━━━━━━━━━━\n\n` +
-    `برای شروع، سرویس موردنظر خود را از منوی پایین انتخاب کنید (${uiMode === 'pro' ? 'حالت حرفه‌ای ⚡' : 'حالت ساده 🌱'}).\n` +
-    `📸 همچنین می‌توانید همین‌جا **سوال بپرسید یا عکس چارت بفرستید** تا هوش مصنوعی دلارینو فوراً تحلیل و ستاپ بدهد!\n\n` +
+    `${modeSummary}\n\n` +
+    `✨ **امکانات کلیدی حساب شما:**\n` +
+    `🧠 **هوش مصنوعی اختصاصی + تحلیل عکس چارت** (همین‌جا سوال بپرس یا عکس چارت بفرست!)\n` +
+    `🛡 **۱۰۰٪ غیرامانی با Trust Wallet** (حداقل ۱۰ دلار واقعی · یا تمرین رایگان با دمو $۱۰,۰۰۰)\n` +
+    `💎 **اشتراک ماهانه صفر:** ۹۵٪ سود واقعی مال شماست و فقط ۵٪ کارمزد سرور از سود محاسبه می‌شود.\n\n` +
+    `━━━━━━━━━━━━━━\n` +
     `🌐 وب‌سایت رسمی دلارینو: ${cleanWeb}\n` +
     `${CREATOR_ATTRIBUTION_FA}\n\n` +
-    `⚠️ فعالیت در بازارهای مالی با ریسک همراه است. هیچ بازدهی تضمین‌شده‌ای وجود ندارد.\n` +
+    `🛡 هیچ بازدهی تضمین‌شده‌ای یا ساختار پانزی وجود ندارد؛ کل سرمایه در کیف‌پول شخصی خودتان است.\n` +
     `**دلارینو؛ هوشمندانه‌تر معامله کنید.**`
   );
 }
 
 export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 'simple', isAdmin = false): ReplyKeyboardButton[][] {
   const safeUrl = webAppUrl?.startsWith('https://') ? webAppUrl : undefined;
-  const rows: ReplyKeyboardButton[][] = [
-    [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '⚡️ شکار فوری AI' }],
-    [{ text: '🟢 شروع خودکار ربات' }, { text: '📈 معاملات باز' }],
-    [{ text: 'حساب کاربری 👤' }, { text: 'اتصال به صرافی 🔗' }],
-    [{ text: '🦊 Trust Wallet و DEX' }, { text: uiMode === 'pro' ? '🔍 اسکنر DEX' : '🏆 کپی‌ترید' }],
-  ];
-  rows.push([{ text: 'تنظیمات ⚙️' }, { text: 'خرید اشتراک 💎' }]);
-  rows.push([{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '👨‍💻 درباره سازنده' }]);
+  const rows: ReplyKeyboardButton[][] =
+    uiMode === 'simple'
+      ? [
+          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '🤖 شروع ربات هوشمند AI' }],
+          [{ text: '📊 وضعیت سود و معاملات' }, { text: '🛡 اتصال Trust Wallet و دمو' }],
+          [{ text: '💰 کارمزد ۵٪ سود (رایگان)' }, { text: '🏆 کپی‌ترید' }],
+          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '👨‍💻 درباره سازنده' }],
+          [{ text: '⚡ رفتن به حالت حرفه‌ای' }],
+        ]
+      : [
+          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '⚡️ شکار فوری AI' }],
+          [{ text: '🟢 شروع خودکار ربات' }, { text: '📈 معاملات باز' }],
+          [{ text: 'حساب کاربری 👤' }, { text: '🛡 اتصال Trust Wallet' }],
+          [{ text: '📡 آلرت رایگان TradingView' }, { text: '🔍 اسکنر DEX' }, { text: '🏆 کپی‌ترید' }],
+          [{ text: 'تنظیمات ⚙️' }, { text: '💰 کارمزد ۵٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }],
+          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '👨‍💻 درباره سازنده' }],
+          [{ text: '🌱 رفتن به حالت ساده' }],
+        ];
   if (isAdmin && safeUrl) {
     rows.push([{ text: 'پنل مدیریت 💼' }, { text: '🚀 باز کردن مینی‌اپ', web_app: { url: safeUrl } }]);
   } else if (isAdmin) {
@@ -183,19 +198,19 @@ export function miniAppInlineKeyboard(
 
   if (openSection === 'trust') {
     rows.push([
-      { text: '🦊 وضعیت و اتصال ولت', callback_data: 'tg_tw_menu', style: 'primary' },
+      { text: '🛡 وضعیت و اتصال Trust Wallet', callback_data: 'tg_tw_menu', style: 'primary' },
       { text: '🔍 توکن‌های داغ DEX', callback_data: 'tg_dex_trending', style: 'success' },
     ]);
     rows.push([
       { text: '🔎 جستجوی توکن', callback_data: 'tg_dex_search' },
-      { text: '💎 اشتراک', callback_data: 'tg_open_sub' },
+      { text: '💰 کارمزد ۵٪ سود (رایگان)', callback_data: 'tg_open_sub' },
     ]);
   }
 
   if (openSection === 'tools') {
     rows.push([
       { text: '📈 معاملات باز', callback_data: 'tg_positions' },
-      { text: '💎 اشتراک', callback_data: 'tg_open_sub', style: 'success' },
+      { text: '📡 آلرت رایگان TradingView', callback_data: 'tg_tv_alerts', style: 'success' },
     ]);
     rows.push([
       { text: '🧩 اکستنشن و ویجت', callback_data: 'tg_ext_widgets' },
@@ -340,10 +355,10 @@ export function settingsKeyboard(isAdmin: boolean, isSuperAdmin = false, uiMode:
     [{ text: 'اتوترید 🤖' }, { text: 'دستی ترید 💪' }],
     [{ text: '🎛 انتخاب روش ترید' }, { text: '⚖️ اسپات / فیوچرز' }],
     [{ text: '↕️ جهت معاملات' }, { text: 'تنظیم مقادیر معاملات 🪛' }],
-    [{ text: 'دریافت موجودی صرافی 💳' }, { text: 'دریافت اعلان 🔔' }],
+    [{ text: 'دریافت موجودی ولت 💳' }, { text: 'دریافت اعلان 🔔' }],
     [
       { text: uiMode === 'simple' ? '⚡ رفتن به حالت حرفه‌ای' : '🌱 رفتن به حالت ساده' },
-      { text: 'تغییر API صرافی 📡' },
+      { text: '🛡 مدیریت Trust Wallet' },
     ],
   ];
   if (isSuperAdmin) {
@@ -357,19 +372,23 @@ export function settingsKeyboard(isAdmin: boolean, isSuperAdmin = false, uiMode:
 
 export function exchangeSelectionKeyboard() {
   return [
-    [{ text: '🦊 کیف‌پول Trust Wallet' }],
-    [{ text: 'Toobit (توبیت) 🟢' }, { text: 'Bitunix (بیت‌یونیکس) 🟠' }],
-    [{ text: 'KCEX (کی‌سی‌ای‌ایکس) 🔵' }, { text: 'Paper Mode (دمو) 🧪' }],
+    [{ text: '🛡 اتصال Trust Wallet (تراست‌ولت)' }, { text: '🧪 شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری' }],
+    [{ text: '⚡ تایید دستی یا اتوترید ۲۴/۷' }, { text: '📡 آلرت رایگان TradingView' }],
     [{ text: 'بازگشت به صفحه قبل 🔙' }],
   ];
 }
 
-export function formatBalanceCard(provider: string, bal: FuturesBalance): string {
+export function formatBalanceCard(provider: string, bal: FuturesBalance, irtRate = 74500): string {
+  const totalNum = Number(bal.total || 0);
+  const toman = Math.round(totalNum * irtRate).toLocaleString('en-US');
+  const rial = Math.round(totalNum * irtRate * 10).toLocaleString('en-US');
   return (
-    `💳 موجودی حساب فیوچرز (${provider.toUpperCase()}):\n\n` +
+    `💳 موجودی حساب (${provider === 'paper' ? 'شبیه‌ساز دمو تراست‌ولت' : 'Trust Wallet Live'}):\n\n` +
     `Free: ${bal.free} ${bal.currency}\n` +
     `Used: ${bal.used} ${bal.currency}\n` +
-    `Total: ${bal.total} ${bal.currency}\n\n` +
+    `Total: ${bal.total} ${bal.currency}\n` +
+    `🇮🇷 معادل لحظه‌ای: **${toman} تومان** (${rial} ریال)\n` +
+    `📌 نرخ تتر ایران: ${Math.round(irtRate).toLocaleString('en-US')} تومان\n\n` +
     `🆔 ${OFFICIAL_CHANNEL_HANDLE}`
   );
 }
@@ -431,7 +450,7 @@ export function formatTradeClosedCard(params: {
   mode?: 'LIVE' | 'PAPER';
 }) {
   const win = params.pnlUsd >= 0;
-  const header = win ? 'تبریک میگم 🤑' : 'ضرر هم جزئی از بازار🥲';
+  const header = win ? 'تبریک میگم 🤑' : 'بسته‌شدن معامله با مدیریت ریسک 🛡';
   const entryTime = formatIranDateTime(params.openedAt);
   const exitTime = formatIranDateTime(params.closedAt ?? new Date().toISOString());
   const engineName = resolveEngineDisplayLabel(params.engineKey, params.engineLabel);
@@ -457,7 +476,7 @@ export function formatTradeClosedCard(params: {
     `🏁 تایم خروج: ${exitTime}\n` +
     `📥 قیمت ورود: ${params.entryPrice}\n` +
     `📤 قیمت خروج: ${params.exitPrice}\n` +
-    `${win ? '🟢 سود خالص' : '🔴 زیان خالص'}: ${signPnl} (${signPct})\n` +
+    `${win ? '🟢 سود خالص' : '🛡 نتیجه خالص'}: ${signPnl} (${signPct})\n` +
     `🎯 وضعیت تارگت‌ها: ${tpSummary}\n` +
     `${trailSummary}\n` +
     `📌 نتیجه: ${params.reason}\n\n` +
@@ -489,25 +508,26 @@ export function formatAccountCard(params: {
   totalPnl: number;
 }): string {
   const walletToman = formatToman(params.walletUsdt, params.tomanRate);
+  const walletRial = formatRial(params.walletUsdt, params.tomanRate * 10);
   const shortTw = params.trustWalletAddress
     ? `${params.trustWalletAddress.slice(0, 6)}...${params.trustWalletAddress.slice(-4)}`
-    : 'متصل نشده (از منوی Trust Wallet متصل کنید)';
+    : 'متصل نشده (از دکمه Trust Wallet متصل کنید)';
   return (
-    `👤 اطلاعات حساب کاربری دلارینو\n\n` +
+    `👤 اطلاعات حساب کاربری دلارینو (Trust Wallet Only)\n\n` +
     `👤 نام: ${params.username}\n` +
     `📱 شماره تماس احرازشده: ${params.phoneVerified && params.phoneNumber ? `${params.phoneNumber} ✅` : 'تایید نشده'}\n` +
-    `🦊 کیف‌پول Trust Wallet: ${shortTw}\n` +
+    `🛡 کیف‌پول Trust Wallet: ${shortTw}\n` +
     `🎛 حالت رابط ربات: ${params.uiMode === 'pro' ? 'حالت حرفه‌ای ⚡' : 'حالت ساده 🌱'}\n` +
     `🆔 آیدی عددی: ${params.telegramId}\n` +
     `📧 حساب وب: ${params.email.endsWith('.local') ? 'ورود با تلگرام (از دکمه ورود سریع استفاده کنید)' : params.email}\n` +
-    `💰 موجودی کیف پول: ${params.walletUsdt.toFixed(2)} USDT (${walletToman} تومان)\n\n` +
-    `💎 اشتراک فعلی: ${params.planNameFa}\n` +
-    (params.hasPaidPlan
-      ? `📅 تاریخ شروع: ${formatIranDateTime(params.subStart)}\n⏳ تاریخ پایان: ${formatIranDateTime(params.subEnd)} (${params.daysRemaining} روز باقیمانده)\n\n`
-      : `⏳ برای دسترسی کامل به لایو، DEX و کپی‌ترید، اشتراک تهیه کنید.\n\n`) +
+    `💰 موجودی کل: $${params.walletUsdt.toFixed(2)} | ${walletToman} تومان (${walletRial} ریال)\n` +
+    `🌐 نرخ لحظه‌ای تتر ایران: ${Math.round(params.tomanRate).toLocaleString('en-US')} تومان\n\n` +
+    `✅ دسترسی پلتفرم: **۱۰۰٪ رایگان بدون اشتراک ماهانه**\n` +
+    `💎 مدل هزینه سرور: **شبیه‌ساز دمو $۰ رایگان · کارمزد ۵٪ فقط از سود معاملات واقعی**\n` +
+    `📌 حداقل موجودی حساب واقعی: **$10 USD** (دمو $10,000 همیشه رایگان)\n\n` +
     `⚙️ حالت معامله: ${params.tradingMode} | ${params.execMode === 'AUTO' ? 'اتوترید 🤖' : 'دستی ترید 💪'}\n` +
     `📊 معاملات بسته: ${params.totalTrades} (برد: ${params.wins})\n` +
-    `📈 سود/ضرر خالص: ${params.totalPnl >= 0 ? '+' : '-'}$${Math.abs(params.totalPnl).toFixed(2)}\n\n` +
+    `📈 نتیجه خالص: ${params.totalPnl >= 0 ? '+' : '-'}$${Math.abs(params.totalPnl).toFixed(2)}\n\n` +
     `${ANTI_SCAM_WARNING_FA}`
   );
 }

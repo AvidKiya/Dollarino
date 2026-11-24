@@ -9,7 +9,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
   const tutorials = isFa
     ? [
         {
-          img: '/images/smart-wallet-radar.png',
+          img: '/images/smart-wallet-radar.webp',
           badge: 'آموزش ۱ · کپی‌ترید هوشمند ولت‌ها V2',
           title: 'شکار نهنگ‌ها، باکس مارجین ایزوله و خزانه ۲۴/۷',
           steps: [
@@ -19,7 +19,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
           ],
         },
         {
-          img: '/images/antirug-shield-dapp.png',
+          img: '/images/antirug-shield-dapp.webp',
           badge: 'آموزش ۲ · سپر ضدراگ و Multi-DApp Trust Wallet',
           title: 'بررسی قرارداد توکن و سوآپ مستقیم در صرافی‌های DEX',
           steps: [
@@ -29,7 +29,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
           ],
         },
         {
-          img: '/images/my-ai-brain.png',
+          img: '/images/my-ai-brain.webp',
           badge: 'آموزش ۳ · ۴ موتور معاملاتی + چت AI و چارت',
           title: 'هوش مصنوعی دلارینو، هوش مصنوعی من و استراتژی شکار',
           steps: [
@@ -39,39 +39,59 @@ export function FaqPage({ lang }: { lang: Lang }) {
           ],
         },
         {
-          img: '/images/exchange-api-hub.png',
-          badge: 'آموزش ۴ · اتصال صرافی، اشتراک و کارت سود',
-          title: 'اتصال Toobit / Bitunix / KCEX و صدور کارت سود تاییدشده',
+          img: '/images/trust-wallet-connect-banner.webp',
+          badge: 'آموزش ۴ · اتصال Trust Wallet و کارت سود',
+          title: 'اتصال Trust Wallet، شبیه‌ساز دمو $۱۰K و صدور کارت سود تاییدشده',
           steps: [
-            '۱. کلید API صرافی را فقط با دسترسی معامله (بدون مجوز برداشت) ثبت کنید؛ رمزنگاری AES-256 تضمین‌شده است.',
-            '۲. با ثبت TXID واریز تتر TRC20 در صفحه اشتراک، اکانت شما به‌صورت خودکار و آن‌چین فعال می‌شود.',
-            '۳. از تمام معاملات CEX و کپی‌ترید V2 می‌توانید کارت سود تاییدشده PNG بگیرید و با شناسه اختصاصی در تلگرام به اشتراک بگذارید.',
+            '۱. کیف‌پول Trust Wallet را با امضای استاندارد Web3 وصل کنید یا با شبیه‌ساز دمو $۱۰,۰۰۰ شبیه تراست‌ولت رایگان تمرین کنید.',
+            '۲. حالت دلخواه را انتخاب کنید: «تایید دستی» (امضای خودتان در تراست‌ولت) یا «تمام‌اتوترید ۲۴/۷» با Agent Key و Copy-Vault.',
+            '۳. از تمام معاملات Perp DEX، کپی‌ترید V2 و شبیه‌ساز می‌توانید کارت سود تاییدشده PNG بگیرید و با شناسه اختصاصی در تلگرام به اشتراک بگذارید.',
+          ],
+        },
+        {
+          img: '/images/referral-invite-banner.png?v=105',
+          badge: 'آموزش ۵ · باشگاه دعوت و اعتبار پیش‌پرداخت کارمزد ۵٪',
+          title: 'ساخت بنر اختصاصی دعوت و کسب اعتبار کارمزد بدون اشتراک',
+          steps: [
+            '۱. از بخش «کارمزد ۵٪ و دعوت دوستان»، بنر اختصاصی با کد معرف خود را دانلود کنید یا متن دعوت آماده را برای دوستان واقعی بفرستید.',
+            '۲. پاداش رفرال نقدی و قابل برداشت نیست؛ تمام پاداش (+۲ دلار شما، +۱ دلار دوستتان و +۲۰٪ سهم اعتبار سود) به اعتبار کارمزد ۵٪ اضافه می‌شود.',
+            '۳. برای جلوگیری از حساب‌های فیک، پاداش تنها زمانی آزاد می‌شود که دوست شما ولت غیرتکراری با حداقل ۱۰ دلار موجودی و حداقل یک ترید واقعی انجام دهد.',
+          ],
+        },
+        {
+          img: '/images/hero-quant-desk.webp',
+          badge: 'آموزش ۶ · فیوچرز ۱۰۰x آن‌چین و مدیریت ریسک هوشمند',
+          title: 'ترید Hyperliquid Perp DEX، آلرت TradingView و کنترل سرمایه',
+          steps: [
+            '۱. در بخش ترمینال یا DEX، هرگز بیش از ۱ تا ۳ درصد کل سرمایه را روی یک معامله ریسک نکنید و برای شروع از اهرم ۲x تا ۵x استفاده کنید.',
+            '۲. از بخش «آلرت‌های رایگان TradingView» برای ساخت هشدارهای SuperTrend، Ichimoku، RSI و اتصال وب‌هوک بدون نیاز به اکانت پولی استفاده کنید.',
+            '۳. همیشه حد ضرر (Stop-Loss) و Break-Even خودکار را فعال نگه دارید و از ربودن احساسات در نوسانات شدید دوری کنید.',
           ],
         },
       ]
     : [
         {
-          img: '/images/smart-wallet-radar.png',
+          img: '/images/smart-wallet-radar.webp',
           badge: 'GUIDE 1 · SMART WALLET COPY V2',
           title: 'Top-10 Smart Money, Isolated Margin Boxes & 24/7 Copy-Vault',
           steps: [
             '1. On Copy-Trade Hub V2, select from the Top-10 leaderboard or add any custom wallet (strictly copies new positions opened after follow time).',
             '2. Configure each trader’s isolated margin box, daily loss limit, TP1/2/3 + Moonbag, SL, Trailing & Break-Even, then run the 7-day backtest.',
-            '3. Pick Trust 1-Click (user-signed) or 24/7 Copy-Vault (automated Solana Jupiter execution with password-verified private key backup).',
+            '3. Pick Manual Trust Wallet Approval or 24/7 Auto Copy-Vault (automated execution with password-verified private key backup).',
           ],
         },
         {
-          img: '/images/antirug-shield-dapp.png',
+          img: '/images/antirug-shield-dapp.webp',
           badge: 'GUIDE 2 · ANTI-RUG & TRUST MULTI-DAPP',
           title: '3-Source Contract Safety & All-Chain DEX Routing',
           steps: [
             '1. On the DEX & Trust Wallet page, click "Multi-DApp + Safety" on any token card.',
-            '2. Review real GoPlus + Honeypot.is + RugCheck safety scores (0–95), buy/sell taxes, mint authority & LP flags.',
+            '2. Review real GoPlus + Honeypot.is + RugCheck safety scores (0–95), buy/sell taxes, token age & LP lock flags.',
             '3. Launch Jupiter, Raydium, Uniswap, PancakeSwap, 1inch, STON.fi, SunSwap or Cetus directly inside Trust Wallet DApp Browser.',
           ],
         },
         {
-          img: '/images/my-ai-brain.png',
+          img: '/images/my-ai-brain.webp',
           badge: 'GUIDE 3 · 4 ENGINES & VISION AI',
           title: 'Auto AI, My Trainable AI, Dorna V1 & Vision Chart AI',
           steps: [
@@ -81,13 +101,33 @@ export function FaqPage({ lang }: { lang: Lang }) {
           ],
         },
         {
-          img: '/images/exchange-api-hub.png',
-          badge: 'GUIDE 4 · CEX API, TRC20 & PROFIT CARDS',
-          title: 'Connect Toobit / Bitunix / KCEX & Verified Profit Cards',
+          img: '/images/trust-wallet-connect-banner.webp',
+          badge: 'GUIDE 4 · TRUST WALLET, 24/7 AUTO & PROFIT CARDS',
+          title: 'Connect Trust Wallet, $10K Demo Simulator & Verified Profit Cards',
           steps: [
-            '1. Bind Trade-Only exchange API keys (withdrawal scope disabled) encrypted with AES-256.',
-            '2. Submit any TRC20 TXID on the Subscription page for instant on-chain activation.',
-            '3. Issue watermarked Verified PnL PNG Cards from both CEX trades and Copy-Trade V2 positions.',
+            '1. Connect your self-custody Trust Wallet via Web3 signature or practice with the $10,000 Trust Wallet Demo Simulator.',
+            '2. Switch anytime between Manual Approval (you confirm trades) and 24/7 Autonomous Auto-Trade (Agent Key + Copy-Vault).',
+            '3. Issue watermarked Verified PnL PNG Cards from Perp DEX, Simulator and Copy-Trade V2 positions.',
+          ],
+        },
+        {
+          img: '/images/referral-invite-banner.png?v=105',
+          badge: 'GUIDE 5 · NON-WITHDRAWABLE REFERRAL FEE CREDITS',
+          title: 'Invite Real Traders & Offset Your 5% Profit Fees',
+          steps: [
+            '1. Download your personalized invite banner PNG or copy the ready-to-share invite link & message from the 5% Fee & Referral Hub.',
+            '2. Referral rewards are non-withdrawable and go directly to your Prepaid 5% Profit-Fee Credit (+$2 for you, +$1 for your friend, +20% fee-credit share).',
+            '3. Anti-abuse verification unlocks rewards strictly when your friend connects a unique Trust Wallet with >= $10 real balance and executes a real LIVE trade.',
+          ],
+        },
+        {
+          img: '/images/hero-quant-desk.webp',
+          badge: 'GUIDE 6 · RISK CONTROL, HYPERLIQUID PERPS & FREE TV ALERTS',
+          title: '1–3% Position Sizing, Stop-Loss & Free Cloud Indicators',
+          steps: [
+            '1. Risk 1–3% per trade, keep Stop-Loss and automatic Break-Even active, and start with 2x–5x leverage on Hyperliquid Perp DEX.',
+            '2. Build custom SuperTrend, Ichimoku, RSI & MACD alerts inside Free TradingView Radar with personal webhook routing.',
+            '3. Always verify token safety with Anti-Rug Shield before manual or automated DEX swaps.',
           ],
         },
       ];
@@ -119,20 +159,28 @@ export function FaqPage({ lang }: { lang: Lang }) {
           'کارت سود در بازه‌های ۷ روزه، ۳۰ روزه و یک‌ساله (و همچنین برای هر پوزیشن کپی‌ترید V2) با خروجی PNG رسمی، واترمارک دلارینو و مهر بزرگ «حساب واقعی / حساب دمو» صادر می‌شود و هر فرد با شناسه تأیید می‌تواند اصالت آن را در سایت بررسی کند. هنگام بسته شدن هر سیگنال نیز کارت رسمی نتیجه معامله همراه با TP1/TP2/TP3 و Trailing SL در کانال رسمی و ربات ارسال می‌شود.',
         ],
         [
-          'خرید اشتراک با تتر TRC20 و دعوت دوستان چطور انجام می‌شود؟',
-          'پس از واریز مبلغ اشتراک به آدرس TRC20 داخل صفحه اشتراک، کافی است لینک یا هش TXID را ثبت کنید تا سیستم از طریق شبکه TRON تراکنش را بررسی و اشتراک شما را خودکار فعال کند. همچنین با لینک اختصاصی دعوت دوستان (یا کد ?ref= هنگام ثبت‌نام)، پاداش معرفی روی کیف پول و اشتراک شما منظور می‌شود.',
+          'هزینه اشتراک و کارمزد ۵٪ از سود واقعی چطور محاسبه می‌شود؟',
+          'دلارینو هیچ اشتراک ماهانه‌ای ندارد و ۱۰۰٪ امکانات (شامل شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری و تمام اندیکاتورها) کاملاً رایگان است! در معاملات واقعی Trust Wallet، ۹۵٪ سود متعلق به خود شماست و فقط ۵٪ از سود واقعی به‌عنوان هزینه سرور محاسبه می‌گردد.',
+        ],
+        [
+          'آیا می‌توانم با کمتر از ۱۰ دلار در Trust Wallet ترید واقعی انجام دهم؟',
+          'حداقل موجودی موردنیاز برای باز کردن معامله واقعی در حالت Trust Wallet Live مبلغ ۱۰ دلار آمریکا است تا کارمزد شبکه باعث سوخت سرمایه کوچک نشود. با موجودی کمتر یا بدون کیف‌پول، همیشه می‌توانید از شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان استفاده کنید.',
+        ],
+        [
+          'آیا برای آلرت اندیکاتورهای TradingView نیاز به اکانت پولی تریدینگ‌ویو دارم؟',
+          'خیر! در بخش رادار دلارینو (آلرت رایگان TradingView) بیش از ۲۵ اندیکاتور استاندارد (SuperTrend، Ichimoku، RSI، MACD، Bollinger، Keltner، ADX، VWAP و...) همراه با لینک وب‌هوک اختصاصی به صورت کاملاً رایگان در اختیار شماست و هر ۵ دقیقه روی کلود بررسی و در تلگرام یا ربات اجرا می‌شود.',
         ],
         [
           'کانال و ربات رسمی دلارینو کدامند و چطور از کلاهبرداری در امان بمانیم؟',
           'تنها کانال رسمی دلارینو @Dollarino_official و تنها ربات و پشتیبانی رسمی @Dollarino_bot (و تیکت آنلاین داخل همین وب‌اپ) هستند. دلارینو هیچ آیدی پشتیبانی متفرقه یا ادمینی که اول پیام بدهد ندارد و هرگز کلید خصوصی کیف‌پول شخصی یا دسترسی برداشت صرافی را نمی‌خواهد.',
         ],
         [
-          'تفاوت فیوچرز صرافی (Toobit / Bitunix / KCEX) با فیوچرز کیف‌پول (Perp DEX مثل Hyperliquid) چیست؟',
-          'در فیوچرز صرافی، معاملات با کلید API ترید (بدون دسترسی برداشت) داخل حساب صرافی شما اجرا می‌شوند و از تمام ربات‌ها، هوش مصنوعی و استاپ‌لاس خودکار پشتیبانی می‌کنند. اما در بخش Perp DEX (صفحه DEX و تراست‌ولت ← تب فیوچرز کیف‌پول)، شما مستقیماً از کیف‌پول شخصی خودتان روی Hyperliquid، Jupiter Perps، GMX V2 یا dYdX بدون احراز هویت (No-KYC) و با حضانت کامل خودتان معامله اهرم‌دار باز می‌کنید.',
+          'تفاوت «تایید دستی» و «تمام‌اتوترید ۲۴/۷» روی Trust Wallet چیست؟',
+          'در حالت «تایید دستی»، ربات سیگنال‌ها را پیدا می‌کند و برای ورود یا برداشت سود از شما در Trust Wallet تایید امضا می‌گیرد. اما در حالت «تمام‌اتوترید ۲۴/۷»، با فعال‌سازی Agent Key (روی Hyperliquid Perp DEX) و Copy-Vault، معاملات بدون نیاز به تایید دستی شما به‌صورت خودکار ۲۴ ساعته اجرا و با ۳ تارگت و حد ضرر مدیریت می‌شوند.',
         ],
         [
-          'آیا سرمایه من در صرافی‌های Toobit، Bitunix و KCEX امن است؟',
-          'بله، سرمایه شما در حساب صرافی خودتان می‌ماند. کلیدهای API با استاندارد AES-256 رمزنگاری می‌شوند و تنها دسترسی معامله (بدون مجوز برداشت) نیاز دارند.',
+          'آیا سرمایه من در Trust Wallet و شبیه‌ساز دمو امن است؟',
+          'بله؛ سرمایه واقعی شما هرگز از کیف‌پول غیرامانی Trust Wallet خارج نمی‌شود و دلارینو هیچ نیازی به عبارت بازیابی (Seed Phrase) شما ندارد. علاوه بر این، همیشه یک حساب شبیه‌ساز $۱۰,۰۰۰ شبیه تراست‌ولت برای تست استراتژی‌ها در اختیار دارید.',
         ],
         [
           'طراح، توسعه‌دهنده و سازنده پلتفرم دلارینو کیست؟',
@@ -161,20 +209,20 @@ export function FaqPage({ lang }: { lang: Lang }) {
           'Generate official 16:9 or 3:4 PNG Profit Cards (7D, 30D, 1Y, plus Copy-Trade V2 positions) with watermarked Dollarino branding, a bold LIVE vs DEMO stamp, and cryptographic verification IDs.',
         ],
         [
-          'What is the difference between Exchange Futures (CEX) and Wallet Futures (Perp DEX)?',
-          'Exchange Futures (Toobit / Bitunix / KCEX) execute automated bots via trade-only API keys inside your CEX account. Wallet Futures (Perp DEX like Hyperliquid, Jupiter Perps, GMX V2 & dYdX) let you trade leveraged perpetuals directly from your self-custody wallet with zero KYC.',
+          'What is the difference between Manual Approval and 24/7 Autonomous Auto-Trade on Trust Wallet?',
+          'In Manual Approval mode, Dollarino prepares verified setups and waits for your wallet confirmation before signing. In 24/7 Full Auto-Trade mode, your scoped Agent Key (Hyperliquid Perp DEX) and encrypted Copy-Vault execute entries, trailing SL and 3-step TP automatically 24/7 with zero withdrawal permissions.',
         ],
         [
-          'How do TRC20 auto-verification and referrals work?',
-          'Paste your TRC20 TXID or TronScan link on the Subscription page for instant on-chain verification. Share your referral link (?ref=CODE) so invited users earn rewards upon signup and subscription.',
+          'How does the 5% profit fee and Non-Withdrawable Referral Fee-Credit system work?',
+          'Dollarino charges $0 monthly subscriptions and makes the $10,000 Demo Simulator 100% free. On real Trust Wallet trades, you keep 95% of net profit and pay a 5% server-cost fee strictly on profitable closes. Referral bonuses (+$2 referrer / +$1 friend + 20% fee-credit share) are strictly non-withdrawable and automatically pay your 5% profit fees once your invited friend holds >= $10 real balance on a unique wallet and executes a real LIVE trade.',
         ],
         [
           'Which handles are official and how do I stay safe from impersonators?',
-          'Our ONLY official bot & support handle is @Dollarino_bot and our official channel is @Dollarino_official (plus the in-app Online Support modal). Dollarino staff never DM you first or ask for withdrawal scopes.',
+          'Our ONLY official bot & support handle is @Dollarino_bot and our official channel is @Dollarino_official (plus the in-app Online Support modal). Dollarino staff never DM you first or ask for seed phrases.',
         ],
         [
-          'Are my exchange funds safe?',
-          'Yes. Funds never leave your Toobit, Bitunix, or KCEX account. API credentials are encrypted with AES-256 and require Trade-Only access with zero withdrawal scope.',
+          'Are my Trust Wallet funds safe?',
+          'Yes. Dollarino is non-custodial and never asks for your Trust Wallet seed phrase. Real funds remain under your wallet custody, and a free $10,000 Trust Wallet Simulator is built in for risk-free strategy testing.',
         ],
       ];
 
@@ -189,8 +237,8 @@ export function FaqPage({ lang }: { lang: Lang }) {
         </h2>
         <p className="text-xs text-dim mt-1">
           {isFa
-            ? 'آموزش کامل کپی‌ترید هوشمند ولت‌ها V2، سپر ضدراگ، Trust Wallet Multi-DApp، هوش مصنوعی من و اتصال صرافی‌ها.'
-            : 'Complete walkthrough of Smart Copy-Trading V2, Anti-Rug Shield, Trust Wallet Multi-DApp, My AI & CEX integration.'}
+            ? 'آموزش کامل اتصال چندزنجیره‌ای Trust Wallet، شبیه‌ساز دمو $10K، حالت ۲۴/۷ اتوترید، کپی‌ترید V2 و سپر ضدراگ.'
+            : 'Complete walkthrough of Trust Wallet Multi-Chain, $10K Demo Simulator, 24/7 Auto-Trade, Smart Copy V2 & Anti-Rug Shield.'}
         </p>
       </div>
 

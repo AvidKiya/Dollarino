@@ -42,6 +42,7 @@ import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import type { AuthUserInfo, EntitlementSummary, NavTab } from '../lib/types';
 import type { LookId } from './AppearanceModal';
 import { DollarinoBrandMark } from './BrandGraphics';
+import { WalletLogo } from './BrandLogos';
 import { CoinIcon } from './CoinIcon';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from './ConfirmTradeSheet';
 import type { ExchangeMarket } from './SymbolPickerModal';
@@ -54,11 +55,10 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 }
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
-  { id: 'overview', labelFa: 'ترید هوشمند AI', labelEn: 'Automated AI Trading', icon: Home },
-  { id: 'copy', labelFa: 'کپی‌ترید تاییدشده', labelEn: 'Copy Trade', icon: Users },
-  { id: 'portfolio', labelFa: 'کیف پول و سودها', labelEn: 'Wallet & Profit', icon: Wallet },
-  { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
-  { id: 'services', labelFa: 'پروفایل و خدمات', labelEn: 'Profile & Services', icon: LayoutGrid },
+  { id: 'overview', labelFa: 'خانه و ربات خودکار', labelEn: 'Home & Auto Bot', icon: Home },
+  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet', labelEn: 'Trust Wallet', icon: Flame },
+  { id: 'copy', labelFa: 'کپی از حرفه‌ای‌ها', labelEn: 'Copy Top Traders', icon: Users },
+  { id: 'pricing', labelFa: 'کارمزد ۵٪ و دعوت دوستان', labelEn: '5% Fee & Referrals', icon: CreditCard },
 ];
 
 const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
@@ -71,8 +71,8 @@ const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; i
 ];
 
 const PRO_WALLET_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
-  { id: 'copy', labelFa: 'کپی‌ترید و اتصال API', labelEn: 'Copy Trade & API', icon: Users },
-  { id: 'dex', labelFa: 'تراست‌والت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
+  { id: 'copy', labelFa: 'کپی‌ترید و Trust Wallet', labelEn: 'Copy & Trust Wallet', icon: Users },
+  { id: 'dex', labelFa: 'تراست‌ولت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
   { id: 'portfolio', labelFa: 'پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
   { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
 ];
@@ -80,7 +80,7 @@ const PRO_WALLET_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; ic
 const MAIN_VIEWS = [...PRO_TRADING_VIEWS, ...PRO_WALLET_VIEWS];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
-  { id: 'pricing', labelFa: 'اشتراک‌ها و کد هدیه', labelEn: 'Subscriptions', icon: CreditCard },
+  { id: 'pricing', labelFa: 'کارمزد ۵٪ سود (رایگان)', labelEn: '5% Profit Fee (Free)', icon: CreditCard },
   { id: 'faq', labelFa: 'راهنما و سوالات', labelEn: 'FAQ & Guide', icon: CircleHelp },
 ];
 
@@ -438,6 +438,7 @@ export function Layout({
   onRefresh,
   onGoLanding,
   onOpenSupport,
+  onOpenAcademy,
   onLogout,
   children,
 }: {
@@ -465,6 +466,7 @@ export function Layout({
   onRefresh?: () => Promise<void>;
   onGoLanding?: () => void;
   onOpenSupport?: () => void;
+  onOpenAcademy?: () => void;
   onLogout: () => Promise<void>;
   children: ReactNode;
 }) {
@@ -523,6 +525,7 @@ export function Layout({
         setPaletteOpen((v) => !v);
       }
       if (e.key === 'Escape') {
+        setDrawerOpen(false);
         setPaletteOpen(false);
         setQtOpen(false);
         setPendingConfirm(null);
@@ -555,7 +558,9 @@ export function Layout({
   const selectTab = (id: NavTab) => {
     tgHaptic('light');
     setActiveTab(id);
-    setDrawerOpen(false);
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setDrawerOpen(false);
+    }
     setPaletteOpen(false);
     setPaletteQ('');
   };
@@ -687,7 +692,8 @@ export function Layout({
           <button
             type="button"
             onClick={() => setDrawerOpen(false)}
-            className="ms-auto lg:hidden h-9 w-9 grid place-items-center rounded-full btn-ghost"
+            aria-label={isFa ? 'بستن منو' : 'Close menu'}
+            className="ms-auto h-9 w-9 grid place-items-center rounded-full btn-ghost shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -740,8 +746,8 @@ export function Layout({
             </div>
             <p className="text-[11px] text-dim leading-relaxed">
               {isFa
-                ? 'چارت کندلی، رادار، بک‌تستر، کپی‌ترید و اتصال API صرافی'
-                : 'Charts, Radar, Backtester, Copy-Trade & API Keys'}
+                ? 'چارت کندلی، رادار، بک‌تستر، کپی‌ترید V2 و اتصال چندزنجیره‌ای Trust Wallet'
+                : 'Charts, Radar, Backtester, Smart Copy V2 & Trust Wallet'}
             </p>
           </button>
 
@@ -754,17 +760,15 @@ export function Layout({
               }`}
             >
               <CreditCard className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{isFa ? 'اشتراک' : 'Plans'}</span>
+              <span className="truncate">{isFa ? 'کارمزد ۵٪ سود' : '5% Fee Ledger'}</span>
             </button>
             <button
               type="button"
-              onClick={() => selectTab('faq')}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold transition ${
-                activeTab === 'faq' ? 'ios-pill-active' : 'surface-soft text-dim hover:text-main'
-              }`}
+              onClick={() => (onOpenAcademy ? onOpenAcademy() : selectTab('faq'))}
+              className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold surface-soft text-dim hover:text-main transition"
             >
-              <CircleHelp className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{isFa ? 'راهنما' : 'Guide'}</span>
+              <CircleHelp className="w-3.5 h-3.5 shrink-0 text-[#0D47A1] dark:text-[#60A5FA]" />
+              <span className="truncate">{isFa ? 'آموزش ساده' : 'Academy'}</span>
             </button>
           </div>
 
@@ -925,11 +929,7 @@ export function Layout({
             </p>
           </div>
           <p className="text-[10px] text-dim truncate">
-            {entitlement?.hasPaidPlan
-              ? `${isFa ? entitlement.planNameFa : entitlement.planNameEn}`
-              : isFa
-                ? 'نیازمند اشتراک فعال'
-                : 'Subscription Required'}
+            {isFa ? '۱۰۰٪ رایگان · کارمزد ۵٪ فقط از سود واقعی' : 'Free Platform · 5% Live Profit Fee Only'}
           </p>
           <button
             type="button"
@@ -993,47 +993,224 @@ export function Layout({
     </div>
   );
 
-  return (
-    <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell flex flex-col overflow-x-hidden max-w-full">
-      <div className="flex-1 flex min-w-0">
-        <aside
-          className="hidden lg:flex w-[272px] shrink-0 border-e border-[var(--glass-border)] p-4 flex-col sticky top-0 h-screen overflow-y-auto backdrop-blur-2xl"
-          style={{ background: 'var(--panel-translucent)' }}
+  const renderCompactRailBody = () => {
+    const items = uiMode === 'simple' ? SIMPLE_VIEWS : [...PRO_TRADING_VIEWS, ...PRO_WALLET_VIEWS];
+    return (
+      <div className="flex flex-col items-center h-full py-2 gap-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            tgHaptic('light');
+            setDrawerOpen(true);
+          }}
+          aria-label={isFa ? 'باز کردن منو' : 'Expand sidebar'}
+          title={isFa ? 'باز کردن منو' : 'Expand sidebar'}
+          className="h-10 w-10 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] text-main hover:brightness-95 transition shrink-0"
         >
-          {renderSidebarBody()}
+          <Menu className="w-4 h-4" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => selectTab('overview')}
+          title="Dollarino"
+          className="my-1 p-1 rounded-xl hover:scale-105 transition shrink-0"
+        >
+          <DollarinoCoinMark size={34} />
+        </button>
+
+        <div className="flex-1 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-1 py-1">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const on = activeTab === item.id;
+            const lbl = isFa ? item.labelFa : item.labelEn;
+            const badge = item.id === 'radar' ? recentSignalsCount : item.id === 'terminal' ? openTradesCount : 0;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectTab(item.id)}
+                title={lbl}
+                aria-label={lbl}
+                className={`relative h-10 w-10 grid place-items-center rounded-xl transition shrink-0 ${
+                  on
+                    ? 'ios-pill-active text-white shadow-sm'
+                    : 'text-dim hover:text-main hover:bg-[var(--soft)]'
+                }`}
+              >
+                <Icon className="w-[18px] h-[18px]" />
+                {badge > 0 && (
+                  <span className="absolute top-1 end-1 h-2 w-2 rounded-full bg-jade ring-1 ring-[var(--bg-surface)]" />
+                )}
+              </button>
+            );
+          })}
+
+          {uiMode === 'pro' && (
+            <>
+              <button
+                type="button"
+                onClick={() => selectTab('card')}
+                title={isFa ? 'کارت سود' : 'Profit Card'}
+                aria-label={isFa ? 'کارت سود' : 'Profit Card'}
+                className={`h-10 w-10 grid place-items-center rounded-xl transition shrink-0 ${
+                  activeTab === 'card' ? 'ios-pill-active text-white' : 'text-dim hover:text-main hover:bg-[var(--soft)]'
+                }`}
+              >
+                <Image className="w-[18px] h-[18px]" />
+              </button>
+              {ACCOUNT_VIEWS.map((item) => {
+                const Icon = item.icon;
+                const on = activeTab === item.id;
+                const lbl = isFa ? item.labelFa : item.labelEn;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => selectTab(item.id)}
+                    title={lbl}
+                    aria-label={lbl}
+                    className={`h-10 w-10 grid place-items-center rounded-xl transition shrink-0 ${
+                      on ? 'ios-pill-active text-white' : 'text-dim hover:text-main hover:bg-[var(--soft)]'
+                    }`}
+                  >
+                    <Icon className="w-[18px] h-[18px]" />
+                  </button>
+                );
+              })}
+            </>
+          )}
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => selectTab('admin')}
+              title={isFa ? 'پنل مدیریت' : 'Admin'}
+              aria-label={isFa ? 'پنل مدیریت' : 'Admin'}
+              className={`h-10 w-10 grid place-items-center rounded-xl transition shrink-0 ${
+                activeTab === 'admin' ? 'btn-gold' : 'text-flame hover:bg-[#FF8200]/10'
+              }`}
+            >
+              <Shield className="w-[18px] h-[18px]" />
+            </button>
+          )}
+        </div>
+
+        <div className="pt-2 border-t hairline w-full flex flex-col items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={toggleDayNight}
+            title={currentLook === 'paper' ? (isFa ? 'حالت شب' : 'Night') : isFa ? 'حالت روز' : 'Day'}
+            aria-label={isFa ? 'تغییر تم' : 'Toggle theme'}
+            className="h-9 w-9 grid place-items-center rounded-xl surface-soft text-main hover:brightness-95 transition"
+          >
+            {currentLook === 'paper' ? <Moon className="w-4 h-4 text-[var(--gold)]" /> : <Sun className="w-4 h-4 text-[#F59E0B]" />}
+          </button>
+
+          {onOpenSupport && (
+            <button
+              type="button"
+              onClick={onOpenSupport}
+              title={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
+              aria-label={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
+              className="h-9 w-9 grid place-items-center rounded-xl surface-soft text-jade hover:brightness-95 transition"
+            >
+              <Headphones className="w-4 h-4" />
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void onLogout()}
+            title={isFa ? 'خروج' : 'Sign Out'}
+            aria-label={isFa ? 'خروج' : 'Sign Out'}
+            className="h-9 w-9 grid place-items-center rounded-xl text-dim hover:text-loss hover:bg-rose-500/10 transition"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell flex flex-col overflow-x-clip max-w-full">
+      <div className="flex-1 flex min-w-0">
+        {/* Desktop ChatGPT-Style Sticky Collapsible Push Sidebar (NO backdrop blur — site stays 100% interactive!) */}
+        <aside
+          className={`hidden lg:flex flex-col sticky top-0 h-[100dvh] shrink-0 border-e border-[var(--glass-border)] backdrop-blur-2xl transition-[width] duration-300 ease-out z-30 ${
+            drawerOpen ? 'w-[272px] p-4 overflow-y-auto' : 'w-[68px] px-1.5 py-2 overflow-hidden'
+          }`}
+          style={{ background: 'var(--bg-surface)' }}
+        >
+          {drawerOpen ? renderSidebarBody(true) : renderCompactRailBody()}
         </aside>
 
-        {drawerOpen && (
-          <div className="fixed inset-0 z-50 lg:hidden bg-black/70 backdrop-blur-sm flex" onClick={() => setDrawerOpen(false)}>
-            <div
-              className="w-72 max-w-[85vw] h-full p-5 bg-[var(--bg-surface)] border-e hairline overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {renderSidebarBody(true)}
-            </div>
-          </div>
-        )}
+        {/* Mobile Slide-Over Drawer (light transparent scrim only on mobile — no heavy blur dimming) */}
+        <div
+          className={`lg:hidden fixed inset-0 z-50 transition-opacity duration-300 ${
+            drawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
+          aria-hidden={!drawerOpen}
+        >
+          <div
+            className="absolute inset-0 bg-black/25"
+            onClick={() => setDrawerOpen(false)}
+          />
+          <aside
+            className={`relative z-10 w-[284px] max-w-[86vw] h-full p-5 border-e border-[var(--glass-border)] overflow-y-auto backdrop-blur-2xl shadow-2xl transition-transform duration-300 ease-out ${
+              drawerOpen
+                ? 'translate-x-0'
+                : isFa
+                  ? 'translate-x-full'
+                  : '-translate-x-full'
+            }`}
+            style={{ background: 'var(--bg-surface)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {renderSidebarBody(true)}
+          </aside>
+        </div>
 
-        <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
-          {/* Unified Consistent Frosted Liquid-Glass Header (Clean & spacious on mobile) */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-x-clip">
+          {/* Unified Consistent Sticky Frosted Header (stays pinned at top as user scrolls) */}
           <header
-            className="sticky top-0 z-30 lg:backdrop-blur-2xl border-b border-[var(--glass-border)]"
+            className="sticky top-0 z-40 backdrop-blur-2xl border-b border-[var(--glass-border)]"
             style={{ background: 'var(--header-glass)' }}
           >
-            <div className="mx-auto max-w-7xl px-3 sm:px-6 py-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="mx-auto w-full max-w-[1440px] px-2.5 sm:px-5 py-2 flex items-center justify-between gap-1.5 sm:gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 min-w-0">
                 <button
                   type="button"
-                  onClick={() => setDrawerOpen(true)}
+                  onClick={() => {
+                    tgHaptic('light');
+                    setDrawerOpen((v) => !v);
+                  }}
                   aria-label="Menu"
-                  className="lg:hidden h-8 w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] shrink-0 hover:brightness-95 transition"
+                  aria-expanded={drawerOpen}
+                  title={isFa ? 'باز و بسته کردن منو' : 'Toggle Menu'}
+                  className={`lg:hidden h-8 w-8 sm:h-9 sm:w-9 grid place-items-center rounded-xl border shrink-0 transition ${
+                    drawerOpen
+                      ? 'bg-[#0D47A1] text-white border-[#0D47A1]'
+                      : 'bg-[var(--soft)] border-[var(--glass-border)] text-main hover:brightness-95'
+                  }`}
                 >
-                  <Menu className="w-4 h-4 text-main" />
+                  {drawerOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectTab('overview')}
+                  className="hidden md:flex lg:hidden items-center gap-2 text-start shrink-0"
+                >
+                  <DollarinoCoinMark size={28} />
+                  <span className="font-display font-black text-base text-main leading-none">
+                    Dollarino<span style={{ color: 'var(--gold-soft)' }}>.</span>
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => selectTab('services')}
-                  className="flex items-center gap-2 text-start group min-w-0"
+                  className="flex items-center gap-2 text-start group shrink-0"
                 >
                   <span className="hidden sm:grid h-8 w-8 rounded-full surface-soft place-items-center text-main font-display font-bold text-xs border border-[var(--glass-border)] shrink-0 overflow-hidden shadow-sm">
                     {user.avatar_url ? (
@@ -1049,12 +1226,12 @@ export function Layout({
                       user.username.slice(0, 1).toUpperCase()
                     )}
                   </span>
-                  <div className="leading-tight min-w-0">
+                  <div className="hidden sm:block leading-tight shrink-0">
                     <span className="flex items-center gap-1.5 text-[11px] font-bold text-main whitespace-nowrap">
                       <span className={`h-2 w-2 rounded-full shrink-0 ${isRunning ? 'bg-[#10B981] live-dot' : 'bg-slate-400'}`} />
-                      <span className="font-num truncate">{isFa ? getPersianToday() : clock}</span>
+                      <span className="font-num">{isFa ? getPersianToday() : clock}</span>
                     </span>
-                    <span className="text-[10px] text-dim hidden sm:inline truncate">{user.username}</span>
+                    <span className="text-[10px] text-dim block max-w-[120px] truncate">{user.username}</span>
                   </div>
                 </button>
               </div>
@@ -1063,17 +1240,30 @@ export function Layout({
                 <button
                   type="button"
                   onClick={() => setPaletteOpen(true)}
-                  className="hidden lg:flex flex-1 max-w-xs items-center gap-2.5 panel rounded-2xl px-3.5 py-1.5 text-[12px] text-dim hover:border-[var(--line-strong)] transition text-start"
+                  title={isFa ? 'جستجوی صفحه یا ارز (⌘K)' : 'Search views or coins (⌘K)'}
+                  className="hidden lg:flex items-center gap-2 panel rounded-xl px-2.5 2xl:px-3.5 py-1.5 text-[12px] text-dim hover:border-[var(--line-strong)] transition text-start shrink-0"
                 >
                   <Search className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{isFa ? 'جستجوی صفحه یا ارز...' : 'Search views or coins...'}</span>
-                  <kbd dir="ltr" className="ms-auto text-[9px] border hairline rounded px-1.5 py-0.5">
+                  <span className="hidden 2xl:inline truncate">{isFa ? 'جستجوی صفحه یا ارز...' : 'Search views or coins...'}</span>
+                  <kbd dir="ltr" className="text-[9px] border hairline rounded px-1.5 py-0.5">
                     ⌘K
                   </kbd>
                 </button>
               )}
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+                {onOpenAcademy && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenAcademy()}
+                    title={isFa ? 'آموزش گام‌به‌گام (خیلی ساده)' : 'Interactive Beginner Tutorial'}
+                    className="hidden sm:inline-flex h-8 px-2.5 items-center gap-1 rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition text-[11px] font-bold text-main shrink-0"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#F59E0B] shrink-0" />
+                    <span>{isFa ? 'آموزش' : 'Guide'}</span>
+                  </button>
+                )}
+
                 {renderModeSwitcher(true)}
 
                 {uiMode === 'pro' && (
@@ -1098,9 +1288,9 @@ export function Layout({
                   onClick={() => (onOpenSupport ? onOpenSupport() : selectTab('faq'))}
                   aria-label={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
                   title={isFa ? 'پشتیبانی آنلاین' : 'Online Support'}
-                  className="relative h-8 w-8 sm:w-auto sm:px-2.5 inline-flex items-center justify-center gap-1 rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition text-[11px] font-bold text-main shrink-0"
+                  className="relative h-7 w-7 sm:h-8 sm:w-auto sm:px-2.5 inline-flex items-center justify-center gap-1 rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition text-[11px] font-bold text-main shrink-0"
                 >
-                  <Headphones className="w-[15px] h-[15px] text-jade shrink-0" />
+                  <Headphones className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-jade shrink-0" />
                   <span className="hidden sm:inline">{isFa ? 'پشتیبانی' : 'Support'}</span>
                   <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)]" />
                 </button>
@@ -1116,9 +1306,9 @@ export function Layout({
                   }}
                   aria-label={isFa ? 'اعلان‌ها' : 'Notifications'}
                   title={isFa ? 'اعلان‌ها' : 'Notifications'}
-                  className="relative h-8 w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition shrink-0"
+                  className="relative h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition shrink-0"
                 >
-                  <Bell className="w-[15px] h-[15px] text-main" />
+                  <Bell className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-main" />
                   {unreadNotifs > 0 && (
                     <span className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-[#F59E0B] ring-2 ring-[var(--bg)]" />
                   )}
@@ -1129,12 +1319,12 @@ export function Layout({
                   onClick={toggleDayNight}
                   aria-label="Toggle day or night"
                   title={isFa ? 'حالت روز / شب' : 'Day / Night'}
-                  className="h-8 w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition shrink-0"
+                  className="h-7 w-7 sm:h-8 sm:w-8 grid place-items-center rounded-xl bg-[var(--soft)] border border-[var(--glass-border)] hover:brightness-95 transition shrink-0"
                 >
                   {currentLook === 'paper' ? (
-                    <Moon className="w-[15px] h-[15px] text-[var(--gold)]" />
+                    <Moon className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-[var(--gold)]" />
                   ) : (
-                    <Sun className="w-[15px] h-[15px] text-[#F59E0B]" />
+                    <Sun className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px] text-[#F59E0B]" />
                   )}
                 </button>
 
@@ -1171,6 +1361,55 @@ export function Layout({
                   <Power className="w-3.5 h-3.5" />
                   <span>{isRunning ? (isFa ? 'توقف ربات' : 'Stop') : isFa ? 'شروع ربات' : 'Start Bot'}</span>
                 </button>
+
+                {(() => {
+                  const twAddr =
+                    user.trust_wallet_address ||
+                    user.trust_wallet_tron ||
+                    user.trust_wallet_solana ||
+                    user.trust_wallet_ton;
+                  const shortTw = twAddr ? `${twAddr.slice(0, 5)}..${twAddr.slice(-4)}` : null;
+                  const tinyTw = twAddr ? `${twAddr.slice(0, 4)}..${twAddr.slice(-3)}` : null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => selectTab('dex')}
+                      data-testid="header-trust-wallet-btn"
+                      title={
+                        twAddr
+                          ? isFa
+                            ? `کیف‌پول Trust Wallet متصل (${twAddr})`
+                            : `Trust Wallet Connected (${twAddr})`
+                          : isFa
+                            ? 'اتصال مستقیم کیف‌پول Trust Wallet'
+                            : 'Connect Trust Wallet Directly'
+                      }
+                      className={`relative h-7 sm:h-8 px-1.5 sm:px-3 inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border text-[10px] sm:text-[11px] font-black transition shrink-0 whitespace-nowrap ${
+                        twAddr
+                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-main border-emerald-500/45 shadow-xs'
+                          : 'bg-[#0D47A1] hover:bg-[#1565C0] text-white border-[#0D47A1] shadow-sm'
+                      }`}
+                    >
+                      <WalletLogo wallet="trustwallet" size={16} />
+                      {twAddr ? (
+                        <>
+                          <span dir="ltr" className="sm:hidden font-mono-num text-[10px] font-black">
+                            {tinyTw}
+                          </span>
+                          <span dir="ltr" className="hidden sm:inline font-mono-num text-[11px] font-black">
+                            {shortTw}
+                          </span>
+                          <span className="hidden sm:inline text-[10px] font-extrabold text-jade">
+                            {isFa ? 'متصل' : 'Online'}
+                          </span>
+                          <span className="absolute -top-0.5 -end-0.5 w-2.5 h-2.5 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)] live-dot" />
+                        </>
+                      ) : (
+                        <span>{isFa ? 'ولت' : 'Wallet'}</span>
+                      )}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
 
