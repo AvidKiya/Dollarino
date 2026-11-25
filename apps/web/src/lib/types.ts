@@ -94,6 +94,7 @@ export interface AuthUserInfo {
   trust_wallet_solana?: string | null;
   trust_wallet_ton?: string | null;
   trust_wallet_verified?: boolean;
+  risk_terms_accepted_at?: string | null;
   ui_mode?: 'simple' | 'pro';
   mobile_widgets?: string[];
   extension_api_key?: string | null;
@@ -193,15 +194,35 @@ export interface RecentSignalRow {
   created_at: string;
 }
 
+export type TradingEngineChoice = 'CENTRAL_AI' | 'MY_AI' | 'STRATEGY' | 'COPY_TRADE' | 'LISTING_SNIPER';
+
+export interface ActiveEngineState {
+  activeEngine: TradingEngineChoice | 'NONE';
+  activeEngines: TradingEngineChoice[];
+  strategyKey: string;
+  botState: string;
+  isBotRunning: boolean;
+  myAiActive: boolean;
+  sniperEnabled: boolean;
+  activeCopyTradersCount: number;
+}
+
 export interface DashboardPayload {
-  activeEngine?: {
-    activeEngine: 'CENTRAL_AI' | 'MY_AI' | 'STRATEGY' | 'COPY_TRADE' | 'NONE';
-    strategyKey: string;
-    botState: string;
-    isBotRunning: boolean;
-    myAiActive: boolean;
-    activeCopyTradersCount: number;
-  };
+  activeEngine?: ActiveEngineState;
+  riskTermsAcceptedAt?: string | null;
+  sniperEvents?: Array<{
+    id: string;
+    symbol: string;
+    token_address: string;
+    chain_id: string;
+    source: string;
+    safety_score: number;
+    liquidity_usd: number;
+    price_usd: number;
+    change_1h_pct: number;
+    note?: string | null;
+    discovered_at: string;
+  }>;
   config: {
     bot_state: string;
     trading_mode: 'PAPER' | 'LIVE';
@@ -223,6 +244,16 @@ export interface DashboardPayload {
     webhook_secret: string;
     signal_channel_handle: string;
     paper_balance: string;
+    custom_paper_balance?: number;
+    active_engines_json?: string;
+    sniper_enabled?: number;
+    sniper_budget_usd?: number;
+    sniper_min_safety?: number;
+    sniper_min_liquidity_usd?: number;
+    sniper_networks_json?: string;
+    bot_budget_mode?: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
+    bot_budget_usd?: number;
+    bot_budget_pct?: number;
     mixer_threshold?: number;
     mixer_weights_json?: string;
     strategy_flow_json?: string;
@@ -250,6 +281,40 @@ export interface DashboardPayload {
     last_ai_decision_at?: string | null;
   };
   balance: { free: string; used: string; total: string; currency: string };
+  walletSummary?: {
+    activeMode: 'PAPER' | 'LIVE';
+    demoBalanceUsd: number;
+    liveBalanceUsd: number;
+    liveHasWallet: boolean;
+    liveMeetsMinimum: boolean;
+    minLiveUsd: number;
+  };
+  capitalSummary?: {
+    walletTotalUsd: number;
+    walletFreeUsd: number;
+    budgetMode: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
+    budgetUsd: number;
+    budgetPct: number;
+    effectiveCapitalUsd: number;
+    usedMarginUsd: number;
+    remainingBudgetUsd: number;
+    isCapped: boolean;
+    recommended: {
+      effectiveCapitalUsd: number;
+      preset: 'conservative' | 'balanced' | 'aggressive';
+      marginPct: number;
+      perTradeUsd: number;
+      maxOpenPositions: number;
+      maxLeverage: number;
+      dailyMaxLossPct: number;
+      trailingStopPct: number;
+      tp1ClosePct: number;
+      tp2ClosePct: number;
+      tp3ClosePct: number;
+      summaryFa: string;
+      summaryEn: string;
+    };
+  } | null;
   activeExchange: { provider: string; label: string };
   activeAI: { provider: string; model: string } | null;
   platformAI?: {
@@ -295,6 +360,9 @@ export interface DashboardPayload {
     pendingVerifyFeeUsd?: number;
     settledFeeUsd: number;
     profitableTradesCount: number;
+    freeTradesUsed?: number;
+    freeTradesLimit?: number;
+    freeTradesRemaining?: number;
     enforcement?: {
       allowed: boolean;
       lockStatus: 'ACTIVE' | 'WARNING' | 'PENDING_REVIEW' | 'LOCKED';

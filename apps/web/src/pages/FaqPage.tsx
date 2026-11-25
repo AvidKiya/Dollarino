@@ -30,7 +30,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         },
         {
           img: '/images/my-ai-brain.webp',
-          badge: 'آموزش ۳ · ۴ موتور معاملاتی + چت AI و چارت',
+          badge: 'آموزش ۳ · ۵ موتور معاملاتی هم‌زمان + چت AI و چارت',
           title: 'هوش مصنوعی دلارینو، هوش مصنوعی من و استراتژی شکار',
           steps: [
             '۱. «هوش مصنوعی دلارینو» برای ترید کاملاً خودکار است و فقط با انتخاب سطح ریسک معامله می‌کند.',
@@ -41,20 +41,20 @@ export function FaqPage({ lang }: { lang: Lang }) {
         {
           img: '/images/trust-wallet-connect-banner.webp',
           badge: 'آموزش ۴ · اتصال Trust Wallet و کارت سود',
-          title: 'اتصال Trust Wallet، شبیه‌ساز دمو $۱۰K و صدور کارت سود تاییدشده',
+          title: 'اتصال Trust Wallet، شبیه‌ساز دمو قابل تنظیم و صدور کارت سود تاییدشده',
           steps: [
-            '۱. کیف‌پول Trust Wallet را با امضای استاندارد Web3 وصل کنید یا با شبیه‌ساز دمو $۱۰,۰۰۰ شبیه تراست‌ولت رایگان تمرین کنید.',
+            '۱. کیف‌پول Trust Wallet را با امضای استاندارد Web3 وصل کنید یا با شبیه‌ساز دمو قابل تنظیم ($50 تا $10M) رایگان تمرین کنید.',
             '۲. حالت دلخواه را انتخاب کنید: «تایید دستی» (امضای خودتان در تراست‌ولت) یا «تمام‌اتوترید ۲۴/۷» با Agent Key و Copy-Vault.',
             '۳. از تمام معاملات Perp DEX، کپی‌ترید V2 و شبیه‌ساز می‌توانید کارت سود تاییدشده PNG بگیرید و با شناسه اختصاصی در تلگرام به اشتراک بگذارید.',
           ],
         },
         {
           img: '/images/referral-invite-banner.png?v=105',
-          badge: 'آموزش ۵ · باشگاه دعوت و اعتبار پیش‌پرداخت کارمزد ۵٪',
+          badge: 'آموزش ۵ · باشگاه دعوت و اعتبار پیش‌پرداخت کارمزد ۳٪',
           title: 'ساخت بنر اختصاصی دعوت و کسب اعتبار کارمزد بدون اشتراک',
           steps: [
-            '۱. از بخش «کارمزد ۵٪ و دعوت دوستان»، بنر اختصاصی با کد معرف خود را دانلود کنید یا متن دعوت آماده را برای دوستان واقعی بفرستید.',
-            '۲. پاداش رفرال نقدی و قابل برداشت نیست؛ تمام پاداش (+۲ دلار شما، +۱ دلار دوستتان و +۲۰٪ سهم اعتبار سود) به اعتبار کارمزد ۵٪ اضافه می‌شود.',
+            '۱. از بخش «کارمزد ۳٪ و خزانه/دعوت»، بنر اختصاصی با کد معرف خود را دانلود کنید یا متن دعوت آماده را برای دوستان واقعی بفرستید.',
+            '۲. پاداش رفرال نقدی و قابل برداشت نیست؛ تمام پاداش (+۲ دلار شما، +۱ دلار دوستتان و +۲۰٪ سهم اعتبار سود) به اعتبار کارمزد ۳٪ اضافه می‌شود.',
             '۳. برای جلوگیری از حساب‌های فیک، پاداش تنها زمانی آزاد می‌شود که دوست شما ولت غیرتکراری با حداقل ۱۰ دلار موجودی و حداقل یک ترید واقعی انجام دهد.',
           ],
         },
@@ -103,9 +103,9 @@ export function FaqPage({ lang }: { lang: Lang }) {
         {
           img: '/images/trust-wallet-connect-banner.webp',
           badge: 'GUIDE 4 · TRUST WALLET, 24/7 AUTO & PROFIT CARDS',
-          title: 'Connect Trust Wallet, $10K Demo Simulator & Verified Profit Cards',
+          title: 'Connect Trust Wallet, Custom Demo ($50–$10M) & Verified Profit Cards',
           steps: [
-            '1. Connect your self-custody Trust Wallet via Web3 signature or practice with the $10,000 Trust Wallet Demo Simulator.',
+            '1. Connect your self-custody Trust Wallet via Web3 signature or practice with the customizable $50–$10M Trust Wallet Demo Simulator.',
             '2. Switch anytime between Manual Approval (you confirm trades) and 24/7 Autonomous Auto-Trade (Agent Key + Copy-Vault).',
             '3. Issue watermarked Verified PnL PNG Cards from Perp DEX, Simulator and Copy-Trade V2 positions.',
           ],
@@ -113,10 +113,10 @@ export function FaqPage({ lang }: { lang: Lang }) {
         {
           img: '/images/referral-invite-banner.png?v=105',
           badge: 'GUIDE 5 · NON-WITHDRAWABLE REFERRAL FEE CREDITS',
-          title: 'Invite Real Traders & Offset Your 5% Profit Fees',
+          title: 'Invite Real Traders & Offset Your 3% Profit Fees',
           steps: [
-            '1. Download your personalized invite banner PNG or copy the ready-to-share invite link & message from the 5% Fee & Referral Hub.',
-            '2. Referral rewards are non-withdrawable and go directly to your Prepaid 5% Profit-Fee Credit (+$2 for you, +$1 for your friend, +20% fee-credit share).',
+            '1. Download your personalized invite banner PNG or copy the ready-to-share invite link & message from the 3% Fee & Treasury Hub.',
+            '2. Referral rewards are non-withdrawable and go directly to your Prepaid 3% Profit-Fee Credit (+$2 for you, +$1 for your friend, +20% fee-credit share).',
             '3. Anti-abuse verification unlocks rewards strictly when your friend connects a unique Trust Wallet with >= $10 real balance and executes a real LIVE trade.',
           ],
         },
@@ -151,20 +151,20 @@ export function FaqPage({ lang }: { lang: Lang }) {
           'از دکمه شناور پایین صفحه یا صفحه اختصاصی «چت هوش مصنوعی AI» می‌توانید دقیقاً مثل یک هوش مصنوعی کامل گفتگو کنید، از لیست بالا مدل دلخواهتان را انتخاب کنید (مدل‌های متصل سیستم یا کلیدهای شخصی خودتان)، و حتی عکس چارت بفرستید یا Paste کنید تا هوش مصنوعی ساختار چارت را تحلیل کرده و ستاپ دقیق (ورود، حد ضرر و ۳ تارگت) ارائه دهد. همین قابلیت مستقیماً داخل ربات تلگرام @Dollarino_bot با دستور /ai یا ارسال مستقیم عکس چارت نیز فعال است.',
         ],
         [
-          'تفاوت ۴ موتور معاملاتی دلارینو و قانون تک‌موتوره چیست؟',
-          '۱) هوش مصنوعی دلارینو (تحلیل چارت، ورود و مدیریت پوزیشن اتومات)، ۲) هوش مصنوعی من (تربیت AI شخصی خودتان با گفتگوی فارسی)، ۳) استراتژی شکار / دُرنا V1 (الگوریتم اختصاصی شکار اسپایک با ۳ تارگت و تریلینگ SL)، و ۴) کپی‌ترید تاییدشده (آینه‌سازی معاملات تریدرهای تاییدشده روی حساب شما). بر اساس قانون تک‌موتوره، با فعال کردن هر موتور روی صرافی‌ها، موتور قبلی متوقف می‌شود تا دو استراتژی همزمان با هم تداخل پیدا نکنند.',
+          'تفاوت ۵ موتور معاملاتی دلارینو و اجرای همزمان (Multi-Engine) چیست؟',
+          '۱) هوش مصنوعی دلارینو، ۲) هوش مصنوعی من، ۳) استراتژی شکار / دُرنا V1، ۴) کپی‌ترید تاییدشده و ۵) اسنایپر لیستینگ صرافی و میم‌کوین‌های داغ. در نسخه جدید V11 هیچ موتور دیگری با روشن کردن کپی‌ترید یا هوش مصنوعی خاموش نمی‌شود و می‌توانید هر تعداد موتور را همزمان روشن کنید!',
         ],
         [
           'کارت سود تاییدشده (Profit Card) و کارت بسته شدن سیگنال چه تفاوتی دارند؟',
           'کارت سود در بازه‌های ۷ روزه، ۳۰ روزه و یک‌ساله (و همچنین برای هر پوزیشن کپی‌ترید V2) با خروجی PNG رسمی، واترمارک دلارینو و مهر بزرگ «حساب واقعی / حساب دمو» صادر می‌شود و هر فرد با شناسه تأیید می‌تواند اصالت آن را در سایت بررسی کند. هنگام بسته شدن هر سیگنال نیز کارت رسمی نتیجه معامله همراه با TP1/TP2/TP3 و Trailing SL در کانال رسمی و ربات ارسال می‌شود.',
         ],
         [
-          'هزینه اشتراک و کارمزد ۵٪ از سود واقعی چطور محاسبه می‌شود؟',
-          'دلارینو هیچ اشتراک ماهانه‌ای ندارد و ۱۰۰٪ امکانات (شامل شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری و تمام اندیکاتورها) کاملاً رایگان است! در معاملات واقعی Trust Wallet، ۹۵٪ سود متعلق به خود شماست و فقط ۵٪ از سود واقعی به‌عنوان هزینه سرور محاسبه می‌گردد.',
+          'هزینه اشتراک و کارمزد ۳٪ (با ۳ معامله اول رایگان) چطور محاسبه می‌شود؟',
+          'دلارینو هیچ اشتراک ماهانه‌ای ندارد و ۱۰۰٪ امکانات رایگان است! علاوه بر آن، ۳ معامله سودده اول واقعی شما کاملاً رایگان (۰٪) است و از معامله سودده چهارم به بعد ۹۷٪ سود متعلق به خود شماست و فقط ۳٪ از سود خالص به‌عنوان هزینه سرور محاسبه می‌گردد.',
         ],
         [
           'آیا می‌توانم با کمتر از ۱۰ دلار در Trust Wallet ترید واقعی انجام دهم؟',
-          'حداقل موجودی موردنیاز برای باز کردن معامله واقعی در حالت Trust Wallet Live مبلغ ۱۰ دلار آمریکا است تا کارمزد شبکه باعث سوخت سرمایه کوچک نشود. با موجودی کمتر یا بدون کیف‌پول، همیشه می‌توانید از شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان استفاده کنید.',
+          'حداقل موجودی موردنیاز برای باز کردن معامله واقعی در حالت Trust Wallet Live مبلغ ۱۰ دلار آمریکا است تا کارمزد شبکه باعث سوخت سرمایه کوچک نشود. با موجودی کمتر یا بدون کیف‌پول، همیشه می‌توانید از کیف‌پول دمو قابل تنظیم رایگان ($50 تا $10M) استفاده کنید.',
         ],
         [
           'آیا برای آلرت اندیکاتورهای TradingView نیاز به اکانت پولی تریدینگ‌ویو دارم؟',
@@ -180,7 +180,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         ],
         [
           'آیا سرمایه من در Trust Wallet و شبیه‌ساز دمو امن است؟',
-          'بله؛ سرمایه واقعی شما هرگز از کیف‌پول غیرامانی Trust Wallet خارج نمی‌شود و دلارینو هیچ نیازی به عبارت بازیابی (Seed Phrase) شما ندارد. علاوه بر این، همیشه یک حساب شبیه‌ساز $۱۰,۰۰۰ شبیه تراست‌ولت برای تست استراتژی‌ها در اختیار دارید.',
+          'بله؛ سرمایه واقعی شما هرگز از کیف‌پول غیرامانی Trust Wallet خارج نمی‌شود و دلارینو هیچ نیازی به عبارت بازیابی (Seed Phrase) شما ندارد. علاوه بر این، همیشه یک حساب شبیه‌ساز دمو قابل تنظیم ($50 تا $10M) برای تست استراتژی‌ها در اختیار دارید.',
         ],
         [
           'طراح، توسعه‌دهنده و سازنده پلتفرم دلارینو کیست؟',
@@ -213,8 +213,8 @@ export function FaqPage({ lang }: { lang: Lang }) {
           'In Manual Approval mode, Dollarino prepares verified setups and waits for your wallet confirmation before signing. In 24/7 Full Auto-Trade mode, your scoped Agent Key (Hyperliquid Perp DEX) and encrypted Copy-Vault execute entries, trailing SL and 3-step TP automatically 24/7 with zero withdrawal permissions.',
         ],
         [
-          'How does the 5% profit fee and Non-Withdrawable Referral Fee-Credit system work?',
-          'Dollarino charges $0 monthly subscriptions and makes the $10,000 Demo Simulator 100% free. On real Trust Wallet trades, you keep 95% of net profit and pay a 5% server-cost fee strictly on profitable closes. Referral bonuses (+$2 referrer / +$1 friend + 20% fee-credit share) are strictly non-withdrawable and automatically pay your 5% profit fees once your invited friend holds >= $10 real balance on a unique wallet and executes a real LIVE trade.',
+          'How does the 3% profit fee (after 3 free wins) and Referral Fee-Credit system work?',
+          'Dollarino charges $0 monthly subscriptions and makes customizable Demo Simulation 100% free. Your first 3 profitable LIVE trades are 0% fee; afterwards you keep 97% of net profits (3% server fee). Existing open positions are never stopped or abandoned.',
         ],
         [
           'Which handles are official and how do I stay safe from impersonators?',
@@ -222,7 +222,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         ],
         [
           'Are my Trust Wallet funds safe?',
-          'Yes. Dollarino is non-custodial and never asks for your Trust Wallet seed phrase. Real funds remain under your wallet custody, and a free $10,000 Trust Wallet Simulator is built in for risk-free strategy testing.',
+          'Yes. Dollarino is non-custodial and never asks for your Trust Wallet seed phrase. Real funds remain under your wallet custody, and a free customizable ($50–$10M) Trust Wallet Simulator is built in for risk-free strategy testing.',
         ],
       ];
 
@@ -237,8 +237,8 @@ export function FaqPage({ lang }: { lang: Lang }) {
         </h2>
         <p className="text-xs text-dim mt-1">
           {isFa
-            ? 'آموزش کامل اتصال چندزنجیره‌ای Trust Wallet، شبیه‌ساز دمو $10K، حالت ۲۴/۷ اتوترید، کپی‌ترید V2 و سپر ضدراگ.'
-            : 'Complete walkthrough of Trust Wallet Multi-Chain, $10K Demo Simulator, 24/7 Auto-Trade, Smart Copy V2 & Anti-Rug Shield.'}
+            ? 'آموزش کامل اتصال چندزنجیره‌ای Trust Wallet، شبیه‌ساز دمو ($50–$10M)، حالت ۲۴/۷ اتوترید، کپی‌ترید V2 و سپر ضدراگ.'
+            : 'Complete walkthrough of Trust Wallet Multi-Chain, Custom Demo ($50–$10M), 24/7 Auto-Trade, Smart Copy V2 & Anti-Rug Shield.'}
         </p>
       </div>
 

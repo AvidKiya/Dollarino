@@ -36,6 +36,13 @@ import {
   resolveTelegramBotToken,
   saveAndConfigureTelegramBot,
 } from '../telegram/token.js';
+import {
+  applyConfirmedTreasuryCredit,
+  connectOwnerWalletAsTreasury,
+  getAdminTreasurySummary,
+  importOwnerMnemonicAsTreasury,
+  saveManualTreasuryReceivers,
+} from '../services/treasury.js';
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 adminRoutes.use('*', requireAuth);
@@ -1164,7 +1171,7 @@ adminRoutes.post('/channels/test', async (c) => {
     const readiness = await tg.checkChannelAdminReadiness(rawTarget);
     const res = await tg.sendMessage(
       target,
-      `✅ تست اتصال دلارینو موفق بود!\n📌 بخش: ${labels[key]!.title}\n🆔 مقصد: \`${rawTarget}\`\n🛡 Trust Wallet Only · کارمزد ۵٪ فقط از سود واقعی`
+      `✅ تست اتصال دلارینو موفق بود!\n📌 بخش: ${labels[key]!.title}\n🆔 مقصد: \`${rawTarget}\`\n🛡 Trust Wallet Only · ۳ معامله سودده اول ۰٪ · سپس ۳٪ کارمزد سود واقعی`
     );
     return c.json({
       ok: true,
@@ -1630,6 +1637,113 @@ adminRoutes.post('/prune-logs', async (c) => {
     (r3.meta?.changes ?? 0) +
     (r4.meta?.changes ?? 0);
   return c.json({ ok: true, deletedRows: totalDeleted, remainingRows: countAfter?.cnt ?? 0 });
+});
+
+// =========================================================================
+// Central Treasury / Bank Wallet (Owner Trust Wallet + BIP39 Seed + Deposit Approvals)
+// =========================================================================
+
+adminRoutes.get('/treasury', async (c) => {
+  const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
+  return c.json({ ok: true, ...summary });
+});
+
+adminRoutes.post('/treasury/connect-wallet', async (c) => {
+  const actor = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    evmAddress?: string;
+    tronAddress?: string;
+    solanaAddress?: string;
+    tonAddress?: string;
+  };
+  try {
+    const res = await connectOwnerWalletAsTreasury(c.env.DB, actor.id, body);
+    const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
+    await c.env.DB.prepare(
+      `INSERT INTO audit_logs (id, user_id, category, level, message) VALUES (?, ?, 'SYSTEM', 'INFO', ?)`
+    )
+      .bind(randomId('aud'), actor.id, `Owner connected Treasury wallet(s): ${res.receivers.evm || res.receivers.tron || ''}`)
+      .run()
+      .catch(() => {});
+    return c.json({ ok: true, ...res, summary });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+adminRoutes.post('/treasury/import-mnemonic', async (c) => {
+  const actor = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    mnemonic?: string;
+    solanaAddress?: string;
+    tonAddress?: string;
+  };
+  try {
+    const res = await importOwnerMnemonicAsTreasury(c.env.DB, c.env.MASTER_ENCRYPTION_KEY, body.mnemonic || '', {
+      solanaAddress: body.solanaAddress,
+      tonAddress: body.tonAddress,
+    });
+    const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
+    await c.env.DB.prepare(
+      `INSERT INTO audit_logs (id, user_id, category, level, message) VALUES (?, ?, 'SYSTEM', 'INFO', ?)`
+    )
+      .bind(randomId('aud'), actor.id, `Admin imported encrypted BIP39 Treasury seed (${res.receivers.evm})`)
+      .run()
+      .catch(() => {});
+    return c.json({ ok: true, ...res, summary });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+adminRoutes.post('/treasury/receivers', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    trc20?: string;
+    tron?: string;
+    evm?: string;
+    solana?: string;
+    ton?: string;
+    minDepositUsd?: number;
+  };
+  await saveManualTreasuryReceivers(c.env.DB, {
+    evm: body.evm,
+    tron: body.tron ?? body.trc20,
+    solana: body.solana,
+    ton: body.ton,
+    minDepositUsd: body.minDepositUsd,
+  });
+  const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
+  return c.json({ ok: true, summary });
+});
+
+adminRoutes.post('/treasury/deposits/:id/decide', async (c) => {
+  const actor = c.get('user');
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as { approve?: boolean; note?: string };
+  const approve = body.approve !== false;
+  try {
+    if (approve) {
+      const creditRes = await applyConfirmedTreasuryCredit(c.env.DB, id, body.note || `تایید شده توسط ${actor.username}`);
+      const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
+      return c.json({
+        ok: true,
+        status: 'CONFIRMED',
+        settledDebtUsd: creditRes.settledDebtUsd,
+        addedCreditUsd: creditRes.addedCreditUsd,
+        summary,
+      });
+    } else {
+      await c.env.DB.prepare(
+        `UPDATE treasury_deposits SET status = 'REJECTED', admin_note = COALESCE(?, admin_note) WHERE id = ?`
+      )
+        .bind(body.note || 'رد شده توسط مدیریت', id)
+        .run();
+      const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
+      return c.json({ ok: true, status: 'REJECTED', summary });
+    }
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
+  }
 });
 
 

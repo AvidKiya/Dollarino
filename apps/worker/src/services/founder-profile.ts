@@ -68,9 +68,9 @@ export const DEFAULT_FOUNDER_PROFILE: FounderProfile = {
   missionEn:
     'Dollarino democratizes institutional AI trading, verified copy-trading, and anti-rug protection directly on self-custody Trust Wallet with $0 subscriptions.',
   antiPonziFa:
-    'دلارینو هیچ‌گونه سرمایه یا سپرده‌ای از کاربران دریافت و نگهداری نمی‌کند، هیچ سود ثابت یا تضمینی وعده نمی‌دهد، و درآمد پلتفرم صرفاً ۵٪ کارمزد سرور از سود خالص معاملات واقعی است (۹۵٪ سود متعلق به کاربر است و رفرال صرفاً اعتبار کارمزد غیرقابل برداشت محسوب می‌شود).',
+    'دلارینو هیچ‌گونه سرمایه یا سپرده‌ای از کاربران دریافت و نگهداری نمی‌کند، هیچ سود ثابت یا تضمینی وعده نمی‌دهد، و ۳ معامله سودده اول واقعی ۰٪ کارمزد است؛ پس از آن صرفاً ۳٪ کارمزد سرور از سود خالص معاملات واقعی محاسبه می‌شود (۹۷٪ سود متعلق به کاربر است و رفرال صرفاً اعتبار کارمزد غیرقابل برداشت محسوب می‌شود).',
   antiPonziEn:
-    'Dollarino never holds user deposits, never promises fixed/guaranteed returns, pays zero MLM cash withdrawals from new deposits, and charges strictly a 5% server fee on real net profits (95% stays with the trader).',
+    'Dollarino never holds user deposits, never promises fixed/guaranteed returns, offers your first 3 profitable live trades completely 0% fee, and then charges strictly a 3% server fee on real net profits (97% stays with the trader).',
   showPublic: true,
   updatedAt: null,
 };

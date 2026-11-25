@@ -1840,14 +1840,14 @@ export async function executeSmartCopySignalForRule(
     };
   }
 
-  // 0. Check 5% server profit-fee lock before opening new LIVE copy-vault trades
+  // 0. Check 3% server profit-fee standing before opening new LIVE copy-vault trades
   if (rule.execution_mode !== 'TRUST_ONE_CLICK') {
     const feeCheck = await checkLiveFeeEnforcement(env.DB, rule.user_id);
     if (!feeCheck.allowed) {
       return {
         ok: false,
         status: 'FEE_SETTLEMENT_REQUIRED',
-        message: feeCheck.reasonFa || 'کپی‌ترید لایو به دلیل کارمزد ۵٪ معوق قفل شده است.',
+        message: feeCheck.reasonFa || 'کپی‌ترید لایو تا تسویه کارمزد ۳٪ معوق قفل شده است (پوزیشن‌های باز همچنان مدیریت می‌شوند).',
       };
     }
   }

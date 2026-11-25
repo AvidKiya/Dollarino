@@ -780,8 +780,8 @@ export function TerminalPage({
           </div>
           <p className="text-[10.5px] text-dim text-center">
             {isFa
-              ? 'نکته: این پایانه روی شبیه‌ساز دمو $10K یا مسیر Perp DEX تراست‌ولت اجرا می‌شود. برای سوآپ توکن‌ها و فیوچرز آنچین بدون KYC به تب «DEX و تراست‌ولت» بروید.'
-              : 'Tip: Executes on $10K Demo Simulator or Trust Wallet Perp DEX. For multi-chain DEX swaps & No-KYC perps, visit DEX & Trust Wallet.'}
+              ? 'نکته: این پایانه روی شبیه‌ساز دمو قابل تنظیم ($50–$10M) یا مسیر Perp DEX تراست‌ولت اجرا می‌شود. برای سوآپ توکن‌ها و فیوچرز آنچین بدون KYC به تب «DEX و تراست‌ولت» بروید.'
+              : 'Tip: Executes on Custom Demo ($50–$10M) or Trust Wallet Perp DEX. For multi-chain DEX swaps & No-KYC perps, visit DEX & Trust Wallet.'}
           </p>
         </div>
 

@@ -27,12 +27,13 @@ import { ChainLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import {
-  buildTrustWalletDappOpenUrl,
-  connectAllWalletChains,
+  connectAndPersistAllTrustWallets,
   EVM_NETWORKS,
   isTrustWalletEnvironment,
-  signTrustWalletNonce,
+  launchTrustWalletUrl,
+  requestTrustWalletDappHandoff,
   switchEvmNetwork,
   type EvmNetworkSpec,
 } from '../lib/trustwallet';
@@ -256,6 +257,20 @@ export function DexTrustPage({
   const [walletBusy, setWalletBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (err) {
+      pushFloatingToast(err, 'error');
+      setErr(null);
+    }
+  }, [err]);
+
+  useEffect(() => {
+    if (msg) {
+      pushFloatingToast(msg, 'success');
+      setMsg(null);
+    }
+  }, [msg]);
 
   const [dexTrades, setDexTrades] = useState<DexTradeItem[]>([]);
   const [tradeAmtUsd, setTradeAmtUsd] = useState(50);
@@ -522,22 +537,7 @@ export function DexTrustPage({
     setErr(null);
     setMsg(null);
     try {
-      const conn = await connectAllWalletChains();
-      const nonceRes = await apiFetch<{ message: string }>('/api/trustwallet/nonce', { method: 'POST' });
-      const sig = conn.evmAddress
-        ? await signTrustWalletNonce(conn.evmAddress, nonceRes.message).catch(() => undefined)
-        : undefined;
-      await apiFetch('/api/trustwallet/connect', {
-        method: 'POST',
-        body: JSON.stringify({
-          evmAddress: conn.evmAddress || undefined,
-          solanaAddress: conn.solanaAddress || undefined,
-          tronAddress: conn.tronAddress || undefined,
-          tonAddress: conn.tonAddress || undefined,
-          signature: sig,
-          signedMessage: nonceRes.message,
-        }),
-      });
+      const conn = await connectAndPersistAllTrustWallets();
       if (conn.evmAddress) setEvmInput(conn.evmAddress);
       if (conn.solanaAddress) setSolInput(conn.solanaAddress);
       if (conn.tronAddress) setTronInput(conn.tronAddress);
@@ -556,14 +556,39 @@ export function DexTrustPage({
     } catch (e) {
       const code = e instanceof Error ? e.message : '';
       if (code === 'NO_INJECTED_WALLET') {
-        setErr(
-          isFa
-            ? 'در این مرورگر افزونه کیف‌پول (Trust Wallet / MetaMask / Phantom / Tonkeeper) تشخیص داده نشد. از دکمه «باز کردن در اپ Trust Wallet» استفاده کنید یا در تب مدیریت کیف‌پول آدرس شبکه‌ها را ثبت کنید.'
-            : 'No injected wallet detected. Open inside Trust Wallet DApp Browser or enter addresses manually in the Wallet Manager tab.'
-        );
+        try {
+          const handoff = await requestTrustWalletDappHandoff();
+          launchTrustWalletUrl(handoff.universalLink, handoff.deepLink);
+          setMsg(
+            isFa
+              ? 'لینک اتصال خودکار Trust Wallet ساخته و باز شد — داخل اپ Trust Wallet تایید کنید.'
+              : 'Opening Trust Wallet app with auto-connect...'
+          );
+        } catch {
+          setErr(
+            isFa
+              ? 'در این مرورگر افزونه کیف‌پول (Trust Wallet / MetaMask / Phantom / Tonkeeper) تشخیص داده نشد. از دکمه «باز کردن در اپ Trust Wallet» استفاده کنید یا در تب مدیریت کیف‌پول آدرس شبکه‌ها را ثبت کنید.'
+              : 'No injected wallet detected. Open inside Trust Wallet DApp Browser or enter addresses manually in the Wallet Manager tab.'
+          );
+        }
+      } else if (code === 'USER_REJECTED') {
+        setErr(isFa ? 'درخواست اتصال در کیف‌پول لغو شد.' : 'Connection request rejected in wallet.');
       } else {
         setErr(code || 'Connection rejected');
       }
+    } finally {
+      setWalletBusy(false);
+    }
+  };
+
+  const handleOpenInTrustApp = async () => {
+    setWalletBusy(true);
+    setErr(null);
+    try {
+      const handoff = await requestTrustWalletDappHandoff();
+      launchTrustWalletUrl(handoff.universalLink, handoff.deepLink);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Unable to open Trust Wallet');
     } finally {
       setWalletBusy(false);
     }
@@ -715,7 +740,6 @@ export function DexTrustPage({
     ])
   );
   const visibleTokens = tokens.filter((t) => chainFilter === 'all' || t.chainId.toLowerCase() === chainFilter);
-  const dappOpenSelf = buildTrustWalletDappOpenUrl(`${window.location.origin}/?tab=dex`);
 
   return (
     <div className="space-y-5">
@@ -781,15 +805,15 @@ export function DexTrustPage({
                     : 'Connect All Chains'}
               </span>
             </button>
-            <a
-              href={dappOpenSelf}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={() => void handleOpenInTrustApp()}
+              disabled={walletBusy}
               className="btn-cobalt px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               <span>{isFa ? 'باز کردن در اپ Trust Wallet' : 'Open in Trust Wallet App'}</span>
-            </a>
+            </button>
 
             <div className="inline-flex rounded-2xl surface-soft border hairline p-1 gap-1">
               <button
@@ -866,16 +890,6 @@ export function DexTrustPage({
           </div>
         </div>
       </section>
-
-      {(msg || err) && (
-        <div
-          className={`rounded-2xl p-3.5 text-xs font-bold border ${
-            err ? 'bg-rose-500/15 border-rose-500/40 text-loss' : 'bg-emerald-500/15 border-emerald-500/40 text-jade'
-          }`}
-        >
-          {err || msg}
-        </div>
-      )}
 
       {/* Navigation Tabs */}
       <div className="tab-bar w-full sm:w-auto">

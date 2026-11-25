@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Context, Next } from 'hono';
+import { computeDynamicRecommendedSettings } from '@dollarino/core';
 import type { AuthUser, Env } from './env.js';
 import {
   generateReferralCode,
@@ -22,7 +23,7 @@ const USER_PROFILE_COLUMNS = `
   COALESCE(has_custom_password, 0) as has_custom_password, display_bio,
   COALESCE(referral_code, 'DLR' || UPPER(SUBSTR(REPLACE(id, '_', ''), -5))) as referral_code,
   trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified,
-  ui_mode, mobile_widgets_json, extension_api_key, created_at
+  ui_mode, mobile_widgets_json, extension_api_key, risk_terms_accepted_at, created_at
 `;
 
 export async function syncTelegramAvatarForUser(
@@ -161,11 +162,23 @@ function isHttpsRequest(c: Context): boolean {
 
 export async function ensureUserDefaults(db: D1Database, userId: string) {
   const webhookSecret = randomId('tv');
+  const rec = computeDynamicRecommendedSettings(10_000, 'balanced');
   await db.prepare(
     `INSERT OR IGNORE INTO bot_configs
-     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, webhook_secret)
-     VALUES (?, 'dollarino_v01', 10, 10, 6, 50, 25, 25, 1, 1, 1, 'ALL_MARKET', 1, ?)`
-  ).bind(userId, webhookSecret).run();
+     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_pct, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, bot_budget_mode, bot_budget_usd, bot_budget_pct, webhook_secret)
+     VALUES (?, 'dollarino_v01', ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 'ALL_MARKET', 1, 'FULL_BALANCE', 0, 100, ?)`
+  ).bind(
+    userId,
+    rec.marginPct,
+    rec.maxLeverage,
+    rec.maxOpenPositions,
+    rec.dailyMaxLossPct,
+    rec.trailingStopPct,
+    rec.tp1ClosePct,
+    rec.tp2ClosePct,
+    rec.tp3ClosePct,
+    webhookSecret
+  ).run();
 
   await db.prepare(
     `INSERT OR IGNORE INTO exchange_connections
@@ -903,6 +916,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
     return c.json({ error: 'Account is suspended by admin' }, 403);
   }
 
+  await ensureUserDefaults(c.env.DB, row.id);
   await c.env.DB.prepare(
     `UPDATE users SET last_active_at = datetime('now') WHERE id = ?`
   ).bind(row.id).run();

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -30,6 +30,7 @@ import {
 } from '@dollarino/core';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import type { DashboardPayload } from '../lib/types';
 import { CoinIcon } from '../components/CoinIcon';
 import { AreaChart, ConsensusGauge } from '../components/DollarinoViz';
@@ -84,6 +85,13 @@ export function RadarLabPage({
     }>
   >([]);
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    if (!notice) return;
+    const isErr = /fail|error|خطا|ناموفق/i.test(notice);
+    pushFloatingToast(notice, isErr ? 'error' : 'info');
+    setNotice('');
+  }, [notice]);
 
   // KBOS & Mixer Parameter Tuner (from StrategyFlowPage)
   const initialKbos = useMemo(() => {
@@ -384,13 +392,6 @@ export function RadarLabPage({
           })}
         </div>
       </div>
-
-      {notice && (
-        <div className="p-3.5 rounded-2xl badge-signal text-xs font-bold flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{notice}</span>
-        </div>
-      )}
 
       {subTab === 'radar' && (
         <div className="space-y-6 tab-enter">

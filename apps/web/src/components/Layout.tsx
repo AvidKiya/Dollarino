@@ -17,6 +17,7 @@ import {
   Image,
   LayoutDashboard,
   LayoutGrid,
+  Loader2,
   LogOut,
   Menu,
   Moon,
@@ -58,7 +59,7 @@ const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: 
   { id: 'overview', labelFa: 'خانه و ربات خودکار', labelEn: 'Home & Auto Bot', icon: Home },
   { id: 'dex', labelFa: 'کیف‌پول Trust Wallet', labelEn: 'Trust Wallet', icon: Flame },
   { id: 'copy', labelFa: 'کپی از حرفه‌ای‌ها', labelEn: 'Copy Top Traders', icon: Users },
-  { id: 'pricing', labelFa: 'کارمزد ۵٪ و دعوت دوستان', labelEn: '5% Fee & Referrals', icon: CreditCard },
+  { id: 'pricing', labelFa: 'کارمزد ۳٪ و خزانه/دعوت', labelEn: '3% Fee & Treasury', icon: CreditCard },
 ];
 
 const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
@@ -80,7 +81,7 @@ const PRO_WALLET_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; ic
 const MAIN_VIEWS = [...PRO_TRADING_VIEWS, ...PRO_WALLET_VIEWS];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
-  { id: 'pricing', labelFa: 'کارمزد ۵٪ سود (رایگان)', labelEn: '5% Profit Fee (Free)', icon: CreditCard },
+  { id: 'pricing', labelFa: 'کارمزد ۳٪ (۳ معامله رایگان)', labelEn: '3% Fee (3 Free Live)', icon: CreditCard },
   { id: 'faq', labelFa: 'راهنما و سوالات', labelEn: 'FAQ & Guide', icon: CircleHelp },
 ];
 
@@ -439,6 +440,8 @@ export function Layout({
   onGoLanding,
   onOpenSupport,
   onOpenAcademy,
+  onDirectConnectWallet,
+  walletConnecting = false,
   onLogout,
   children,
 }: {
@@ -467,6 +470,8 @@ export function Layout({
   onGoLanding?: () => void;
   onOpenSupport?: () => void;
   onOpenAcademy?: () => void;
+  onDirectConnectWallet?: () => Promise<void> | void;
+  walletConnecting?: boolean;
   onLogout: () => Promise<void>;
   children: ReactNode;
 }) {
@@ -760,7 +765,7 @@ export function Layout({
               }`}
             >
               <CreditCard className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{isFa ? 'کارمزد ۵٪ سود' : '5% Fee Ledger'}</span>
+              <span className="truncate">{isFa ? 'کارمزد ۳٪ و خزانه' : '3% Fee & Vault'}</span>
             </button>
             <button
               type="button"
@@ -929,7 +934,7 @@ export function Layout({
             </p>
           </div>
           <p className="text-[10px] text-dim truncate">
-            {isFa ? '۱۰۰٪ رایگان · کارمزد ۵٪ فقط از سود واقعی' : 'Free Platform · 5% Live Profit Fee Only'}
+            {isFa ? '۳ معامله اول ۰٪ · سپس ۳٪ از سود واقعی' : 'First 3 Free · Then 3% Profit Fee Only'}
           </p>
           <button
             type="button"
@@ -1019,7 +1024,7 @@ export function Layout({
           <DollarinoCoinMark size={34} />
         </button>
 
-        <div className="flex-1 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-1 py-1">
+          <div className="flex-1 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-1 py-1">
           {items.map((item) => {
             const Icon = item.icon;
             const on = activeTab === item.id;
@@ -1029,6 +1034,7 @@ export function Layout({
               <button
                 key={item.id}
                 type="button"
+                data-testid={`nav-${item.id}`}
                 onClick={() => selectTab(item.id)}
                 title={lbl}
                 aria-label={lbl}
@@ -1050,6 +1056,7 @@ export function Layout({
             <>
               <button
                 type="button"
+                data-testid="nav-card"
                 onClick={() => selectTab('card')}
                 title={isFa ? 'کارت سود' : 'Profit Card'}
                 aria-label={isFa ? 'کارت سود' : 'Profit Card'}
@@ -1067,6 +1074,7 @@ export function Layout({
                   <button
                     key={item.id}
                     type="button"
+                    data-testid={`nav-${item.id}`}
                     onClick={() => selectTab(item.id)}
                     title={lbl}
                     aria-label={lbl}
@@ -1084,6 +1092,7 @@ export function Layout({
           {isAdmin && (
             <button
               type="button"
+              data-testid="nav-admin"
               onClick={() => selectTab('admin')}
               title={isFa ? 'پنل مدیریت' : 'Admin'}
               aria-label={isFa ? 'پنل مدیریت' : 'Admin'}
@@ -1373,7 +1382,15 @@ export function Layout({
                   return (
                     <button
                       type="button"
-                      onClick={() => selectTab('dex')}
+                      disabled={walletConnecting}
+                      onClick={() => {
+                        tgHaptic('medium');
+                        if (!twAddr && onDirectConnectWallet) {
+                          void onDirectConnectWallet();
+                        } else {
+                          selectTab('dex');
+                        }
+                      }}
                       data-testid="header-trust-wallet-btn"
                       title={
                         twAddr
@@ -1381,16 +1398,20 @@ export function Layout({
                             ? `کیف‌پول Trust Wallet متصل (${twAddr})`
                             : `Trust Wallet Connected (${twAddr})`
                           : isFa
-                            ? 'اتصال مستقیم کیف‌پول Trust Wallet'
-                            : 'Connect Trust Wallet Directly'
+                            ? 'اتصال مستقیم کیف‌پول Trust Wallet به همه شبکه‌ها'
+                            : 'Open & Connect Trust Wallet Across All Chains'
                       }
-                      className={`relative h-7 sm:h-8 px-1.5 sm:px-3 inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border text-[10px] sm:text-[11px] font-black transition shrink-0 whitespace-nowrap ${
+                      className={`relative h-7 sm:h-8 px-1.5 sm:px-3 inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border text-[10px] sm:text-[11px] font-black transition shrink-0 whitespace-nowrap disabled:opacity-75 ${
                         twAddr
                           ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-main border-emerald-500/45 shadow-xs'
                           : 'bg-[#0D47A1] hover:bg-[#1565C0] text-white border-[#0D47A1] shadow-sm'
                       }`}
                     >
-                      <WalletLogo wallet="trustwallet" size={16} />
+                      {walletConnecting ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      ) : (
+                        <WalletLogo wallet="trustwallet" size={16} />
+                      )}
                       {twAddr ? (
                         <>
                           <span dir="ltr" className="sm:hidden font-mono-num text-[10px] font-black">
@@ -1405,7 +1426,9 @@ export function Layout({
                           <span className="absolute -top-0.5 -end-0.5 w-2.5 h-2.5 rounded-full bg-[#10B981] ring-2 ring-[var(--bg)] live-dot" />
                         </>
                       ) : (
-                        <span>{isFa ? 'ولت' : 'Wallet'}</span>
+                        <span>
+                          {walletConnecting ? (isFa ? 'در حال اتصال...' : 'Connecting...') : isFa ? 'ولت' : 'Wallet'}
+                        </span>
                       )}
                     </button>
                   );

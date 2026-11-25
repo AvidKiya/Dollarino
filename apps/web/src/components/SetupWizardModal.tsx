@@ -5,14 +5,12 @@ import {
   Bot,
   CheckCircle2,
   KeyRound,
-  Rocket,
-  TrendingUp,
   Wallet,
   X,
-  Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import { DollarinoBrandMark } from './BrandGraphics';
 import { TrustWalletConnectInline } from './TrustWalletConnectInline';
 
@@ -129,7 +127,7 @@ export function SetupWizardModal({
   const selectedRisk = riskOptions.find((r) => r.id === riskLevel) ?? riskOptions[1]!;
   const selectedStrat = strategyOptions.find((s) => s.id === strategyType) ?? strategyOptions[0]!;
 
-  const startAiAgent = async () => {
+  const saveWizardSettings = async () => {
     setSaving(true);
     setMsg('');
     try {
@@ -148,6 +146,7 @@ export function SetupWizardModal({
           tp1_close_pct: actualKey === 'kbos_v11' ? 30 : 50,
           tp2_close_pct: actualKey === 'kbos_v11' ? 30 : 25,
           tp3_close_pct: actualKey === 'kbos_v11' ? 40 : 25,
+          trade_execution_mode: execMode,
           risk_profile_json: {
             preset: riskLevel === 'low' ? 'conservative' : riskLevel === 'high' ? 'aggressive' : 'balanced',
             allocatedAmount,
@@ -157,24 +156,24 @@ export function SetupWizardModal({
         }),
       });
 
-      await apiFetch('/api/trading/bot/start', {
+      await apiFetch('/api/trustwallet/execution-mode', {
         method: 'POST',
         body: JSON.stringify({
-          marginPct,
-          strategyKey: actualKey,
-          riskPreset: riskLevel,
-          maxLeverage: effLev,
-          trailingStopEnabled: true,
-          trailingStopPct: selectedRisk.trailingPct,
-          allocatedAmount,
-          tradeExecutionMode: execMode,
+          executionMode: execMode,
+          syncCopyRules: true,
         }),
-      });
+      }).catch(() => {});
 
+      pushFloatingToast(
+        isFa
+          ? 'تنظیمات ربات با موفقیت ذخیره شد ✅ هر زمان آماده بودید از صفحه اصلی ربات را روشن کنید.'
+          : 'Bot settings saved ✅ Start the bot manually from Home when ready.',
+        'success'
+      );
       await onCompleted();
       onClose();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Failed to start');
+      setMsg(e instanceof Error ? e.message : 'Failed to save settings');
     } finally {
       setSaving(false);
     }
@@ -184,7 +183,7 @@ export function SetupWizardModal({
     isFa ? 'مبلغ سرمایه' : 'Capital',
     isFa ? 'سطح ریسک' : 'Risk',
     isFa ? 'استراتژی' : 'Strategy',
-    isFa ? 'تأیید و شروع' : 'Launch',
+    isFa ? 'تأیید و ذخیره' : 'Review & Save',
   ];
 
   return (
@@ -404,7 +403,7 @@ export function SetupWizardModal({
                 className="btn-ghost px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 disabled:opacity-40"
               >
                 <ArrowLeft className={`w-3.5 h-3.5 ${isFa ? 'rotate-180' : ''}`} />
-                <span>{isFa ? 'قبلی' : 'Back'}</span>
+                <span>{isFa ? 'مرحله قبل' : 'Back'}</span>
               </button>
 
               {step < 3 ? (
@@ -420,11 +419,11 @@ export function SetupWizardModal({
                 <button
                   type="button"
                   disabled={saving}
-                  onClick={() => void startAiAgent()}
-                  className="btn-emerald px-6 py-2.5 rounded-xl text-xs inline-flex items-center gap-1.5"
+                  onClick={() => void saveWizardSettings()}
+                  className="px-6 py-2.5 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white text-xs font-black inline-flex items-center gap-1.5 shadow-lg transition disabled:opacity-50"
                 >
-                  <Rocket className="w-4 h-4" />
-                  <span>{saving ? '...' : isFa ? 'ذخیره و شروع خودکار ربات' : 'Save & Start Bot'}</span>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{saving ? '...' : isFa ? 'ذخیره تنظیمات' : 'Save Settings'}</span>
                 </button>
               )}
             </div>

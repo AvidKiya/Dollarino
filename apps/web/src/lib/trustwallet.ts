@@ -1,3 +1,6 @@
+import { apiFetch } from './api';
+import { getTelegramWebApp, isInsideTelegramMiniApp } from './telegram';
+
 export interface Eip1193Provider {
   isTrust?: boolean;
   isTrustWallet?: boolean;
@@ -145,23 +148,110 @@ type InjectedWindow = {
   tonkeeper?: { ton?: TonInjectedProvider } & TonInjectedProvider;
 };
 
+type WalletStandardWallet = {
+  name?: string;
+  chains?: string[];
+  accounts?: Array<{ address?: string }>;
+  features?: Record<
+    string,
+    {
+      connect?: (input?: unknown) => Promise<{ accounts?: Array<{ address?: string }> }>;
+    }
+  >;
+};
+
+type Eip6963AnnounceEvent = CustomEvent<{
+  info?: { rdns?: string; name?: string; uuid?: string };
+  provider?: Eip1193Provider;
+}>;
+
+const discoveredEip6963Providers: Array<{
+  rdns: string;
+  name: string;
+  provider: Eip1193Provider;
+}> = [];
+const discoveredStandardWallets: WalletStandardWallet[] = [];
+let discoveryInitialized = false;
+
+export function initWalletDiscovery(): void {
+  if (typeof window === 'undefined' || discoveryInitialized) return;
+  discoveryInitialized = true;
+
+  const onAnnounce = (ev: Event) => {
+    const detail = (ev as Eip6963AnnounceEvent).detail;
+    if (!detail?.provider) return;
+    const rdns = detail.info?.rdns || '';
+    const name = detail.info?.name || '';
+    if (!discoveredEip6963Providers.some((p) => p.provider === detail.provider)) {
+      discoveredEip6963Providers.push({ rdns, name, provider: detail.provider });
+    }
+  };
+
+  window.addEventListener('eip6963:announceProvider', onAnnounce);
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+  // Listen for Wallet Standard (Solana / multi-chain extensions including Trust Wallet)
+  const registerFn = (wallet: WalletStandardWallet) => {
+    if (wallet && !discoveredStandardWallets.includes(wallet)) {
+      discoveredStandardWallets.push(wallet);
+    }
+  };
+  try {
+    window.addEventListener('wallet-standard:register-wallet', (ev: Event) => {
+      const cb = (ev as CustomEvent<(api: { register: (w: WalletStandardWallet) => void }) => void>).detail;
+      if (typeof cb === 'function') cb({ register: registerFn });
+    });
+    window.dispatchEvent(
+      new CustomEvent('wallet-standard:app-ready', {
+        detail: { register: registerFn },
+      })
+    );
+  } catch {
+    // ignore if browser blocks custom wallet-standard event
+  }
+}
+
+export async function waitForWalletProviders(ms = 140): Promise<void> {
+  initWalletDiscovery();
+  if (getInjectedTrustProvider() || getInjectedSolanaProvider() || getInjectedTonProvider()) {
+    return;
+  }
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 export function getInjectedTrustProvider(): Eip1193Provider | null {
+  if (typeof window === 'undefined') return null;
+  initWalletDiscovery();
   const win = window as unknown as InjectedWindow;
+
+  // 1) Explicit Trust Wallet global
   if (win.trustwallet) {
     if ('ethereum' in win.trustwallet && win.trustwallet.ethereum) return win.trustwallet.ethereum;
     if ('request' in win.trustwallet) return win.trustwallet as Eip1193Provider;
   }
+  // 2) EIP-6963 announced Trust Wallet extension
+  const eipTrust = discoveredEip6963Providers.find(
+    (p) => p.rdns.toLowerCase().includes('trustwallet') || /trust\s*wallet/i.test(p.name) || p.provider.isTrust || p.provider.isTrustWallet
+  );
+  if (eipTrust) return eipTrust.provider;
+
+  // 3) Multi-provider window.ethereum.providers
   if (win.ethereum?.providers?.length) {
     const found = win.ethereum.providers.find((p) => p.isTrust || p.isTrustWallet);
     if (found) return found;
   }
+  // 4) Any EIP-6963 provider if window.ethereum absent, else window.ethereum
   if (win.ethereum) return win.ethereum;
+  if (discoveredEip6963Providers[0]?.provider) return discoveredEip6963Providers[0].provider;
   return null;
 }
 
 export function getInjectedSolanaProvider(): SolanaInjectedProvider | null {
+  if (typeof window === 'undefined') return null;
+  initWalletDiscovery();
   const win = window as unknown as InjectedWindow;
   if (win.trustwallet && 'solana' in win.trustwallet && win.trustwallet.solana) return win.trustwallet.solana;
+  if (win.solana?.isTrust) return win.solana;
   if (win.phantom?.solana) return win.phantom.solana;
   if (win.solana) return win.solana;
   if (win.solflare) return win.solflare;
@@ -169,6 +259,7 @@ export function getInjectedSolanaProvider(): SolanaInjectedProvider | null {
 }
 
 export function getInjectedTronProvider(): { tronWeb?: TronInjectedProvider; link?: InjectedWindow['tronLink'] } {
+  if (typeof window === 'undefined') return {};
   const win = window as unknown as InjectedWindow;
   const twTron = win.trustwallet && 'tron' in win.trustwallet ? win.trustwallet.tron : undefined;
   return {
@@ -178,6 +269,7 @@ export function getInjectedTronProvider(): { tronWeb?: TronInjectedProvider; lin
 }
 
 export function getInjectedTonProvider(): TonInjectedProvider | null {
+  if (typeof window === 'undefined') return null;
   const win = window as unknown as InjectedWindow;
   if (win.trustwallet && 'ton' in win.trustwallet && win.trustwallet.ton) return win.trustwallet.ton;
   if (win.tonkeeper?.ton) return win.tonkeeper.ton;
@@ -187,12 +279,32 @@ export function getInjectedTonProvider(): TonInjectedProvider | null {
 }
 
 export function isTrustWalletEnvironment(): boolean {
+  if (typeof window === 'undefined') return false;
+  const win = window as unknown as InjectedWindow;
   const p = getInjectedTrustProvider();
   return Boolean(
-    p?.isTrust ||
+    win.trustwallet ||
+      p?.isTrust ||
       p?.isTrustWallet ||
+      discoveredEip6963Providers.some((x) => x.rdns.toLowerCase().includes('trustwallet')) ||
       (typeof navigator !== 'undefined' && /Trust/i.test(navigator.userAgent))
   );
+}
+
+export function hasAnyInjectedWallet(): boolean {
+  return Boolean(
+    getInjectedTrustProvider() ||
+      getInjectedSolanaProvider() ||
+      getInjectedTonProvider() ||
+      getInjectedTronProvider().tronWeb ||
+      getInjectedTronProvider().link ||
+      discoveredStandardWallets.length > 0
+  );
+}
+
+export function isMobileWalletPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || isInsideTelegramMiniApp();
 }
 
 export function buildTrustWalletDappOpenUrl(targetUrl: string, coinId = 20000714): string {
@@ -257,6 +369,11 @@ export interface MultiChainConnectResult {
 }
 
 export async function connectAllWalletChains(): Promise<MultiChainConnectResult> {
+  await waitForWalletProviders(140);
+  if (!hasAnyInjectedWallet()) {
+    throw new Error('NO_INJECTED_WALLET');
+  }
+
   let evmAddress: string | null = null;
   let solanaAddress: string | null = null;
   let tronAddress: string | null = null;
@@ -264,6 +381,7 @@ export async function connectAllWalletChains(): Promise<MultiChainConnectResult>
   let isTrust = isTrustWalletEnvironment();
   let activeEvmChainId: string | null = null;
   const connectedFamilies: string[] = [];
+  let userRejectedAny = false;
 
   // 1. Connect EVM (covers Ethereum, BSC, Base, Arbitrum, Polygon, Avalanche, Optimism)
   try {
@@ -272,22 +390,46 @@ export async function connectAllWalletChains(): Promise<MultiChainConnectResult>
     isTrust = isTrust || evm.isTrust;
     activeEvmChainId = evm.chainId;
     connectedFamilies.push('EVM (ETH · BSC · Base · Arb · Pol · Avax · OP)');
-  } catch {
-    // EVM wallet optional if user connects Solana/TRON/TON
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    const msg = err instanceof Error ? err.message : '';
+    if (code === 4001 || /reject|denied|cancel/i.test(msg)) userRejectedAny = true;
   }
 
-  // 2. Connect Solana (Trust Wallet Solana / Phantom / Solflare)
+  // 2. Connect Solana (Trust Wallet Solana / Wallet Standard / Phantom / Solflare)
   const solProv = getInjectedSolanaProvider();
   if (solProv) {
     try {
-      const resp = await solProv.connect().catch(() => null);
+      const resp = await solProv.connect().catch((err) => {
+        const code = (err as { code?: number })?.code;
+        if (code === 4001) userRejectedAny = true;
+        return null;
+      });
       const pk = resp?.publicKey?.toString() || solProv.publicKey?.toString() || null;
       if (pk && !pk.startsWith('0x')) {
         solanaAddress = pk;
         connectedFamilies.push('Solana (SPL)');
       }
     } catch {
-      // user rejected or provider locked
+      // optional
+    }
+  } else if (discoveredStandardWallets.length > 0) {
+    const solStandard =
+      discoveredStandardWallets.find(
+        (w) => /trust/i.test(w.name || '') && w.chains?.some((c) => c.startsWith('solana:'))
+      ) || discoveredStandardWallets.find((w) => w.chains?.some((c) => c.startsWith('solana:')));
+    if (solStandard?.features?.['standard:connect']?.connect) {
+      try {
+        const res = await solStandard.features['standard:connect'].connect();
+        const pk = res?.accounts?.[0]?.address || solStandard.accounts?.[0]?.address || null;
+        if (pk && !pk.startsWith('0x')) {
+          solanaAddress = pk;
+          if (/trust/i.test(solStandard.name || '')) isTrust = true;
+          connectedFamilies.push('Solana (SPL)');
+        }
+      } catch {
+        // optional
+      }
     }
   }
 
@@ -311,7 +453,18 @@ export async function connectAllWalletChains(): Promise<MultiChainConnectResult>
   if (tonProv) {
     try {
       const res = (await tonProv.connect?.().catch(() => null)) as { account?: { address?: string }; address?: string } | undefined;
-      const addr = res?.account?.address || res?.address || tonProv.account?.address || null;
+      let addr = res?.account?.address || res?.address || tonProv.account?.address || null;
+      if (!addr && tonProv.send) {
+        const accounts = (await tonProv.send('ton_requestAccounts').catch(() => null)) as string[] | null;
+        if (Array.isArray(accounts) && typeof accounts[0] === 'string') {
+          addr = accounts[0];
+        } else {
+          const wallets = (await tonProv.send('ton_requestWallets').catch(() => null)) as Array<{ address?: string }> | null;
+          if (Array.isArray(wallets) && typeof wallets[0]?.address === 'string') {
+            addr = wallets[0].address;
+          }
+        }
+      }
       if (addr) {
         tonAddress = addr;
         connectedFamilies.push('TON (Jetton)');
@@ -322,7 +475,7 @@ export async function connectAllWalletChains(): Promise<MultiChainConnectResult>
   }
 
   if (!evmAddress && !solanaAddress && !tronAddress && !tonAddress) {
-    throw new Error('NO_INJECTED_WALLET');
+    throw new Error(userRejectedAny ? 'USER_REJECTED' : 'NO_INJECTED_WALLET');
   }
 
   return {
@@ -334,6 +487,70 @@ export async function connectAllWalletChains(): Promise<MultiChainConnectResult>
     activeEvmChainId,
     connectedFamilies,
   };
+}
+
+export interface PersistedMultiChainResult extends MultiChainConnectResult {
+  verified: boolean;
+}
+
+export async function connectAndPersistAllTrustWallets(): Promise<PersistedMultiChainResult> {
+  const conn = await connectAllWalletChains();
+  const nonceRes = await apiFetch<{ message: string }>('/api/trustwallet/nonce', { method: 'POST' });
+  const sig = conn.evmAddress
+    ? await signTrustWalletNonce(conn.evmAddress, nonceRes.message).catch(() => undefined)
+    : undefined;
+  await apiFetch('/api/trustwallet/connect', {
+    method: 'POST',
+    body: JSON.stringify({
+      evmAddress: conn.evmAddress || undefined,
+      solanaAddress: conn.solanaAddress || undefined,
+      tronAddress: conn.tronAddress || undefined,
+      tonAddress: conn.tonAddress || undefined,
+      signature: sig,
+      signedMessage: nonceRes.message,
+    }),
+  });
+  void apiFetch('/api/trustwallet/balance', { method: 'POST' }).catch(() => {});
+  return {
+    ...conn,
+    verified: Boolean(sig),
+  };
+}
+
+export interface TrustWalletDappHandoff {
+  targetUrl: string;
+  universalLink: string;
+  deepLink: string;
+  expiresInSeconds: number;
+}
+
+export async function requestTrustWalletDappHandoff(coinId = 20000714): Promise<TrustWalletDappHandoff> {
+  return apiFetch<TrustWalletDappHandoff>('/api/trustwallet/dapp-handoff', {
+    method: 'POST',
+    body: JSON.stringify({
+      origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+      coinId,
+    }),
+  });
+}
+
+export function launchTrustWalletUrl(universalLink: string, deepLink?: string): void {
+  if (typeof window === 'undefined') return;
+  const tg = getTelegramWebApp();
+  if (isInsideTelegramMiniApp() && tg?.openLink) {
+    tg.openLink(universalLink, { try_instant_view: false });
+    return;
+  }
+  if (deepLink && isMobileWalletPlatform()) {
+    window.location.href = deepLink;
+    window.setTimeout(() => {
+      if (document.visibilityState === 'visible') {
+        window.location.href = universalLink;
+      }
+    }, 850);
+    return;
+  }
+  window.open(universalLink, '_blank', 'noopener,noreferrer');
 }
 
 export async function signTrustWalletNonce(address: string, message: string): Promise<string> {

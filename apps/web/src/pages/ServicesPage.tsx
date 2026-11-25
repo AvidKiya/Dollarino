@@ -285,8 +285,8 @@ export function ServicesPage({
   };
 
   const activePlanLabel = isFa
-    ? 'رایگان همیشگی · ۹۵٪ سود برای شما (کارمزد ۵٪ فقط از سود واقعی)'
-    : 'Free Forever · 5% Fee Only on Real Profit';
+    ? '۳ معامله اول ۰٪ · ۹۷٪ سود برای شما (کارمزد ۳٪ فقط از سود واقعی)'
+    : 'First 3 Live Wins 0% · 3% Fee Only on Net Profit';
 
   /* Dedicated Account Management View: Full Editable Profile with Locked Verified Phone */
   if (accountView) {
@@ -582,7 +582,7 @@ export function ServicesPage({
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-dim font-bold">
-                  {data.config.trading_mode === 'LIVE' ? 'TRUST WALLET' : 'SIMULATOR $10K'}
+                  {data.config.trading_mode === 'LIVE' ? 'TRUST WALLET' : 'DEMO SIMULATOR'}
                 </span>
                 <Arrow className="w-4 h-4 text-dim" />
               </div>
@@ -744,7 +744,7 @@ export function ServicesPage({
     },
     {
       tab: 'pricing',
-      title: isFa ? 'اشتراک و هدیه' : 'Plans & Gift',
+      title: isFa ? 'کارمزد ۳٪ و هدیه' : '3% Fee & Gift',
       icon: Gift,
       bg: 'from-[#F59E0B] to-[#FBBF24]',
       color: '#FFFFFF',
@@ -1001,7 +1001,7 @@ export function ServicesPage({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'کارمزد ۵٪ سود و باشگاه دعوت از دوستان' : '5% Profit Fee & Referral Hub'}</span>
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'کارمزد ۳٪ سود، خزانه و باشگاه دعوت' : '3% Profit Fee, Treasury & Referrals'}</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#0D9455]/15 text-[#0D9455] dark:text-[#34D399]">
                   {isFa ? 'اعتبار کارمزد غیرقابل‌برداشت' : 'Prepaid Fee Credit'}
                 </span>

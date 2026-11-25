@@ -265,7 +265,7 @@ export function TrustWalletConnectInline({
                   : 'surface-soft hairline text-dim hover:text-main'
               }`}
             >
-              <p className="text-xs font-black">{isFa ? '🧪 شبیه‌ساز دمو ($10,000)' : '🧪 Demo Simulator ($10k)'}</p>
+              <p className="text-xs font-black">{isFa ? '🧪 شبیه‌ساز دمو ($50–$10M)' : '🧪 Custom Demo ($50–$10M)'}</p>
               <p className="text-[10px] opacity-85 mt-0.5">
                 {isFa ? 'دقیقاً مشابه تراست‌ولت با قیمت زنده و بدون ریسک' : 'Mirrors Trust Wallet with live prices'}
               </p>

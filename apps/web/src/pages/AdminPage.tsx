@@ -48,8 +48,10 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
+import { formatDollarinoSignal } from '@dollarino/core';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import type { FounderProfile, OnchainApiProviderItem, PromoBannerItem } from '../lib/types';
 
 interface PlatformAIEngine {
@@ -175,17 +177,6 @@ interface SubOrder {
   created_at: string;
 }
 
-interface PlanRow {
-  code: string;
-  name_fa?: string;
-  name_en?: string;
-  price_usd: number;
-  price_toman: number;
-  duration_days?: number;
-  is_popular?: number;
-  is_active?: number;
-}
-
 interface AdminCopyTrader {
   id: string;
   display_name: string;
@@ -268,20 +259,11 @@ export function AdminPage({
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
-  const [grantEmail, setGrantEmail] = useState('');
-  const [grantPlan, setGrantPlan] = useState('pro_monthly');
-  const [grantDays, setGrantDays] = useState(30);
-
   const [payCfg, setPayCfg] = useState({
-    subscriptionRequired: true,
     usdtTrc20Wallet: '',
     iranCardNumber: '',
     iranCardHolder: '',
     telegramSupport: '@Dollarino_bot',
-    proPriceUsd: 29,
-    proPriceToman: 1950000,
-    vipPriceUsd: 59,
-    vipPriceToman: 3950000,
   });
 
   const [adminSection, setAdminSection] = useState<'menu' | 'overview' | 'banners' | 'founder' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'all'>('menu');
@@ -518,17 +500,6 @@ export function AdminPage({
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
   const [supReply, setSupReply] = useState('');
 
-  // Full Plans CRUD State
-  const [adminPlans, setAdminPlans] = useState<PlanRow[]>([]);
-  const [newPlan, setNewPlan] = useState({
-    code: '',
-    nameFa: '',
-    nameEn: '',
-    priceUsd: 29,
-    priceToman: 2030000,
-    durationDays: 30,
-    isPopular: false,
-  });
   const [onchainApis, setOnchainApis] = useState<OnchainApiProviderItem[]>([]);
   const [onchainInputs, setOnchainInputs] = useState<Record<string, string>>({});
   const [promoBanners, setPromoBanners] = useState<PromoBannerItem[]>([]);
@@ -589,13 +560,69 @@ export function AdminPage({
     latePenaltyPct: '25',
     autoLockEnabled: true,
   });
+  const [treasurySummary, setTreasurySummary] = useState<{
+    bankMode: string;
+    mnemonicConfigured: boolean;
+    mnemonicHint: string;
+    minDepositUsd: number;
+    receivers: { evm: string; tron: string; solana: string; ton: string };
+    totals: {
+      confirmedDepositsUsd: number;
+      confirmedTopupsUsd: number;
+      confirmedFeeSettlementsUsd: number;
+      pendingDepositsUsd: number;
+      pendingCount: number;
+      profitFeesCollectedUsd: number;
+      profitFeesAccruedUsd: number;
+      freeTrialTradesCount: number;
+      referralCreditsUsd: number;
+    };
+    deposits: Array<{
+      id: string;
+      username?: string;
+      email?: string;
+      category: string;
+      asset: string;
+      network: string;
+      amount_usd: number;
+      tx_hash: string;
+      status: string;
+      created_at: string;
+    }>;
+  } | null>(null);
+  const [treasuryMnemonicInput, setTreasuryMnemonicInput] = useState('');
+  const [treasuryReceiversForm, setTreasuryReceiversForm] = useState({
+    evm: '',
+    tron: '',
+    solana: '',
+    ton: '',
+    minDepositUsd: '10',
+  });
+  const [treasuryBusy, setTreasuryBusy] = useState(false);
+  const [adminTvWebhookUrl, setAdminTvWebhookUrl] = useState('');
+  const [adminTvCopied, setAdminTvCopied] = useState(false);
+  const [adminTvChannel, setAdminTvChannel] = useState('@Dollarino_official');
+  const [adminTvRawSig, setAdminTvRawSig] = useState(() =>
+    formatDollarinoSignal({
+      symbol: 'BTCUSDT',
+      direction: 'LONG',
+      timeframe: '15m',
+      price: '62000',
+      stopLoss: '60500',
+      leverage: 10,
+      tp1: '63500',
+      tp2: '65000',
+      tp3: '66500',
+      channelHandle: '@Dollarino_official',
+    })
+  );
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, topTrRes, chStatusRes, supRes, plansRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes, feeAdminRes, founderRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, topTrRes, chStatusRes, supRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes, feeAdminRes, founderRes, treasuryRes, tvRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
-      apiFetch<{ plans: PlanRow[]; paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
+      apiFetch<{ paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
       apiFetch<{
         engines: PlatformAIEngine[];
         consensusMode: string;
@@ -617,7 +644,6 @@ export function AdminPage({
         automation?: typeof autoPublishingCfg;
       }>('/api/admin/telegram/channel-status').catch(() => null),
       apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
-      apiFetch<{ plans: PlanRow[] }>('/api/admin/plans').catch(() => ({ plans: [] })),
       apiFetch<{ news: Array<{ id: string; title: string; category: string; impact: string; created_at: string }> }>('/api/admin/channel/news').catch(() => ({ news: [] })),
       apiFetch<{ trades: AdminDexTrade[] }>('/api/admin/dex-trades').catch(() => ({ trades: [] })),
       apiFetch<{ logs: AdminAuditLog[] }>('/api/admin/audit-logs').catch(() => ({ logs: [] })),
@@ -628,7 +654,25 @@ export function AdminPage({
       apiFetch<{ broadcasts?: typeof broadcastList }>('/api/admin/broadcasts').catch(() => ({ broadcasts: [] })),
       apiFetch<{ policy?: { graceLimitUsd: number; graceHours: number; latePenaltyPct: number; autoLockEnabled: boolean }; accounts?: typeof adminFeeAccounts }>('/api/subscriptions/admin/server-fees').catch(() => ({ policy: undefined, accounts: [] })),
       apiFetch<{ profile?: FounderProfile }>('/api/admin/founder-profile').catch(() => ({ profile: undefined })),
+      apiFetch<{ ok?: boolean } & NonNullable<typeof treasurySummary>>('/api/admin/treasury').catch(() => null),
+      apiFetch<{ webhookUrl?: string | null }>('/api/webhook/alerts').catch(() => null),
     ]);
+    if (tvRes?.webhookUrl) {
+      setAdminTvWebhookUrl(tvRes.webhookUrl);
+    }
+    if (ov.settings.official_channel) {
+      setAdminTvChannel(ov.settings.official_channel);
+    }
+    if (treasuryRes) {
+      setTreasurySummary(treasuryRes);
+      setTreasuryReceiversForm({
+        evm: treasuryRes.receivers?.evm || '',
+        tron: treasuryRes.receivers?.tron || '',
+        solana: treasuryRes.receivers?.solana || '',
+        ton: treasuryRes.receivers?.ton || '',
+        minDepositUsd: String(treasuryRes.minDepositUsd ?? 10),
+      });
+    }
     if (founderRes.profile) {
       setFounderProfile(founderRes.profile);
     }
@@ -647,7 +691,6 @@ export function AdminPage({
     setBroadcastList(broadcastsRes.broadcasts || []);
     setData(ov);
     setOrders(ordRes.orders);
-    setAdminPlans(plansRes.plans || []);
     setChannelNewsList(newsRes.news || []);
     setDexTrades(dexRes.trades || []);
     setAuditLogs(logRes.logs || []);
@@ -728,10 +771,7 @@ export function AdminPage({
     }
 
     if (subMe) {
-      const pro = subMe.plans.find((p) => p.code === 'pro_monthly');
-      const vip = subMe.plans.find((p) => p.code === 'vip_quarterly');
       setPayCfg({
-        subscriptionRequired: (subMe.paymentConfig.subscription_required ?? 'true') !== 'false',
         usdtTrc20Wallet: subMe.paymentConfig.usdt_trc20_wallet || '',
         iranCardNumber: subMe.paymentConfig.iran_card_number || '',
         iranCardHolder: subMe.paymentConfig.iran_card_holder || '',
@@ -739,10 +779,6 @@ export function AdminPage({
           subMe.paymentConfig.telegram_support && !/Dollarino_admin|Dollarinoofficial/i.test(subMe.paymentConfig.telegram_support)
             ? subMe.paymentConfig.telegram_support
             : '@Dollarino_bot',
-        proPriceUsd: pro?.price_usd ?? 20,
-        proPriceToman: pro?.price_toman ?? 1400000,
-        vipPriceUsd: vip?.price_usd ?? 50,
-        vipPriceToman: vip?.price_toman ?? 3500000,
       });
     }
   };
@@ -750,6 +786,13 @@ export function AdminPage({
   useEffect(() => {
     load().catch(() => {});
   }, [isOwnerOrAdmin]);
+
+  useEffect(() => {
+    if (!msg) return;
+    const isErr = /❌|خطا|fail|error|rejected|ناموفق/i.test(msg);
+    pushFloatingToast(msg, isErr ? 'error' : 'success');
+    setMsg(null);
+  }, [msg]);
 
   const updateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -786,7 +829,7 @@ export function AdminPage({
         method: 'POST',
         body: JSON.stringify({ decision }),
       });
-      setMsg(decision === 'APPROVE' ? 'Subscription approved & activated!' : 'Order rejected.');
+      setMsg(decision === 'APPROVE' ? 'Settlement approved!' : 'Record rejected.');
       await load();
       onUserUpdated();
     } catch (err) {
@@ -803,28 +846,12 @@ export function AdminPage({
     try {
       const res = await apiFetch<{ ok: boolean; code: string; durationDays: number }>('/api/subscriptions/admin/gift-codes', {
         method: 'POST',
-        body: JSON.stringify({ planCode: grantPlan, durationDays: giftDays, maxUses: giftMaxUses }),
+        body: JSON.stringify({ planCode: 'pro_monthly', durationDays: giftDays, maxUses: giftMaxUses }),
       });
       setGeneratedGiftCode(res.code);
-      setMsg(isFa ? `کد هدیه ساخته شد: ${res.code} (${res.durationDays} روز)` : `Gift Code Created: ${res.code} (${res.durationDays}d)`);
+      setMsg(isFa ? `کد هدیه اعتبار کارمزد ساخته شد: ${res.code} (${res.durationDays} روز)` : `Fee Credit Gift Code Created: ${res.code} (${res.durationDays}d)`);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'Gift code creation failed');
-    }
-  };
-
-  const grantSubscription = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMsg(null);
-    try {
-      const res = await apiFetch<{ email: string; days: number }>('/api/subscriptions/admin/grant', {
-        method: 'POST',
-        body: JSON.stringify({ emailOrUserId: grantEmail, planCode: grantPlan, days: grantDays }),
-      });
-      setGrantEmail('');
-      setMsg(`Granted ${res.days}d ${grantPlan} to ${res.email}!`);
-      await load();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Grant subscription failed');
     }
   };
 
@@ -910,15 +937,6 @@ export function AdminPage({
 
   return (
     <div className="space-y-5 tab-enter">
-      {msg && (
-        <div className="surface-card p-3.5 border-brand text-xs text-brand font-bold flex items-center justify-between gap-2">
-          <span>{msg}</span>
-          <button type="button" onClick={() => setMsg(null)} className="text-dim hover:text-main">
-            <XCircle className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Compact Top Account & Security Toggle Bar */}
       <div className="panel rounded-3xl p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -993,7 +1011,7 @@ export function AdminPage({
                     {adminSection === 'banners' && (isFa ? 'بنرهای متحرک و کمپین تبلیغاتی' : 'Promo Banners & Campaigns')}
                     {adminSection === 'founder' && (isFa ? 'هویت بنیان‌گذار، عکس و شفافیت ضدپانزی' : 'Founder Identity, Photo & Anti-Scam Proof')}
                     {adminSection === 'users' && (isFa ? 'مدیریت کاربران، KYC و رفرال' : 'Users, Phone KYC & Referrals')}
-                    {adminSection === 'payments' && (isFa ? 'مالی، فیش‌ها، کارمزد ۵٪ و کیف‌پول‌ها' : 'Finance, Fees & Wallets')}
+                    {adminSection === 'payments' && (isFa ? 'مالی، خزانه، فیش‌ها و کارمزد ۳٪' : 'Finance, Treasury, 3% Fees & Wallets')}
                     {adminSection === 'ops' && (isFa ? 'کانال تلگرام، کپی‌ترید و پشتیبانی' : 'Channel, Copy-Trade & Tickets')}
                     {adminSection === 'dex_logs' && (isFa ? 'APIهای آن‌چین، DEX و لاگ سیستم' : 'On-Chain APIs, DEX & Audit Logs')}
                     {adminSection === 'all' && (isFa ? 'نمایش کامل تمام بخش‌های ادمین' : 'All Admin Sections')}
@@ -1056,7 +1074,7 @@ export function AdminPage({
                     </div>
                   </div>
                   <div className="surface-soft rounded-2xl p-3 border hairline">
-                    <div className="text-[10px] text-sub font-bold">{isFa ? 'کارمزد ۵٪ سود' : '5% Profit Fee'}</div>
+                    <div className="text-[10px] text-sub font-bold">{isFa ? 'کارمزد ۳٪ سود' : '3% Profit Fee'}</div>
                     <div className="text-base font-black font-mono-num text-jade mt-0.5" dir="ltr">
                       ${Number(data.stats.serverFees?.accruedFeeUsd ?? 0).toFixed(2)}
                     </div>
@@ -1170,7 +1188,7 @@ export function AdminPage({
                       id: 'payments' as const,
                       icon: CreditCard,
                       badgeBg: 'bg-[#059669]',
-                      title: isFa ? 'امور مالی، تایید فیش، کارمزد ۵٪ و آدرس‌های Trust Wallet' : 'Finance, Receipts, 5% Fees & Trust Wallets',
+                      title: isFa ? 'خزانه مرکزی (بانک)، کارمزد ۳٪ و آدرس‌های Trust Wallet' : 'Central Treasury Bank, 3% Fees & Trust Wallets',
                       subtitle: isFa
                         ? `تنظیم ولت‌های دریافت کارمزد، کد هدیه، اعطای اعتبار و بررسی فیش‌ها`
                         : `Receiver wallets, gift codes, manual grants & receipt approvals`,
@@ -1331,7 +1349,7 @@ export function AdminPage({
                       { ok: systemHealth.productionChecks.encryptionKeyOk, label: isFa ? 'رمزنگاری Vault' : 'AES Vault Key' },
                       { ok: systemHealth.productionChecks.telegramBotConfigured, label: isFa ? 'توکن ربات تلگرام' : 'Telegram Bot' },
                       { ok: systemHealth.productionChecks.aiEngineConfigured, label: isFa ? 'موتور هوش مصنوعی' : 'AI Gateway' },
-                      { ok: systemHealth.productionChecks.feeReceiverWalletConfigured, label: isFa ? 'ولت دریافت کارمزد ۵٪' : '5% Fee Wallet' },
+                      { ok: systemHealth.productionChecks.feeReceiverWalletConfigured, label: isFa ? 'ولت خزانه / کارمزد ۳٪' : 'Treasury / 3% Fee Wallet' },
                       { ok: systemHealth.productionChecks.allowLiveTrading, label: isFa ? 'اجازه ترید واقعی' : 'Live Trading' },
                     ].map((chk) => (
                       <div
@@ -1699,12 +1717,259 @@ export function AdminPage({
 
           {(adminSection === 'all' || adminSection === 'payments') && (
           <div className="space-y-5 tab-enter">
-          {/* 5% Fee Debt & Lock Policy Enforcement Panel */}
+          {/* Central Treasury / Bank Wallet Management (Owner Trust Wallet Connect + BIP39 Seed + Deposit Verification) */}
+          <div className="surface-card p-5 space-y-4 border border-sky-500/30">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-black text-main flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-[#0D47A1] dark:text-[#60A5FA]" />
+                  <span>{isFa ? '🏦 خزانه مرکزی و کیف‌پول بانک دلارینو (BIP39 / Trust Wallet)' : '🏦 Central Treasury Bank Wallet (BIP39 / Trust Wallet)'}</span>
+                </h3>
+                <p className="text-[11px] text-dim mt-0.5">
+                  {isFa
+                    ? 'تمام واریزها (حداقل $۱۰)، پیش‌پرداخت و کارمزد ۳٪ پس از ۳ معامله سودده اول رایگان به این کیف‌پول خزانه واریز می‌شود.'
+                    : 'Collects $10+ deposits, credit top-ups, and 3% post-trial profit fees.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-[11px] font-black">
+                <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-[#059669]">
+                  {treasurySummary?.bankMode === 'MNEMONIC_VAULT' ? '🔐 BIP39 Vault' : '🛡 Trust Wallet Bank'}
+                </span>
+                <button
+                  type="button"
+                  disabled={treasuryBusy}
+                  onClick={async () => {
+                    setTreasuryBusy(true);
+                    try {
+                      await apiFetch('/api/admin/treasury/connect-wallet', { method: 'POST', body: JSON.stringify({}) });
+                      setMsg(isFa ? 'کیف‌پول Trust Wallet متصل‌شده ادمین به عنوان بانک خزانه ثبت شد ✅' : 'Owner Trust Wallet connected as Treasury ✅');
+                      await load();
+                    } catch (e) {
+                      setMsg(e instanceof Error ? e.message : 'Connect treasury failed');
+                    } finally {
+                      setTreasuryBusy(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-[#0D47A1] text-white font-black"
+                >
+                  {isFa ? 'اتصال Trust Wallet من به عنوان بانک' : 'Connect My Trust Wallet'}
+                </button>
+              </div>
+            </div>
+
+            {treasurySummary && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                <div className="surface-soft rounded-2xl p-3 border hairline">
+                  <p className="text-[10px] text-dim">{isFa ? 'واریزهای تاییدشده' : 'Confirmed Deposits'}</p>
+                  <p dir="ltr" className="font-num font-black text-main mt-0.5">
+                    ${(treasurySummary.totals.confirmedDepositsUsd + treasurySummary.totals.confirmedTopupsUsd).toFixed(2)}
+                  </p>
+                </div>
+                <div className="surface-soft rounded-2xl p-3 border hairline">
+                  <p className="text-[10px] text-dim">{isFa ? 'کارمزد ۳٪ وصول‌شده' : '3% Fees Collected'}</p>
+                  <p dir="ltr" className="font-num font-black text-[#059669] mt-0.5">
+                    ${treasurySummary.totals.profitFeesCollectedUsd.toFixed(2)}
+                  </p>
+                </div>
+                <div className="surface-soft rounded-2xl p-3 border hairline">
+                  <p className="text-[10px] text-dim">{isFa ? 'در انتظار تایید' : 'Pending Review'}</p>
+                  <p dir="ltr" className="font-num font-black text-[#D97706] mt-0.5">
+                    {treasurySummary.totals.pendingCount} (${treasurySummary.totals.pendingDepositsUsd.toFixed(2)})
+                  </p>
+                </div>
+                <div className="surface-soft rounded-2xl p-3 border hairline">
+                  <p className="text-[10px] text-dim">{isFa ? 'معاملات رایگان اول' : '0% Free Trial Trades'}</p>
+                  <p dir="ltr" className="font-num font-black text-brand mt-0.5">
+                    {treasurySummary.totals.freeTrialTradesCount}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* BIP39 Encrypted Seed Import (Optional Bank Wallet Derivation) */}
+            <div className="rounded-2xl p-3.5 surface-soft border hairline space-y-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-black text-main">
+                  {isFa ? '🔑 اتصال بانک با عبارت ۱۲/۲۴ کلمه‌ای (رمزنگاری AES-GCM + مشتق BIP44 EVM & TRON)' : '🔑 Import 12/24-Word BIP39 Treasury Seed (AES-GCM Vault)'}
+                </span>
+                {treasurySummary?.mnemonicConfigured && (
+                  <span className="text-[10px] text-[#059669] font-black">{treasurySummary.mnemonicHint}</span>
+                )}
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <input
+                  type="password"
+                  dir="ltr"
+                  value={treasuryMnemonicInput}
+                  onChange={(e) => setTreasuryMnemonicInput(e.target.value)}
+                  placeholder={isFa ? 'word1 word2 ... word12 (رمزنگاری‌شده ذخیره می‌شود)' : '12 or 24 BIP39 mnemonic words...'}
+                  className="surface-input flex-1 h-10 rounded-xl px-3 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  disabled={treasuryBusy || !treasuryMnemonicInput.trim()}
+                  onClick={async () => {
+                    setTreasuryBusy(true);
+                    try {
+                      const res = await apiFetch<{ receivers?: { evm?: string; tron?: string } }>('/api/admin/treasury/import-mnemonic', {
+                        method: 'POST',
+                        body: JSON.stringify({ mnemonic: treasuryMnemonicInput }),
+                      });
+                      setTreasuryMnemonicInput('');
+                      setMsg(isFa ? `خزانه با سید رمزنگاری و آدرس EVM (${res.receivers?.evm}) راه‌اندازی شد ✅` : 'BIP39 Treasury Seed imported ✅');
+                      await load();
+                    } catch (e) {
+                      setMsg(e instanceof Error ? e.message : 'Mnemonic import failed');
+                    } finally {
+                      setTreasuryBusy(false);
+                    }
+                  }}
+                  className="h-10 px-5 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:opacity-45 text-white font-black shrink-0 inline-flex items-center justify-center"
+                >
+                  {isFa ? '🔐 مشتق‌سازی و ذخیره رمزنگاری' : '🔐 Derive & Encrypt'}
+                </button>
+              </div>
+            </div>
+
+            {/* Manual Treasury Receiver Addresses per Chain */}
+            <div className="space-y-3 text-xs">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-dim block mb-1.5">EVM (BEP20 / ERC20 / Base)</label>
+                  <input
+                    dir="ltr"
+                    value={treasuryReceiversForm.evm}
+                    onChange={(e) => setTreasuryReceiversForm((s) => ({ ...s, evm: e.target.value }))}
+                    placeholder="0x..."
+                    className="surface-input w-full h-10 rounded-xl px-3 font-mono text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-dim block mb-1.5">TRON (TRC20)</label>
+                  <input
+                    dir="ltr"
+                    value={treasuryReceiversForm.tron}
+                    onChange={(e) => setTreasuryReceiversForm((s) => ({ ...s, tron: e.target.value }))}
+                    placeholder="T..."
+                    className="surface-input w-full h-10 rounded-xl px-3 font-mono text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-dim block mb-1.5">Solana (SPL)</label>
+                  <input
+                    dir="ltr"
+                    value={treasuryReceiversForm.solana}
+                    onChange={(e) => setTreasuryReceiversForm((s) => ({ ...s, solana: e.target.value }))}
+                    placeholder="Solana address..."
+                    className="surface-input w-full h-10 rounded-xl px-3 font-mono text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-dim block mb-1.5">TON Network</label>
+                  <input
+                    dir="ltr"
+                    value={treasuryReceiversForm.ton}
+                    onChange={(e) => setTreasuryReceiversForm((s) => ({ ...s, ton: e.target.value }))}
+                    placeholder="UQ..."
+                    className="surface-input w-full h-10 rounded-xl px-3 font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-2xl p-3.5 surface-soft border hairline flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <label className="text-[11px] font-bold text-dim shrink-0">{isFa ? 'حداقل واریز به خزانه ($):' : 'Min Treasury Deposit ($):'}</label>
+                  <input
+                    type="number"
+                    min={10}
+                    dir="ltr"
+                    value={treasuryReceiversForm.minDepositUsd}
+                    onChange={(e) => setTreasuryReceiversForm((s) => ({ ...s, minDepositUsd: e.target.value }))}
+                    className="surface-input w-28 h-10 rounded-xl px-3 font-mono text-xs font-bold"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={treasuryBusy}
+                  onClick={async () => {
+                    setTreasuryBusy(true);
+                    try {
+                      await apiFetch('/api/admin/treasury/receivers', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          evm: treasuryReceiversForm.evm,
+                          tron: treasuryReceiversForm.tron,
+                          solana: treasuryReceiversForm.solana,
+                          ton: treasuryReceiversForm.ton,
+                          minDepositUsd: Number(treasuryReceiversForm.minDepositUsd || 10),
+                        }),
+                      });
+                      setMsg(isFa ? 'آدرس‌های خزانه ذخیره شد ✅' : 'Treasury receivers saved ✅');
+                      await load();
+                    } finally {
+                      setTreasuryBusy(false);
+                    }
+                  }}
+                  className="h-10 px-6 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white font-black text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0"
+                >
+                  <span>{isFa ? '💾 ذخیره آدرس‌های خزانه و حداقل واریز' : '💾 Save Treasury Receivers'}</span>
+                </button>
+              </div>
+            </div>
+
+            {treasurySummary?.deposits && treasurySummary.deposits.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t hairline text-xs">
+                <p className="font-black text-main">{isFa ? 'لیست واریزهای خزانه کاربران (بررسی TX Hash منحصربه‌فرد):' : 'User Treasury Deposits:'}</p>
+                {treasurySummary.deposits.slice(0, 12).map((td) => (
+                  <div key={td.id} className="surface-soft rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 border hairline">
+                    <div className="min-w-0">
+                      <span className="font-black text-main">{td.username || td.email}</span>{' '}
+                      <span dir="ltr" className="text-[#059669] font-black">${Number(td.amount_usd).toFixed(2)} {td.asset} ({td.network})</span>
+                      <p dir="ltr" className="text-[10px] font-mono text-dim truncate max-w-md">{td.tx_hash}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        td.status === 'CONFIRMED' ? 'bg-emerald-500/15 text-[#059669]' : td.status === 'REJECTED' ? 'bg-rose-500/15 text-[#DC2626]' : 'bg-amber-500/15 text-[#D97706]'
+                      }`}>
+                        {td.status}
+                      </span>
+                      {td.status === 'PENDING_VERIFY' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await apiFetch(`/api/admin/treasury/deposits/${td.id}/decide`, { method: 'POST', body: JSON.stringify({ approve: true }) });
+                              await load();
+                            }}
+                            className="px-2 py-1 rounded-lg bg-[#059669] text-white text-[10px] font-black"
+                          >
+                            {isFa ? 'تایید' : 'Approve'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await apiFetch(`/api/admin/treasury/deposits/${td.id}/decide`, { method: 'POST', body: JSON.stringify({ approve: false }) });
+                              await load();
+                            }}
+                            className="px-2 py-1 rounded-lg bg-[#DC2626] text-white text-[10px] font-black"
+                          >
+                            {isFa ? 'رد' : 'Reject'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 3% Fee Debt & Lock Policy Enforcement Panel */}
           <div className="surface-card p-5 space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h3 className="text-sm font-black text-main flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-[#D97706]" />
-                <span>{isFa ? 'کنترل کارمزد ۵٪، بدهکاران، مهلت ۷۲ ساعته و قفل خودکار' : '5% Server Fee Enforcement, Debtors & Late Penalty'}</span>
+                <span>{isFa ? 'کنترل کارمزد ۳٪ (پس از ۳ معامله رایگان)، بدهکاران و مهلت ۷۲ ساعته' : '3% Server Fee Enforcement, Debtors & Late Penalty'}</span>
               </h3>
               <button
                 type="button"
@@ -1718,7 +1983,7 @@ export function AdminPage({
                       fee_auto_lock_enabled: adminFeePolicy.autoLockEnabled ? 'true' : 'false',
                     }),
                   });
-                  setMsg(isFa ? 'قوانین محدودیت کارمزد ۵٪ ذخیره شد ✅' : 'Fee enforcement rules saved ✅');
+                  setMsg(isFa ? 'قوانین محدودیت کارمزد ۳٪ ذخیره شد ✅' : 'Fee enforcement rules saved ✅');
                   await load();
                 }}
                 className="px-3.5 py-1.5 rounded-xl bg-[#059669] text-white text-xs font-black"
@@ -1827,7 +2092,7 @@ export function AdminPage({
           <div className="surface-card p-5 space-y-3 overflow-x-auto">
             <h3 className="text-sm font-black text-main flex items-center gap-2">
               <Crown className="w-4 h-4 text-flame" />
-              <span>{isFa ? 'تسویه کارمزد ۵٪ سود و تراکنش‌های تاریخی (اشتراک ماهانه رایگان است)' : '5% Profit Fee Settlements & Legacy Records (Subscriptions Free)'}</span>
+              <span>{isFa ? 'تسویه کارمزد ۳٪ سود و تراکنش‌های تاریخی (اشتراک ماهانه رایگان است)' : '3% Profit Fee Settlements & Legacy Records (Subscriptions Free)'}</span>
             </h3>
             {orders.length === 0 ? (
               <p className="text-xs text-dim py-3">{isFa ? 'هنوز سفارشی ثبت نشده است.' : 'No subscription orders yet.'}</p>
@@ -1910,41 +2175,27 @@ export function AdminPage({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-            <form onSubmit={grantSubscription} className="surface-card p-5 space-y-3">
+            <div className="surface-card p-5 space-y-3">
               <h3 className="font-black text-sm text-main flex items-center gap-2">
                 <Gift className="w-4 h-4 text-signal" />
-                <span>{isFa ? 'فعال‌سازی دستی اشتراک برای کاربر' : 'Manual Subscription Grant'}</span>
+                <span>{isFa ? 'مدل رایگان + کد هدیه اعتبار کارمزد ۳٪' : '0$ Subscription Model & Fee Credit Gift Codes'}</span>
               </h3>
-              <input
-                required
-                value={grantEmail}
-                onChange={(e) => setGrantEmail(e.target.value)}
-                placeholder={isFa ? 'ایمیل یا ID کاربر' : 'User Email or ID'}
-                className="w-full surface-input rounded-xl px-3 py-2.5"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <select value={grantPlan} onChange={(e) => setGrantPlan(e.target.value)} className="surface-input rounded-xl px-3 py-2.5">
-                  <option value="pro_monthly">1-Month ($20)</option>
-                  <option value="vip_quarterly">3-Month ($50)</option>
-                  <option value="pro_semiannual">6-Month ($90)</option>
-                  <option value="pro_annual">1-Year ($160)</option>
-                </select>
-                <input
-                  type="number"
-                  min={1}
-                  max={3650}
-                  value={grantDays}
-                  onChange={(e) => setGrantDays(Number(e.target.value))}
-                  className="surface-input rounded-xl px-3 py-2.5 font-mono-num"
-                />
+              <div className="rounded-2xl surface-soft border hairline p-3.5 space-y-1.5 text-[11px] text-sub leading-relaxed">
+                <p className="font-black text-main">
+                  {isFa
+                    ? '✅ سیستم اشتراک ماهانه و پکیج‌های پولی حذف شده است.'
+                    : '✅ Monthly subscription tiers have been permanently retired.'}
+                </p>
+                <p>
+                  {isFa
+                    ? '• تمام امکانات برای همه کاربران رایگان است. ۳ معامله سودده اول واقعی با کارمزد ۰٪ محاسبه می‌شود و از معامله چهارم به بعد فقط ۳٪ کارمزد از سود خالص کسر می‌گردد.'
+                    : '• All platform tools are 100% free. First 3 profitable LIVE trades carry 0% fee; subsequent profitable trades share 3% net profit.'}
+                </p>
               </div>
-              <button type="submit" className="w-full py-2.5 rounded-xl btn-emerald font-extrabold">
-                {isFa ? 'اعطای اشتراک فعال' : 'Grant Active Subscription'}
-              </button>
 
-              <div className="pt-3 mt-2 border-t hairline space-y-2">
+              <div className="pt-2 space-y-2">
                 <div className="text-[11px] font-bold text-sub">
-                  {isFa ? 'تولید کد هدیه اشتراک (Gift Code):' : 'Generate Subscription Gift Code:'}
+                  {isFa ? 'تولید کد هدیه اعتبار کارمزد (Gift Code):' : 'Generate Fee-Credit Gift Code:'}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <input type="number" min={1} max={3650} value={giftDays} onChange={(e) => setGiftDays(Number(e.target.value))} placeholder="Days" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
@@ -1960,27 +2211,22 @@ export function AdminPage({
                   </div>
                 )}
               </div>
-            </form>
+            </div>
 
             <form onSubmit={savePayConfig} className="surface-card p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-black text-sm text-main flex items-center gap-2">
                   <Settings className="w-4 h-4 text-brand" />
-                  <span>{isFa ? 'تنظیمات کیف‌پول و تعرفه پلن‌ها' : 'Payment Wallet & Plan Pricing'}</span>
+                  <span>{isFa ? 'آدرس‌های تسویه کارمزد ۳٪ و امنیت Trust Wallet' : '3% Fee Settlement Wallets & Security'}</span>
                 </h3>
-                <label className="flex items-center gap-1.5 text-[11px] font-bold text-sub">
-                  <input
-                    type="checkbox"
-                    checked={payCfg.subscriptionRequired}
-                    onChange={(e) => setPayCfg({ ...payCfg, subscriptionRequired: e.target.checked })}
-                  />
-                  <span>{isFa ? 'اجبار اشتراک پولی' : 'Require Paid Plan'}</span>
-                </label>
+                <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">
+                  {isFa ? '۳ معامله ۰٪ + ۳٪ سود' : '3 Free -> 3%'}
+                </span>
               </div>
               <input
                 value={payCfg.usdtTrc20Wallet}
                 onChange={(e) => setPayCfg({ ...payCfg, usdtTrc20Wallet: e.target.value })}
-                placeholder="USDT TRC20 Wallet Address"
+                placeholder="USDT TRC20 Settlement Wallet Address"
                 className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
               />
               <div className="grid grid-cols-2 gap-2">
@@ -1996,12 +2242,6 @@ export function AdminPage({
                   placeholder="Card Holder Name"
                   className="surface-input rounded-xl px-3 py-2"
                 />
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <input type="number" value={payCfg.proPriceUsd} onChange={(e) => setPayCfg({ ...payCfg, proPriceUsd: Number(e.target.value) })} placeholder="Pro $" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
-                <input type="number" value={payCfg.proPriceToman} onChange={(e) => setPayCfg({ ...payCfg, proPriceToman: Number(e.target.value) })} placeholder="Pro T" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
-                <input type="number" value={payCfg.vipPriceUsd} onChange={(e) => setPayCfg({ ...payCfg, vipPriceUsd: Number(e.target.value) })} placeholder="VIP $" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
-                <input type="number" value={payCfg.vipPriceToman} onChange={(e) => setPayCfg({ ...payCfg, vipPriceToman: Number(e.target.value) })} placeholder="VIP T" className="surface-input rounded-xl px-2.5 py-2 font-mono-num" />
               </div>
 
               <div className="pt-2 border-t hairline space-y-2">
@@ -2045,131 +2285,7 @@ export function AdminPage({
               </div>
 
               <button type="submit" className="w-full py-2.5 rounded-xl btn-cobalt font-extrabold">
-                {isFa ? 'ذخیره تنظیمات مالی، Trust Wallet و KYC' : 'Save Pricing, Trust Wallet & KYC'}
-              </button>
-            </form>
-          </div>
-
-          {/* Full Subscription Plans CRUD */}
-          <div className="surface-card p-5 space-y-4 text-xs">
-            <div className="flex items-center justify-between">
-              <h3 className="font-black text-sm text-main flex items-center gap-2">
-                <Crown className="w-4 h-4 text-amber-400" />
-                <span>{isFa ? 'مدیریت کامل پکیج‌ها و پلن‌های اشتراک' : 'Subscription Plans Manager'}</span>
-              </h3>
-              <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{adminPlans.length}</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
-              {adminPlans.map((pl) => (
-                <div key={pl.code} className="surface-soft rounded-2xl p-3 space-y-2 border hairline">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-black text-main truncate">{isFa ? pl.name_fa || pl.code : pl.name_en || pl.code}</span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiFetch(`/api/admin/plans/${pl.code}`, {
-                          method: 'PATCH',
-                          body: JSON.stringify({ is_active: pl.is_active !== 1 }),
-                        });
-                        await load();
-                        onUserUpdated();
-                      }}
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                        pl.is_active === 1 ? 'badge-signal' : 'bg-rose-500/15 text-loss'
-                      }`}
-                    >
-                      {pl.is_active === 1 ? (isFa ? 'فعال' : 'Active') : (isFa ? 'غیرفعال' : 'Hidden')}
-                    </button>
-                  </div>
-                  <div className="text-[11px] text-dim font-mono-num" dir="ltr">
-                    {pl.code} · ${pl.price_usd} · {Number(pl.price_toman || 0).toLocaleString()}T · {pl.duration_days || 30}d
-                  </div>
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiFetch(`/api/admin/plans/${pl.code}`, {
-                          method: 'PATCH',
-                          body: JSON.stringify({ is_popular: pl.is_popular !== 1 }),
-                        });
-                        await load();
-                      }}
-                      className={`flex-1 py-1 rounded-lg text-[10px] font-bold ${
-                        pl.is_popular === 1 ? 'btn-gold' : 'surface-card text-dim'
-                      }`}
-                    >
-                      {pl.is_popular === 1 ? '⭐ Popular' : 'Mark Popular'}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                await apiFetch('/api/admin/plans', {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    code: newPlan.code || undefined,
-                    name_fa: newPlan.nameFa,
-                    name_en: newPlan.nameEn || newPlan.nameFa,
-                    price_usd: newPlan.priceUsd,
-                    price_toman: newPlan.priceToman,
-                    duration_days: newPlan.durationDays,
-                    is_popular: newPlan.isPopular,
-                    is_active: true,
-                  }),
-                });
-                setNewPlan({ code: '', nameFa: '', nameEn: '', priceUsd: 29, priceToman: 2030000, durationDays: 30, isPopular: false });
-                setMsg(isFa ? 'پلن اشتراک با موفقیت ذخیره شد.' : 'Subscription plan saved.');
-                await load();
-                onUserUpdated();
-              }}
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 pt-3 border-t hairline items-end"
-            >
-              <input
-                value={newPlan.code}
-                onChange={(e) => setNewPlan({ ...newPlan, code: e.target.value })}
-                placeholder="code (e.g. vip_60)"
-                dir="ltr"
-                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
-              />
-              <input
-                required
-                value={newPlan.nameFa}
-                onChange={(e) => setNewPlan({ ...newPlan, nameFa: e.target.value })}
-                placeholder={isFa ? 'نام فارسی پلن' : 'Persian Name'}
-                className="surface-input rounded-xl px-2.5 py-2"
-              />
-              <input
-                type="number"
-                min={1}
-                value={newPlan.priceUsd}
-                onChange={(e) => setNewPlan({ ...newPlan, priceUsd: Number(e.target.value) })}
-                placeholder="USD $"
-                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
-              />
-              <input
-                type="number"
-                min={10000}
-                value={newPlan.priceToman}
-                onChange={(e) => setNewPlan({ ...newPlan, priceToman: Number(e.target.value) })}
-                placeholder="Toman"
-                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
-              />
-              <input
-                type="number"
-                min={1}
-                value={newPlan.durationDays}
-                onChange={(e) => setNewPlan({ ...newPlan, durationDays: Number(e.target.value) })}
-                placeholder="Days"
-                className="surface-input rounded-xl px-2.5 py-2 font-mono-num"
-              />
-              <button type="submit" className="btn-emerald py-2 px-3 rounded-xl font-black inline-flex items-center justify-center gap-1">
-                <Plus className="w-3.5 h-3.5" />
-                <span>{isFa ? 'افزودن / آپدیت' : 'Save Plan'}</span>
+                {isFa ? 'ذخیره تنظیمات تسویه کارمزد، Trust Wallet و KYC' : 'Save Fee Receivers, Trust Wallet & KYC'}
               </button>
             </form>
           </div>
@@ -3768,6 +3884,109 @@ export function AdminPage({
               </div>
             </div>
 
+            {/* 5. Admin-Only TradingView Webhook & Direct Signal Runner */}
+            <div className="surface-soft rounded-2xl p-4 space-y-3 border border-sky-500/25 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-black text-main flex items-center gap-1.5">
+                    <Activity className="w-4 h-4 text-brand" />
+                    <span>{isFa ? '🔗 وب‌هوک اختصاصی TradingView و تنظیم کانال سیگنال (ادمین)' : '🔗 Admin TradingView Webhook & Channel Runner'}</span>
+                  </span>
+                  <p className="text-[11px] text-dim mt-0.5">
+                    {isFa
+                      ? 'این بخش منحصراً برای ادمین‌ها فعال است و در صفحات کاربران عمومی نمایش داده نمی‌شود.'
+                      : 'Strictly Admin-only TradingView webhook & direct signal runner.'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    dir="ltr"
+                    value={adminTvChannel}
+                    onChange={(e) => setAdminTvChannel(e.target.value)}
+                    placeholder="@Dollarino_official"
+                    className="surface-input rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await apiFetch('/api/admin/settings', {
+                        method: 'PUT',
+                        body: JSON.stringify({ official_channel: adminTvChannel.trim() || '@Dollarino_official' }),
+                      });
+                      setMsg(isFa ? `کانال رسمی سیگنال روی ${adminTvChannel} ذخیره شد ✅` : 'Official channel saved ✅');
+                    }}
+                    className="px-3 py-1.5 rounded-xl btn-ghost font-bold shrink-0"
+                  >
+                    {isFa ? 'ذخیره کانال' : 'Save Channel'}
+                  </button>
+                </div>
+              </div>
+
+              {adminTvWebhookUrl && (
+                <div className="surface-card rounded-xl p-2.5 flex items-center justify-between gap-2 border hairline">
+                  <code dir="ltr" className="truncate font-mono text-[11px] text-main">{adminTvWebhookUrl}</code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(adminTvWebhookUrl);
+                      setAdminTvCopied(true);
+                      setMsg(isFa ? 'لینک وب‌هوک TradingView کپی شد ✅' : 'TradingView webhook copied ✅');
+                      setTimeout(() => setAdminTvCopied(false), 1800);
+                    }}
+                    className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1 shrink-0"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{adminTvCopied ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی لینک وب‌هوک' : 'Copy Webhook'}</span>
+                  </button>
+                </div>
+              )}
+
+              <textarea
+                rows={4}
+                dir="ltr"
+                value={adminTvRawSig}
+                onChange={(e) => setAdminTvRawSig(e.target.value)}
+                className="w-full surface-input rounded-xl p-2.5 font-mono text-[11px]"
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const r = await apiFetch<{ ok: boolean; error?: string }>('/api/trading/signals/execute', {
+                        method: 'POST',
+                        body: JSON.stringify({ rawText: adminTvRawSig, executeNow: false, source: 'admin_tv' }),
+                      });
+                      setMsg(r.ok ? (isFa ? 'سیگنال TradingView تحلیل و ثبت شد ✅' : 'Signal parsed & logged ✅') : r.error || 'Rejected');
+                    } catch (err) {
+                      setMsg(err instanceof Error ? err.message : 'Error');
+                    }
+                  }}
+                  className="btn-ghost px-4 py-2 rounded-xl font-bold"
+                >
+                  {isFa ? 'فقط تحلیل و ثبت' : 'Parse Only'}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const r = await apiFetch<{ ok: boolean; tradeId?: string; error?: string }>('/api/trading/signals/execute', {
+                        method: 'POST',
+                        body: JSON.stringify({ rawText: adminTvRawSig, executeNow: true, source: 'admin_tv' }),
+                      });
+                      setMsg(r.ok ? (isFa ? `معامله ${r.tradeId} با ۳ تارگت اجرا شد ✅` : `Executed ${r.tradeId} ✅`) : r.error || 'Rejected');
+                    } catch (err) {
+                      setMsg(err instanceof Error ? err.message : 'Error');
+                    }
+                  }}
+                  className="btn-emerald px-4 py-2 rounded-xl font-black inline-flex items-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'اجرای خودکار ۳ تارگت' : 'Execute 3-TP'}</span>
+                </button>
+              </div>
+            </div>
+
             <details className="surface-soft rounded-2xl p-4 border hairline">
               <summary className="cursor-pointer font-black text-xs text-sub hover:text-main">
                 {isFa ? '+ ارسال دستی استثنایی سیگنال یا خبر (علاوه بر ارسال خودکار ۲۴/۷)' : '+ Optional Manual Signal / News Override'}
@@ -3920,7 +4139,7 @@ export function AdminPage({
               <input
                 value={broadcastTitle}
                 onChange={(e) => setBroadcastTitle(e.target.value)}
-                placeholder={isFa ? 'عنوان اطلاعیه (مثلاً آپدیت نسخه ۱۰)' : 'Broadcast title'}
+                placeholder={isFa ? 'عنوان اطلاعیه (مثلاً آپدیت نسخه V11.2)' : 'Broadcast title'}
                 className="w-full surface-input rounded-xl px-3 py-2 text-xs font-bold"
               />
               <textarea

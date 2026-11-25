@@ -10,12 +10,18 @@ import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter
 import { notifyAllAdmins, notifyAllAdminsPhoto } from '../telegram/publisher.js';
 import {
   evaluateUserFeeStanding,
+  FREE_PROFITABLE_LIVE_TRADES,
   getFeePolicyConfig,
   getUserServerFeeSummary,
   isValidBlockchainTxHash,
   SERVER_PROFIT_FEE_PCT,
   tryVerifyEvmReceiptOnchain,
 } from '../services/server-fee.js';
+import {
+  getUserTreasuryDepositOptions,
+  MIN_TREASURY_DEPOSIT_USD,
+  submitTreasuryDeposit,
+} from '../services/treasury.js';
 
 export interface SubscriptionPlanRow {
   code: string;
@@ -182,8 +188,8 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
     return {
       hasPaidPlan: true,
       planCode: 'vip_owner',
-      planNameFa: 'دسترسی کامل مدیریت · بدون اشتراک (۵٪ کارمزد سود واقعی)',
-      planNameEn: 'Admin Full Access · Zero Subscription (5% Live Profit Fee)',
+      planNameFa: 'دسترسی کامل مدیریت · بدون اشتراک (۳ معامله رایگان · ۳٪ کارمزد سود واقعی)',
+      planNameEn: 'Admin Full Access · Zero Subscription (3 Free Live Trades · 3% Profit Fee)',
       status: 'ACTIVE',
       allowPaperDemo: true,
       allowAiTrading: true,
@@ -198,9 +204,9 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
 
   return {
     hasPaidPlan: true,
-    planCode: 'free_5pct_profit',
-    planNameFa: 'رایگان برای همه · فقط ۵٪ کارمزد سرور از سود واقعی',
-    planNameEn: 'Free Forever · 5% Server Fee Only on Real Profit',
+    planCode: 'free_3pct_profit',
+    planNameFa: 'رایگان برای همه · ۳ معامله سودده اول ۰٪ · سپس ۳٪ کارمزد سرور از سود واقعی',
+    planNameEn: 'Free Forever · First 3 Profitable Live Trades 0% · Then 3% Fee Only on Net Profit',
     status: 'ACTIVE',
     allowPaperDemo: true,
     allowAiTrading: true,
@@ -947,8 +953,8 @@ subscriptionRoutes.get('/referrals', async (c) => {
   const inviteTextFa =
     `🚀 من با هوش مصنوعی دلارینو (Dollarino) روی کیف‌پول شخصی Trust Wallet ترید خودکار و کپی‌ترید انجام می‌دم!\n` +
     `✅ اشتراک ماهانه: صفر تومان (کاملاً رایگان)\n` +
-    `✅ شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان برای تمرین و تست استراتژی\n` +
-    `✅ فقط ۵٪ کارمزد سرور از سود خالص معاملات واقعی (۹۵٪ سود برای شما!)\n` +
+    `✅ کیف‌پول دمو رایگان (با موجودی قابل تنظیم از ۵۰ تا ۱۰M دلار) برای تمرین و تست استراتژی\n` +
+    `✅ ۳ معامله سودده اول واقعی ۱۰۰٪ رایگان (کارمزد ۰٪) و پس از آن فقط ۳٪ کارمزد سرور از سود خالص (۹۷٪ سود برای شما!)\n` +
     `🎁 با کد دعوت من ثبت‌نام کن و پس از شارژ حداقل ۱۰ دلار و اولین ترید واقعی، ۱ دلار اعتبار کارمزد رایگان هدیه بگیر:\n\n` +
     `🔑 کد دعوت: ${code}\n` +
     `🤖 ورود از ربات تلگرام: ${telegramInviteUrl}\n` +
@@ -956,9 +962,9 @@ subscriptionRoutes.get('/referrals', async (c) => {
 
   const inviteTextEn =
     `🚀 I'm trading with Dollarino AI & Smart Copy-Trade directly on self-custody Trust Wallet!\n` +
-    `✅ $0 Monthly Subscription — Free $10,000 Demo Simulator\n` +
-    `✅ Only 5% Server Fee Strictly on Real Profits (You keep 95%!)\n` +
-    `🎁 Join with my invite code & get +$1.00 non-withdrawable 5% Fee Credit after holding >= $10 and placing your first live trade:\n\n` +
+    `✅ $0 Monthly Subscription — Customizable Paper Simulator ($50–$10M)\n` +
+    `✅ First 3 Profitable Live Trades 0% Fee, then only 3% Server Fee Strictly on Net Profits (You keep 97%!)\n` +
+    `🎁 Join with my invite code & get +$1.00 non-withdrawable 3% Fee Credit after holding >= $10 and placing your first live trade:\n\n` +
     `🔑 Invite Code: ${code}\n` +
     `🤖 Telegram Bot: ${telegramInviteUrl}\n` +
     `🌐 Web App: ${inviteUrl}`;
@@ -980,9 +986,9 @@ subscriptionRoutes.get('/referrals', async (c) => {
     feeCreditBalanceUsd: Number((userBal?.fee_credit_usd ?? 0).toFixed(4)),
     referralFeeCreditEarnedUsd: Number((refFeeAgg?.ref_credit_sum ?? 0).toFixed(4)),
     nonWithdrawablePolicyFa:
-      'جوایز رفرال نقدی و قابل برداشت نیستند و فقط به اعتبار پیش‌پرداخت کارمزد ۵٪ سود شما اضافه می‌شوند. جایزه زمانی آزاد می‌شود که دوست دعوت‌شده حداقل ۱۰ دلار موجودی واقعی داشته باشد و معامله واقعی (LIVE) انجام دهد؛ حساب‌های تکراری با IP/دستگاه/کیف‌پول مشترک خودکار مسدود می‌شوند.',
+      'جوایز رفرال نقدی و قابل برداشت نیستند و فقط به اعتبار پیش‌پرداخت کارمزد ۳٪ سود شما اضافه می‌شوند. جایزه زمانی آزاد می‌شود که دوست دعوت‌شده حداقل ۱۰ دلار موجودی واقعی داشته باشد و معامله واقعی (LIVE) انجام دهد؛ حساب‌های تکراری با IP/دستگاه/کیف‌پول مشترک خودکار مسدود می‌شوند.',
     nonWithdrawablePolicyEn:
-      'Referral rewards are strictly non-withdrawable and go exclusively into your Prepaid 5% Profit-Fee Credit. Rewards unlock ONLY after the invited friend holds >= $10 real balance and executes a live trade; duplicate IPs/devices/Trust Wallets are automatically blocked.',
+      'Referral rewards are strictly non-withdrawable and go exclusively into your Prepaid 3% Profit-Fee Credit. Rewards unlock ONLY after the invited friend holds >= $10 real balance and executes a live trade; duplicate IPs/devices/Trust Wallets are automatically blocked.',
     balanceUsd: Number(userBal?.bal ?? 0),
     totalEarnedUsd: Number(userBal?.total ?? 0),
     totalReferred,
@@ -1019,7 +1025,7 @@ subscriptionRoutes.post('/referrals/apply-to-fee-credit', async (c) => {
     `INSERT INTO server_fee_ledger (id, user_id, trade_id, source, symbol, realized_pnl_usd, fee_pct, fee_usd, status, note)
      VALUES (?, ?, ?, 'REFERRAL_FEE_CREDIT', 'USDT', 0, 0, ?, 'SETTLED_PREPAID', ?)`
   )
-    .bind(randomId('fee_rc'), user.id, `ref_conv:${Date.now()}`, amt, 'انتقال به اعتبار پیش‌پرداخت کارمزد ۵٪ (غیرقابل برداشت)')
+    .bind(randomId('fee_rc'), user.id, `ref_conv:${Date.now()}`, amt, 'انتقال به اعتبار پیش‌پرداخت کارمزد ۳٪ (غیرقابل برداشت)')
     .run()
     .catch(() => {});
   return c.json({ ok: true, transferredUsd: amt });
@@ -1124,7 +1130,7 @@ subscriptionRoutes.post('/referrals/withdraw', async (c) => {
     if ((fcRow?.fc ?? 0) > 0) {
       return c.json(
         {
-          error: 'پاداش رفرال دلارینو نقدی و قابل برداشت نیست و فقط به عنوان اعتبار پیش‌پرداخت کارمزد ۵٪ سود مصرف می‌شود.',
+          error: 'پاداش رفرال دلارینو نقدی و قابل برداشت نیست و فقط به عنوان اعتبار پیش‌پرداخت کارمزد ۳٪ سود مصرف می‌شود.',
           code: 'NON_WITHDRAWABLE_FEE_CREDIT',
         },
         400
@@ -1210,11 +1216,12 @@ subscriptionRoutes.post('/admin/gift-codes', async (c) => {
 
 subscriptionRoutes.get('/server-fees', async (c) => {
   const user = c.get('user');
-  const [summary, settingsRows] = await Promise.all([
+  const [summary, settingsRows, treasuryOpts] = await Promise.all([
     getUserServerFeeSummary(c.env.DB, user.id),
     c.env.DB.prepare(
       `SELECT key, value FROM system_settings WHERE key IN ('usdt_trc20_wallet', 'trust_wallet_evm_receiver', 'trust_wallet_sol_receiver', 'trust_wallet_ton_receiver')`
     ).all<{ key: string; value: string }>().catch(() => ({ results: [] })),
+    getUserTreasuryDepositOptions(c.env.DB, user.id).catch(() => null),
   ]);
   const receivers: Record<string, string> = {};
   for (const s of settingsRows.results) {
@@ -1226,12 +1233,56 @@ subscriptionRoutes.get('/server-fees', async (c) => {
     ...summary,
     subscriptionModel: 'FREE_ZERO_SUBSCRIPTION',
     profitSharePct: SERVER_PROFIT_FEE_PCT,
+    freeProfitableLiveTrades: FREE_PROFITABLE_LIVE_TRADES,
+    minTreasuryDepositUsd: MIN_TREASURY_DEPOSIT_USD,
+    treasury: treasuryOpts,
     receivers,
     honestArchitectureNoteFa:
-      'دارایی اصلی Trust Wallet شما ۱۰۰٪ غیرامانی (Non-Custodial) است و دلارینو هیچ‌گاه دسترسی برداشت خودکار از کیف‌پول اصلی شما ندارد؛ در معاملات واقعی و پرپ/کپی کارمزد ۵٪ فقط از سود خالص معاملات موفق ثبت می‌گردد (۹۵٪ سود برای شما).',
+      `دارایی اصلی Trust Wallet شما ۱۰۰٪ غیرامانی (Non-Custodial) است و دلارینو هیچ‌گاه دسترسی برداشت خودکار از کیف‌پول اصلی شما ندارد؛ در معاملات واقعی، ${FREE_PROFITABLE_LIVE_TRADES} معامله سودده اول ۱۰۰٪ رایگان است (کارمزد ۰٪) و پس از آن فقط ${SERVER_PROFIT_FEE_PCT}% کارمزد از سود خالص معاملات موفق ثبت می‌گردد (۹۷٪ سود خالص برای شما).`,
     honestArchitectureNoteEn:
-      'Your main Trust Wallet remains 100% non-custodial—Dollarino never has permission to arbitrarily withdraw your wallet funds. Live perp/copy profits record a transparent 5% server-cost entry strictly on net profits (you keep 95%).',
+      `Your main Trust Wallet remains 100% non-custodial. Your first ${FREE_PROFITABLE_LIVE_TRADES} profitable LIVE trades have 0% fee, followed by a transparent ${SERVER_PROFIT_FEE_PCT}% fee strictly on net profits (you keep 97%).`,
   });
+});
+
+subscriptionRoutes.get('/treasury/options', async (c) => {
+  const user = c.get('user');
+  const opts = await getUserTreasuryDepositOptions(c.env.DB, user.id);
+  return c.json({ ok: true, ...opts });
+});
+
+subscriptionRoutes.post('/treasury/deposit', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    asset?: string;
+    network?: 'BEP20' | 'TRC20' | 'ERC20' | 'BASE' | 'ARBITRUM' | 'SOLANA' | 'TON';
+    amountUsd?: number;
+    txHash?: string;
+    category?: 'DEPOSIT' | 'FEE_SETTLEMENT' | 'CREDIT_TOPUP';
+  };
+  try {
+    const cleanTx = String(body.txHash || '').trim();
+    const net = body.network || 'BEP20';
+    const amt = Number(body.amountUsd || 0);
+    const result = await submitTreasuryDeposit(c.env.DB, user.id, {
+      asset: body.asset || (net === 'SOLANA' ? 'SOL' : net === 'TON' ? 'TON' : 'USDT'),
+      network: net,
+      amountUsd: amt,
+      txHash: cleanTx,
+      category: body.category,
+    });
+    await notifyAllAdmins(
+      c.env,
+      `🏦 واریز اعتبار خزانه مرکزی ($${amt.toFixed(2)})\n` +
+        `کاربر: ${user.username}\nشبکه: ${net}\nوضعیت: ${
+          result.status === 'CONFIRMED' ? '✅ تایید خودکار آن‌چین و شارژ شد' : '⏳ در انتظار تایید ادمین'
+        }\nTX: ${cleanTx}`
+    ).catch(() => {});
+    return c.json(result, 201);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const code = /قبلاً/.test(msg) ? 409 : 400;
+    return c.json({ ok: false, error: msg }, code);
+  }
 });
 
 subscriptionRoutes.post('/server-fees/settle', async (c) => {
@@ -1245,14 +1296,19 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
     );
   }
 
-  const dup = await c.env.DB.prepare(
-    `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND user_id != ? LIMIT 1`
-  ).bind(txHash, user.id).first<{ id: string }>().catch(() => null);
-  const dupOwn = await c.env.DB.prepare(
-    `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND status IN ('SETTLED_ONCHAIN', 'PENDING_VERIFY') LIMIT 1`
-  ).bind(txHash).first<{ id: string }>().catch(() => null);
-  if (dup || dupOwn) {
-    return c.json({ error: 'این هش تراکنش قبلاً برای تسویه ثبت شده است و قابل استفاده مجدد نیست.' }, 409);
+  const [dup, dupOwn, dupTreasury] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND user_id != ? LIMIT 1`
+    ).bind(txHash, user.id).first<{ id: string }>().catch(() => null),
+    c.env.DB.prepare(
+      `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND status IN ('SETTLED_ONCHAIN', 'PENDING_VERIFY') LIMIT 1`
+    ).bind(txHash).first<{ id: string }>().catch(() => null),
+    c.env.DB.prepare(
+      `SELECT id FROM treasury_deposits WHERE tx_hash = ? LIMIT 1`
+    ).bind(txHash).first<{ id: string }>().catch(() => null),
+  ]);
+  if (dup || dupOwn || dupTreasury) {
+    return c.json({ error: 'این هش تراکنش قبلاً برای تسویه یا واریز ثبت شده است و قابل استفاده مجدد نیست.' }, 409);
   }
 
   const receipt = await tryVerifyEvmReceiptOnchain(txHash);
@@ -1280,7 +1336,7 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
   const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);
   await notifyAllAdmins(
     c.env,
-    `💳 ثبت تسویه کارمزد ۵٪ سرور\nکاربر: ${user.username}\nوضعیت: ${nextLedgerStatus === 'SETTLED_ONCHAIN' ? '✅ تایید و آزاد شد' : '⏳ در انتظار تایید ادمین (حساب قفل بود)'}\nTX: ${txHash}`
+    `💳 ثبت تسویه کارمزد ${SERVER_PROFIT_FEE_PCT}% سرور\nکاربر: ${user.username}\nوضعیت: ${nextLedgerStatus === 'SETTLED_ONCHAIN' ? '✅ تایید و آزاد شد' : '⏳ در انتظار تایید ادمین (حساب قفل بود)'}\nTX: ${txHash}`
   ).catch(() => {});
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Server fee settlement (${nextLedgerStatus}) txHash ${txHash}`);
 
@@ -1295,19 +1351,25 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
 
 subscriptionRoutes.post('/server-fees/prepay', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json<{ amountUsd?: number; txHash?: string }>().catch(() => ({} as { amountUsd?: number; txHash?: string }));
+  const body = await c.req.json<{ amountUsd?: number; txHash?: string; network?: string }>().catch(
+    () => ({} as { amountUsd?: number; txHash?: string; network?: string })
+  );
   const amountUsd = Number(body.amountUsd || 0);
   const txHash = (body.txHash || '').trim();
-  if (!Number.isFinite(amountUsd) || amountUsd < 1 || amountUsd > 5000) {
-    return c.json({ error: 'مبلغ شارژ اعتبار کارمزد باید بین ۱ تا ۵۰۰۰ دلار باشد.' }, 400);
+  if (!Number.isFinite(amountUsd) || amountUsd < MIN_TREASURY_DEPOSIT_USD || amountUsd > 50000) {
+    return c.json({ error: `حداقل مبلغ شارژ اعتبار کارمزد ${MIN_TREASURY_DEPOSIT_USD} دلار (USDT) و حداکثر ۵۰٬۰۰۰ دلار است.` }, 400);
   }
   if (!isValidBlockchainTxHash(txHash)) {
     return c.json({ error: 'لطفاً هش تراکنش (TX Hash) معتبر شارژ اعتبار کارمزد را وارد کنید.' }, 400);
   }
 
-  const dup = await c.env.DB.prepare(`SELECT id FROM server_fee_ledger WHERE tx_hash = ? LIMIT 1`)
-    .bind(txHash).first<{ id: string }>().catch(() => null);
-  if (dup) {
+  const [dup, dupTreasury] = await Promise.all([
+    c.env.DB.prepare(`SELECT id FROM server_fee_ledger WHERE tx_hash = ? LIMIT 1`)
+      .bind(txHash).first<{ id: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT id FROM treasury_deposits WHERE tx_hash = ? LIMIT 1`)
+      .bind(txHash).first<{ id: string }>().catch(() => null),
+  ]);
+  if (dup || dupTreasury) {
     return c.json({ error: 'این هش تراکنش قبلاً ثبت شده است.' }, 409);
   }
 
@@ -1316,7 +1378,6 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
     return c.json({ error: 'تراکنش در بلاکچین ناموفق بوده است.' }, 400);
   }
 
-  // Record prepay ledger entry (auto-applies if receipt confirmed or submitted cleanly while not locked; admin can also inspect/revoke)
   const autoConfirm = receipt === 'CONFIRMED';
   await c.env.DB.prepare(
     `INSERT INTO server_fee_ledger (id, user_id, trade_id, source, symbol, realized_pnl_usd, fee_pct, fee_usd, status, tx_hash, note)
@@ -1329,7 +1390,7 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
       Number(amountUsd.toFixed(2)),
       autoConfirm ? 'SETTLED_PREPAID' : 'PENDING_VERIFY',
       txHash,
-      `شارژ پیش‌پرداخت اعتبار کارمزد ۵٪ (${amountUsd.toFixed(2)}$)`
+      `شارژ پیش‌پرداخت اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}% (${amountUsd.toFixed(2)}$)`
     )
     .run();
 
@@ -1341,7 +1402,7 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
 
   await notifyAllAdmins(
     c.env,
-    `🏦 درخواست شارژ اعتبار کارمزد ۵٪\nکاربر: ${user.username}\nمبلغ: $${amountUsd.toFixed(2)}\nوضعیت: ${autoConfirm ? '✅ تایید خودکار آن‌چین' : '⏳ در انتظار تایید ادمین'}\nTX: ${txHash}`
+    `🏦 درخواست شارژ اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}%\nکاربر: ${user.username}\nمبلغ: $${amountUsd.toFixed(2)}\nوضعیت: ${autoConfirm ? '✅ تایید خودکار آن‌چین' : '⏳ در انتظار تایید ادمین'}\nTX: ${txHash}`
   ).catch(() => {});
 
   const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);

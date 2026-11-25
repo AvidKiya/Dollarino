@@ -81,7 +81,7 @@ export function LandingPage({
   onOpenSupport?: () => void;
 }) {
   const isFa = lang === 'fa';
-  const [iranIrt, setIranIrt] = useState<number>(74500);
+  const [iranIrt, setIranIrt] = useState<number>(290000);
   const [copyTraders, setCopyTraders] = useState<PublicCopyTrader[]>([]);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [heroCoin, setHeroCoin] = useState<'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT'>('BTCUSDT');
@@ -188,8 +188,8 @@ export function LandingPage({
       icon: Trophy,
       color: '#f59e0b',
       desc: isFa
-        ? 'هم معاملات تریدرهای تاییدشده سایت را روی Trust Wallet و شبیه‌ساز $10K کپی کنید و هم ۱۰ ولت برتر هوشمند یا هر ولت دلخواه در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین جداگانه، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
-        : 'Mirror verified site traders on Trust Wallet & $10K Simulator AND track Top-10 Smart-Money or custom wallets across Solana, Base, ETH, BSC, TON & TRON with isolated margin boxes, 7-day backtest, Anti-Rug shield, 3-TP + Moonbag, and 24/7 Copy-Vault.',
+        ? 'هم معاملات تریدرهای تاییدشده سایت را روی Trust Wallet و شبیه‌ساز قابل تنظیم ($50 تا $10M) کپی کنید و هم ۱۰ ولت برتر هوشمند یا هر ولت دلخواه در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین جداگانه، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
+        : 'Mirror verified site traders on Trust Wallet & Custom Demo ($50–$10M) AND track Top-10 Smart-Money or custom wallets across Solana, Base, ETH, BSC, TON & TRON with isolated margin boxes, 7-day backtest, Anti-Rug shield, 3-TP + Moonbag, and 24/7 Copy-Vault.',
       bullets: isFa
         ? [
             'کپی فقط معاملات جدید از لحظه فالو + باکس مارجین ایزوله برای هر تریدر',
@@ -255,7 +255,7 @@ export function LandingPage({
               ['pillars', isFa ? '۴ روش' : '4 Ways'],
               ['smart-v2', isFa ? 'کپی ولت V2' : 'Smart Copy'],
               ['copy-leaders', isFa ? 'کپی‌تریدرها' : 'Traders'],
-              ['pricing', isFa ? 'کارمزد ۵٪' : '5% Fee'],
+              ['pricing', isFa ? 'کارمزد ۳٪' : '3% Fee'],
               ['trust-founder', isFa ? 'سازنده و اصالت' : 'Founder & Trust'],
               ['faq', isFa ? 'سوالات' : 'FAQ'],
             ].map(([id, label]) => (
@@ -351,7 +351,7 @@ export function LandingPage({
               ['pillars', isFa ? '۴ روش معامله (ساده تا حرفه‌ای)' : '4 Ways to Trade'],
               ['smart-v2', isFa ? 'کپی‌ترید ولت نهنگ‌ها و سپر ضدراگ (V2)' : 'Smart Wallet Copy & Anti-Rug V2'],
               ['copy-leaders', isFa ? 'تریدرهای تاییدشده کپی‌ترید' : 'Verified Copy Traders'],
-              ['pricing', isFa ? 'مدل رایگان + کارمزد ۵٪ سود' : 'Free · 5% Profit Fee'],
+              ['pricing', isFa ? '۳ معامله رایگان + ۳٪ از سود' : '3 Free · 3% Profit Fee'],
               ['trust-founder', isFa ? 'معرفی سازنده و شفافیت ضدپانزی' : 'Founder Verification & Anti-Ponzi'],
               ['faq', isFa ? 'راهنما و سوالات پرتکرار' : 'FAQ'],
             ].map(([id, label]) => (
@@ -467,15 +467,15 @@ export function LandingPage({
 
             <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
               {isFa
-                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ترید کاملاً خودکار با هوش مصنوعی گرفته تا آموزش هوش مصنوعی خام شخصی، کپی از تریدرهای تاییدشده یا استراتژی Pine Script و Python — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷)، شبیه‌ساز دمو $۱۰,۰۰۰، رادار DexScreener و ربات رسمی تلگرام @Dollarino_bot.'
-                : 'Trade the exact way you prefer: fully automated AI trading, chat-trainable personal AI, verified Copy Traders, or custom Pine Script & Python strategies — powered by multi-chain Trust Wallet (Manual Approval or 24/7 Full Auto), $10,000 Demo Simulator, DexScreener Radar, and Telegram Bot @Dollarino_bot.'}
+                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ۵ موتور همزمان (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine/Python، کپی‌ترید و اسنایپر لیستینگ و میم‌کوین) — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷)، شبیه‌ساز دمو قابل تنظیم (۵۰$ تا ۱۰M$)، رادار DexScreener و ربات رسمی تلگرام @Dollarino_bot.'
+                : 'Trade with 5 simultaneous engines (Central AI, Personal AI, Pine/Python Strategy, Copy Trade, and Listing & Meme Sniper) — powered by multi-chain Trust Wallet (Manual Approval or 24/7 Full Auto), Custom Demo Simulator ($50–$10M), DexScreener Radar, and Telegram Bot @Dollarino_bot.'}
             </p>
 
             {/* Brand Ecosystem Strip (Trust Wallet, Perps & Blockchains) */}
             <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 pt-1">
               {[
                 { kind: 'w' as const, id: 'trustwallet', label: 'Trust Wallet' },
-                { kind: 'ex' as const, id: 'paper', label: '$10K Demo Simulator' },
+                { kind: 'ex' as const, id: 'paper', label: 'Custom Demo ($50–$10M)' },
                 { kind: 'c' as const, id: 'arbitrum', label: 'Hyperliquid 24/7' },
                 { kind: 'w' as const, id: 'tonkeeper', label: 'TON' },
                 { kind: 'c' as const, id: 'solana', label: 'Solana · Jupiter' },
@@ -528,7 +528,7 @@ export function LandingPage({
 
             <div className="flex flex-wrap justify-center lg:justify-start gap-x-5 gap-y-2 text-xs font-bold text-dim pt-1">
               {[
-                isFa ? 'ربات ۲۴ ساعته متصل به Trust Wallet و شبیه‌ساز دمو $۱۰K' : '24/7 Trust Wallet & $10K Demo Simulator Core',
+                isFa ? 'ربات ۲۴ ساعته متصل به Trust Wallet و شبیه‌ساز دمو $50–$10M' : '24/7 Trust Wallet & Custom Demo ($50–$10M)',
                 isFa ? 'رادار زنده DexScreener + اکستنشن کروم و ویجت موبایل' : 'DexScreener Radar, Extension & Mobile Widgets',
                 isFa ? 'ثبت‌نام و احراز هویت امن شماره تماس در @Dollarino_bot' : 'Phone-Verified Onboarding in @Dollarino_bot',
               ].map((x) => (
@@ -571,7 +571,7 @@ export function LandingPage({
                   LIVE MARKET TELEMETRY
                 </p>
                 <h3 className="font-display font-bold text-lg text-main">
-                  {isFa ? 'نبض زنده بازار و شبیه‌ساز ۴ گانه' : 'Live Market Feed'}
+                  {isFa ? 'نبض زنده بازار و ۵ موتور همزمان' : 'Live Market & 5-Engine Feed'}
                 </h3>
               </div>
               <div className="flex gap-1">
@@ -736,8 +736,8 @@ export function LandingPage({
                 },
                 {
                   n: '۲',
-                  t: isFa ? 'اتصال Trust Wallet (یا شبیه‌ساز رایگان ۱۰,۰۰۰ دلاری)' : 'Connect Trust Wallet (or Free $10K Demo)',
-                  d: isFa ? 'با حداقل ۱۰ دلار واقعی شروع کنید یا رایگان با شبیه‌ساز ۱۰٬۰۰۰ دلاری تمرین کنید.' : 'Trade real with $10+ in Trust Wallet or practice free with $10,000 Demo.',
+                  t: isFa ? 'اتصال Trust Wallet (یا شبیه‌ساز رایگان قابل تنظیم)' : 'Connect Trust Wallet (or Free Custom Demo)',
+                  d: isFa ? 'با حداقل ۱۰ دلار واقعی شروع کنید یا رایگان با شبیه‌ساز قابل تنظیم (۵۰$ تا ۱۰M$) تمرین کنید.' : 'Trade real with $10+ in Trust Wallet or practice free with Custom Demo ($50–$10M).',
                 },
                 {
                   n: '۳',
@@ -1040,7 +1040,7 @@ export function LandingPage({
           </div>
         </section>
 
-        {/* 4. Free Forever + 5% Only On Real Profit Showcase */}
+        {/* 4. Free Forever + 3 Free Wins + 3% Only On Real Profit Showcase */}
         <section id="pricing" className="space-y-6">
           <div className="panel rounded-[30px] p-6 sm:p-8 border hairline grid lg:grid-cols-[1.15fr_0.85fr] gap-6 items-center">
             <div className="space-y-4">
@@ -1049,21 +1049,21 @@ export function LandingPage({
                 <span>{isFa ? '۱۰۰٪ رایگان · اشتراک ماهانه برای همیشه حذف شد!' : 'ZERO SUBSCRIPTIONS · 100% FREE FOREVER'}</span>
               </span>
               <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-                {isFa ? 'فقط ۵٪ کارمزد سرور از سود معاملات واقعی (۹۵٪ سود برای شما!)' : 'Only 5% Server Fee Strictly on Real Profits (Keep 95%!)'}
+                {isFa ? '۳ معامله اول ۰٪ · سپس فقط ۳٪ کارمزد از سود واقعی (۹۷٪ سود برای شما!)' : 'First 3 Live Wins 0% · Then Only 3% Server Fee on Net Profits (Keep 97%!)'}
               </h2>
               <p className="text-xs sm:text-sm text-dim leading-relaxed">
                 {isFa
-                  ? `تمام امکانات دلارینو رایگان است: شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری، ۲۵+ اندیکاتور و آلرت رایگان TradingView، کپی‌ترید هوشمند ولت‌ها V2 و هوش مصنوعی چندمدلی. نرخ لحظه‌ای هر دلار تتر ایران: ${iranIrt.toLocaleString('en-US')} تومان.`
-                  : 'All Dollarino modules are free: $10,000 Demo Simulator, 25+ Free TradingView Indicator Alerts, Smart Copy V2, and Multi-AI. Live trading requires $10+ USD in your own non-custodial Trust Wallet.'}
+                  ? `تمام امکانات دلارینو رایگان است: کیف‌پول دمو قابل تنظیم رایگان ($50 تا $10M)، ۵ موتور همزمان + اسنایپر لیستینگ و میم‌کوین، ۲۵+ اندیکاتور رایگان و هوش مصنوعی چندمدلی. نرخ لحظه‌ای هر دلار تتر ایران: ${iranIrt.toLocaleString('en-US')} تومان.`
+                  : 'All Dollarino modules are free: Customizable Paper Wallet ($50–$10M), 5 concurrent engines + Listing & Meme Sniper, 25+ Free Alerts, and Multi-AI. Live trading starts from $10+ USD in your own Trust Wallet.'}
               </p>
               <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
                 <div className="surface-soft rounded-2xl p-3 border hairline">
-                  <p className="font-black text-main">{isFa ? '۰ تومان اشتراک' : '$0 / Month'}</p>
-                  <p className="text-[11px] text-dim mt-0.5">{isFa ? 'دسترسی نامحدود به همه بخش‌ها' : 'Full access unlocked'}</p>
+                  <p className="font-black text-main">{isFa ? '۳ معامله سودده اول ۰٪' : 'First 3 Live Wins = 0%'}</p>
+                  <p className="text-[11px] text-dim mt-0.5">{isFa ? 'تست واقعی بدون کارمزد' : 'Zero fee trial on real wins'}</p>
                 </div>
                 <div className="surface-soft rounded-2xl p-3 border hairline">
-                  <p className="font-black text-[#059669] dark:text-[#34D399]">{isFa ? '۵٪ فقط از سود واقعی' : '5% On Real Profit'}</p>
-                  <p className="text-[11px] text-dim mt-0.5">{isFa ? '۹۵٪ سود برای شما · دمو رایگان' : 'Keep 95% · Demo = $0'}</p>
+                  <p className="font-black text-[#059669] dark:text-[#34D399]">{isFa ? '۳٪ فقط از سود واقعی' : '3% On Real Profit'}</p>
+                  <p className="text-[11px] text-dim mt-0.5">{isFa ? '۹۷٪ سود برای شما · دمو رایگان' : 'Keep 97% · Demo = $0'}</p>
                 </div>
                 <div className="surface-soft rounded-2xl p-3 border hairline">
                   <p className="font-black text-main">{isFa ? 'شروع واقعی از ۱۰ دلار' : 'Live Min $10 USD'}</p>
@@ -1083,7 +1083,7 @@ export function LandingPage({
             <div className="flex flex-col items-center justify-center gap-3">
               <img
                 src="/images/transparent/rocket-profit-3d.png"
-                alt="5% Profit Share Rocket"
+                alt="3% Profit Share Rocket"
                 className="h-48 w-48 object-contain drop-shadow-2xl"
               />
               <span className="text-[11px] font-bold text-dim text-center">
@@ -1282,8 +1282,8 @@ export function LandingPage({
                   </div>
                   <p className="text-xs text-sub leading-relaxed">
                     {isFa
-                      ? (founder?.missionFa || 'هدف دلارینو دموکراتیک‌سازی ترید الگوریتمی و هوش مصنوعی برای همه کاربران بدون نیاز به پرداخت اشتراک است: آموزش و تمرین ۱۰۰٪ رایگان روی شبیه‌ساز ۱۰,۰۰۰ دلاری و در حالت واقعی فقط کارمزد شفاف ۵٪ از سود واقعی در کیف‌پول شخصی خود کاربر.')
-                      : (founder?.missionEn || 'Dollarino democratizes AI and algorithmic trading for everyone with zero upfront fees: free $10,000 paper training plus self-custody live trading with a transparent 5% profit-only fee.')}
+                      ? (founder?.missionFa || 'هدف دلارینو دموکراتیک‌سازی ترید الگوریتمی و هوش مصنوعی برای همه کاربران بدون نیاز به پرداخت اشتراک است: آموزش و تمرین ۱۰۰٪ رایگان روی کیف‌پول دمو قابل تنظیم و در حالت واقعی ۳ معامله اول رایگان + فقط کارمزد شفاف ۳٪ از سود واقعی در کیف‌پول شخصی خود کاربر.')
+                      : (founder?.missionEn || 'Dollarino democratizes AI and algorithmic trading for everyone with zero upfront fees: free customizable paper training, first 3 live wins at 0% fee, plus a transparent 3% profit-only fee.')}
                   </p>
                 </div>
               </div>
@@ -1317,7 +1317,7 @@ export function LandingPage({
                           ['۱. بدون دریافت سپرده کاربر', 'هیچ پولی به حساب دلارینو واریز نمی‌شود؛ تمام سرمایه شما در کیف‌پول شخصی Trust Wallet خودتان باقی می‌ماند.'],
                           ['۲. بدون سود تضمینی و بدون هرمی', 'هیچ وعده سود ثابت روزانه/ماهانه وجود ندارد. هر معامله واقعی روی بازار شفاف صرافی غیرمتمرکز انجام می‌شود.'],
                           ['۳. کلید بدون مجوز برداشت', 'اتصال Web3 و Agent Key منحصراً برای ثبت سفارش و حد ضرر است و امکان برداشت به ولت دیگر از پایه مسدود است.'],
-                          ['۴. ۰ تومان اشتراک · ۵٪ فقط از سود', 'تا زمانی که معامله واقعی شما سودآور نباشد هیچ کارمزدی کسر نمی‌شود و ۹۵٪ کل سود مال خود شماست.'],
+                          ['۴. ۳ معامله رایگان · ۳٪ فقط از سود', '۳ معامله سودده اول رایگان است و پس از آن فقط ۳٪ از سود واقعی محاسبه می‌شود (۹۷٪ سود مال شماست).'],
                           ['۵. سپر ضدراگ و هانی‌پات زنده', 'تمام توکن‌ها قبل از ورود با GoPlus، Honeypot.is و RugCheck اسکن می‌شوند تا از کلاهبرداری قراردادها جلوگیری شود.'],
                           ['۶. هویت باز و قابل پیگیری قانونی', 'مشخصات واقعی سازنده، کد تایید و راه‌های تماس مستقیم در دسترس عموم و مراجع قانونی جهت بررسی کامل قرار دارد.'],
                         ]
@@ -1325,7 +1325,7 @@ export function LandingPage({
                           ['1. Zero Pooled Deposits', 'Dollarino never collects or holds trading capital. Your funds stay inside your own self-custodial Trust Wallet.'],
                           ['2. No Fixed ROI / No MLM', 'Zero fake guaranteed daily yields and zero multi-level pyramid payouts — only transparent market execution.'],
                           ['3. Zero Withdrawal Permission', 'Execution scopes only sign orders & SL/TP. Funds cannot be withdrawn to third-party wallets.'],
-                          ['4. $0 Subscription · 5% Profit Only', 'Keep 95% of real profits. Paper $10K simulation and 25+ TradingView alerts are 100% free forever.'],
+                          ['4. 3 Free Wins · 3% Profit Only', 'First 3 profitable live trades carry 0% fee, then you keep 97% of net profits. Demo simulation is 100% free.'],
                           ['5. Real-Time Anti-Rug Scanner', 'Every token is verified via GoPlus, Honeypot.is & RugCheck before copy or swap orders trigger.'],
                           ['6. Traceable Solo Founder', 'Real identity, verification ID, and direct channels are published openly for user & legal inspection.'],
                         ]
@@ -1340,7 +1340,7 @@ export function LandingPage({
 
                 <div className="pt-1 flex flex-wrap items-center justify-between gap-2.5 border-t hairline">
                   <span className="text-[11px] font-bold text-dim">
-                    {isFa ? 'ابتدا با شبیه‌ساز رایگان $10,000 امتحان کنید؛ بدون ریسک و بدون واریز وجه!' : 'Test free on the $10,000 Simulator first — zero deposit required!'}
+                    {isFa ? 'ابتدا با شبیه‌ساز دمو قابل تنظیم (۵۰$ تا ۱۰M$) رایگان امتحان کنید؛ بدون ریسک و بدون واریز وجه!' : 'Test free on the Custom Demo Simulator ($50–$10M) first — zero deposit required!'}
                   </span>
                   <button
                     type="button"
@@ -1404,7 +1404,7 @@ export function LandingPage({
                   ['تفاوت حالت تایید دستی با تمام‌اتوترید ۲۴/۷ در Trust Wallet چیست؟', 'در حالت تایید دستی، معاملات با امضای خود شما در اپلیکیشن Trust Wallet تایید می‌شوند؛ اما در حالت تمام‌اتوترید ۲۴/۷، ربات از طریق Agent Key و خزانه رمزنگاری‌شده بدون نیاز به تایید لحظه‌ای، ۲۴ ساعته پوزیشن‌ها را با ۳ تارگت و حد ضرر مدیریت می‌کند.'],
                   ['چطور با هوش مصنوعی من (My AI) کار کنم؟', 'بعد از ورود به میز کار وارد تب «هوش مصنوعی من» شوید و مثل چت کردن عادی استراتژیتان را بنویسید (مثلاً تایم ۱۵ دقیقه، RSI زیر ۳۵، حد ضرر ۲٪). سیستم فوراً قوانین را می‌فهمد، تست زنده می‌گیرد و با یک کلیک ۲۴ ساعته برایتان معامله می‌کند.'],
                   ['تفاوت حالت ساده با حالت حرفه‌ای چیست؟', 'در حالت ساده فقط ترید هوشمند کاملاً اتومات با هوش مصنوعی وجود دارد تا هیچ پیچیدگی نبیند. در حالت حرفه‌ای به ترمینال چارت، هوش مصنوعی من، کپی‌ترید تاییدشده + ولت‌های هوشمند V2، رادار DEX و IDE استراتژی شخصی دسترسی دارید.'],
-                  ['آیا دلارینو رایگان است و کارمزد ۵٪ چطور حساب می‌شود؟', 'بله! اشتراک ماهانه وجود ندارد و همه بخش‌ها رایگان است (از جمله شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری و ۲۵+ اندیکاتور رایگان TradingView). فقط وقتی معامله واقعی در Trust Wallet (حداقل موجودی ۱۰ دلار) با سود بسته شود، ۹۵٪ سود برای شماست و ۵٪ هزینه سرور محاسبه می‌شود.'],
+                  ['آیا دلارینو رایگان است و کارمزد ۳٪ چطور حساب می‌شود؟', 'بله! اشتراک ماهانه وجود ندارد و همه بخش‌ها رایگان است (از جمله کیف‌پول دمو قابل تنظیم رایگان و ۲۵+ اندیکاتور). حتی ۳ معامله سودده اول واقعی شما کاملاً رایگان (۰٪) است و از معامله چهارم به بعد ۹۷٪ سود برای شما و فقط ۳٪ کارمزد سرور محاسبه می‌شود.'],
                 ]
               : [
                   ['How does Smart-Wallet Copy Trading V2 & Isolated Margin Boxes work?', 'Track Top-10 smart-money wallets or add any custom wallet across Solana, Base, ETH, BSC, Arbitrum, TON & TRON. Only fresh trades opened after follow-time are mirrored, each inside an isolated margin box with its own daily max loss, 3-step TP, Moonbag, Trailing SL, and 7-day backtest.'],

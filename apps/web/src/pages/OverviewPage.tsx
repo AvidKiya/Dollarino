@@ -31,12 +31,19 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react';
-import { type Timeframe } from '@dollarino/core';
+import {
+  computeDynamicRecommendedSettings,
+  resolveEffectiveBotCapital,
+  type BotBudgetMode,
+  type CapitalPresetId,
+  type Timeframe,
+} from '@dollarino/core';
 import { apiFetch } from '../lib/api';
 import { formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
-import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow } from '../lib/types';
+import { pushFloatingToast } from '../lib/toast';
+import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow, TradingEngineChoice } from '../lib/types';
 import { WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '../components/DollarinoViz';
@@ -47,41 +54,23 @@ import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerMod
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
 import { WeeklyCardPage } from './WeeklyCardPage';
 
-const RISK_PRESETS = [
+const RISK_PRESET_META = [
   {
     id: 'conservative' as const,
     titleFa: 'کم‌ریسک (محافظ سرمایه)',
     titleEn: 'Conservative',
-    descFa: '۲٪ مارجین · اهرم ۳x · سقف ضرر روزانه ۳٪',
-    descEn: '2% margin · 3x lev · 3% daily cap',
-    marginPct: 2,
-    maxLev: 3,
-    dailyLoss: 3,
-    maxOpen: 4,
     color: '#10d9a3',
   },
   {
     id: 'balanced' as const,
-    titleFa: 'متعادل (پیشنهاد دلارینو)',
+    titleFa: 'متعادل (پیشنهادی دلارینو)',
     titleEn: 'Balanced (Recommended)',
-    descFa: '۵٪ مارجین · اهرم ۱۰x · تا ۸ ارز همزمان',
-    descEn: '5% margin · 10x lev · up to 8 coins',
-    marginPct: 5,
-    maxLev: 10,
-    dailyLoss: 6,
-    maxOpen: 8,
     color: '#2b74ff',
   },
   {
     id: 'aggressive' as const,
     titleFa: 'پُرقدرت (آزادی کامل تریدر)',
     titleEn: 'Aggressive Pro',
-    descFa: '۱۰٪ مارجین · اهرم ۲۰x · تا ۲۰ ارز همزمان',
-    descEn: '10% margin · 20x lev · up to 20 coins',
-    marginPct: 10,
-    maxLev: 20,
-    dailyLoss: 12,
-    maxOpen: 20,
     color: '#e8c15a',
   },
 ];
@@ -141,14 +130,58 @@ export function OverviewPage({
 }) {
   const isFa = lang === 'fa';
   const isRunning = data.config.bot_state.startsWith('RUNNING');
-  void user;
 
   const [hideBal, setHideBal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
+
+  // V11.0: Risk Terms modal, Custom Paper Balance, Live IRT Refresh, Multi-Engine & Listing Sniper
+  const [riskModalOpen, setRiskModalOpen] = useState(false);
+  const [riskChecked, setRiskChecked] = useState(false);
+  const [pendingStartAction, setPendingStartAction] = useState<(() => Promise<void>) | null>(null);
+  const [paperResetOpen, setPaperResetOpen] = useState(false);
+  const [customPaperInput, setCustomPaperInput] = useState(() =>
+    String(Math.round(Number(data.config.custom_paper_balance || data.config.paper_balance || 10000)))
+  );
+  const [liveIrtOverride, setLiveIrtOverride] = useState<{ usdtIrt: number; source: string } | null>(null);
+  const [irtRefreshing, setIrtRefreshing] = useState(false);
+  const [sniperScanning, setSniperScanning] = useState(false);
+  const [sniperCandidates, setSniperCandidates] = useState<Array<{
+    symbol: string;
+    name: string;
+    chainId: string;
+    source: string;
+    safetyScore: number;
+    liquidityUsd: number;
+    priceUsd: number;
+    change1hPct: number;
+    trustWalletSwapUrl: string;
+    dexScreenerUrl: string;
+  }>>([]);
+  const [sniperBudgetInput, setSniperBudgetInput] = useState(() => String(data.config.sniper_budget_usd ?? 25));
+  const [sniperMinSafetyInput, setSniperMinSafetyInput] = useState(() => String(data.config.sniper_min_safety ?? 65));
+
+  // V11.1: Bot Capital Cap & Dynamic Capital-Aware Settings
+  const [budgetDrawerOpen, setBudgetDrawerOpen] = useState(false);
+  const [budgetModeInput, setBudgetModeInput] = useState<BotBudgetMode>(
+    () => (data.config.bot_budget_mode as BotBudgetMode) || 'FULL_BALANCE'
+  );
+  const [budgetUsdInput, setBudgetUsdInput] = useState(() =>
+    String(Math.round(Number(data.config.bot_budget_usd || 100)))
+  );
+  const [budgetPctInput, setBudgetPctInput] = useState(() =>
+    String(Math.round(Number(data.config.bot_budget_pct || 25)))
+  );
+  const [manualLevInput, setManualLevInput] = useState(() =>
+    String(Math.max(1, Math.min(100, Math.round(Number(data.config.max_leverage || 10)))))
+  );
+  useEffect(() => {
+    setBudgetModeInput((data.config.bot_budget_mode as BotBudgetMode) || 'FULL_BALANCE');
+    if ((data.config.bot_budget_usd ?? 0) > 0) setBudgetUsdInput(String(Math.round(Number(data.config.bot_budget_usd))));
+    if (data.config.max_leverage) setManualLevInput(String(Math.max(1, Math.min(100, Math.round(Number(data.config.max_leverage))))));
+    if ((data.config.bot_budget_pct ?? 0) > 0) setBudgetPctInput(String(Math.round(Number(data.config.bot_budget_pct))));
+  }, [data.config.bot_budget_mode, data.config.bot_budget_usd, data.config.bot_budget_pct]);
 
   // Inline Edit TP/SL state
   const [editPos, setEditPos] = useState<OpenTradeRow | null>(null);
@@ -209,7 +242,6 @@ export function OverviewPage({
 
   const runAiInstantScan = async (autoExecute = false) => {
     setAiScanBusy(true);
-    setErrorMsg(null);
     try {
       const res = await apiFetch<{ ok: boolean; results: AiScanResultItem[] }>('/api/trading/ai-scan-now', {
         method: 'POST',
@@ -221,7 +253,7 @@ export function OverviewPage({
       setAiScanResults(res.results || []);
       const executedCount = (res.results || []).filter((r) => r.executed).length;
       const actionable = (res.results || []).filter((r) => r.action === 'LONG' || r.action === 'SHORT').length;
-      setNotice(
+      toastMsg(
         autoExecute && executedCount > 0
           ? isFa
             ? `${executedCount} معامله هوشمند با AI هم‌اکنون باز شد.`
@@ -232,7 +264,7 @@ export function OverviewPage({
       );
       if (autoExecute && executedCount > 0) await onRefresh();
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'AI Scan Error');
+      toastMsg(e instanceof Error ? e.message : 'AI Scan Error', true);
     } finally {
       setAiScanBusy(false);
     }
@@ -240,21 +272,244 @@ export function OverviewPage({
 
   const freeBal = Number(data.balance.free || 0);
   const usedBal = Number(data.balance.used || 0);
-  const totalEq = Number(data.balance.total || freeBal + usedBal);
-  const liveIranIrt = data.iranRate?.usdtIrt || 74500;
+  const totalEq = Number(data.balance.total ?? freeBal + usedBal);
+  const demoBalDisplay = Number(
+    data.walletSummary?.demoBalanceUsd ??
+      (data.config.trading_mode === 'PAPER' ? totalEq : Number(data.config.custom_paper_balance || data.config.paper_balance || 10000))
+  );
+  const liveBalDisplay = Number(
+    data.walletSummary?.liveBalanceUsd ??
+      (data.config.trading_mode === 'LIVE' ? totalEq : 0)
+  );
+  const liveIranIrt = liveIrtOverride?.usdtIrt || data.iranRate?.usdtIrt || 290_000;
+  const liveIranSource = liveIrtOverride?.source || data.iranRate?.source || 'arzdigital';
+  const iranSourceLabel = (() => {
+    if (!isFa) return liveIranSource.toUpperCase();
+    switch (liveIranSource) {
+      case 'arzdigital':
+        return 'ارزدیجیتال';
+      case 'alanchand':
+        return 'الان‌چند';
+      case 'nobitex':
+        return 'نوبیتکس';
+      case 'wallex':
+        return 'والکس';
+      case 'tetherland':
+        return 'تترلند';
+      case 'ramzinex':
+        return 'رمزینکس';
+      default:
+        return 'نرخ پایه';
+    }
+  })();
+
+  const serverCap = data.capitalSummary;
+  const activeCapitalRes = useMemo(
+    () =>
+      serverCap
+        ? {
+            walletTotalUsd: serverCap.walletTotalUsd,
+            effectiveCapitalUsd: serverCap.effectiveCapitalUsd,
+            usedMarginUsd: serverCap.usedMarginUsd,
+            remainingBudgetUsd: serverCap.remainingBudgetUsd,
+            isCapped: serverCap.isCapped,
+            budgetMode: serverCap.budgetMode,
+          }
+        : {
+            ...resolveEffectiveBotCapital({
+              walletBalanceUsd: totalEq,
+              budgetMode: data.config.bot_budget_mode,
+              budgetUsd: data.config.bot_budget_usd,
+              budgetPct: data.config.bot_budget_pct,
+            }),
+            walletTotalUsd: totalEq,
+            usedMarginUsd: usedBal,
+            remainingBudgetUsd: Math.max(0, totalEq - usedBal),
+          },
+    [serverCap, totalEq, usedBal, data.config.bot_budget_mode, data.config.bot_budget_usd, data.config.bot_budget_pct]
+  );
+
+  const previewDraftCap = useMemo(
+    () =>
+      resolveEffectiveBotCapital({
+        walletBalanceUsd: activeCapitalRes.walletTotalUsd || totalEq,
+        budgetMode: budgetModeInput,
+        budgetUsd: Number(budgetUsdInput || 0),
+        budgetPct: Number(budgetPctInput || 100),
+      }),
+    [activeCapitalRes.walletTotalUsd, totalEq, budgetModeInput, budgetUsdInput, budgetPctInput]
+  );
+
+  const previewDraftRec = useMemo(
+    () => computeDynamicRecommendedSettings(previewDraftCap.effectiveCapitalUsd, 'balanced'),
+    [previewDraftCap.effectiveCapitalUsd]
+  );
+
+  const dynamicRiskPresets = useMemo(
+    () =>
+      RISK_PRESET_META.map((meta) => {
+        const rec = computeDynamicRecommendedSettings(activeCapitalRes.effectiveCapitalUsd, meta.id);
+        return {
+          ...meta,
+          rec,
+          descFa: `هر ترید $${rec.perTradeUsd.toFixed(rec.perTradeUsd < 10 ? 1 : 0)} (${rec.marginPct}%) · تا ${rec.maxOpenPositions} معامله · اهرم ${rec.maxLeverage}×`,
+          descEn: `$${rec.perTradeUsd.toFixed(rec.perTradeUsd < 10 ? 1 : 0)}/trade (${rec.marginPct}%) · max ${rec.maxOpenPositions} pos · ${rec.maxLeverage}× lev`,
+        };
+      }),
+    [activeCapitalRes.effectiveCapitalUsd]
+  );
   const unrealized = data.openTrades.reduce((s, t) => s + Number(t.unrealized_pnl || 0), 0);
   const todayPnl = Number(data.stats.todayPnl ?? data.stats.totalPnl ?? 0) + unrealized;
   const activeStrategy = data.config.strategy_key || 'dollarino_v01';
   const scanScope = data.config.scan_scope || 'ALL_MARKET';
   const execMode = data.config.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';
+  const activeEngines: TradingEngineChoice[] = useMemo(() => {
+    if (data.activeEngine?.activeEngines?.length) return data.activeEngine.activeEngines;
+    const list: TradingEngineChoice[] = [];
+    if (activeStrategy === 'ai_autonomous_agent') list.push('CENTRAL_AI');
+    else if (activeStrategy === 'my_custom_ai') list.push('MY_AI');
+    else if (activeStrategy === 'copy_trade') list.push('COPY_TRADE');
+    else list.push('STRATEGY');
+    if (data.config.sniper_enabled) list.push('LISTING_SNIPER');
+    return list;
+  }, [data.activeEngine?.activeEngines, activeStrategy, data.config.sniper_enabled]);
+  const hasAcceptedRisk = Boolean(data.riskTermsAcceptedAt || user.risk_terms_accepted_at);
+  const freeTradesRem = data.serverFeeSummary?.freeTradesRemaining ?? 3;
+  const freeTradesLim = data.serverFeeSummary?.freeTradesLimit ?? 3;
 
-  const resetConfigToDefaults = async () => {
+  const refreshLiveIranRate = async () => {
+    setIrtRefreshing(true);
+    try {
+      const r = await apiFetch<{ usdtIrt: number; source: string }>('/api/public/usdt-irt-rate?refresh=1');
+      if (r.usdtIrt > 0) setLiveIrtOverride({ usdtIrt: r.usdtIrt, source: r.source });
+      toastMsg(isFa ? `نرخ لحظه‌ای تتر بروز شد: ${Math.round(r.usdtIrt).toLocaleString('en-US')} تومان` : `Live USDT/IRT updated`);
+    } catch {
+      /* ignore */
+    } finally {
+      setIrtRefreshing(false);
+    }
+  };
+
+  const toggleEngineChoice = async (engine: TradingEngineChoice, forceNext?: boolean) => {
+    const currentlyOn = activeEngines.includes(engine);
+    const nextOn = forceNext !== undefined ? forceNext : !currentlyOn;
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; activeEngine?: { activeEngines: TradingEngineChoice[] } }>(
+        '/api/trading/engines/toggle',
+        {
+          method: 'POST',
+          body: JSON.stringify({ engine, enabled: nextOn }),
+        }
+      );
+      const count = res.activeEngine?.activeEngines?.length ?? 0;
+      toastMsg(
+        isFa
+          ? `${nextOn ? '✅ موتور فعال شد' : '⏸ موتور غیرفعال شد'} (${count} موتور آماده/فعال همزمان)`
+          : `${nextOn ? 'Engine enabled' : 'Engine disabled'} (${count} active)`
+      );
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Engine toggle failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyCustomPaperBalance = async (targetBal: number) => {
+    const clean = Math.max(50, Math.min(10_000_000, Math.round(targetBal * 100) / 100));
+    setBusy(true);
+    try {
+      const res = await apiFetch<{
+        balance?: number;
+        balanceAfter?: number;
+        customPaperBalance?: number;
+        message?: string;
+      }>('/api/trading/wallet/reset', {
+        method: 'POST',
+        body: JSON.stringify({ balance: clean }),
+      });
+      const finalBal = Number(res.balance ?? res.balanceAfter ?? res.customPaperBalance ?? clean);
+      setCustomPaperInput(String(finalBal));
+      setPaperResetOpen(false);
+      toastMsg(
+        res.message ||
+          (isFa
+            ? `موجودی کیف‌پول دمو روی $${finalBal.toLocaleString('en-US')} تنظیم شد ✅`
+            : `Demo balance set to $${finalBal.toLocaleString('en-US')}`)
+      );
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Demo reset failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runSniperScanNow = async (execute = false) => {
+    setSniperScanning(true);
+    try {
+      await apiFetch('/api/trading/sniper', {
+        method: 'POST',
+        body: JSON.stringify({
+          enabled: true,
+          budgetUsd: Math.max(5, Number(sniperBudgetInput || 25)),
+          minSafety: Math.max(40, Math.min(95, Number(sniperMinSafetyInput || 65))),
+        }),
+      });
+      const res = await apiFetch<{ candidates: typeof sniperCandidates; boughtCount: number }>(
+        '/api/trading/sniper/scan-now',
+        {
+          method: 'POST',
+          body: JSON.stringify({ execute }),
+        }
+      );
+      setSniperCandidates(res.candidates || []);
+      toastMsg(
+        isFa
+          ? `اسکن لیستینگ و میم‌کوین کامل شد: ${(res.candidates || []).length} توکن واجد شرایط${res.boughtCount > 0 ? ` · ${res.boughtCount} خرید ثبت شد!` : ''}`
+          : `Sniper scan complete: ${(res.candidates || []).length} candidates`
+      );
+      if (res.boughtCount > 0) await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Sniper scan failed', true);
+    } finally {
+      setSniperScanning(false);
+    }
+  };
+
+  const runWithRiskCheck = (startAction: () => Promise<void>) => {
+    if (hasAcceptedRisk) {
+      void startAction();
+      return;
+    }
+    setRiskChecked(false);
+    setPendingStartAction(() => startAction);
+    setRiskModalOpen(true);
+  };
+
+  useEffect(() => {
+    const onReqRisk = () => {
+      runWithRiskCheck(async () => {
+        await apiFetch('/api/trading/bot/start', {
+          method: 'POST',
+          body: JSON.stringify({ scanScope: data.config.scan_scope || 'ALL_MARKET' }),
+        });
+        await onRefresh();
+      });
+    };
+    window.addEventListener('dollarino:require-risk-terms', onReqRisk);
+    return () => window.removeEventListener('dollarino:require-risk-terms', onReqRisk);
+  });
+
+  const resetConfigToDefaults = async (preset: CapitalPresetId = 'balanced') => {
     setBusy(true);
     try {
       const res = await apiFetch<{ message?: string }>('/api/trading/config/reset-defaults', {
         method: 'POST',
+        body: JSON.stringify({ preset }),
       });
-      toastMsg(res.message || (isFa ? 'تنظیمات به حالت پیش‌فرض دلارینو بازگشت ✅' : 'Restored Dollarino defaults ✅'));
+      toastMsg(res.message || (isFa ? 'پیش‌فرض بر اساس بودجه اعمال شد ✅' : 'Budget-based defaults applied ✅'));
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Reset failed', true);
@@ -263,10 +518,49 @@ export function OverviewPage({
     }
   };
 
+  const saveBotBudgetCap = async (applyRecommended = false) => {
+    setBusy(true);
+    try {
+      const cleanUsd = budgetModeInput === 'FIXED_USD' ? Math.max(10, Number(budgetUsdInput || 100)) : 0;
+      const cleanPct = budgetModeInput === 'PERCENT_OF_BALANCE' ? Math.max(5, Math.min(100, Number(budgetPctInput || 25))) : 100;
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          bot_budget_mode: budgetModeInput,
+          bot_budget_usd: cleanUsd,
+          bot_budget_pct: cleanPct,
+        }),
+      });
+      if (applyRecommended) {
+        const res = await apiFetch<{ message?: string }>('/api/trading/config/reset-defaults', {
+          method: 'POST',
+          body: JSON.stringify({ preset: 'balanced', budgetMode: budgetModeInput, budgetUsd: cleanUsd, budgetPct: cleanPct }),
+        });
+        toastMsg(res.message || (isFa ? 'سقف بودجه و تنظیمات پویا اعمال شد ✅' : 'Budget & dynamic settings applied ✅'));
+      } else {
+        toastMsg(
+          isFa
+            ? `سقف سرمایه ربات روی $${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')} ذخیره شد ✅`
+            : `Bot budget cap saved ($${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')}) ✅`
+        );
+      }
+      setBudgetDrawerOpen(false);
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Budget save failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const switchTrustExecution = async (next: { executionMode?: 'AUTO' | 'MANUAL_CONFIRM'; tradingMode?: 'PAPER' | 'LIVE' }) => {
     setBusy(true);
     try {
-      const res = await apiFetch<{ ok: boolean; message: string }>('/api/trustwallet/execution-mode', {
+      const res = await apiFetch<{
+        ok: boolean;
+        message: string;
+        warningCode?: 'NO_TRUST_WALLET' | 'MIN_BALANCE_10_USD';
+      }>('/api/trustwallet/execution-mode', {
         method: 'POST',
         body: JSON.stringify({
           executionMode: next.executionMode ?? execMode,
@@ -274,7 +568,14 @@ export function OverviewPage({
           syncCopyRules: true,
         }),
       });
-      toastMsg(res.message);
+      if (res.warningCode) {
+        pushFloatingToast(res.message, 'warn', 5500, {
+          label: isFa ? 'اتصال Trust Wallet' : 'Connect Wallet',
+          onClick: () => setTrustDrawerOpen(true),
+        });
+      } else {
+        toastMsg(res.message);
+      }
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Mode update failed', true);
@@ -350,17 +651,7 @@ export function OverviewPage({
   const consensusPct = data.recentSignals.length ? Math.round((longSigCount / data.recentSignals.length) * 100) : 64;
 
   const toastMsg = (msg: string, isErr = false) => {
-    if (isErr) {
-      setErrorMsg(msg);
-      setNotice(null);
-    } else {
-      setNotice(msg);
-      setErrorMsg(null);
-    }
-    setTimeout(() => {
-      setNotice(null);
-      setErrorMsg(null);
-    }, 5000);
+    pushFloatingToast(msg, isErr ? 'error' : 'success');
   };
 
   const patchConfig = async (payload: Record<string, unknown>, okMsg?: string) => {
@@ -397,19 +688,25 @@ export function OverviewPage({
       setStopConfirmOpen(true);
       return;
     }
-    setBusy(true);
-    try {
-      await apiFetch('/api/trading/bot/start', {
-        method: 'POST',
-        body: JSON.stringify({ scanScope }),
-      });
-      toastMsg(isFa ? 'ربات با موفقیت روشن شد و اسکن زنده آغاز گردید' : 'Bot started — scanning markets');
-      await onRefresh();
-    } catch (e) {
-      toastMsg(e instanceof Error ? e.message : 'Start failed', true);
-    } finally {
-      setBusy(false);
-    }
+    runWithRiskCheck(async () => {
+      setBusy(true);
+      try {
+        await apiFetch('/api/trading/bot/start', {
+          method: 'POST',
+          body: JSON.stringify({
+            scanScope,
+            activeEngines: activeEngines.length > 0 ? activeEngines : ['CENTRAL_AI'],
+            acceptRiskTerms: true,
+          }),
+        });
+        toastMsg(isFa ? 'ربات با موفقیت روشن شد و اسکن زنده آغاز گردید' : 'Bot started — scanning markets');
+        await onRefresh();
+      } catch (e) {
+        toastMsg(e instanceof Error ? e.message : 'Start failed', true);
+      } finally {
+        setBusy(false);
+      }
+    });
   };
 
   const handleKillSwitch = async () => {
@@ -514,6 +811,324 @@ export function OverviewPage({
     }
   };
 
+  const renderBotBudgetCard = (variant: 'glass' | 'panel') => {
+    const capTotal = Math.max(0, activeCapitalRes.effectiveCapitalUsd);
+    const used = Math.max(0, activeCapitalRes.usedMarginUsd);
+    const rem = Math.max(0, activeCapitalRes.remainingBudgetUsd);
+    const pctUsed = capTotal > 0 ? Math.min(100, Math.round((used / capTotal) * 100)) : 0;
+    const isGlass = variant === 'glass';
+
+    return (
+      <div
+        className={`rounded-2xl p-3.5 space-y-2.5 ${
+          isGlass
+            ? 'bg-black/30 backdrop-blur-md border border-white/20 text-white'
+            : 'surface-soft border hairline text-main'
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl overflow-hidden ring-1 ring-white/20 bg-[#07152e] shrink-0">
+              <img src="/images/transparent/capital-vault-3d.png" alt="Bot Budget" className="w-full h-full object-cover" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-black">
+                <span>
+                  {isFa ? 'بودجه مجاز ربات:' : 'Bot Budget Cap:'}{' '}
+                  <span dir="ltr" className={isGlass ? 'text-emerald-300 font-num' : 'text-[#059669] dark:text-[#34D399] font-num'}>
+                    ${capTotal.toLocaleString('en-US')}
+                  </span>
+                </span>
+                {activeCapitalRes.isCapped && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isGlass ? 'bg-amber-400/20 text-amber-200' : 'bg-amber-500/15 text-[#D97706]'}`}>
+                    {isFa ? `از کل $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}` : `of $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}`}
+                  </span>
+                )}
+              </div>
+              <p className={`text-[10.5px] font-num ${isGlass ? 'text-white/75' : 'text-dim'}`}>
+                {isFa
+                  ? `درگیر: $${used.toFixed(0)} · باقی‌مانده مجاز: $${rem.toFixed(0)}`
+                  : `In Use: $${used.toFixed(0)} · Remaining: $${rem.toFixed(0)}`}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setBudgetDrawerOpen((v) => !v)}
+              className={`h-8 px-3 rounded-xl text-[11px] font-black inline-flex items-center gap-1 transition ${
+                isGlass ? 'ios-glass-btn' : 'btn-ghost border hairline'
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5 text-amber-300" />
+              <span>{isFa ? 'تنظیم بودجه' : 'Set Cap'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void resetConfigToDefaults(currentPresetId)}
+              className={`h-8 px-3 rounded-xl text-[11px] font-black inline-flex items-center gap-1 transition ${
+                isGlass ? 'ios-glass-emerald-btn' : 'bg-[#059669] hover:bg-[#047857] text-white'
+              }`}
+              title={isFa ? 'تنظیم خودکار مارجین، اهرم و تعداد معاملات متناسب با بودجه فعلی' : 'Apply budget-based defaults'}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{isFa ? 'پیش‌فرض بر اساس بودجه' : 'Budget Defaults'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className={`h-1.5 w-full rounded-full overflow-hidden ${isGlass ? 'bg-white/15' : 'bg-slate-500/15'}`}>
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-amber-300 transition-all duration-300"
+            style={{ width: `${Math.max(activeCapitalRes.isCapped ? 6 : 3, pctUsed)}%` }}
+          />
+        </div>
+
+        {budgetDrawerOpen && (
+          <div className={`pt-2.5 mt-1 border-t space-y-2.5 ${isGlass ? 'border-white/15' : 'hairline'}`}>
+            <p className={`text-[11px] font-bold ${isGlass ? 'text-white/85' : 'text-sub'}`}>
+              {isFa
+                ? 'مشخص کنید ربات در مجموع (چه ۱ ترید چه ۱۰ ترید) حداکثر با چقدر از پول کیف‌پول کار کند:'
+                : 'Limit total capital the bot may deploy across all open trades combined:'}
+            </p>
+            <div className="grid grid-cols-3 gap-1.5 text-[11px] font-black">
+              {(
+                [
+                  { id: 'FULL_BALANCE' as const, labelFa: 'کل موجودی', labelEn: 'Full Wallet' },
+                  { id: 'FIXED_USD' as const, labelFa: 'سقف دلاری ($)', labelEn: 'Fixed USD ($)' },
+                  { id: 'PERCENT_OF_BALANCE' as const, labelFa: 'درصد از کل (%)', labelEn: 'Percent (%)' },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setBudgetModeInput(m.id)}
+                  className={`py-2 px-2 rounded-xl border transition ${
+                    budgetModeInput === m.id
+                      ? isGlass
+                        ? 'ios-glass-gold-btn border-amber-300/60'
+                        : 'bg-[#0D47A1] text-white border-[#0D47A1]'
+                      : isGlass
+                        ? 'bg-black/30 text-white/75 border-white/15 hover:text-white'
+                        : 'surface-card text-dim border-[var(--line-strong)]'
+                  }`}
+                >
+                  {isFa ? m.labelFa : m.labelEn}
+                </button>
+              ))}
+            </div>
+
+            {budgetModeInput === 'FIXED_USD' && (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5 text-[10px] font-black">
+                  {[50, 100, 250, 500, 1000].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setBudgetUsdInput(String(v))}
+                      className={`px-2.5 py-1 rounded-lg border ${
+                        Number(budgetUsdInput) === v
+                          ? 'bg-emerald-500 text-white border-emerald-400'
+                          : isGlass
+                            ? 'bg-black/30 text-white/80 border-white/15'
+                            : 'surface-card text-dim border-[var(--line-strong)]'
+                      }`}
+                    >
+                      ${v.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={10}
+                    max={10000000}
+                    dir="ltr"
+                    value={budgetUsdInput}
+                    onChange={(e) => setBudgetUsdInput(e.target.value)}
+                    placeholder="100"
+                    className={`w-32 px-3 py-1.5 rounded-xl text-xs font-num font-bold ${
+                      isGlass ? 'bg-black/45 border border-white/25 text-white' : 'input-pro'
+                    }`}
+                  />
+                  <span className={`text-[11px] ${isGlass ? 'text-white/75' : 'text-dim'}`}>
+                    {isFa ? 'دلار سقف مجموع کل تریدهای باز' : 'USD aggregate max across all open trades'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {budgetModeInput === 'PERCENT_OF_BALANCE' && (
+              <div className="flex items-center gap-2 flex-wrap">
+                {[10, 25, 50, 75].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setBudgetPctInput(String(p))}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black border ${
+                      Number(budgetPctInput) === p
+                        ? 'bg-emerald-500 text-white border-emerald-400'
+                        : isGlass
+                          ? 'bg-black/30 text-white/80 border-white/15'
+                          : 'surface-card text-dim border-[var(--line-strong)]'
+                    }`}
+                  >
+                    {p}%
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  dir="ltr"
+                  value={budgetPctInput}
+                  onChange={(e) => setBudgetPctInput(e.target.value)}
+                  className={`w-20 px-2.5 py-1.5 rounded-xl text-xs font-num font-bold ${
+                    isGlass ? 'bg-black/45 border border-white/25 text-white' : 'input-pro'
+                  }`}
+                />
+              </div>
+            )}
+
+            <div className={`rounded-xl p-2.5 text-[11px] font-bold ${isGlass ? 'bg-emerald-400/15 text-emerald-100 border border-emerald-300/25' : 'bg-emerald-500/10 text-[#059669] dark:text-[#34D399] border border-emerald-500/25'}`}>
+              ✨ {isFa ? previewDraftRec.summaryFa : previewDraftRec.summaryEn}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void saveBotBudgetCap(false)}
+                className={`py-2 px-3 rounded-xl text-xs font-black ${
+                  isGlass ? 'ios-glass-btn' : 'btn-ghost border hairline'
+                }`}
+              >
+                {isFa ? 'ذخیره سقف بودجه' : 'Save Cap Only'}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void saveBotBudgetCap(true)}
+                className={`py-2 px-3 rounded-xl text-xs font-black ${
+                  isGlass ? 'ios-glass-emerald-btn' : 'bg-[#059669] hover:bg-[#047857] text-white'
+                }`}
+              >
+                {isFa ? 'ذخیره + پیش‌فرض بر اساس بودجه' : 'Save + Budget Defaults'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderLeverageControl = () => {
+    const isAutoLev = Boolean(data.config.use_signal_leverage);
+    const suggestedLev = previewDraftRec.maxLeverage;
+    const applyManualLev = async (levVal: number) => {
+      const clamped = Math.max(1, Math.min(100, Math.round(levVal || 5)));
+      setManualLevInput(String(clamped));
+      await patchConfig(
+        { max_leverage: clamped, use_signal_leverage: false },
+        isFa ? `اهرم دستی روی ${clamped}× ذخیره شد ✅` : `Manual leverage set to ${clamped}× ✅`
+      );
+    };
+    const applySuggestedLev = async () => {
+      setManualLevInput(String(suggestedLev));
+      await patchConfig(
+        { max_leverage: suggestedLev, use_signal_leverage: true },
+        isFa ? `اهرم پیشنهادی (${suggestedLev}× متناسب با بودجه) فعال شد ✅` : `Budget-suggested leverage (${suggestedLev}×) enabled ✅`
+      );
+    };
+
+    return (
+      <div className="rounded-2xl p-3.5 surface-soft border hairline space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-black text-main">
+              {isFa ? 'تنظیم اهرم معاملات (پیشنهادی یا دستی)' : 'Trade Leverage (Suggested or Manual)'}
+            </p>
+            <p className="text-[11px] text-dim">
+              {isAutoLev
+                ? isFa
+                  ? `حالت فعلی: پیشنهادی بر اساس بودجه و هوش مصنوعی (تا سقف ${data.config.max_leverage}×)`
+                  : `Active: Suggested by Budget & AI (up to ${data.config.max_leverage}×)`
+                : isFa
+                  ? `حالت فعلی: اهرم دستی ثابت ${data.config.max_leverage}× برای تمام معاملات`
+                  : `Active: Fixed Manual ${data.config.max_leverage}× for trades`}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void applySuggestedLev()}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition border ${
+                isAutoLev
+                  ? 'bg-[#059669] text-white border-[#059669]'
+                  : 'surface-card text-main border-[var(--line-strong)] hover:border-emerald-500/40'
+              }`}
+            >
+              {isFa ? `پیشنهادی (${suggestedLev}×)` : `Suggested (${suggestedLev}×)`}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void applyManualLev(Number(manualLevInput) || data.config.max_leverage || 5)}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition border ${
+                !isAutoLev
+                  ? 'bg-[#0D47A1] text-white border-[#0D47A1]'
+                  : 'surface-card text-main border-[var(--line-strong)] hover:border-blue-500/40'
+              }`}
+            >
+              {isFa ? 'دستی' : 'Manual'}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {[2, 3, 5, 10, 20, 50].map((lv) => (
+            <button
+              key={lv}
+              type="button"
+              disabled={busy}
+              onClick={() => void applyManualLev(lv)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-black font-num border transition ${
+                !isAutoLev && Number(data.config.max_leverage) === lv
+                  ? 'bg-[#0D47A1] text-white border-[#0D47A1]'
+                  : 'surface-card text-dim border-[var(--line-strong)] hover:text-main'
+              }`}
+            >
+              {lv}×
+            </button>
+          ))}
+          <div className="flex items-center gap-1.5 ms-auto">
+            <input
+              type="number"
+              min={1}
+              max={100}
+              dir="ltr"
+              aria-label={isFa ? 'عدد اهرم دستی' : 'Manual leverage'}
+              value={manualLevInput}
+              onChange={(e) => setManualLevInput(e.target.value)}
+              className="input-pro w-16 px-2 py-1 rounded-lg text-xs font-num font-bold text-center"
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void applyManualLev(Number(manualLevInput) || 5)}
+              className="px-2.5 py-1 rounded-lg bg-[#0D47A1] text-white text-[11px] font-black"
+            >
+              {isFa ? 'ثبت دستی' : 'Set'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSharedModals = () => (
     <>
       {wizardOpen && (
@@ -581,6 +1196,82 @@ export function OverviewPage({
           document.body
         )}
 
+      {riskModalOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-sm grid place-items-center p-4" onClick={() => setRiskModalOpen(false)}>
+            <div className="pop-in panel rounded-[28px] w-full max-w-md p-6 space-y-4 border border-amber-500/40" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-[#F59E0B]" />
+                  <span>{isFa ? 'تاییدیه ریسک و شفافیت معاملات (الزامی)' : 'Risk & Transparency Acknowledgment'}</span>
+                </h3>
+                <button type="button" onClick={() => setRiskModalOpen(false)} className="btn-ghost p-1.5 rounded-xl">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="surface-soft rounded-2xl p-4 text-xs text-sub leading-relaxed space-y-2 border hairline">
+                <p>
+                  {isFa
+                    ? '۱. بازارهای ارز دیجیتال دارای نوسانات بالا و ریسک ذاتی هستند و هیچ سامانه هوش مصنوعی سود قطعی یا تضمینی ارائه نمی‌دهد.'
+                    : '1. Crypto markets carry inherent volatility and risk; no AI or strategy guarantees profits.'}
+                </p>
+                <p>
+                  {isFa
+                    ? '۲. دلارینو یک دستیار تحلیل و اتوماسیون غیرامانی است؛ تمامی تصمیمات، انتخاب اهرم، استراتژی‌ها و مدیریت سرمایه با مسئولیت شخصی شما انجام می‌شود.'
+                    : '2. Dollarino is strictly a non-custodial automation tool; all trade choices, leverage, and risk are your sole responsibility.'}
+                </p>
+                <p>
+                  {isFa
+                    ? `۳. ${freeTradesLim} معامله سودده اول واقعی ۰٪ کارمزد است و پس از آن فقط ۳٪ از سود خالص معاملات موفق (در حالت لایو) به‌عنوان هزینه سرور محاسبه می‌شود.`
+                    : `3. Your first ${freeTradesLim} profitable LIVE trades are 0% fee; afterwards only 3% of net live profits apply.`}
+                </p>
+              </div>
+              <label className="flex items-start gap-2.5 text-xs font-bold text-main cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={riskChecked}
+                  onChange={(e) => setRiskChecked(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-[#059669]"
+                />
+                <span>
+                  {isFa
+                    ? 'متن بالا را خواندم و می‌پذیرم که تمام مسئولیت ریسک معاملات با خودم است.'
+                    : 'I read and accept full responsibility for my trading risks.'}
+                </span>
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={!riskChecked || busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await apiFetch('/api/trading/accept-risk-terms', { method: 'POST' });
+                      setRiskModalOpen(false);
+                      const fn = pendingStartAction;
+                      setPendingStartAction(null);
+                      if (fn) await fn();
+                      else await onRefresh();
+                    } catch (err) {
+                      toastMsg(err instanceof Error ? err.message : 'Failed to save acceptance', true);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="btn-emerald flex-1 py-3 rounded-xl text-xs font-black disabled:opacity-40"
+                >
+                  {isFa ? '✅ تایید و شروع ربات' : '✅ Accept & Start Bot'}
+                </button>
+                <button type="button" onClick={() => setRiskModalOpen(false)} className="btn-ghost px-4 py-3 rounded-xl text-xs font-bold">
+                  {isFa ? 'انصراف' : 'Cancel'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
       {stopConfirmOpen &&
         typeof document !== 'undefined' &&
         createPortal(
@@ -622,76 +1313,14 @@ export function OverviewPage({
           ? 'پول واقعی (Trust Wallet)'
           : 'Real Money (Trust Wallet)'
         : isFa
-          ? 'پول آزمایشی رایگان ($10K)'
-          : 'Free Practice ($10K)';
+          ? 'پول آزمایشی قابل تنظیم ($50–$10M)'
+          : 'Custom Demo ($50–$10M)';
 
     const feeEnf = data.serverFeeSummary?.enforcement;
-    const isCustomProMode =
-      activeStrategy === 'my_custom_ai' ||
-      (activeStrategy !== 'ai_autonomous_agent' && activeStrategy !== 'dollarino_v01' && activeStrategy !== 'copy_trade');
-
-    const beginnerOptions = [
-      {
-        id: 'ai' as const,
-        img: '/images/transparent/ai-brain-3d.png',
-        badge: isFa ? 'پیشنهادی' : 'RECOMMENDED',
-        title: isFa ? '۱. هوش مصنوعی هوشمند' : '1. Smart AI Autopilot',
-        desc: isFa
-          ? 'خودش ۲۴ ساعته قیمت ارزها را می‌بیند و بهترین موقعیت را می‌خرد.'
-          : 'Watches all coins 24/7 and picks clean trades automatically.',
-        active: simpleModel === 'ai',
-        onSelect: () => {
-          setSimpleModel('ai');
-          void patchConfig({ strategy_key: 'ai_autonomous_agent', ai_gate_enabled: 1 }, isFa ? 'ربات روی هوش مصنوعی هوشمند قرار گرفت' : 'Smart AI selected');
-        },
-      },
-      {
-        id: 'hunting' as const,
-        img: '/images/transparent/mascot-astronaut.png',
-        badge: isFa ? 'آماده و تست‌شده' : 'READY PRESET',
-        title: isFa ? '۲. روش آماده دلارینو' : '2. Dollarino Ready Plan',
-        desc: isFa
-          ? 'بهترین تنظیمات آماده تیم دلارینو؛ مناسب شروع سریع بدون هیچ دانش قبلی.'
-          : 'Pre-tuned strategy built by Dollarino — zero knowledge needed.',
-        active: simpleModel === 'hunting' || simpleModel === 'myai',
-        onSelect: () => {
-          setSimpleModel('hunting');
-          if (activeStrategy === 'ai_autonomous_agent' || activeStrategy === 'copy_trade') {
-            void patchConfig({ strategy_key: 'dollarino_v01', ai_gate_enabled: 0 }, isFa ? 'روش آماده دلارینو انتخاب شد' : 'Ready Plan selected');
-          }
-        },
-      },
-      {
-        id: 'copy' as const,
-        img: '/images/transparent/trophy-copy-3d.png',
-        badge: isFa ? 'کپی از برترین‌ها' : 'COPY PROS',
-        title: isFa ? '۳. کپی از حرفه‌ای‌ها' : '3. Copy Top Traders',
-        desc: isFa
-          ? 'حرفه‌ای‌های تاییدشده هرچه خریدند، دقیقاً همان برای تو کپی شود.'
-          : 'Automatically mirror verified top-performing traders.',
-        active: simpleModel === 'copy',
-        onSelect: () => {
-          setSimpleModel('copy');
-        },
-      },
-    ];
 
     return (
       <div className="space-y-5 max-w-5xl mx-auto">
-        {notice && (
-          <div className="p-3.5 rounded-2xl badge-signal text-xs font-extrabold flex items-center justify-between">
-            <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" />{notice}</span>
-            <button type="button" onClick={() => setNotice(null)}><X className="w-4 h-4" /></button>
-          </div>
-        )}
-        {errorMsg && (
-          <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-xs font-extrabold text-loss flex items-center justify-between gap-2">
-            <span>{errorMsg}</span>
-            <button type="button" onClick={() => setErrorMsg(null)}><X className="w-4 h-4" /></button>
-          </div>
-        )}
-
-        {/* Fee Lock / Warning Banner (Visible when user approaches or hits 5% server fee deadline) */}
+        {/* Fee Warning Banner (Non-blocking on open positions: 3% server fee after 3 free live profit trades) */}
         {feeEnf && (feeEnf.lockStatus === 'LOCKED' || feeEnf.lockStatus === 'WARNING') && (
           <div
             className={`rounded-3xl p-4 border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs ${
@@ -704,16 +1333,16 @@ export function OverviewPage({
               <p className="font-black text-main">
                 {feeEnf.lockStatus === 'LOCKED'
                   ? isFa
-                    ? `🔒 ترید واقعی تا تسویه کارمزد ۵٪ ($${feeEnf.totalDueUsd.toFixed(2)}) متوقف شد`
-                    : `🔒 Live trading locked until $${feeEnf.totalDueUsd.toFixed(2)} fee settlement`
+                    ? `🔒 ورود جدید واقعی تا تسویه کارمزد ۳٪ ($${feeEnf.totalDueUsd.toFixed(2)}) متوقف است`
+                    : `🔒 New LIVE entries paused until $${feeEnf.totalDueUsd.toFixed(2)} (3% fee) settlement`
                   : isFa
-                    ? `⏳ مهلت تسویه کارمزد ۵٪: ${feeEnf.hoursRemaining ?? 72} ساعت فرصت دارید ($${feeEnf.totalDueUsd.toFixed(2)})`
-                    : `⏳ Settlement deadline: ${feeEnf.hoursRemaining ?? 72}h left ($${feeEnf.totalDueUsd.toFixed(2)})`}
+                    ? `⏳ مهلت تسویه کارمزد ۳٪: ${feeEnf.hoursRemaining ?? 72} ساعت فرصت دارید ($${feeEnf.totalDueUsd.toFixed(2)})`
+                    : `⏳ 3% fee settlement deadline: ${feeEnf.hoursRemaining ?? 72}h left ($${feeEnf.totalDueUsd.toFixed(2)})`}
               </p>
               <p className="text-sub">
                 {isFa
-                  ? 'پول آزمایشی $10,000 همیشه رایگان فعال است. برای ادامه ترید واقعی، کارمزد را تسویه کنید.'
-                  : 'Free $10,000 practice remains open. Settle via Trust Wallet to keep LIVE trading active.'}
+                  ? 'پوزیشن‌های باز فعلی همچنان تا رسیدن به حد سود/ضرر مدیریت می‌شوند و کیف‌پول دمو رایگان همیشه باز است.'
+                  : 'Existing open positions continue to be managed until close; free demo simulation remains open.'}
               </p>
             </div>
             <button
@@ -746,11 +1375,11 @@ export function OverviewPage({
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={() => setHideBal((v) => !v)}
-                className="ios-glass-btn p-2 rounded-full"
+                className="ios-glass-btn h-8 w-8 rounded-full grid place-items-center"
                 aria-label="Toggle balance"
               >
                 {hideBal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -759,31 +1388,9 @@ export function OverviewPage({
                 <button
                   type="button"
                   onClick={onOpenAcademy}
-                  className="ios-glass-btn px-3 py-1.5 rounded-full text-[11px] font-black inline-flex items-center gap-1"
+                  className="ios-glass-btn h-8 px-3 rounded-full text-[11px] font-black inline-flex items-center gap-1"
                 >
-                  <span>🎓 {isFa ? 'آموزش تصویری (خیلی ساده)' : 'Easy Guide'}</span>
-                </button>
-              )}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void resetConfigToDefaults()}
-                className="ios-glass-btn px-3 py-1.5 rounded-full text-[11px] font-black inline-flex items-center gap-1"
-                title={isFa ? 'بازگشت به بهترین تنظیمات پیشنهادی دلارینو' : 'Reset to Dollarino Defaults'}
-              >
-                <span>🔄 {isFa ? 'تنظیمات پیشنهادی' : 'Best Defaults'}</span>
-              </button>
-              {onToggleUiMode && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    tgHaptic('medium');
-                    onToggleUiMode('pro');
-                  }}
-                  className="ios-glass-btn px-3 py-1.5 rounded-full text-[11px] font-black inline-flex items-center gap-1"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>{isFa ? 'حالت حرفه‌ای' : 'Pro Mode'}</span>
+                  <span>🎓 {isFa ? 'آموزش ساده' : 'Guide'}</span>
                 </button>
               )}
             </div>
@@ -792,11 +1399,22 @@ export function OverviewPage({
           <div className="grid lg:grid-cols-12 gap-5 items-end">
             <div className="lg:col-span-7 space-y-3">
               <p className="text-xs font-bold text-white/80">
-                {isFa ? 'موجودی حساب شما' : 'Your Account Balance'}
+                {data.config.trading_mode === 'LIVE'
+                  ? isFa
+                    ? 'موجودی حساب واقعی (Trust Wallet)'
+                    : 'Your Real Trust Wallet Balance'
+                  : isFa
+                    ? 'موجودی کیف‌پول دمو (آزمایشی)'
+                    : 'Your Demo Account Balance'}
               </p>
               <div className="flex items-baseline gap-2.5 flex-wrap">
                 <span dir="ltr" className="font-display font-bold text-4xl sm:text-5xl tabular text-white tracking-tight font-num drop-shadow">
-                  {hideBal ? '••••••' : `$${totalEq.toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
+                  {hideBal
+                    ? '••••••'
+                    : `$${totalEq.toLocaleString('en-US', {
+                        minimumFractionDigits: data.config.trading_mode === 'LIVE' && totalEq < 100 ? 2 : 0,
+                        maximumFractionDigits: 2,
+                      })}`}
                 </span>
                 {!hideBal && isFa && (
                   <span className="text-base sm:text-lg font-black text-amber-200">
@@ -805,11 +1423,73 @@ export function OverviewPage({
                 )}
               </div>
               {!hideBal && (
-                <p className="text-xs text-white/85 font-semibold leading-relaxed">
-                  {isFa
-                    ? `نرخ تتر امروز: ${liveIranIrt.toLocaleString('en-US')} تومان · بدون اشتراک ماهانه (۹۵٪ سود برای شما · فقط ۵٪ کارمزد سرور)`
-                    : `Live rate: ${liveIranIrt.toLocaleString('en-US')} Toman · 100% Free (5% fee only on real profit)`}
-                </p>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-white/90 font-semibold leading-relaxed">
+                  <span>
+                    {isFa
+                      ? `نرخ تتر (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} ت · ${freeTradesRem > 0 ? `${freeTradesRem}/${freeTradesLim} معامله اول رایگان · ` : ''}فقط ۳٪ از سود واقعی`
+                      : `USDT/IRT (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} · ${freeTradesRem}/${freeTradesLim} Free Live Wins · 3% Profit Fee`}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={irtRefreshing}
+                    onClick={() => void refreshLiveIranRate()}
+                    className="ios-glass-btn h-6 px-2.5 rounded-full text-[10px] font-black inline-flex items-center gap-1"
+                    title={isFa ? 'بروزرسانی نرخ لحظه‌ای تتر' : 'Refresh live Tether rate'}
+                  >
+                    <RefreshCw className={`w-3 h-3 ${irtRefreshing ? 'animate-spin' : ''}`} />
+                    <span>{isFa ? 'بروزرسانی نرخ' : 'Refresh'}</span>
+                  </button>
+                  {data.config.trading_mode === 'PAPER' && (
+                    <button
+                      type="button"
+                      onClick={() => setPaperResetOpen((v) => !v)}
+                      className="ios-glass-btn h-6 px-2.5 rounded-full text-[10px] font-black inline-flex items-center gap-1"
+                    >
+                      <Edit3 className="w-3 h-3 text-amber-300" />
+                      <span>{isFa ? 'تغییر موجودی دمو' : 'Edit Demo $'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {renderBotBudgetCard('glass')}
+
+              {paperResetOpen && data.config.trading_mode === 'PAPER' && (
+                <div className="rounded-2xl bg-black/35 border border-white/20 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-black">
+                    {[100, 1000, 10000, 100000].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void applyCustomPaperBalance(preset)}
+                        className="ios-glass-btn px-2.5 py-1 rounded-lg"
+                      >
+                        ${preset.toLocaleString()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={50}
+                      max={10000000}
+                      value={customPaperInput}
+                      onChange={(e) => setCustomPaperInput(e.target.value)}
+                      placeholder="10000"
+                      dir="ltr"
+                      className="w-32 px-2.5 py-1.5 rounded-xl bg-black/40 border border-white/25 text-white text-xs font-num"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void applyCustomPaperBalance(Number(customPaperInput || 10000))}
+                      className="ios-glass-emerald-btn px-3 py-1.5 rounded-xl text-[11px] font-black"
+                    >
+                      {isFa ? 'اعمال موجودی دمو' : 'Apply'}
+                    </button>
+                  </div>
+                </div>
               )}
 
               {/* Simple 2-Choice Money Switch + Auto/Ask Switch */}
@@ -823,7 +1503,7 @@ export function OverviewPage({
                       data.config.trading_mode === 'PAPER' ? 'ios-glass-gold-btn' : 'text-white/80 hover:text-white'
                     }`}
                   >
-                    {isFa ? '🎮 پول آزمایشی ($10,000 رایگان)' : '🎮 Free Practice ($10K)'}
+                    {isFa ? `🎮 کیف‌پول دمو ($${Math.round(demoBalDisplay).toLocaleString('en-US')})` : `🎮 Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`}
                   </button>
                   <button
                     type="button"
@@ -833,7 +1513,9 @@ export function OverviewPage({
                       data.config.trading_mode === 'LIVE' ? 'ios-glass-emerald-btn' : 'text-white/80 hover:text-white'
                     }`}
                   >
-                    {isFa ? '🛡 پول واقعی (Trust Wallet)' : '🛡 Real Trust Wallet'}
+                    {isFa
+                      ? `🛡 پول واقعی ($${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })})`
+                      : `🛡 Real Trust ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`}
                   </button>
                 </div>
 
@@ -881,43 +1563,35 @@ export function OverviewPage({
               <button
                 type="button"
                 disabled={busy}
-                onClick={async () => {
+                onClick={() => {
                   tgHaptic('medium');
                   if (isRunning) {
                     setStopConfirmOpen(true);
                     return;
                   }
-                  setBusy(true);
-                  try {
-                    const targetStrategy =
-                      activeStrategy === 'copy_trade' || !activeStrategy
-                        ? 'ai_autonomous_agent'
-                        : activeStrategy;
-                    await apiFetch('/api/trading/config', {
-                      method: 'PATCH',
-                      body: JSON.stringify({
-                        strategy_key: targetStrategy,
-                        ai_gate_enabled: targetStrategy === 'ai_autonomous_agent' || targetStrategy === 'my_custom_ai' ? 1 : 0,
-                        auto_scan_top: 1,
-                        scan_scope: 'ALL_MARKET',
-                      }),
-                    });
-                    await apiFetch('/api/trading/bot/start', {
-                      method: 'POST',
-                      body: JSON.stringify({
-                        strategyKey: targetStrategy,
-                        scanScope: 'ALL_MARKET',
-                        tradeExecutionMode: execMode,
-                      }),
-                    });
-                    tgNotifyHaptic('success');
-                    toastMsg(isFa ? 'عالی! ربات با موفقیت روشن شد ✅' : 'Awesome! Bot started ✅');
-                    await onRefresh();
-                  } catch (e) {
-                    toastMsg(e instanceof Error ? e.message : 'Start failed', true);
-                  } finally {
-                    setBusy(false);
-                  }
+                  runWithRiskCheck(async () => {
+                    setBusy(true);
+                    try {
+                      const nextEngines: TradingEngineChoice[] =
+                        activeEngines.length > 0 ? activeEngines : ['CENTRAL_AI'];
+                      await apiFetch('/api/trading/bot/start', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          activeEngines: nextEngines,
+                          scanScope: 'ALL_MARKET',
+                          tradeExecutionMode: execMode,
+                          acceptRiskTerms: true,
+                        }),
+                      });
+                      tgNotifyHaptic('success');
+                      toastMsg(isFa ? `عالی! ربات با ${nextEngines.length} موتور فعال روشن شد ✅` : 'Bot started ✅');
+                      await onRefresh();
+                    } catch (e) {
+                      toastMsg(e instanceof Error ? e.message : 'Start failed', true);
+                    } finally {
+                      setBusy(false);
+                    }
+                  });
                 }}
                 className={`w-full py-4 px-4 rounded-2xl text-sm inline-flex items-center justify-center gap-2 font-black ${
                   isRunning ? 'bg-rose-500/95 hover:bg-rose-600 text-white border border-rose-300/40' : 'ios-glass-emerald-btn'
@@ -973,51 +1647,129 @@ export function OverviewPage({
           </section>
         )}
 
-        {/* 2. STEP 1: HOW SHOULD THE BOT TRADE FOR YOU? (3 CRYSTAL-CLEAR VISUAL CARDS) */}
+        {/* 2. STEP 1: CLEAN UNIFIED 5-ENGINE SELECTOR (CONCURRENT) */}
         <section className="panel rounded-[28px] p-5 sm:p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="font-display font-bold text-base sm:text-lg text-main">
-                {isFa ? 'قدم ۱: انتخاب کن ربات چطور معامله کند' : 'Step 1: Choose How the Bot Trades'}
+                {isFa ? 'قدم ۱: انتخاب موتورهای ربات (قابل اجرا به‌صورت همزمان)' : 'Step 1: Choose Bot Engines (Run Simultaneously)'}
               </h2>
               <p className="text-xs text-dim mt-0.5">
                 {isFa
-                  ? 'اگر تازه‌کار هستی، همان گزینه اول (هوش مصنوعی هوشمند) بهترین انتخاب است!'
-                  : 'New to trading? Option 1 (Smart AI) is pre-tuned for beginners!'}
+                  ? 'روی هر کارت بزنید تا روشن یا خاموش شود — می‌توانید همزمان هوش مصنوعی، استراتژی، کپی‌ترید و اسنایپر را با هم فعال کنید.'
+                  : 'Tap any engine card to toggle ON/OFF — combine AI, Strategy, Copy Trade, and Sniper freely.'}
               </p>
             </div>
-            {isCustomProMode && (
-              <span className="text-[11px] font-black px-3 py-1 rounded-full bg-amber-500/15 text-[#D97706] dark:text-[#FBBF24]">
-                {isFa ? '✓ تنظیمات دلخواه حالت حرفه‌ای شما حفظ شده است' : '✓ Custom Pro selection preserved'}
-              </span>
-            )}
+            <span className="text-[11px] font-black px-3 py-1 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399]">
+              {isFa ? `${activeEngines.length} موتور فعال` : `${activeEngines.length} Active`}
+            </span>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-3.5">
-            {beginnerOptions.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={opt.onSelect}
-                className={`p-4 rounded-3xl border text-start transition flex items-start gap-3.5 ${
-                  opt.active
-                    ? 'border-[#059669] bg-emerald-500/10 ring-1 ring-[#059669]/40'
-                    : 'surface-soft border-transparent hover:border-[var(--line-strong)]'
-                }`}
-              >
-                <img src={opt.img} alt={opt.title} className="w-14 h-14 object-contain shrink-0" />
-                <div className="flex-1 min-w-0 space-y-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA]">
-                      {opt.badge}
-                    </span>
-                    {opt.active && <CheckCircle2 className="w-4 h-4 text-[#059669] dark:text-[#34D399] shrink-0" />}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3.5">
+            {[
+              {
+                engine: 'CENTRAL_AI' as TradingEngineChoice,
+                img: '/images/transparent/ai-brain-3d.png',
+                roundedImg: false,
+                badge: isFa ? 'پیشنهادی' : 'SMART AI',
+                title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino Smart AI',
+                desc: isFa ? 'تحلیل خودکار کل بازار ۲۴ ساعته و شکار امن‌ترین موقعیت‌ها.' : 'Watches the full market 24/7 and picks high-probability entries.',
+              },
+              {
+                engine: 'STRATEGY' as TradingEngineChoice,
+                img: '/images/transparent/mascot-astronaut.png',
+                roundedImg: false,
+                badge: isFa ? 'آماده و سریع' : 'STRATEGY',
+                title: isFa ? 'استراتژی شکار دُرنا' : 'Dorna Hunter Plan',
+                desc: isFa ? 'بهترین استراتژی‌های تاییدشده دلارینو یا کد شخصی شما.' : 'Pre-tuned Dollarino hunter rules or your custom script.',
+              },
+              {
+                engine: 'MY_AI' as TradingEngineChoice,
+                img: '/images/transparent/ai-brain-3d.png',
+                roundedImg: false,
+                badge: isFa ? 'قابل آموزش' : 'PERSONAL AI',
+                title: isFa ? 'هوش مصنوعی شخصی من' : 'My Personal AI',
+                desc: isFa ? 'با قوانین و سبک معامله خودت به ربات آموزش بده.' : 'Trades exclusively according to rules you teach in chat.',
+                actionLabel: isFa ? 'آموزش هوش من →' : 'Train My AI →',
+                onAction: () => onNavigate('myai'),
+              },
+              {
+                engine: 'COPY_TRADE' as TradingEngineChoice,
+                img: '/images/transparent/trophy-copy-3d.png',
+                roundedImg: false,
+                badge: isFa ? 'کپی‌ترید' : 'COPY PROS',
+                title: isFa ? 'کپی از حرفه‌ای‌ها' : 'Verified Copy-Trade',
+                desc: isFa ? 'آینه‌سازی لحظه‌ای معاملات تریدرهای برتر تاییدشده.' : 'Automatically mirror verified top-performing traders.',
+                actionLabel: isFa ? 'انتخاب تریدرهای برتر →' : 'Pick Traders →',
+                onAction: () => {
+                  setSimpleModel('copy');
+                  if (!activeEngines.includes('COPY_TRADE')) void toggleEngineChoice('COPY_TRADE', true);
+                },
+              },
+              {
+                engine: 'LISTING_SNIPER' as TradingEngineChoice,
+                img: '/images/transparent/sniper-rocket-3d.png',
+                roundedImg: true,
+                badge: isFa ? 'لیستینگ و میم‌کوین' : 'SNIPER',
+                title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'Listing & Meme Sniper',
+                desc: isFa ? 'رصد لحظه‌ای لیستینگ‌های جدید و میم‌کوین‌های ایمن.' : 'Snipes fresh exchange listings & high-safety DEX gems.',
+                actionLabel: sniperScanning ? '...' : isFa ? '🔍 اسکن لحظه‌ای' : '🔍 Scan Now',
+                onAction: () => void runSniperScanNow(false),
+              },
+            ].map((item, idx) => {
+              const on = activeEngines.includes(item.engine);
+              const spanClass = idx < 3 ? 'lg:col-span-2' : 'lg:col-span-3';
+              return (
+                <div
+                  key={item.engine}
+                  onClick={() => void toggleEngineChoice(item.engine)}
+                  className={`${spanClass} cursor-pointer p-4 rounded-3xl border text-start transition flex flex-col justify-between gap-3 ${
+                    on
+                      ? 'border-[#059669] bg-emerald-500/10 ring-1 ring-[#059669]/35 shadow-sm'
+                      : 'surface-soft border-[var(--line)] hover:border-[var(--line-strong)]'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    {item.roundedImg ? (
+                      <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-white/15 shrink-0">
+                        <img src={item.img} alt={item.title} className="w-full h-full object-cover" />
+                      </div>
+                    ) : (
+                      <img src={item.img} alt={item.title} className="w-12 h-12 object-contain shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA] truncate">
+                          {item.badge}
+                        </span>
+                        <span
+                          className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-flex items-center gap-1 shrink-0 ${
+                            on ? 'bg-[#059669] text-white' : 'bg-slate-500/15 text-dim'
+                          }`}
+                        >
+                          {on && <CheckCircle2 className="w-3 h-3" />}
+                          <span>{on ? (isFa ? 'روشن' : 'ON') : isFa ? 'خاموش' : 'OFF'}</span>
+                        </span>
+                      </div>
+                      <p className="text-sm font-black text-main leading-snug">{item.title}</p>
+                      <p className="text-[11.5px] text-dim leading-relaxed">{item.desc}</p>
+                    </div>
                   </div>
-                  <p className="text-sm font-black text-main">{opt.title}</p>
-                  <p className="text-xs text-dim leading-relaxed">{opt.desc}</p>
+
+                  {item.actionLabel && item.onAction && (
+                    <div className="pt-2 border-t hairline flex justify-end" onClick={(ev) => ev.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={item.onAction}
+                        className="px-3 py-1 rounded-xl bg-sky-500/12 hover:bg-sky-500/20 text-[#0D47A1] dark:text-[#60A5FA] text-[11px] font-black transition"
+                      >
+                        {item.actionLabel}
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
 
           {/* Simple Controls for the Chosen Mode */}
@@ -1026,7 +1778,7 @@ export function OverviewPage({
               <div className="space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-xs font-black text-main">
-                    {isFa ? 'تریدرهای برتر تاییدشده (فقط دکمه کپی کن را بزن):' : 'Top Verified Traders (Click Copy):'}
+                    {isFa ? 'تریدرهای برتر تاییدشده (فالو کنید؛ ربات فقط با استارت دستی شما روشن می‌شود):' : 'Top Verified Traders (Follow without auto-starting bot):'}
                   </p>
                   <button
                     type="button"
@@ -1056,7 +1808,7 @@ export function OverviewPage({
                               body: JSON.stringify({ traderId: t.id }),
                             });
                             setSiteTraders((prev) => prev.map((x) => (x.id === t.id ? { ...x, is_following: !x.is_following } : x)));
-                            toastMsg(isFa ? `کپی برای ${t.display_name} تغییر کرد ✅` : `Updated ${t.display_name}`);
+                            toastMsg(isFa ? `وضعیت فالو برای ${t.display_name} بروزرسانی شد ✅` : `Updated ${t.display_name}`);
                             await onRefresh();
                           } catch (e) {
                             toastMsg(e instanceof Error ? e.message : 'Follow failed', true);
@@ -1068,7 +1820,7 @@ export function OverviewPage({
                           t.is_following ? 'bg-[#059669] text-white' : 'bg-[#0D47A1] text-white'
                         }`}
                       >
-                        {t.is_following ? (isFa ? 'در حال کپی ✓' : 'Copying ✓') : isFa ? 'کپی کن' : 'Copy'}
+                        {t.is_following ? (isFa ? 'فالو شده ✓' : 'Following ✓') : isFa ? 'فالو' : 'Follow'}
                       </button>
                     </div>
                   ))}
@@ -1076,24 +1828,27 @@ export function OverviewPage({
               </div>
             ) : (
               <div className="space-y-3">
-                <p className="text-xs font-black text-main">
-                  {isFa ? 'قدم ۲: چقدر محتاط یا سریع معامله کند؟' : 'Step 2: Choose Safety & Speed Level:'}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-black text-main">
+                    {isFa
+                      ? `قدم ۲: پیش‌فرض بر اساس بودجه ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
+                      : `Step 2: Budget-Based Defaults ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} Cap)`}
+                  </p>
+                  <span className="text-[11px] text-dim font-bold">
+                    {isFa
+                      ? `اعداد زیر خودکار طبق سرمایه $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} محاسبه شده‌اند`
+                      : `Auto-scaled for $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')}`}
+                  </span>
+                </div>
                 <div className="grid sm:grid-cols-3 gap-2.5">
-                  {RISK_PRESETS.map((p) => {
+                  {dynamicRiskPresets.map((p) => {
                     const active = currentPresetId === p.id;
                     const friendlyTitle =
                       p.id === 'conservative'
-                        ? isFa ? '🛡 خیلی ایمن و آروم (مناسب مبتدی)' : '🛡 Super Safe'
+                        ? isFa ? '🛡 خیلی ایمن و آروم' : '🛡 Super Safe'
                         : p.id === 'balanced'
-                          ? isFa ? '⚖️ متعادل و استاندارد (پیشنهادی)' : '⚖️ Balanced'
-                          : isFa ? '⚡ پرسرعت و جسور' : '⚡ Fast';
-                    const friendlyDesc =
-                      p.id === 'conservative'
-                        ? isFa ? 'معامله با ۲٪ پول، محافظت حداکثری سرمایه' : '2% per trade, maximum safety'
-                        : p.id === 'balanced'
-                          ? isFa ? 'تعادل عالی بین سود و امنیت (بهترین گزینه)' : 'Best balance of growth and safety'
-                          : isFa ? 'معاملات بزرگ‌تر و سریع‌تر برای حرفه‌ای‌ترها' : 'Larger size for faster moves';
+                          ? isFa ? '⚖️ متعادل (پیشنهادی)' : '⚖️ Balanced (Best)'
+                          : isFa ? '⚡ پرسرعت و جسور' : '⚡ Aggressive';
                     return (
                       <button
                         key={p.id}
@@ -1102,28 +1857,30 @@ export function OverviewPage({
                         onClick={() =>
                           void patchConfig(
                             {
-                              margin_pct: p.marginPct,
-                              max_leverage: p.maxLev,
-                              daily_max_loss_pct: p.dailyLoss,
-                              max_open_positions: p.maxOpen,
+                              margin_pct: p.rec.marginPct,
+                              max_leverage: p.rec.maxLeverage,
+                              daily_max_loss_pct: p.rec.dailyMaxLossPct,
+                              max_open_positions: p.rec.maxOpenPositions,
+                              trailing_stop_pct: p.rec.trailingStopPct,
                               risk_profile_json: { preset: p.id },
                             },
-                            isFa ? `سطح سرعت/امنیت ذخیره شد ✅` : `${p.titleEn} saved`
+                            isFa ? `پیش‌فرض بودجه «${friendlyTitle}» اعمال شد: ${p.descFa} ✅` : `${p.titleEn} saved`
                           )
                         }
                         className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
-                          active ? 'border-[#059669] bg-emerald-500/12' : 'surface-soft border-transparent hover:border-[var(--line-strong)]'
+                          active ? 'border-[#059669] bg-emerald-500/12 ring-1 ring-[#059669]/30' : 'surface-soft border-transparent hover:border-[var(--line-strong)]'
                         }`}
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-black text-main">{friendlyTitle}</span>
                           {active && <CheckCircle2 className="w-4 h-4 text-[#059669]" />}
                         </div>
-                        <p className="text-[11px] text-dim">{friendlyDesc}</p>
+                        <p className="text-[11px] text-dim font-num">{isFa ? p.descFa : p.descEn}</p>
                       </button>
                     );
                   })}
                 </div>
+                {renderLeverageControl()}
                 {data.config.last_ai_reason && (
                   <div className="rounded-2xl p-3.5 surface-soft border hairline text-xs text-sub flex items-start gap-2">
                     <Sparkles className="w-4 h-4 text-[#0D47A1] dark:text-[#60A5FA] shrink-0 mt-0.5" />
@@ -1286,22 +2043,6 @@ export function OverviewPage({
 
   return (
     <div className="space-y-6 tab-enter">
-      {notice && (
-        <div className="p-3.5 rounded-2xl badge-signal text-xs font-extrabold flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4" />
-            {notice}
-          </span>
-          <button type="button" onClick={() => setNotice(null)}><X className="w-4 h-4" /></button>
-        </div>
-      )}
-      {errorMsg && (
-        <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-xs font-extrabold text-loss flex items-center justify-between gap-2">
-          <span>{errorMsg}</span>
-          <button type="button" onClick={() => setErrorMsg(null)}><X className="w-4 h-4" /></button>
-        </div>
-      )}
-
       {/* 1. Signature Overview Hero + Live Royal Blue & Gold 3D Glass Equity Card */}
       <section className="grid lg:grid-cols-[1.05fr_1fr] gap-8 items-center">
         <div>
@@ -1336,16 +2077,16 @@ export function OverviewPage({
 
           <p className="mt-4 text-dim text-sm leading-relaxed max-w-lg">
             {isFa
-              ? 'اتصال انحصاری به Trust Wallet + شبیه‌ساز دمو ۱۰k: هر ۴ موتور هوشمند با انتخاب «تایید دستی» یا «تمام‌اتوترید ۲۴/۷» تا ۲۰ پوزیشن را همزمان مدیریت می‌کنند.'
-              : 'Exclusive Trust Wallet + $10k Simulator desk: deploy 4 engines with Manual 1-Click Approval or Full 24/7 Autonomous Auto-Trade.'}
+              ? `اتصال انحصاری به Trust Wallet + کیف‌پول دمو قابل تنظیم: هر ۵ موتور (AI مرکزی، AI شخصی، دُرنا، کپی‌ترید و اسنایپر لیستینگ/میم) همزمان و بدون تداخل کار می‌کنند. ${freeTradesLim} معامله سودده اول ۰٪ کارمزد!`
+              : `Exclusive Trust Wallet + Customizable Demo desk: run all 5 engines simultaneously without mutual exclusion. First ${freeTradesLim} profitable live trades 0% fee!`}
           </p>
 
-          <div className="mt-6 flex flex-wrap gap-2.5">
+          <div className="mt-6 flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               disabled={busy}
               onClick={() => void handleStartStop()}
-              className={`inline-flex items-center gap-2 font-black px-6 py-3.5 rounded-2xl text-xs sm:text-sm transition ${
+              className={`h-11 inline-flex items-center gap-2 font-black px-5 rounded-2xl text-xs sm:text-sm transition ${
                 isRunning ? 'bg-[#FF8A00] hover:bg-[#ea7d00] text-white' : 'btn-gold'
               }`}
             >
@@ -1356,16 +2097,16 @@ export function OverviewPage({
             <button
               type="button"
               onClick={() => setWizardOpen(true)}
-              className="btn-emerald inline-flex items-center gap-2 font-black px-5 py-3.5 rounded-2xl text-xs sm:text-sm"
+              className="btn-emerald h-11 inline-flex items-center gap-2 font-black px-5 rounded-2xl text-xs sm:text-sm"
             >
               <WandSparkles className="w-4 h-4" />
-              <span>{isFa ? 'راه‌اندازی ۴ مرحله‌ای (Wizard)' : 'Setup Wizard'}</span>
+              <span>{isFa ? 'راه‌اندازی ۴ مرحله‌ای' : 'Setup Wizard'}</span>
             </button>
 
             <button
               type="button"
               onClick={() => onNavigate('terminal')}
-              className="btn-ghost inline-flex items-center gap-2 font-bold px-5 py-3.5 rounded-2xl text-xs sm:text-sm"
+              className="btn-ghost h-11 inline-flex items-center gap-2 font-bold px-4 rounded-2xl text-xs sm:text-sm"
             >
               <span>{isFa ? 'پایانه و چارت AI' : 'Pro Terminal'}</span>
               <ArrowRight className="w-4 h-4 rtl:rotate-180" />
@@ -1374,10 +2115,15 @@ export function OverviewPage({
             <button
               type="button"
               disabled={busy}
-              onClick={() => void resetConfigToDefaults()}
-              className="btn-ghost inline-flex items-center gap-1.5 font-bold px-4 py-3.5 rounded-2xl text-xs"
+              onClick={() => void resetConfigToDefaults(currentPresetId)}
+              className="btn-ghost h-11 inline-flex items-center gap-1.5 font-bold px-4 rounded-2xl text-xs"
             >
-              <span>🔄 {isFa ? 'بازگشت به پیش‌فرض (همگام با ساده)' : 'Reset Defaults (Synced)'}</span>
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>
+                {isFa
+                  ? `پیش‌فرض بر اساس بودجه ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
+                  : `Budget Defaults ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`}
+              </span>
             </button>
           </div>
 
@@ -1418,7 +2164,7 @@ export function OverviewPage({
                       data.config.trading_mode === 'PAPER' ? 'ios-glass-gold-btn' : 'text-white/75 hover:text-white'
                     }`}
                   >
-                    {isFa ? 'شبیه‌ساز $10k' : 'Sim'}
+                    {isFa ? `دمو ($${Math.round(demoBalDisplay).toLocaleString('en-US')})` : `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`}
                   </button>
                   <button
                     type="button"
@@ -1428,7 +2174,9 @@ export function OverviewPage({
                       data.config.trading_mode === 'LIVE' ? 'ios-glass-emerald-btn' : 'text-white/75 hover:text-white'
                     }`}
                   >
-                    {isFa ? 'تراست‌ولت واقعی' : 'Trust Live'}
+                    {isFa
+                      ? `تراست‌ولت واقعی ($${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })})`
+                      : `Trust Live ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`}
                   </button>
                 </div>
 
@@ -1464,10 +2212,66 @@ export function OverviewPage({
                   <button type="button" onClick={() => setHideBal((v) => !v)} className="text-white/80 hover:text-white">
                     {hideBal ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
+                  {data.config.trading_mode === 'PAPER' && (
+                    <button
+                      type="button"
+                      onClick={() => setPaperResetOpen((v) => !v)}
+                      className="ios-glass-btn px-2 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1"
+                    >
+                      <Edit3 className="w-3 h-3 text-amber-300" />
+                      <span>{isFa ? 'تنظیم موجودی دمو' : 'Set Demo $'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={irtRefreshing}
+                    onClick={() => void refreshLiveIranRate()}
+                    className="ios-glass-btn px-2.5 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1"
+                    title={isFa ? 'بروزرسانی نرخ لحظه‌ای تتر' : 'Refresh live Tether rate'}
+                  >
+                    <RefreshCw className={`w-3 h-3 ${irtRefreshing ? 'animate-spin' : ''}`} />
+                    <span>{Math.round(liveIranIrt).toLocaleString('en-US')} ت ({iranSourceLabel})</span>
+                  </button>
                 </div>
                 <div dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-white mt-1 font-num">
                   {hideBal ? '••••••' : <AnimatedNumber value={totalEq} format={(n) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />}
                 </div>
+                {paperResetOpen && data.config.trading_mode === 'PAPER' && (
+                  <div className="mt-2 rounded-2xl bg-black/45 border border-white/25 p-2.5 space-y-2">
+                    <div className="flex flex-wrap gap-1 text-[10px] font-black">
+                      {[100, 1000, 10000, 100000].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void applyCustomPaperBalance(preset)}
+                          className="ios-glass-btn px-2 py-0.5 rounded-lg"
+                        >
+                          ${preset.toLocaleString()}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={50}
+                        max={10000000}
+                        value={customPaperInput}
+                        onChange={(e) => setCustomPaperInput(e.target.value)}
+                        dir="ltr"
+                        className="w-28 px-2 py-1 rounded-lg bg-black/50 border border-white/25 text-white text-xs font-num"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void applyCustomPaperBalance(Number(customPaperInput || 10000))}
+                        className="ios-glass-emerald-btn px-2.5 py-1 rounded-lg text-[10px] font-black"
+                      >
+                        {isFa ? 'اعمال' : 'Apply'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <span
@@ -1480,6 +2284,8 @@ export function OverviewPage({
                 {todayPnl >= 0 ? `+$${todayPnl.toFixed(2)}` : `-$${Math.abs(todayPnl).toFixed(2)}`}
               </span>
             </div>
+
+            {renderBotBudgetCard('glass')}
 
             <div className="h-48 rounded-2xl bg-black/35 backdrop-blur-md border border-white/15 p-2.5">
               <AreaChart
@@ -1585,37 +2391,36 @@ export function OverviewPage({
           </div>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
           {[
             {
               id: 'ai' as const,
-              active: activeStrategy === 'ai_autonomous_agent',
+              engine: 'CENTRAL_AI' as const,
+              active: activeEngines.includes('CENTRAL_AI'),
               icon: BrainCircuit,
               code: 'DOLLARINO AI',
               title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
               desc: isFa ? 'اجماع چند مدل هوش مصنوعی روی ساختار بازار بدون نیاز به کلید API شخصی.' : 'Consensus Multi-LLM engine managed centrally by Dollarino.',
               win: 74,
               color: '#e8c15a',
-              onClick: () =>
-                void patchConfig(
-                  { strategy_key: 'ai_autonomous_agent', ai_gate_enabled: 1 },
-                  isFa ? 'هوش مصنوعی دلارینو فعال شد' : 'Dollarino AI activated'
-                ),
+              onClick: () => void toggleEngineChoice('CENTRAL_AI'),
             },
             {
               id: 'myai' as const,
-              active: activeStrategy === 'my_custom_ai',
+              engine: 'MY_AI' as const,
+              active: activeEngines.includes('MY_AI'),
               icon: Bot,
               code: 'RAW PERSONAL AI',
               title: isFa ? 'هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
-              desc: isFa ? 'به زبان فارسی به ربات یاد بده چطور معامله کند و مستقیم روی چارت اجرا شود.' : 'Teach your personal AI rules in chat and execute 24/7.',
+              desc: isFa ? 'به زبان فارسی به ربات یاد بده چطور معامله کند و همزمان با بقیه اجرا شود.' : 'Teach your personal AI rules in chat and run concurrently 24/7.',
               win: 76,
               color: '#a855f7',
-              onClick: () => onNavigate('myai'),
+              onClick: () => void toggleEngineChoice('MY_AI'),
             },
             {
               id: 'dorna' as const,
-              active: activeStrategy !== 'ai_autonomous_agent' && activeStrategy !== 'my_custom_ai' && activeStrategy !== 'copy_trade',
+              engine: 'STRATEGY' as const,
+              active: activeEngines.includes('STRATEGY'),
               icon: Crosshair,
               code: 'HUNTING · ۲ بخش',
               title: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
@@ -1624,22 +2429,31 @@ export function OverviewPage({
                 : '2 sub-modes: Our preset hunters (Dorna V1, KBOS, SP2L) OR your custom Pine/Python strategy.',
               win: 68,
               color: '#10d9a3',
-              onClick: () =>
-                void patchConfig(
-                  { strategy_key: 'dollarino_v01', ai_gate_enabled: 0 },
-                  isFa ? 'استراتژی شکار (دُرنا V1) فعال شد' : 'Hunting Strategy activated'
-                ),
+              onClick: () => void toggleEngineChoice('STRATEGY'),
             },
             {
               id: 'copy' as const,
-              active: activeStrategy === 'copy_trade',
+              engine: 'COPY_TRADE' as const,
+              active: activeEngines.includes('COPY_TRADE'),
               icon: Trophy,
               code: 'COPY TRADE',
               title: isFa ? 'کپی‌ترید تاییدشده دلارینو' : 'Verified Copy-Trade',
-              desc: isFa ? 'کپی خودکار معاملات تریدرهای تاییدشده، ولت‌های نهنگ و سیگنال‌های @Dollarino_official.' : 'Instant sub-second mirroring of verified traders & @Dollarino_official.',
+              desc: isFa ? 'آینه‌سازی معاملات تریدرهای فالو‌شده (با روشن کردن این موتور و زدن Start اجرا می‌شود).' : 'Mirror followed traders & smart wallets when this engine & bot are active.',
               win: 79,
               color: '#38e1ff',
-              onClick: () => onNavigate('copy'),
+              onClick: () => void toggleEngineChoice('COPY_TRADE'),
+            },
+            {
+              id: 'sniper' as const,
+              engine: 'LISTING_SNIPER' as const,
+              active: activeEngines.includes('LISTING_SNIPER'),
+              icon: Flame,
+              code: 'LISTING & MEME SNIPER',
+              title: isFa ? 'اسنایپ لیستینگ و میم‌کوین' : 'New Listing & Meme Sniper',
+              desc: isFa ? 'شکار خودکار ارزهای تازه‌لیست‌شده صرافی‌ها و میم‌کوین‌های انفجاری ایمن DEX.' : 'Auto-snipes fresh CEX listings & safe booming DEX meme tokens.',
+              win: 81,
+              color: '#f97316',
+              onClick: () => void toggleEngineChoice('LISTING_SNIPER'),
             },
           ].map((e) => {
             const Icon = e.icon;
@@ -1664,11 +2478,45 @@ export function OverviewPage({
                 <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
               </div>
               <div className="space-y-2">
+                {e.id === 'myai' && (
+                  <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('myai')}
+                      className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand text-[10px] font-black hover:opacity-85"
+                    >
+                      {isFa ? 'آموزش و تنظیمات AI من' : 'Configure My AI'}
+                    </button>
+                  </div>
+                )}
+                {e.id === 'copy' && (
+                  <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('copy')}
+                      className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand text-[10px] font-black hover:opacity-85"
+                    >
+                      {isFa ? 'لیست تریدرها و نهنگ‌ها' : 'Browse Traders'}
+                    </button>
+                  </div>
+                )}
+                {e.id === 'sniper' && (
+                  <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
+                    <button
+                      type="button"
+                      disabled={sniperScanning}
+                      onClick={() => void runSniperScanNow(false)}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-[#F97316] text-[10px] font-black hover:bg-amber-500/25"
+                    >
+                      {sniperScanning ? '...' : isFa ? 'اسکن لحظه‌ای لیستینگ' : 'Scan Now'}
+                    </button>
+                  </div>
+                )}
                 {e.id === 'dorna' && (
                   <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
                     <button
                       type="button"
-                      onClick={() => void patchConfig({ strategy_key: 'dollarino_v01', ai_gate_enabled: 0 }, isFa ? 'استراتژی آماده دُرنا V1 انتخاب شد' : 'Dorna V1 selected')}
+                      onClick={() => void patchConfig({ strategy_key: 'dollarino_v01' }, isFa ? 'استراتژی آماده دُرنا V1 انتخاب شد' : 'Dorna V1 selected')}
                       className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-jade text-[10px] font-black hover:bg-emerald-500/25"
                     >
                       {isFa ? 'آماده (دُرنا)' : 'Presets'}
@@ -1685,7 +2533,7 @@ export function OverviewPage({
                 <div className="flex items-center justify-between text-xs font-black pt-2 border-t hairline" style={{ color: e.color }}>
                   <span className="inline-flex items-center gap-1">
                     {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    <span>{e.active ? (isFa ? 'فعال' : 'Active') : isFa ? 'انتخاب' : 'Select'}</span>
+                    <span>{e.active ? (isFa ? 'روشن (هم‌زمان)' : 'ON (Concurrent)') : isFa ? 'خاموش (کلیک = روشن)' : 'OFF (Tap ON)'}</span>
                   </span>
                   <span>{e.win}% WR</span>
                 </div>
@@ -1693,6 +2541,103 @@ export function OverviewPage({
             </div>
             );
           })}
+        </div>
+
+        {/* Dedicated CEX New Listing & Booming Meme Sniper Radar Box */}
+        <div className="panel rounded-[24px] p-4 sm:p-5 border border-orange-500/25 bg-gradient-to-br from-orange-500/8 via-transparent to-amber-500/8 space-y-3.5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-11 h-11 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-orange-400/35 shrink-0 shadow-md">
+                <img src="/images/transparent/sniper-rocket-3d.png" alt="Sniper" className="w-full h-full object-cover" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-black text-main">
+                    {isFa ? 'اسنایپر هوشمند لیستینگ صرافی‌ها و میم‌کوین‌های انفجاری' : 'CEX Listing & Booming Meme Sniper'}
+                  </span>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-400 font-black">
+                    {activeEngines.includes('LISTING_SNIPER') ? (isFa ? 'روشن و خودکار' : 'AUTO ACTIVE') : isFa ? 'آماده اسکن' : 'STANDBY'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-dim mt-0.5">
+                  {isFa
+                    ? 'شکار خودکار لیستینگ‌های جدید Binance + میم‌کوین‌های داغ با فیلتر آنتی‌هانی‌پات و سقف بودجه مجاز ربات'
+                    : 'Detects fresh CEX listings & booming safe meme tokens with anti-honeypot scoring and strict budget cap.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs shrink-0">
+              <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-dim surface-soft px-2.5 py-1.5 rounded-xl border hairline">
+                <span>{isFa ? 'بودجه ($):' : 'Budget ($):'}</span>
+                <input
+                  type="number"
+                  min={5}
+                  max={5000}
+                  value={sniperBudgetInput}
+                  onChange={(e) => setSniperBudgetInput(e.target.value)}
+                  dir="ltr"
+                  className="bg-transparent w-14 text-main text-xs font-num font-black focus:outline-none"
+                />
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-dim surface-soft px-2.5 py-1.5 rounded-xl border hairline">
+                <span>{isFa ? 'ایمنی ≥:' : 'Safe ≥:'}</span>
+                <input
+                  type="number"
+                  min={40}
+                  max={95}
+                  value={sniperMinSafetyInput}
+                  onChange={(e) => setSniperMinSafetyInput(e.target.value)}
+                  dir="ltr"
+                  className="bg-transparent w-11 text-main text-xs font-num font-black focus:outline-none"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={sniperScanning}
+                onClick={() => void runSniperScanNow(false)}
+                className="btn-ghost h-9 px-3.5 rounded-xl text-xs font-black"
+              >
+                {sniperScanning ? '...' : isFa ? '🔍 اسکن لیستینگ' : '🔍 Scan'}
+              </button>
+              <button
+                type="button"
+                disabled={sniperScanning}
+                onClick={() => void runSniperScanNow(true)}
+                className="h-9 px-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-black shadow-sm"
+              >
+                {isFa ? '🎯 شکار فوری' : '🎯 Snipe Now'}
+              </button>
+            </div>
+          </div>
+
+          {sniperCandidates.length > 0 && (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t hairline">
+              {sniperCandidates.slice(0, 8).map((c, idx) => (
+                <div key={`${c.symbol}_${c.chainId}_${idx}`} className="surface-soft rounded-xl p-3 text-[11px] space-y-1.5 border hairline">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-main">{c.symbol}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-jade text-[10px] font-black">
+                      {c.safetyScore}/100 · {c.chainId.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-dim font-num" dir="ltr">
+                    <span>Liq ${Math.round(c.liquidityUsd).toLocaleString()}</span>
+                    <span className={c.change1hPct >= 0 ? 'text-jade font-black' : 'text-loss'}>
+                      {c.change1hPct >= 0 ? `+${c.change1hPct.toFixed(1)}%` : `${c.change1hPct.toFixed(1)}%`} (1h)
+                    </span>
+                  </div>
+                  <a
+                    href={c.trustWalletSwapUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block text-center py-1 rounded-lg bg-[#059669]/20 hover:bg-[#059669] text-[#34D399] hover:text-white font-black text-[10px] transition"
+                  >
+                    {isFa ? 'خرید ۱-کلیک در Trust Wallet 🛡' : '1-Click Buy in Trust Wallet 🛡'}
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Compact Live AI Core Bar & Instant Market Scan */}
@@ -1778,19 +2723,26 @@ export function OverviewPage({
         </div>
       </section>
 
-      {/* 4. Risk Shield Preset + Market Scope */}
+      {/* 4. Dynamic Capital-Aware Risk Shield Preset + Market Scope */}
       <section className="grid lg:grid-cols-2 gap-4">
-        <div className="panel rounded-[26px] p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-display font-bold text-lg text-main">
-              {isFa ? '۲. میزان ریسک و اهرم' : '2. Risk Shield Preset'}
-            </h3>
+        <div className="panel rounded-[26px] p-5 space-y-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="font-display font-bold text-lg text-main">
+                {isFa ? '۲. پیش‌فرض بر اساس بودجه و اهرم' : '2. Budget Defaults & Leverage'}
+              </h3>
+              <p className="text-[11px] text-dim">
+                {isFa
+                  ? `محاسبه‌شده برای بودجه مؤثر $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} ربات (باقی‌مانده: $${activeCapitalRes.remainingBudgetUsd.toLocaleString('en-US')})`
+                  : `Auto-scaled to $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} bot cap ($${activeCapitalRes.remainingBudgetUsd.toLocaleString('en-US')} left)`}
+              </p>
+            </div>
             <button type="button" onClick={() => onNavigate('copy')} className="text-xs font-bold hover:underline" style={{ color: 'var(--gold)' }}>
               {isFa ? 'تنظیمات دقیق ریسک ←' : 'Fine-tune Risk →'}
             </button>
           </div>
           <div className="grid sm:grid-cols-3 gap-2.5">
-            {RISK_PRESETS.map((p) => {
+            {dynamicRiskPresets.map((p) => {
               const on = currentPresetId === p.id;
               return (
                 <button
@@ -1800,13 +2752,14 @@ export function OverviewPage({
                   onClick={() =>
                     void patchConfig(
                       {
-                        margin_pct: p.marginPct,
-                        max_leverage: p.maxLev,
-                        daily_max_loss_pct: p.dailyLoss,
-                        max_open_positions: p.maxOpen,
+                        margin_pct: p.rec.marginPct,
+                        max_leverage: p.rec.maxLeverage,
+                        daily_max_loss_pct: p.rec.dailyMaxLossPct,
+                        max_open_positions: p.rec.maxOpenPositions,
+                        trailing_stop_pct: p.rec.trailingStopPct,
                         risk_profile_json: JSON.stringify({ preset: p.id }),
                       },
-                      isFa ? `ریسک «${p.titleFa}» ذخیره شد` : `${p.titleEn} saved`
+                      isFa ? `پیش‌فرض بودجه «${p.titleFa}» برای $${activeCapitalRes.effectiveCapitalUsd} ذخیره شد` : `${p.titleEn} saved`
                     )
                   }
                   className={`p-3.5 rounded-2xl border text-start transition ${
@@ -1818,11 +2771,12 @@ export function OverviewPage({
                     {on && <CheckCircle2 className="w-4 h-4" style={{ color: 'var(--gold)' }} />}
                   </div>
                   <div className="text-xs font-black text-main mt-2">{isFa ? p.titleFa : p.titleEn}</div>
-                  <div className="text-[11px] text-dim mt-1 leading-relaxed">{isFa ? p.descFa : p.descEn}</div>
+                  <div className="text-[11px] text-dim mt-1 leading-relaxed font-num">{isFa ? p.descFa : p.descEn}</div>
                 </button>
               );
             })}
           </div>
+          {renderLeverageControl()}
         </div>
 
         <div className="panel rounded-[26px] p-5 space-y-4">

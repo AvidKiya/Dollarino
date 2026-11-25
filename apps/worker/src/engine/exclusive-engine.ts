@@ -1,14 +1,81 @@
 import { logAudit } from './executor.js';
 
-export type TradingEngineChoice = 'CENTRAL_AI' | 'MY_AI' | 'STRATEGY' | 'COPY_TRADE';
+export type TradingEngineChoice =
+  | 'CENTRAL_AI'
+  | 'MY_AI'
+  | 'STRATEGY'
+  | 'COPY_TRADE'
+  | 'LISTING_SNIPER';
+
+export const ALL_ENGINE_CHOICES: TradingEngineChoice[] = [
+  'CENTRAL_AI',
+  'MY_AI',
+  'STRATEGY',
+  'COPY_TRADE',
+  'LISTING_SNIPER',
+];
 
 export interface ActiveEngineState {
-  activeEngine: TradingEngineChoice | 'NONE';
+  activeEngine: TradingEngineChoice | 'MULTI' | 'NONE';
+  activeEngines: TradingEngineChoice[];
   strategyKey: string;
   botState: string;
   isBotRunning: boolean;
   myAiActive: boolean;
+  sniperEnabled: boolean;
   activeCopyTradersCount: number;
+}
+
+export function normalizeEngineArray(raw: unknown): TradingEngineChoice[] {
+  if (!Array.isArray(raw)) return [];
+  const valid = new Set<TradingEngineChoice>();
+  for (const item of raw) {
+    const up = String(item || '').trim().toUpperCase() as TradingEngineChoice;
+    if (ALL_ENGINE_CHOICES.includes(up)) valid.add(up);
+  }
+  return Array.from(valid);
+}
+
+export function parseActiveEnginesFromConfig(
+  activeEnginesJson: string | null | undefined,
+  strategyKey: string | null | undefined,
+  myAiActive: boolean,
+  activeCopyCount: number,
+  sniperEnabled: boolean,
+  botState?: string | null
+): TradingEngineChoice[] {
+  if (typeof activeEnginesJson === 'string' && activeEnginesJson.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(activeEnginesJson) as unknown;
+      if (Array.isArray(parsed)) {
+        const list = normalizeEngineArray(parsed);
+        if (sniperEnabled && !list.includes('LISTING_SNIPER')) {
+          list.push('LISTING_SNIPER');
+        }
+        if (!sniperEnabled) {
+          return list.filter((e) => e !== 'LISTING_SNIPER');
+        }
+        return list;
+      }
+    } catch {
+      // fall through to heuristic
+    }
+  }
+
+  const out: TradingEngineChoice[] = [];
+  if (strategyKey === 'copy_trade' || (activeCopyCount > 0 && botState === 'STOPPED')) {
+    out.push('COPY_TRADE');
+  } else if (strategyKey === 'ai_autonomous_agent') {
+    out.push('CENTRAL_AI');
+  } else if (strategyKey === 'my_custom_ai' || myAiActive) {
+    out.push('MY_AI');
+  } else if (strategyKey) {
+    out.push('STRATEGY');
+  }
+  if (sniperEnabled && !out.includes('LISTING_SNIPER')) {
+    out.push('LISTING_SNIPER');
+  }
+  return out;
 }
 
 export function classifyEngineFromStrategyKey(
@@ -39,9 +106,17 @@ export function classifyEngineFromStrategyKey(
 export async function getActiveEngineState(db: D1Database, userId: string): Promise<ActiveEngineState> {
   const [cfg, agent, copyCnt] = await Promise.all([
     db
-      .prepare(`SELECT bot_state, strategy_key FROM bot_configs WHERE user_id = ? LIMIT 1`)
+      .prepare(
+        `SELECT bot_state, strategy_key, active_engines_json, COALESCE(sniper_enabled, 0) AS sniper_enabled
+         FROM bot_configs WHERE user_id = ? LIMIT 1`
+      )
       .bind(userId)
-      .first<{ bot_state: string; strategy_key: string }>()
+      .first<{
+        bot_state: string;
+        strategy_key: string;
+        active_engines_json?: string | null;
+        sniper_enabled?: number;
+      }>()
       .catch(() => null),
     db
       .prepare(`SELECT is_active_for_trading FROM user_ai_agents WHERE user_id = ? LIMIT 1`)
@@ -58,55 +133,168 @@ export async function getActiveEngineState(db: D1Database, userId: string): Prom
   const botState = cfg?.bot_state || 'STOPPED';
   const strategyKey = cfg?.strategy_key || 'dollarino_v01';
   const myAiActive = Boolean(agent?.is_active_for_trading);
+  const sniperEnabled = Boolean(cfg?.sniper_enabled);
   const activeCopyTradersCount = Number(copyCnt?.cnt ?? 0);
   const isBotRunning = botState === 'RUNNING_PAPER' || botState === 'RUNNING_LIVE';
 
-  const activeEngine = classifyEngineFromStrategyKey(strategyKey, myAiActive, activeCopyTradersCount, botState);
+  const activeEngines = parseActiveEnginesFromConfig(
+    cfg?.active_engines_json,
+    strategyKey,
+    myAiActive,
+    activeCopyTradersCount,
+    sniperEnabled,
+    botState
+  );
+
+  const activeEngine: ActiveEngineState['activeEngine'] =
+    activeEngines.length === 0
+      ? 'NONE'
+      : activeEngines.length === 1
+        ? activeEngines[0]!
+        : 'MULTI';
 
   return {
     activeEngine,
+    activeEngines,
     strategyKey,
     botState,
     isBotRunning,
     myAiActive,
+    sniperEnabled,
     activeCopyTradersCount,
   };
 }
 
-async function deactivateAllCopySubscriptions(db: D1Database, userId: string): Promise<number> {
-  const activeRows = await db
-    .prepare(`SELECT id, trader_id FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`)
+/**
+ * Sets the exact user-selected set of active engines (single OR simultaneous).
+ * Does NOT auto-start the bot (bot_state stays unchanged unless explicitly changed elsewhere).
+ * Strictly enforces isolation: engines NOT in `engines` never fire trades!
+ */
+export async function setActiveTradingEngines(
+  db: D1Database,
+  userId: string,
+  engines: TradingEngineChoice[],
+  opts?: {
+    strategyKey?: string;
+    customStrategyId?: string | null;
+    auditSource?: string;
+  }
+): Promise<ActiveEngineState> {
+  const unique = normalizeEngineArray(engines);
+  const hasCentralAi = unique.includes('CENTRAL_AI');
+  const hasMyAi = unique.includes('MY_AI');
+  const hasStrategy = unique.includes('STRATEGY');
+  const hasCopy = unique.includes('COPY_TRADE');
+  const hasSniper = unique.includes('LISTING_SNIPER');
+
+  const currentCfg = await db
+    .prepare(`SELECT strategy_key FROM bot_configs WHERE user_id = ? LIMIT 1`)
     .bind(userId)
-    .all<{ id: string; trader_id: string }>()
-    .catch(() => ({ results: [] as Array<{ id: string; trader_id: string }> }));
+    .first<{ strategy_key: string }>()
+    .catch(() => null);
 
-  if (!activeRows.results.length) return 0;
+  let nextStrategyKey = opts?.strategyKey || currentCfg?.strategy_key || 'dollarino_v01';
+  if (hasStrategy && (nextStrategyKey === 'ai_autonomous_agent' || nextStrategyKey === 'my_custom_ai' || nextStrategyKey === 'copy_trade')) {
+    nextStrategyKey = 'dollarino_v01';
+  } else if (!hasStrategy) {
+    if (hasCentralAi) nextStrategyKey = 'ai_autonomous_agent';
+    else if (hasMyAi) nextStrategyKey = 'my_custom_ai';
+    else if (hasCopy) nextStrategyKey = 'copy_trade';
+  }
 
-  await db
-    .prepare(`UPDATE copy_subscriptions SET is_active = 0, updated_at = datetime('now') WHERE user_id = ? AND is_active = 1`)
-    .bind(userId)
-    .run()
-    .catch(() => {});
+  const aiGateEnabled = hasCentralAi ? 1 : 0;
+  const sniperEnabled = hasSniper ? 1 : 0;
 
-  for (const row of activeRows.results) {
+  if (opts?.customStrategyId !== undefined) {
     await db
-      .prepare(`UPDATE copy_traders SET followers_count = MAX(0, followers_count - 1) WHERE id = ?`)
-      .bind(row.trader_id)
+      .prepare(
+        `UPDATE bot_configs
+         SET active_engines_json = ?,
+             strategy_key = ?,
+             active_custom_strategy_id = ?,
+             ai_gate_enabled = ?,
+             sniper_enabled = ?,
+             updated_at = datetime('now')
+         WHERE user_id = ?`
+      )
+      .bind(JSON.stringify(unique), nextStrategyKey, opts.customStrategyId, aiGateEnabled, sniperEnabled, userId)
+      .run()
+      .catch(() => {});
+  } else {
+    await db
+      .prepare(
+        `UPDATE bot_configs
+         SET active_engines_json = ?,
+             strategy_key = ?,
+             ai_gate_enabled = ?,
+             sniper_enabled = ?,
+             updated_at = datetime('now')
+         WHERE user_id = ?`
+      )
+      .bind(JSON.stringify(unique), nextStrategyKey, aiGateEnabled, sniperEnabled, userId)
       .run()
       .catch(() => {});
   }
 
-  return activeRows.results.length;
+  if (hasMyAi) {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO user_ai_agents (id, user_id, name, training_notes, system_rules_json, is_active_for_trading)
+         VALUES (?, ?, 'هوش مصنوعی شخصی من', '', '{}', 1)`
+      )
+      .bind(`myai_${userId.slice(-12)}`, userId)
+      .run()
+      .catch(() => {});
+  }
+
+  await db
+    .prepare(`UPDATE user_ai_agents SET is_active_for_trading = ?, updated_at = datetime('now') WHERE user_id = ?`)
+    .bind(hasMyAi ? 1 : 0, userId)
+    .run()
+    .catch(() => {});
+
+  // Keep copy_subscriptions auto_mirror aligned ONLY when bot is already running or user toggled Copy off
+  if (!hasCopy) {
+    await db
+      .prepare(`UPDATE copy_subscriptions SET auto_mirror = 0, updated_at = datetime('now') WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {});
+  }
+
+  await logAudit(
+    db,
+    userId,
+    'SYSTEM',
+    'INFO',
+    `Active engines updated -> [${unique.join(', ') || 'NONE'}]${opts?.auditSource ? ` via ${opts.auditSource}` : ''}`
+  ).catch(() => {});
+
+  return getActiveEngineState(db, userId);
+}
+
+export async function toggleTradingEngine(
+  db: D1Database,
+  userId: string,
+  engine: TradingEngineChoice,
+  enabled: boolean,
+  opts?: { strategyKey?: string; customStrategyId?: string | null; auditSource?: string }
+): Promise<ActiveEngineState> {
+  const cur = await getActiveEngineState(db, userId);
+  const next = new Set<TradingEngineChoice>(cur.activeEngines);
+  if (enabled) next.add(engine);
+  else next.delete(engine);
+  return setActiveTradingEngines(db, userId, Array.from(next), opts);
 }
 
 /**
- * Enforces strict single-engine mutual exclusion:
- * Activating CENTRAL_AI, MY_AI, STRATEGY, or COPY_TRADE automatically disables all other engines.
+ * Legacy helper preserved for single-selection callers: sets `target` as primary engine
+ * (preserving LISTING_SNIPER if already enabled unless target is COPY_TRADE only).
  */
 export async function activateExclusiveTradingEngine(
   db: D1Database,
   userId: string,
-  target: TradingEngineChoice,
+  target: Exclude<TradingEngineChoice, 'LISTING_SNIPER'>,
   opts?: {
     strategyKey?: string;
     customStrategyId?: string | null;
@@ -118,131 +306,17 @@ export async function activateExclusiveTradingEngine(
   stoppedBot: boolean;
   disabledMyAi: boolean;
 }> {
-  let cancelledCopyCount = 0;
-  let stoppedBot = false;
-  let disabledMyAi = false;
-
-  if (target === 'COPY_TRADE') {
-    const cfg = await db
-      .prepare(`SELECT bot_state FROM bot_configs WHERE user_id = ? LIMIT 1`)
-      .bind(userId)
-      .first<{ bot_state: string }>()
-      .catch(() => null);
-    if (cfg && (cfg.bot_state === 'RUNNING_PAPER' || cfg.bot_state === 'RUNNING_LIVE')) {
-      stoppedBot = true;
-    }
-    await db
-      .prepare(
-        `UPDATE bot_configs
-         SET bot_state = 'STOPPED',
-             strategy_key = 'copy_trade',
-             active_custom_strategy_id = NULL,
-             updated_at = datetime('now')
-         WHERE user_id = ?`
-      )
-      .bind(userId)
-      .run()
-      .catch(() => {});
-
-    const agRes = await db
-      .prepare(`UPDATE user_ai_agents SET is_active_for_trading = 0, updated_at = datetime('now') WHERE user_id = ? AND is_active_for_trading = 1`)
-      .bind(userId)
-      .run()
-      .catch(() => null);
-    disabledMyAi = Boolean(agRes?.meta?.changes);
-  } else {
-    cancelledCopyCount = await deactivateAllCopySubscriptions(db, userId);
-
-    if (target === 'CENTRAL_AI') {
-      const agRes = await db
-        .prepare(`UPDATE user_ai_agents SET is_active_for_trading = 0, updated_at = datetime('now') WHERE user_id = ? AND is_active_for_trading = 1`)
-        .bind(userId)
-        .run()
-        .catch(() => null);
-      disabledMyAi = Boolean(agRes?.meta?.changes);
-
-      await db
-        .prepare(
-          `UPDATE bot_configs
-           SET strategy_key = 'ai_autonomous_agent',
-               active_custom_strategy_id = NULL,
-               ai_gate_enabled = 1,
-               updated_at = datetime('now')
-           WHERE user_id = ?`
-        )
-        .bind(userId)
-        .run()
-        .catch(() => {});
-    } else if (target === 'MY_AI') {
-      await db
-        .prepare(`UPDATE user_ai_agents SET is_active_for_trading = 1, updated_at = datetime('now') WHERE user_id = ?`)
-        .bind(userId)
-        .run()
-        .catch(() => {});
-
-      await db
-        .prepare(
-          `UPDATE bot_configs
-           SET strategy_key = 'my_custom_ai',
-               active_custom_strategy_id = NULL,
-               updated_at = datetime('now')
-           WHERE user_id = ?`
-        )
-        .bind(userId)
-        .run()
-        .catch(() => {});
-    } else if (target === 'STRATEGY') {
-      const agRes = await db
-        .prepare(`UPDATE user_ai_agents SET is_active_for_trading = 0, updated_at = datetime('now') WHERE user_id = ? AND is_active_for_trading = 1`)
-        .bind(userId)
-        .run()
-        .catch(() => null);
-      disabledMyAi = Boolean(agRes?.meta?.changes);
-
-      const skey = opts?.strategyKey && opts.strategyKey !== 'ai_autonomous_agent' && opts.strategyKey !== 'my_custom_ai' && opts.strategyKey !== 'copy_trade'
-        ? opts.strategyKey
-        : 'dollarino_v01';
-
-      if (opts?.customStrategyId !== undefined) {
-        await db
-          .prepare(
-            `UPDATE bot_configs
-             SET strategy_key = ?,
-                 active_custom_strategy_id = ?,
-                 updated_at = datetime('now')
-             WHERE user_id = ?`
-          )
-          .bind(skey, opts.customStrategyId, userId)
-          .run()
-          .catch(() => {});
-      } else {
-        await db
-          .prepare(
-            `UPDATE bot_configs
-             SET strategy_key = ?,
-                 updated_at = datetime('now')
-             WHERE user_id = ?`
-          )
-          .bind(skey, userId)
-          .run()
-          .catch(() => {});
-      }
-    }
-  }
-
-  if (cancelledCopyCount > 0 || stoppedBot || disabledMyAi) {
-    const parts: string[] = [];
-    if (cancelledCopyCount > 0) parts.push(`${cancelledCopyCount} copy-trade subscription(s) stopped`);
-    if (stoppedBot) parts.push('autonomous bot stopped');
-    if (disabledMyAi) parts.push('personal AI deactivated');
-    await logAudit(
-      db,
-      userId,
-      'SYSTEM',
-      'INFO',
-      `Exclusive engine -> ${target} (${parts.join(', ')}${opts?.auditSource ? ` via ${opts.auditSource}` : ''})`
-    ).catch(() => {});
-  }
-
-  return { cancelledCopyCount, stoppedBot, disabledMyAi };
+  const cur = await getActiveEngineState(db, userId);
+  const next: TradingEngineChoice[] = [target];
+  if (cur.sniperEnabled) next.push('LISTING_SNIPER');
+  await setActiveTradingEngines(db, userId, next, {
+    strategyKey: opts?.strategyKey,
+    customStrategyId: opts?.customStrategyId,
+    auditSource: opts?.auditSource,
+  });
+  return {
+    cancelledCopyCount: 0,
+    stoppedBot: false,
+    disabledMyAi: target !== 'MY_AI' && cur.myAiActive,
+  };
 }

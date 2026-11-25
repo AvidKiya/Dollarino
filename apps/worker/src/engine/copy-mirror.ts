@@ -8,6 +8,7 @@ import {
   getSystemSettingValue,
   publishSignalBroadcast,
 } from '../telegram/publisher.js';
+import { parseActiveEnginesFromConfig } from './exclusive-engine.js';
 import { executeSignalForUser } from './executor.js';
 
 export interface CopyTradeRecord {
@@ -116,18 +117,38 @@ export async function confirmAndMirrorCopyTrade(
 
   for (const f of followers.results) {
     try {
-      // Mutual exclusion safety check: do not mirror if user has another autonomous engine running
+      // Multi-engine check: mirror ONLY if follower enabled COPY_TRADE (or legacy explicit strategy_key='copy_trade')
+      // AND never auto-trade when follower explicitly turned COPY_TRADE off!
       const followerBot = await env.DB.prepare(
-        `SELECT bot_state, strategy_key FROM bot_configs WHERE user_id = ? LIMIT 1`
+        `SELECT bc.bot_state, bc.strategy_key, bc.active_engines_json, COALESCE(bc.sniper_enabled, 0) AS sniper_enabled,
+                COALESCE(ua.is_active_for_trading, 0) AS my_ai_active
+         FROM bot_configs bc
+         LEFT JOIN user_ai_agents ua ON ua.user_id = bc.user_id
+         WHERE bc.user_id = ? LIMIT 1`
       )
         .bind(f.user_id)
-        .first<{ bot_state: string; strategy_key: string }>()
+        .first<{
+          bot_state: string;
+          strategy_key: string;
+          active_engines_json?: string | null;
+          sniper_enabled?: number;
+          my_ai_active?: number;
+        }>()
         .catch(() => null);
-      if (
-        followerBot &&
-        (followerBot.bot_state === 'RUNNING_PAPER' || followerBot.bot_state === 'RUNNING_LIVE') &&
-        followerBot.strategy_key !== 'copy_trade'
-      ) {
+
+      const copyAllowedByEngines = followerBot
+        ? parseActiveEnginesFromConfig(
+            followerBot.active_engines_json,
+            followerBot.strategy_key,
+            Boolean(followerBot.my_ai_active),
+            1,
+            Boolean(followerBot.sniper_enabled),
+            followerBot.bot_state
+          ).includes('COPY_TRADE') ||
+          (followerBot.strategy_key === 'copy_trade' && followerBot.bot_state === 'STOPPED')
+        : true;
+
+      if (!copyAllowedByEngines) {
         skippedCount++;
         continue;
       }
@@ -203,6 +224,28 @@ export async function confirmAndMirrorCopyTrade(
   for (const vr of v2Followers.results) {
     if (legacyFollowedUserIds.has(vr.user_id)) continue;
     try {
+      const vrBot = await env.DB.prepare(
+        `SELECT bot_state, strategy_key, active_engines_json, COALESCE(sniper_enabled, 0) AS sniper_enabled
+         FROM bot_configs WHERE user_id = ? LIMIT 1`
+      )
+        .bind(vr.user_id)
+        .first<{ bot_state: string; strategy_key: string; active_engines_json?: string | null; sniper_enabled?: number }>()
+        .catch(() => null);
+      if (vrBot) {
+        const engs = parseActiveEnginesFromConfig(
+          vrBot.active_engines_json,
+          vrBot.strategy_key,
+          false,
+          1,
+          Boolean(vrBot.sniper_enabled),
+          vrBot.bot_state
+        );
+        const isRunning = vrBot.bot_state === 'RUNNING_PAPER' || vrBot.bot_state === 'RUNNING_LIVE';
+        if (!engs.includes('COPY_TRADE') || (!isRunning && vrBot.strategy_key !== 'copy_trade')) {
+          skippedCount++;
+          continue;
+        }
+      }
       if (vr.daily_loss_used_usd >= vr.daily_max_loss_usd) {
         skippedCount++;
         continue;

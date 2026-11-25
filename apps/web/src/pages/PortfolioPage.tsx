@@ -3,19 +3,22 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BrainCircuit,
-  Download,
+  CheckCircle2,
   Eye,
   EyeOff,
+  NotebookPen,
+  Plus,
   RefreshCw,
-  RotateCcw,
   Search,
   Sparkles,
+  Trash2,
+  Wallet,
   X,
-  Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { coinDisplayName, formatTomanEq } from '../lib/format';
+import { coinDisplayName, formatTomanEq, getLiveUsdtIrt, setLiveUsdtIrt } from '../lib/format';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import type { DashboardPayload } from '../lib/types';
 import { CoinIcon } from '../components/CoinIcon';
 import { AreaChart } from '../components/DollarinoViz';
@@ -38,13 +41,32 @@ interface WalletLedgerEntry {
   created_at: string;
 }
 
+interface AccountNote {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  created_at: string;
+}
+
+interface AiSettingProposal {
+  id: string;
+  titleFa: string;
+  titleEn: string;
+  descFa: string;
+  descEn: string;
+  patch: Record<string, unknown>;
+}
+
 export function PortfolioPage({
   lang,
+  iranRate,
   data,
   onOpenTerminal,
   onRefresh,
 }: {
   lang: Lang;
+  iranRate?: number;
   data: DashboardPayload;
   onOpenTerminal: (sym?: string) => void;
   onRefresh: () => Promise<void>;
@@ -58,10 +80,47 @@ export function PortfolioPage({
   const [logQ, setLogQ] = useState('');
   const [assetQ, setAssetQ] = useState('');
   const [hideZero, setHideZero] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
   const [hideBal, setHideBal] = useState(false);
   const [coachAiBusy, setCoachAiBusy] = useState(false);
   const [coachAiNote, setCoachAiNote] = useState<string | null>(null);
+
+  // Personal Notes / Trading Journal
+  const [notes, setNotes] = useState<AccountNote[]>([]);
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [noteCategory, setNoteCategory] = useState<'NOTE' | 'STRATEGY' | 'AI_ADVICE'>('NOTE');
+  const [notesBusy, setNotesBusy] = useState(false);
+
+  const liveIrt = iranRate || data.iranRate?.usdtIrt || getLiveUsdtIrt();
+  useEffect(() => {
+    if (liveIrt >= 30_000) setLiveUsdtIrt(liveIrt, data.iranRate?.source);
+  }, [liveIrt, data.iranRate?.source]);
+
+  const loadNotes = () => {
+    void apiFetch<{ notes: AccountNote[] }>('/api/trading/notes')
+      .then((r) => setNotes(r.notes || []))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    loadNotes();
+    void apiFetch<{ logs: AuditLog[] }>('/api/trading/logs')
+      .then((r) => setLogs(r.logs || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (ledgerTab === 'logs') {
+      void apiFetch<{ logs: AuditLog[] }>('/api/trading/logs')
+        .then((r) => setLogs(r.logs || []))
+        .catch(() => {});
+    } else if (ledgerTab === 'wallet') {
+      void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
+        .then((r) => setWalletLedger(r.ledger || []))
+        .catch(() => {});
+    }
+  }, [ledgerTab]);
 
   const coachStats = useMemo(() => {
     const trades = data.closedTrades || [];
@@ -76,6 +135,8 @@ export function PortfolioPage({
         shortWinRate: 0,
         longPnl: 0,
         shortPnl: 0,
+        longCount: 0,
+        shortCount: 0,
         avgWin: 0,
         avgLoss: 0,
         rrRatio: 0,
@@ -85,12 +146,12 @@ export function PortfolioPage({
         worstSymbolPnl: 0,
         insightFa:
           openCount > 0
-            ? `شما اکنون ${openCount} پوزیشن باز دارید، اما هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین پوزیشن‌ها، مربی هوش مصنوعی نرخ برد واقعی، نسبت R:R و نقاط ضعف/قوت شما را محاسبه می‌کند.`
-            : 'هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین معاملات، مربی هوش مصنوعی الگوی برد و باخت، بهترین ارز و توصیه بهینه‌سازی را اینجا نشان می‌دهد.',
+            ? `شما اکنون ${openCount} پوزیشن باز دارید، اما هنوز معامله بسته‌شده‌ای ثبت نشده است. به محض بسته شدن اولین پوزیشن‌ها، مشاور هوشمند نرخ برد، جهت مناسب و پیشنهاد اصلاح تنظیمات را ارائه می‌دهد.`
+            : 'هنوز معامله بسته‌شده‌ای ثبت نشده است. با ثبت اولین معاملات، مشاور هوشمند عملکرد شما را تحلیل کرده و تغییرات دقیق تنظیمات ربات (اهرم، مارجین، جهت و ریسک‌فری) را پیشنهاد می‌دهد.',
         insightEn:
           openCount > 0
-            ? `You currently have ${openCount} open position(s), with 0 closed trades yet. Once your first trades close, AI Coach calculates your real Win Rate, R:R, and edge.`
-            : 'No closed trades yet. Once your first trades close, AI Performance Coach analyzes your win rate, direction bias, and R:R discipline.',
+            ? `You currently have ${openCount} open position(s), with 0 closed trades yet. Once closed, AI Coach analyzes Win Rate, direction edge, and suggests concrete config tweaks.`
+            : 'No closed trades yet. Once trades close, AI Coach evaluates your stats and proposes one-click config adjustments.',
       };
     }
 
@@ -146,17 +207,17 @@ export function PortfolioPage({
     let insightFa = '';
     let insightEn = '';
     if (shortCount >= 2 && shortPnl < -Math.abs(longPnl) * 0.5 && longPnl >= 0) {
-      insightFa = `پیشنهاد مربی AI: در جهت LONG عملکرد قوی دارید (${longWinRate.toFixed(0)}% برد)، اما معاملات SHORT عامل افت شما بوده‌اند (${fmtUsd(shortPnl)}). پیشنهاد می‌شود موقتاً جهت ربات را روی «فقط لانگ» بگذارید یا تایم‌فریم ورود را بالاتر ببرید.`;
-      insightEn = `AI Coach Advice: Your LONG trades perform strongly (${longWinRate.toFixed(0)}% WR), while SHORT trades caused ${fmtUsd(shortPnl)} loss. Consider switching to Long Only or higher timeframe confirmation.`;
+      insightFa = `پیشنهاد مشاور AI: در جهت LONG عملکرد قوی دارید (${longWinRate.toFixed(0)}% برد)، اما معاملات SHORT عامل افت شما بوده‌اند (${fmtUsd(shortPnl)}). پیشنهاد می‌شود با دکمه زیر جهت ربات را موقتاً روی «فقط لانگ» قرار دهید.`;
+      insightEn = `AI Coach Proposal: Your LONG trades perform well (${longWinRate.toFixed(0)}% WR), while SHORT trades caused ${fmtUsd(shortPnl)}. Use the quick button below to set direction to Long Only.`;
     } else if (avgLoss > avgWin * 1.25 && lossCount > 0) {
-      insightFa = `پیشنهاد مربی AI: میانگین ضرر ($${avgLoss.toFixed(1)}) از میانگین سود ($${avgWin.toFixed(1)}) بیشتر است. نسبت R:R فعلی (${rrRatio.toFixed(2)}) نیاز به نزدیک‌تر کردن حد ضرر یا ذخیره سود در TP2/TP3 دارد.`;
-      insightEn = `AI Coach Advice: Avg loss ($${avgLoss.toFixed(1)}) exceeds avg win ($${avgWin.toFixed(1)}). Tighten stop-loss or trail winners toward TP2/TP3 to lift R:R above 1.5.`;
+      insightFa = `پیشنهاد مشاور AI: میانگین ضرر ($${avgLoss.toFixed(1)}) از میانگین سود ($${avgWin.toFixed(1)}) بیشتر است. توصیه می‌شود اهرم ربات را به حداکثر 5× کاهش داده و ذخیره سود ریسک‌فری در TP1 را فعال کنید.`;
+      insightEn = `AI Coach Proposal: Avg loss ($${avgLoss.toFixed(1)}) exceeds avg win ($${avgWin.toFixed(1)}). Lower max leverage to 5× and enable Auto-Breakeven on TP1 below.`;
     } else if (winRate >= 55 && rrRatio >= 1.1) {
-      insightFa = `تبریک! انضباط معاملاتی شما عالی است: وین‌ریت ${winRate.toFixed(0)}% با نسبت سود به ضرر ${rrRatio.toFixed(2)}. بهترین عملکرد شما روی ${bestSymbol} (${fmtUsd(bestSymbolPnl)}) ثبت شده است.`;
-      insightEn = `Great discipline: ${winRate.toFixed(0)}% Win Rate with ${rrRatio.toFixed(2)} R:R. Top performer: ${bestSymbol} (${fmtUsd(bestSymbolPnl)}).`;
+      insightFa = `عملکرد بسیار منظم! نرخ برد ${winRate.toFixed(0)}% با نسبت R:R برابر ${rrRatio.toFixed(2)}. بهترین نتیجه روی ${bestSymbol} (${fmtUsd(bestSymbolPnl)}) بوده است.`;
+      insightEn = `Strong discipline: ${winRate.toFixed(0)}% Win Rate and ${rrRatio.toFixed(2)} R:R. Top symbol: ${bestSymbol} (${fmtUsd(bestSymbolPnl)}).`;
     } else {
-      insightFa = `خلاصه ${total} معامله بسته${openCount > 0 ? ` (+ ${openCount} پوزیشن باز)` : ''}: نرخ برد ${winRate.toFixed(0)}% · ${bestSymbolPnl >= 0 ? `بهترین ارز ${bestSymbol} (${fmtUsd(bestSymbolPnl)})` : `نیاز به بازبینی ریسک روی ${worstSymbol} (${fmtUsd(worstSymbolPnl)})`}.`;
-      insightEn = `Summary over ${total} closed${openCount > 0 ? ` (+ ${openCount} open)` : ''}: ${winRate.toFixed(0)}% WR. ${bestSymbolPnl >= 0 ? `Best: ${bestSymbol} (${fmtUsd(bestSymbolPnl)})` : `Review risk on ${worstSymbol} (${fmtUsd(worstSymbolPnl)})`}.`;
+      insightFa = `خلاصه ${total} معامله بسته: نرخ برد ${winRate.toFixed(0)}% · ${bestSymbolPnl >= 0 ? `بهترین ارز ${bestSymbol} (${fmtUsd(bestSymbolPnl)})` : `نیاز به کنترل ریسک روی ${worstSymbol} (${fmtUsd(worstSymbolPnl)})`}.`;
+      insightEn = `Summary over ${total} closed trades: ${winRate.toFixed(0)}% WR. ${bestSymbolPnl >= 0 ? `Best: ${bestSymbol} (${fmtUsd(bestSymbolPnl)})` : `Review risk on ${worstSymbol} (${fmtUsd(worstSymbolPnl)})`}.`;
     }
 
     return {
@@ -167,6 +228,8 @@ export function PortfolioPage({
       shortWinRate,
       longPnl,
       shortPnl,
+      longCount,
+      shortCount,
       avgWin,
       avgLoss,
       rrRatio,
@@ -179,12 +242,84 @@ export function PortfolioPage({
     };
   }, [data.closedTrades, data.openTrades]);
 
+  // Actionable setting proposals generated directly from account state & AI performance
+  const settingProposals = useMemo<AiSettingProposal[]>(() => {
+    const list: AiSettingProposal[] = [];
+    if (coachStats.shortCount >= 2 && coachStats.shortPnl < 0 && data.config.direction_mode !== 'LONG_ONLY') {
+      list.push({
+        id: 'long-only',
+        titleFa: 'تغییر جهت ربات به «فقط LONG»',
+        titleEn: 'Switch Bot to LONG ONLY',
+        descFa: 'به علت افت عملکرد در معاملات شورت، تمرکز ربات روی موقعیت‌های صعودی قرار می‌گیرد.',
+        descEn: 'Focus bot exclusively on LONG entries based on your positive Long win rate.',
+        patch: { direction_mode: 'LONG_ONLY' },
+      });
+    }
+    if (Number(data.config.max_leverage || 10) > 5) {
+      list.push({
+        id: 'cap-lev-5',
+        titleFa: 'کاهش ریسک و سقف اهرم به 5× + ریسک‌فری TP1',
+        titleEn: 'Cap Leverage at 5× + TP1 Breakeven',
+        descFa: 'حد ضرر سریع‌تر به نقطه ورود منتقل شده و ریسک مارجین کاهش می‌یابد.',
+        descEn: 'Lowers leverage ceiling to 5× and locks profit at entry after TP1.',
+        patch: { max_leverage: 5, use_signal_leverage: false, auto_breakeven_on_tp1: true },
+      });
+    }
+    if (!data.config.auto_breakeven_on_tp1) {
+      list.push({
+        id: 'enable-be',
+        titleFa: 'فعال‌سازی ریسک‌فری خودکار پس از تارگت ۱',
+        titleEn: 'Enable Auto-Breakeven on TP1',
+        descFa: 'به‌محض رسیدن معامله به سود اول، حد ضرر روی نقطه ورود قفل می‌شود.',
+        descEn: 'Automatically moves Stop-Loss to entry once TP1 hits.',
+        patch: { auto_breakeven_on_tp1: true },
+      });
+    }
+    if (Number(data.config.margin_pct || 10) > 12) {
+      list.push({
+        id: 'safe-margin',
+        titleFa: 'اصلاح حجم هر معامله به ۸٪ بودجه ربات',
+        titleEn: 'Set Margin per Trade to 8%',
+        descFa: 'مانع درگیری بیش‌ازحد سرمایه در یک معامله می‌شود.',
+        descEn: 'Prevents over-allocation into any single trade.',
+        patch: { margin_pct: 8 },
+      });
+    }
+    if (list.length === 0) {
+      list.push({
+        id: 'balanced-confirm',
+        titleFa: 'به‌روزرسانی تنظیمات متعادل (مارجین ۱۰٪ · لوریج ۵× · ریسک‌فری فعال)',
+        titleEn: 'Apply Balanced Guardrails (10% Margin · 5× Lev · Auto-BE)',
+        descFa: 'پیکربندی استاندارد محافظت سرمایه متناسب با وضعیت فعلی حساب شما.',
+        descEn: 'Applies standard capital-preservation defaults.',
+        patch: { margin_pct: 10, max_leverage: 5, auto_breakeven_on_tp1: true, trailing_stop_pct: 1.5 },
+      });
+    }
+    return list.slice(0, 3);
+  }, [coachStats, data.config]);
+
+  const applySettingProposal = async (p: AiSettingProposal) => {
+    setBusy(true);
+    try {
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify(p.patch),
+      });
+      pushFloatingToast(isFa ? `تنظیم پیشنهادی «${p.titleFa}» روی ربات اعمال شد ✅` : `Applied "${p.titleEn}" ✅`, 'success');
+      await onRefresh();
+    } catch (e) {
+      pushFloatingToast(e instanceof Error ? e.message : 'Update failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const askAiCoachDeepAnalysis = async () => {
     setCoachAiBusy(true);
     try {
       const prompt = isFa
-        ? `به عنوان مربی حرفه‌ای ترید، این آمار عملکرد واقعی حساب من را بررسی کن و ۳ راهکار کوتاه و دقیق برای بالا بردن سود و کاهش ریسک بده:\nتعداد ترید: ${coachStats.total} | وین‌ریت: ${coachStats.winRate.toFixed(1)}% | وین‌ریت لانگ: ${coachStats.longWinRate.toFixed(0)}% (${coachStats.longPnl.toFixed(1)}$) | وین‌ریت شورت: ${coachStats.shortWinRate.toFixed(0)}% (${coachStats.shortPnl.toFixed(1)}$) | میانگین سود: $${coachStats.avgWin.toFixed(1)} | میانگین ضرر: $${coachStats.avgLoss.toFixed(1)} | بهترین ارز: ${coachStats.bestSymbol} | بدترین ارز: ${coachStats.worstSymbol}`
-        : `Act as a pro trading coach and give 3 crisp actionable improvements for my account stats: Trades=${coachStats.total}, WR=${coachStats.winRate.toFixed(1)}%, LongWR=${coachStats.longWinRate.toFixed(0)}% ($${coachStats.longPnl.toFixed(1)}), ShortWR=${coachStats.shortWinRate.toFixed(0)}% ($${coachStats.shortPnl.toFixed(1)}), AvgWin=$${coachStats.avgWin.toFixed(1)}, AvgLoss=$${coachStats.avgLoss.toFixed(1)}, Best=${coachStats.bestSymbol}, Worst=${coachStats.worstSymbol}`;
+        ? `به عنوان مربی حرفه‌ای ترید و مدیر ریسک حساب، این آمار واقعی حساب من را بررسی کن و ۳ راهکار دقیق برای بالا بردن سود، کاهش ریسک و تغییر تنظیمات ربات بده:\nتعداد ترید بسته: ${coachStats.total} | وین‌ریت: ${coachStats.winRate.toFixed(1)}% | وین‌ریت لانگ: ${coachStats.longWinRate.toFixed(0)}% (${coachStats.longPnl.toFixed(1)}$) | وین‌ریت شورت: ${coachStats.shortWinRate.toFixed(0)}% (${coachStats.shortPnl.toFixed(1)}$) | میانگین سود: $${coachStats.avgWin.toFixed(1)} | میانگین ضرر: $${coachStats.avgLoss.toFixed(1)} | اهرم فعلی: ${data.config.max_leverage}× | مارجین هر معامله: ${data.config.margin_pct}% | بهترین ارز: ${coachStats.bestSymbol} | بدترین ارز: ${coachStats.worstSymbol}`
+        : `Act as a pro risk manager & trading coach. Review my stats and recommend 3 exact setting & discipline upgrades: Trades=${coachStats.total}, WR=${coachStats.winRate.toFixed(1)}%, LongWR=${coachStats.longWinRate.toFixed(0)}% ($${coachStats.longPnl.toFixed(1)}), ShortWR=${coachStats.shortWinRate.toFixed(0)}% ($${coachStats.shortPnl.toFixed(1)}), AvgWin=$${coachStats.avgWin.toFixed(1)}, AvgLoss=$${coachStats.avgLoss.toFixed(1)}, MaxLev=${data.config.max_leverage}x, MarginPct=${data.config.margin_pct}%, Best=${coachStats.bestSymbol}, Worst=${coachStats.worstSymbol}`;
       const res = await apiFetch<{ reply: string }>('/api/ai-assistant/chat', {
         method: 'POST',
         body: JSON.stringify({ message: prompt }),
@@ -197,21 +332,82 @@ export function PortfolioPage({
     }
   };
 
-  useEffect(() => {
-    if (ledgerTab === 'logs') {
-      void apiFetch<{ logs: AuditLog[] }>('/api/trading/logs')
-        .then((r) => setLogs(r.logs))
-        .catch(() => {});
-    } else if (ledgerTab === 'wallet') {
-      void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
-        .then((r) => setWalletLedger(r.ledger))
-        .catch(() => {});
+  const switchTradingMode = async (nextMode: 'PAPER' | 'LIVE') => {
+    if (data.config.trading_mode === nextMode) return;
+    setBusy(true);
+    try {
+      const res = await apiFetch<{
+        ok: boolean;
+        message?: string;
+        warningCode?: 'NO_TRUST_WALLET' | 'MIN_BALANCE_10_USD';
+      }>('/api/trustwallet/execution-mode', {
+        method: 'POST',
+        body: JSON.stringify({
+          tradingMode: nextMode,
+          executionMode: data.config.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO',
+        }),
+      });
+      pushFloatingToast(
+        res.message ||
+          (nextMode === 'LIVE'
+            ? isFa ? 'حساب روی حالت واقعی Trust Wallet قرار گرفت ✅' : 'Switched to Real Trust Wallet mode ✅'
+            : isFa ? 'حساب روی حالت شبیه‌ساز دمو قرار گرفت 🧪' : 'Switched to Demo Simulator mode 🧪'),
+        res.warningCode ? 'warn' : 'success'
+      );
+      await onRefresh();
+    } catch (e) {
+      pushFloatingToast(e instanceof Error ? e.message : 'Mode switch failed', 'error');
+    } finally {
+      setBusy(false);
     }
-  }, [ledgerTab]);
+  };
+
+  const saveAccountNote = async (customTitle?: string, customBody?: string, customCat?: 'NOTE' | 'STRATEGY' | 'AI_ADVICE') => {
+    const content = (customBody ?? noteContent).trim();
+    if (!content) return;
+    setNotesBusy(true);
+    try {
+      await apiFetch('/api/trading/notes', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: (customTitle ?? noteTitle).trim(),
+          content,
+          category: customCat ?? noteCategory,
+        }),
+      });
+      if (!customBody) {
+        setNoteTitle('');
+        setNoteContent('');
+      }
+      pushFloatingToast(isFa ? 'یادداشت شخصی در کیف‌پول ذخیره شد ✅' : 'Personal note saved ✅', 'success');
+      loadNotes();
+    } catch (e) {
+      pushFloatingToast(e instanceof Error ? e.message : 'Save note failed', 'error');
+    } finally {
+      setNotesBusy(false);
+    }
+  };
+
+  const deleteAccountNote = async (id: string) => {
+    try {
+      await apiFetch(`/api/trading/notes/${id}`, { method: 'DELETE' });
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+    } catch {
+      // ignore
+    }
+  };
 
   const freeCash = Number(data.balance.free || 0);
   const usedMargin = Number(data.balance.used || 0);
-  const totalEq = Number(data.balance.total || freeCash + usedMargin);
+  const totalEq = Number(data.balance.total ?? freeCash + usedMargin);
+  const demoBalDisplay = Number(
+    data.walletSummary?.demoBalanceUsd ??
+      (data.config.trading_mode === 'PAPER' ? totalEq : Number(data.config.custom_paper_balance || data.config.paper_balance || 10000))
+  );
+  const liveBalDisplay = Number(
+    data.walletSummary?.liveBalanceUsd ??
+      (data.config.trading_mode === 'LIVE' ? totalEq : 0)
+  );
   const unreal = data.openTrades.reduce((s, t) => s + Number(t.unrealized_pnl || 0), 0);
 
   const curveSeries = useMemo(() => {
@@ -278,42 +474,9 @@ export function PortfolioPage({
       });
   }, [data.openTrades, freeCash, assetQ, hideZero, isFa]);
 
-  const closeAll = async () => {
-    await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: true }) });
-    setNotice(isFa ? 'همه معاملات باز بسته و تسویه شدند' : 'All open trades settled');
-    await onRefresh();
-  };
-
   const closeOne = async (id: string) => {
     await apiFetch(`/api/trading/positions/${id}/close`, { method: 'POST' });
     await onRefresh();
-  };
-
-  const resetDemo = async () => {
-    await apiFetch('/api/trading/wallet/reset', { method: 'POST' });
-    setNotice(isFa ? 'موجودی شبیه‌ساز به $۱۰,۰۰۰ بازنشانی شد' : 'Simulation balance reset to $10,000');
-    await onRefresh();
-    if (ledgerTab === 'wallet') {
-      void apiFetch<{ ledger: WalletLedgerEntry[] }>('/api/trading/wallet/ledger')
-        .then((r) => setWalletLedger(r.ledger))
-        .catch(() => {});
-    }
-  };
-
-  const exportCsv = () => {
-    const rows = [
-      ['Type', 'Symbol', 'Direction', 'Leverage', 'Entry', 'Exit/Mark', 'PnL USD'],
-      ...data.openTrades.map((p) => ['OPEN', p.symbol, p.direction, String(p.leverage), p.entry_price, p.mark_price ?? p.entry_price, p.unrealized_pnl ?? '0']),
-      ...data.closedTrades.map((p) => ['CLOSED', p.symbol, p.direction, String(p.leverage), p.entry_price, p.exit_price, p.realized_pnl]),
-    ];
-    const blob = new Blob(['\uFEFF' + rows.map((r) => r.join(',')).join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dollarino-portfolio.csv';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice(isFa ? 'فایل CSV پورتفوی دانلود شد' : 'Portfolio CSV exported');
   };
 
   const filteredLogs = useMemo(() => {
@@ -326,29 +489,46 @@ export function PortfolioPage({
   }, [logs, logQ, logCategory]);
 
   const sliceTotal = slices.reduce((s, x) => s + x.value, 0) || 1;
+  const isPaper = data.config.trading_mode === 'PAPER';
 
   return (
     <div className="space-y-5 max-w-3xl mx-auto">
-      {notice && <div className="p-3 rounded-2xl badge-signal text-xs font-bold">{notice}</div>}
-
-      {/* 1. Cosmic Safe Vault & Trust Wallet Hero Card */}
+      {/* 1. Cosmic Safe Vault & Trust Wallet Hero Card with Real / Demo Switcher */}
       <div className="ios-vault-card rounded-[30px] p-5 sm:p-7 text-white relative overflow-hidden shadow-2xl space-y-5">
         <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md border border-white/25 text-[11px] font-black inline-flex items-center gap-1.5">
-              <span>🛡</span>
+              <Wallet className="w-3.5 h-3.5" />
               <span>
-                {data.config.trading_mode === 'PAPER'
-                  ? isFa ? 'شبیه‌ساز دمو مشابه تراست‌ولت' : 'TRUST WALLET SIMULATOR'
-                  : isFa ? 'کیف‌پول Trust Wallet واقعی' : 'TRUST WALLET LIVE VAULT'}
+                {isPaper
+                  ? isFa ? 'شبیه‌ساز دمو تراست‌ولت' : 'TRUST WALLET DEMO'
+                  : isFa ? 'کیف‌پول Trust Wallet واقعی' : 'TRUST WALLET LIVE'}
               </span>
             </span>
-            <span className="px-2.5 py-1 rounded-full bg-amber-400/20 backdrop-blur-md border border-amber-300/35 text-[10px] font-black text-amber-100">
-              {data.config.trade_execution_mode === 'MANUAL_CONFIRM'
-                ? isFa ? 'تایید دستی' : 'Manual'
-                : isFa ? 'تمام‌اتومات ۲۴/۷' : '24/7 Auto'}
-            </span>
+
+            {/* Real / Demo Mode Switcher matching OverviewPage */}
+            <div className="inline-flex items-center rounded-full bg-black/35 p-0.5 border border-white/20 text-[11px] font-black">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void switchTradingMode('PAPER')}
+                className={`px-3 py-1 rounded-full transition ${isPaper ? 'bg-amber-400 text-slate-950 shadow' : 'text-white/80 hover:text-white'}`}
+              >
+                {isFa ? `دمو 🧪 ($${Math.round(demoBalDisplay).toLocaleString('en-US')})` : `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void switchTradingMode('LIVE')}
+                className={`px-3 py-1 rounded-full transition ${!isPaper ? 'bg-emerald-500 text-white shadow' : 'text-white/80 hover:text-white'}`}
+              >
+                {isFa
+                  ? `حساب واقعی 🛡 ($${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })})`
+                  : `Real ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`}
+              </button>
+            </div>
           </div>
+
           <div className="flex items-center gap-1.5">
             <button
               type="button"
@@ -370,12 +550,23 @@ export function PortfolioPage({
         </div>
 
         <div className="relative z-10 text-center space-y-1.5 py-1">
-          <p className="text-xs text-white/80 font-bold">{isFa ? 'ارزش کل خزانه و دارایی متصل به تراست‌ولت' : 'Total Vault & Trust Wallet Equity'}</p>
+          <p className="text-xs text-white/80 font-bold">
+            {isFa
+              ? `ارزش کل خزانه و تاریخچه دارایی (${isPaper ? 'دمو' : 'حساب واقعی Trust Wallet'})`
+              : `Total Vault & Asset Equity (${isPaper ? 'Demo' : 'Live Trust Wallet'})`}
+          </p>
           <p dir="ltr" className="font-display font-bold text-4xl sm:text-5xl tabular text-white font-num drop-shadow">
-            {hideBal ? '••••••' : `$${totalEq.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
+            {hideBal
+              ? '••••••'
+              : `$${totalEq.toLocaleString('en-US', {
+                  minimumFractionDigits: !isPaper && totalEq < 100 ? 2 : 0,
+                  maximumFractionDigits: 2,
+                })}`}
           </p>
           {!hideBal && isFa && (
-            <p className="text-xs text-white/85 font-semibold">معادل {formatTomanEq(totalEq)} تومان</p>
+            <p className="text-xs text-white/90 font-semibold">
+              معادل {formatTomanEq(totalEq, liveIrt)} تومان (نرخ زنده: {Math.round(liveIrt).toLocaleString('en-US')} ت)
+            </p>
           )}
           <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px]">
             <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90">
@@ -394,53 +585,6 @@ export function PortfolioPage({
               {unreal >= 0 ? `+$${unreal.toFixed(2)}` : `-$${Math.abs(unreal).toFixed(2)}`}
             </span>
           </div>
-        </div>
-
-        {/* 4 iOS Frosted Glass Vault Action Pills */}
-        <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-          <button
-            type="button"
-            onClick={() => onOpenTerminal('BTCUSDT')}
-            className="ios-glass-gold-btn py-2.5 px-3 rounded-2xl text-xs inline-flex items-center justify-center gap-1.5"
-          >
-            <Zap className="w-4 h-4" />
-            <span>{isFa ? 'معامله سریع' : 'Quick Trade'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void resetDemo()}
-            className="ios-glass-btn py-2.5 px-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
-          >
-            <RotateCcw className="w-4 h-4 text-sky-300" />
-            <span>
-              {isFa ? (
-                <>
-                  ریست <span dir="ltr" className="inline-block font-num">$10K</span>
-                </>
-              ) : (
-                'Reset $10K'
-              )}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="ios-glass-btn py-2.5 px-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5"
-          >
-            <Download className="w-4 h-4 text-emerald-300" />
-            <span>{isFa ? 'خروجی CSV' : 'Export CSV'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void closeAll()}
-            className="ios-glass-btn py-2.5 px-3 rounded-2xl text-xs font-black inline-flex items-center justify-center gap-1.5 border-rose-300/35 hover:bg-rose-500/35"
-          >
-            <X className="w-4 h-4 text-rose-300" />
-            <span>{isFa ? 'بستن همه' : 'Settle All'}</span>
-          </button>
         </div>
       </div>
 
@@ -467,7 +611,46 @@ export function PortfolioPage({
         </div>
       </div>
 
-      {/* 4. Filter Pills + Search Row + 2-Column Asset Cards matching image-4.png */}
+      {/* 3. Asset History & Growth Chart */}
+      <div className="panel rounded-[26px] p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-display font-bold text-base text-main">{isFa ? 'نمودار رشد و تاریخچه دارایی' : 'Asset History & Equity Curve'}</h3>
+            <p className="text-[11px] text-dim flex items-center gap-1.5 flex-wrap">
+              <span>{isFa ? `نرخ برد: ${data.stats.winRate.toFixed(0)}% · کل سود:` : `Win Rate ${data.stats.winRate.toFixed(0)}% · Total PnL:`}</span>
+              <span
+                dir="ltr"
+                style={{ unicodeBidi: 'isolate' }}
+                className={`inline-block font-num font-black ${data.stats.totalPnl >= 0 ? 'text-jade' : 'text-loss'}`}
+              >
+                {data.stats.totalPnl >= 0 ? `+$${data.stats.totalPnl.toFixed(2)}` : `-$${Math.abs(data.stats.totalPnl).toFixed(2)}`}
+              </span>
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {(['1D', '1W', '1M', 'ALL'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRange(r)}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition ${range === r ? 'ios-pill-active' : 'text-dim hover:text-main'}`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="h-[250px] rounded-2xl surface-soft border hairline p-3">
+          <AreaChart
+            values={curvePoints}
+            points={curveSeries}
+            baseline={curveSeries[0]?.equity ?? totalEq}
+            height={224}
+          />
+        </div>
+      </div>
+
+      {/* 4. Holdings Breakdown */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <button
@@ -484,7 +667,7 @@ export function PortfolioPage({
             <input
               value={assetQ}
               onChange={(e) => setAssetQ(e.target.value)}
-              placeholder={isFa ? 'جستجوی ارز...' : 'Search coin...'}
+              placeholder={isFa ? 'جستجوی ارز در کیف‌پول...' : 'Search holding...'}
               className="bg-transparent flex-1 text-xs text-main outline-none placeholder:text-dim"
             />
           </div>
@@ -518,7 +701,7 @@ export function PortfolioPage({
                   <p dir="ltr" className="font-num font-black text-sm text-main">
                     ${a.usd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
                   </p>
-                  {isFa && <p className="text-[10px] text-dim">{formatTomanEq(a.usd)} تومان</p>}
+                  {isFa && <p className="text-[10px] text-dim">{formatTomanEq(a.usd, liveIrt)} تومان</p>}
                 </div>
                 {a.pnl !== 0 && (
                   <span dir="ltr" className={`inline-block text-[11px] font-black tabular font-num ${a.pnl >= 0 ? 'text-jade' : 'text-loss'}`}>
@@ -531,72 +714,31 @@ export function PortfolioPage({
         </div>
       </div>
 
-      {/* 5. Pro TradingView Equity Growth Card */}
-      <div className="panel rounded-[26px] p-5 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="font-display font-bold text-base text-main">{isFa ? 'نمودار رشد دارایی' : 'Equity Curve'}</h3>
-            <p className="text-[11px] text-dim flex items-center gap-1.5 flex-wrap">
-              <span>{isFa ? `نرخ برد: ${data.stats.winRate.toFixed(0)}% · کل سود:` : `Win Rate ${data.stats.winRate.toFixed(0)}% · Total PnL:`}</span>
-              <span
-                dir="ltr"
-                style={{ unicodeBidi: 'isolate' }}
-                className={`inline-block font-num font-black ${data.stats.totalPnl >= 0 ? 'text-jade' : 'text-loss'}`}
-              >
-                {data.stats.totalPnl >= 0 ? `+$${data.stats.totalPnl.toFixed(2)}` : `-$${Math.abs(data.stats.totalPnl).toFixed(2)}`}
-              </span>
-            </p>
-          </div>
-          <div className="flex gap-1">
-            {(['1D', '1W', '1M', 'ALL'] as const).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setRange(r)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition ${range === r ? 'ios-pill-active' : 'text-dim hover:text-main'}`}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="h-[264px] rounded-2xl surface-soft border hairline p-3">
-          <AreaChart
-            values={curvePoints}
-            points={curveSeries}
-            baseline={curveSeries[0]?.equity ?? totalEq}
-            height={238}
-          />
-        </div>
-      </div>
-
-      {/* 5.5 AI Performance Coach Card */}
-      <div className="panel rounded-[26px] p-5 space-y-3 border border-[#1652f0]/25">
+      {/* 5. AI Performance Coach & One-Click Setting Change Proposals */}
+      <div className="panel rounded-[26px] p-5 space-y-3.5 border border-[#1652f0]/25">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl btn-cobalt grid place-items-center shrink-0">
               <BrainCircuit className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-sm sm:text-base text-main flex items-center gap-1.5">
-                <span>{isFa ? 'مربی هوشمند عملکرد (AI Performance Coach)' : 'AI Performance Coach'}</span>
+              <h3 className="font-display font-bold text-sm sm:text-base text-main">
+                {isFa ? 'مشاور هوشمند حساب و پیشنهاد تغییر تنظیمات' : 'AI Account Advisor & Setting Proposals'}
               </h3>
               <p className="text-[11px] text-dim">
-                {isFa ? 'تحلیل الگوی برد و باخت، لانگ در برابر شورت و نسبت ریسک به ریوارد' : 'Automated review of Long vs Short edge, R:R, and top symbols'}
+                {isFa ? 'تحلیل نقاط قوت/ضعف حساب همراه با دکمه اعمال مستقیم تغییرات روی ربات' : 'Performance review with 1-click bot optimization proposals'}
               </p>
             </div>
           </div>
-          {coachStats.total > 0 && (
-            <button
-              type="button"
-              disabled={coachAiBusy}
-              onClick={() => void askAiCoachDeepAnalysis()}
-              className="btn-cobalt px-3.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{coachAiBusy ? '...' : isFa ? 'تحلیل عمیق با AI' : 'Deep AI Review'}</span>
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={coachAiBusy}
+            onClick={() => void askAiCoachDeepAnalysis()}
+            className="btn-cobalt px-3.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center gap-1.5"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{coachAiBusy ? '...' : isFa ? 'تحلیل عمیق حساب با AI' : 'Ask AI Coach'}</span>
+          </button>
         </div>
 
         {coachStats.total > 0 && (
@@ -614,64 +756,164 @@ export function PortfolioPage({
               </p>
             </div>
             <div className="surface-soft rounded-2xl p-2.5">
-              <p className="text-[10px] text-dim">
-                {coachStats.bestSymbolPnl >= 0
-                  ? isFa ? 'بهترین ارز' : 'Best Coin'
-                  : isFa ? 'کم‌ضررترین ارز' : 'Least Loss'}
-              </p>
+              <p className="text-[10px] text-dim">{coachStats.bestSymbolPnl >= 0 ? (isFa ? 'بهترین ارز' : 'Best Coin') : isFa ? 'کم‌ضررترین' : 'Least Loss'}</p>
               <p dir="ltr" className={`font-num font-black mt-0.5 ${coachStats.bestSymbolPnl >= 0 ? 'text-jade' : 'text-amber-500'}`}>
                 {coachStats.bestSymbol.replace('USDT', '')}
               </p>
-              {coachStats.bestSymbol !== '—' && (
-                <p dir="ltr" className={`font-num text-[10px] font-bold ${coachStats.bestSymbolPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
-                  {coachStats.bestSymbolPnl >= 0 ? `+$${coachStats.bestSymbolPnl.toFixed(2)}` : `-$${Math.abs(coachStats.bestSymbolPnl).toFixed(2)}`}
-                </p>
-              )}
             </div>
             <div className="surface-soft rounded-2xl p-2.5">
               <p className="text-[10px] text-dim">{isFa ? 'پرضررترین ارز' : 'Weakest Coin'}</p>
               <p dir="ltr" className={`font-num font-black mt-0.5 ${coachStats.worstSymbolPnl < 0 ? 'text-loss' : 'text-main'}`}>
                 {coachStats.worstSymbol.replace('USDT', '')}
               </p>
-              {coachStats.worstSymbol !== '—' && (
-                <p dir="ltr" className={`font-num text-[10px] font-bold ${coachStats.worstSymbolPnl >= 0 ? 'text-jade' : 'text-loss'}`}>
-                  {coachStats.worstSymbolPnl >= 0 ? `+$${coachStats.worstSymbolPnl.toFixed(2)}` : `-$${Math.abs(coachStats.worstSymbolPnl).toFixed(2)}`}
-                </p>
-              )}
             </div>
           </div>
         )}
 
-        <div className="surface-soft rounded-2xl p-3.5 text-xs text-sub leading-relaxed whitespace-pre-wrap">
-          {coachAiNote ?? (isFa ? coachStats.insightFa : coachStats.insightEn)}
+        <div className="surface-soft rounded-2xl p-3.5 text-xs text-sub leading-relaxed whitespace-pre-wrap space-y-2">
+          <p>{coachAiNote ?? (isFa ? coachStats.insightFa : coachStats.insightEn)}</p>
+          {coachAiNote && (
+            <button
+              type="button"
+              disabled={notesBusy}
+              onClick={() => void saveAccountNote(isFa ? 'پیشنهاد هوش مصنوعی' : 'AI Coach Insight', coachAiNote, 'AI_ADVICE')}
+              className="text-[11px] font-black text-[#0D47A1] dark:text-[#60A5FA] hover:underline inline-flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{isFa ? 'ذخیره این تحلیل در یادداشت‌های من' : 'Save Insight to My Notes'}</span>
+            </button>
+          )}
+        </div>
+
+        {/* One-Click Proposed Config Updates */}
+        <div className="space-y-2">
+          <p className="text-[11px] font-black text-main">
+            {isFa ? 'تغییرات پیشنهادی قابل اجرا برای بهینه‌سازی حساب:' : 'Actionable Setting Proposals:'}
+          </p>
+          <div className="grid gap-2">
+            {settingProposals.map((p) => (
+              <div key={p.id} className="rounded-2xl surface-soft border hairline p-3 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black text-main">{isFa ? p.titleFa : p.titleEn}</p>
+                  <p className="text-[11px] text-dim">{isFa ? p.descFa : p.descEn}</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void applySettingProposal(p)}
+                  className="px-3.5 py-1.5 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-[11px] font-black inline-flex items-center gap-1 shrink-0 transition"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'اعمال روی تنظیمات' : 'Apply Setting'}</span>
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* 6. Unified Open / Closed / Wallet Ledger / Activity Logs */}
+      {/* 6. Personal Notes & Trading Journal */}
+      <div className="panel rounded-[26px] p-5 space-y-3.5">
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-[#D97706] grid place-items-center shrink-0">
+            <NotebookPen className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="font-display font-bold text-sm sm:text-base text-main">
+              {isFa ? 'یادداشت‌های شخصی و ژورنال معامله‌گر' : 'Personal Account Notes & Journal'}
+            </h3>
+            <p className="text-[11px] text-dim">
+              {isFa ? 'استراتژی، نقاط مهم و نکات شخصی خود را برای حساب و ربات ثبت و نگهداری کنید' : 'Keep personal strategy notes, lessons, and account observations'}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl surface-soft border hairline p-3.5 space-y-2.5">
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={noteTitle}
+              onChange={(e) => setNoteTitle(e.target.value)}
+              placeholder={isFa ? 'عنوان کوتاه (اختیاری)' : 'Short title (optional)'}
+              className="input-pro flex-1 min-w-[160px] px-3 py-2 rounded-xl text-xs"
+            />
+            <select
+              value={noteCategory}
+              onChange={(e) => setNoteCategory(e.target.value as typeof noteCategory)}
+              className="input-pro px-3 py-2 rounded-xl text-xs font-bold"
+            >
+              <option value="NOTE">{isFa ? 'یادداشت شخصی' : 'Personal Note'}</option>
+              <option value="STRATEGY">{isFa ? 'استراتژی و قوانین' : 'Strategy Rule'}</option>
+              <option value="AI_ADVICE">{isFa ? 'نکته هوش مصنوعی' : 'AI Advice'}</option>
+            </select>
+          </div>
+          <textarea
+            rows={2}
+            value={noteContent}
+            onChange={(e) => setNoteContent(e.target.value)}
+            placeholder={isFa ? 'متن یادداشت یا تجربه ترید امروزتان را بنویسید...' : 'Write your trading journal note or rule...'}
+            className="input-pro w-full px-3 py-2 rounded-xl text-xs resize-none"
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={notesBusy || !noteContent.trim()}
+              onClick={() => void saveAccountNote()}
+              className="px-4 py-2 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white text-xs font-black inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{notesBusy ? '...' : isFa ? 'ذخیره یادداشت' : 'Save Note'}</span>
+            </button>
+          </div>
+        </div>
+
+        {notes.length === 0 ? (
+          <p className="text-center text-xs text-dim py-3">{isFa ? 'هنوز یادداشتی ثبت نکرده‌اید.' : 'No personal notes yet.'}</p>
+        ) : (
+          <div className="space-y-2 max-h-[260px] overflow-y-auto">
+            {notes.map((n) => (
+              <div key={n.id} className="surface-soft rounded-2xl border hairline p-3 flex items-start justify-between gap-2 text-xs">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-[#D97706] text-[10px] font-black">{n.category}</span>
+                    {n.title && <span className="font-black text-main">{n.title}</span>}
+                    <span className="text-[10px] text-dim">{n.created_at.slice(0, 16)}</span>
+                  </div>
+                  <p className="text-sub whitespace-pre-wrap leading-relaxed">{n.content}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void deleteAccountNote(n.id)}
+                  className="text-dim hover:text-loss p-1 shrink-0"
+                  aria-label="Delete note"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 7. Unified Work Reports, Open/Closed Trades & Wallet Ledger */}
       <div className="panel rounded-[26px] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="tab-bar w-full sm:w-auto">
+          <div className="tab-bar w-full">
             {[
               { id: 'open' as const, l: isFa ? `باز (${data.openTrades.length})` : `Open (${data.openTrades.length})` },
-              { id: 'closed' as const, l: isFa ? `بسته‌شده (${data.closedTrades.length})` : `Closed (${data.closedTrades.length})` },
-              { id: 'wallet' as const, l: isFa ? 'دفتر کیف پول' : 'Wallet Ledger' },
-              { id: 'logs' as const, l: isFa ? 'گزارش زنده ربات' : 'Activity Logs' },
+              { id: 'closed' as const, l: isFa ? `تاریخچه (${data.closedTrades.length})` : `History (${data.closedTrades.length})` },
+              { id: 'wallet' as const, l: isFa ? 'تراکنش ولت' : 'Wallet Ledger' },
+              { id: 'logs' as const, l: isFa ? 'گزارش کار ربات' : 'Work Reports' },
             ].map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setLedgerTab(t.id)}
-                className={`tab-pill flex-1 sm:flex-initial ${ledgerTab === t.id ? 'tab-pill-active' : ''}`}
+                className={`tab-pill flex-1 ${ledgerTab === t.id ? 'tab-pill-active' : ''}`}
               >
                 {t.l}
               </button>
             ))}
           </div>
-
-          <button type="button" onClick={() => onOpenTerminal()} className="btn-gold px-4 py-2 rounded-xl text-xs inline-flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5" />
-            <span>{isFa ? 'معامله جدید در پایانه' : 'New Trade'}</span>
-          </button>
         </div>
 
         {ledgerTab === 'open' && (
@@ -786,11 +1028,11 @@ export function PortfolioPage({
             <div className="flex items-center gap-2 text-xs">
               <div className="relative flex-1">
                 <Search className="w-3.5 h-3.5 text-dim absolute start-3 top-1/2 -translate-y-1/2" />
-                <input value={logQ} onChange={(e) => setLogQ(e.target.value)} placeholder={isFa ? 'جستجو در گزارش ربات...' : 'Filter logs...'} className="field ps-9 py-2 text-xs" />
+                <input value={logQ} onChange={(e) => setLogQ(e.target.value)} placeholder={isFa ? 'جستجو در گزارش کار ربات...' : 'Filter logs...'} className="field ps-9 py-2 text-xs" />
               </div>
               <button
                 type="button"
-                onClick={() => void apiFetch<{ logs: AuditLog[] }>('/api/trading/logs').then((r) => setLogs(r.logs))}
+                onClick={() => void apiFetch<{ logs: AuditLog[] }>('/api/trading/logs').then((r) => setLogs(r.logs || []))}
                 className="btn-ghost px-3 py-2 rounded-xl inline-flex items-center gap-1 font-bold"
               >
                 <RefreshCw className="w-3.5 h-3.5" />

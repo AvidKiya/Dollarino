@@ -10,6 +10,7 @@ export interface TelegramWebAppApi {
   ready?: () => void;
   expand?: () => void;
   close?: () => void;
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
   BackButton?: {
