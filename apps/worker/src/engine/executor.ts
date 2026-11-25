@@ -271,12 +271,12 @@ export async function executeSignalForUser(
           'FEE_SETTLEMENT_REQUIRED: باز کردن معامله جدید واقعی تا تسویه کارمزد ۳٪ سود متوقف است (پوزیشن‌های باز فعلی همچنان برای سود مدیریت می‌شوند).',
       };
     }
-    // Never silently fall back to Paper simulation when user specifically launched LIVE mode without an active Agent/Exchange adapter
-    if (provider === 'paper' && !options?.forceBypassState) {
+    // Never silently fall back to Paper simulation when user specifically runs LIVE mode without an active Agent/Exchange adapter
+    if (provider === 'paper') {
       const base = signal.symbol.replace(/USDT$|USDC$|USD$/i, '') || 'BTC';
       const hlUrl = `https://app.hyperliquid.xyz/trade/${encodeURIComponent(base)}`;
       const twLink = `https://link.trustwallet.com/open_url?coin_id=10042161&url=${encodeURIComponent(hlUrl)}`;
-      if (cfgRow.trade_execution_mode === 'MANUAL_CONFIRM') {
+      if (cfgRow.trade_execution_mode === 'MANUAL_CONFIRM' || options?.strategyKey === 'manual_terminal') {
         await pushNotification(
           env.DB,
           userId,
@@ -290,17 +290,32 @@ export async function executeSignalForUser(
           `🛡 **فرصت ترید واقعی (نیاز به تایید Trust Wallet)**\n\n` +
             `📌 نماد: **${signal.symbol}** (${signal.direction} ${signal.leverage || 5}×)\n` +
             `💵 ورود پیشنهادی: \`$${signal.price}\` · SL: \`$${signal.stopLoss}\` · TP1: \`$${signal.tp1}\`\n` +
-            `👇 برای تایید غیرحضانتی در Trust Wallet DApp لمس کنید (یا کلید Agent Wallet Hyperliquid را در پنل ثبت نمایید):`,
+            `👇 برای تایید غیرحضانتی در Trust Wallet DApp لمس کنید (یا کلید Agent Wallet Hyperliquid را با ۱ کلیک در پنل تایید نمایید):`,
           [[{ text: 'امضا و اجرا در Trust Wallet 🛡', url: twLink }]]
         );
         return {
           ok: false,
-          error: 'TRUST_WALLET_MANUAL_SIGN_SENT: لینک امضای مستقیم به تلگرام و اعلان‌های شما ارسال شد (در حالت لایو بدون Agent Key روی شبیه‌ساز دمو ثبت نمی‌شود).',
+          error: 'TRUST_WALLET_MANUAL_SIGN_SENT: در حالت واقعی بدون Agent Key، لینک امضای مستقیم Hyperliquid در Trust Wallet صادر و به اعلان‌ها ارسال شد.',
         };
+      }
+      const recentlyPrompted = await env.DB.prepare(
+        `SELECT id FROM notifications WHERE user_id = ? AND category = 'SYSTEM' AND title LIKE '%Hyperliquid Agent%' AND created_at >= datetime('now', '-6 hours') LIMIT 1`
+      )
+        .bind(userId)
+        .first<{ id: string }>()
+        .catch(() => null);
+      if (!recentlyPrompted) {
+        await pushNotification(
+          env.DB,
+          userId,
+          'SYSTEM',
+          'نیاز به فعال‌سازی ۱-کلیکی Hyperliquid Agent برای اتوترید ۲۴/۷',
+          `سیگنال ${signal.direction} ${signal.symbol} صادر شد. برای اجرای خودکار ۲۴/۷ روی حساب واقعی، در تب کیف‌پول / DEX دکمه «⚡ فعال‌سازی خودکار Hyperliquid با ۱ کلیک» را امضا کنید (یا حالت اجرا را روی «تایید با ۱ کلیک Trust Wallet» بگذارید).`
+        );
       }
       return {
         ok: false,
-        error: 'AGENT_KEY_REQUIRED: برای اجرای کاملاً خودکار ۲۴/۷ در حالت واقعی (LIVE)، لطفاً کلید Trade-Only Agent Wallet هایپرلیکویید یا صرافی را در بخش اتصال کیف‌پول ثبت کنید.',
+        error: 'AGENT_KEY_REQUIRED: برای اجرای کاملاً خودکار ۲۴/۷ در حالت واقعی (LIVE)، لطفاً در تب DEX / Trust Wallet دکمه «فعال‌سازی خودکار Hyperliquid با ۱ کلیک (ApproveAgent)» را تایید کنید.',
       };
     }
   }

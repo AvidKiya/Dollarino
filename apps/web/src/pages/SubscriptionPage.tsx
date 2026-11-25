@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   Clock,
   Copy,
   Download,
   Gift,
-  Info,
   Link2,
   Lock,
   MessageSquareText,
-  Send,
   Share2,
-  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Users,
@@ -23,6 +22,8 @@ import type { Lang } from '../lib/i18n';
 import { formatTomanEq } from '../lib/format';
 import { tgNotifyHaptic } from '../lib/telegram';
 import { pushFloatingToast } from '../lib/toast';
+import type { NavTab } from '../lib/types';
+import { TreasuryBankingHub } from '../components/TreasuryBankingHub';
 
 interface ServerFeeEntry {
   id: string;
@@ -99,20 +100,15 @@ interface ServerFeePayload {
 export function SubscriptionPage({
   lang,
   onRefreshDashboard,
+  onNavigate,
 }: {
   lang: Lang;
   onRefreshDashboard: () => Promise<void>;
+  onNavigate?: (tab: NavTab) => void;
 }) {
   const isFa = lang === 'fa';
   const [ledger, setLedger] = useState<ServerFeePayload | null>(null);
   const [iranRate, setIranRate] = useState<number>(290000);
-  const [txHash, setTxHash] = useState('');
-  const [prepayAmount, setPrepayAmount] = useState('10');
-  const [prepayTxHash, setPrepayTxHash] = useState('');
-  const [treasuryNetwork, setTreasuryNetwork] = useState<'BEP20' | 'TRC20' | 'ERC20' | 'BASE' | 'ARBITRUM' | 'SOLANA' | 'TON'>('BEP20');
-  const [treasuryAsset, setTreasuryAsset] = useState('USDT');
-  const [treasuryAmount, setTreasuryAmount] = useState('10');
-  const [treasuryTxHash, setTreasuryTxHash] = useState('');
   const [giftCode, setGiftCode] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -176,121 +172,6 @@ export function SubscriptionPage({
     void loadAll();
   }, []);
 
-  const handleSettle = async () => {
-    if (txHash.trim().length < 32) {
-      setMsg(isFa ? 'فرمت هش تراکنش (TX Hash) معتبر نیست — هش واقعی بلاکچین را وارد کنید.' : 'Enter a valid blockchain TX Hash.');
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    try {
-      const res = await apiFetch<{ ok: boolean; settledCount: number; status?: string }>('/api/subscriptions/server-fees/settle', {
-        method: 'POST',
-        body: JSON.stringify({ txHash }),
-      });
-      tgNotifyHaptic('success');
-      setMsg(
-        res.status === 'PENDING_VERIFY'
-          ? isFa
-            ? 'تراکنش شما ثبت شد و در انتظار تایید آن‌چین / ادمین جهت بازگشایی حساب قرار گرفت ⏳'
-            : 'Settlement TX submitted and queued for verification ⏳'
-          : isFa
-            ? `${res.settledCount} ردیف کارمزد سرور تسویه و حساب کاملاً آزاد شد ✅`
-            : `Settled ${res.settledCount} fee entries ✅`
-      );
-      setTxHash('');
-      await loadAll();
-      await onRefreshDashboard();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Settlement failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handlePrepay = async () => {
-    const amt = Number(prepayAmount || 0);
-    if (!Number.isFinite(amt) || amt < 10) {
-      setMsg(isFa ? 'حداقل مبلغ شارژ اعتبار خزانه ۱۰ دلار (USDT) است.' : 'Minimum credit top-up is $10.');
-      return;
-    }
-    if (prepayTxHash.trim().length < 32) {
-      setMsg(isFa ? 'لطفاً هش تراکنش معتبر شارژ اعتبار را وارد کنید.' : 'Enter valid prepay TX Hash.');
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    try {
-      const res = await apiFetch<{ ok: boolean; autoConfirmed: boolean }>('/api/subscriptions/server-fees/prepay', {
-        method: 'POST',
-        body: JSON.stringify({ amountUsd: amt, txHash: prepayTxHash }),
-      });
-      tgNotifyHaptic('success');
-      setMsg(
-        res.autoConfirmed
-          ? isFa
-            ? `اعتبار پیش‌پرداخت $${amt} تایید و شارژ شد ✅`
-            : `$${amt} prepaid fee credit confirmed ✅`
-          : isFa
-            ? `درخواست شارژ $${amt} ثبت شد و پس از تایید، کارمزد ۳٪ خودکار از آن کسر می‌شود ⏳`
-            : `Prepay request ($${amt}) submitted for verification ⏳`
-      );
-      setPrepayTxHash('');
-      await loadAll();
-      await onRefreshDashboard();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Prepay failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleTreasuryDeposit = async () => {
-    const amt = Number(treasuryAmount || 0);
-    if (!Number.isFinite(amt) || amt < 10) {
-      setMsg(isFa ? 'حداقل مبلغ واریز به خزانه ۱۰ دلار است.' : 'Minimum deposit is $10 USD.');
-      return;
-    }
-    if (treasuryTxHash.trim().length < 32) {
-      setMsg(isFa ? 'لطفاً کد تراکنش (TX Hash) معتبر شبکه انتخابی را وارد کنید.' : 'Enter a valid TX Hash.');
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    try {
-      const res = await apiFetch<{ ok: boolean; status: string; settledDebtUsd?: number; addedCreditUsd?: number }>(
-        '/api/subscriptions/treasury/deposit',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            network: treasuryNetwork,
-            asset: treasuryAsset,
-            amountUsd: amt,
-            txHash: treasuryTxHash.trim(),
-            category: 'DEPOSIT',
-          }),
-        }
-      );
-      tgNotifyHaptic('success');
-      setMsg(
-        res.status === 'CONFIRMED'
-          ? isFa
-            ? `واریز $${amt} روی ${treasuryNetwork} خودکار تایید و شارژ شد ✅`
-            : `Deposit of $${amt} on ${treasuryNetwork} confirmed ✅`
-          : isFa
-            ? `واریز $${amt} روی ${treasuryNetwork} با کد منحصربه‌فرد ثبت شد و در انتظار تایید ادمین است ⏳`
-            : `Deposit ($${amt}) queued for verification ⏳`
-      );
-      setTreasuryTxHash('');
-      await loadAll();
-      await onRefreshDashboard();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Treasury deposit failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleRedeemGift = async () => {
     if (!giftCode.trim()) return;
     setBusy(true);
@@ -301,7 +182,7 @@ export function SubscriptionPage({
         body: JSON.stringify({ code: giftCode }),
       });
       if (res.ok) {
-        setMsg(isFa ? 'کد هدیه با موفقیت ثبت شد ✅' : 'Gift code redeemed ✅');
+        setMsg(isFa ? 'کد هدیه با موفقیت ثبت شد' : 'Gift code redeemed');
         setGiftCode('');
         await onRefreshDashboard();
       }
@@ -342,12 +223,16 @@ export function SubscriptionPage({
                 : 'First 3 Live Wins 0% · Then 3% Fee Strictly on Net Profits (Keep 97%!)'}
             </h1>
             <p className="text-xs sm:text-sm text-white/85 leading-relaxed">
-              {isFa
-                ? `در دلارینو تمام امکانات رایگان است، کیف‌پول دمو دلخواه ($50 تا $10M) رایگان است و ۳ معامله سودده اول واقعی شما بدون کارمزد (۰٪) محاسبه می‌شود؛ از معامله سودده چهارم به بعد ۹۷٪ سود برای شما و فقط ۳٪ کارمزد سرور محاسبه می‌گردد. برخلاف پلتفرم‌های اشتراکی که پول اشتراک را اول می‌گیرند و سود یا ضرر کاربر برایشان مهم نیست، دلارینو تمام تلاشش را برای سود شما می‌کند چون ما فقط وقتی بیشتر درآمد داریم که شما سود بیشتری بگیرید! (پوزیشن‌های باز شما حتی هنگام تسویه کارمزد همیشه مدیریت می‌شوند.)`
-                : `All tools and customizable demo wallets ($50–$10M) are 100% free. Unlike subscription bots that take your money upfront whether you lose or win, Dollarino charges $0 subscription and works relentlessly for your profit because our 3% server fee (after your first 3 free live wins, keeping 97%) grows ONLY when you earn more!`}
+              {isFa ? (
+                <>
+                  در دلارینو تمام امکانات رایگان است، کیف‌پول دمو دلخواه (<span dir="ltr" className="inline-block font-bold">$50–$10M</span>) رایگان است و ۳ معامله سودده اول واقعی شما بدون کارمزد (۰٪) محاسبه می‌شود؛ از معامله سودده چهارم به بعد ۹۷٪ سود برای شما و فقط ۳٪ کارمزد سرور محاسبه می‌گردد. برخلاف پلتفرم‌های اشتراکی که پول اشتراک را اول می‌گیرند و سود یا ضرر کاربر برایشان مهم نیست، دلارینو تمام تلاشش را برای سود شما می‌کند چون ما فقط وقتی بیشتر درآمد داریم که شما سود بیشتری بگیرید! (پوزیشن‌های باز شما حتی هنگام تسویه کارمزد همیشه مدیریت می‌شوند.)
+                </>
+              ) : (
+                `All tools and customizable demo wallets ($50–$10M) are 100% free. Unlike subscription bots that take your money upfront whether you lose or win, Dollarino charges $0 subscription and works relentlessly for your profit because our 3% server fee (after your first 3 free live wins, keeping 97%) grows ONLY when you earn more!`
+              )}
             </p>
             <div className="rounded-2xl p-3 bg-emerald-500/15 border border-emerald-400/35 text-[11px] sm:text-xs text-emerald-100 leading-relaxed">
-              <strong className="text-emerald-300">{isFa ? '🤝 هم‌راستایی ۱۰۰٪ منافع با شما: ' : '🤝 100% Profit Alignment: '}</strong>
+              <strong className="text-emerald-300">{isFa ? 'هم‌راستایی ۱۰۰٪ منافع با شما: ' : '100% Profit Alignment: '}</strong>
               {isFa
                 ? 'پلتفرم‌های رقیب از همان روز اول هزینه اشتراک می‌گیرند و اگر ضرر کنید آسیبی نمی‌بینند؛ اما درآمد دلارینو کاملاً وابسته به سود خالص معاملات شماست و بنابراین تمام موتورهای هوش مصنوعی، کپی‌ترید و سپرهای ریسک ما به نفع حداکثرسازی سود شما کار می‌کنند.'
                 : 'Subscription platforms profit even when users lose. Dollarino earns $0 upfront and only takes 3% of verified net live profits — our AI and risk shields are aligned with your success.'}
@@ -363,8 +248,8 @@ export function SubscriptionPage({
           <div className="space-y-1 text-xs">
             <p className="font-black text-sm text-[#DC2626] dark:text-[#FB7185]">
               {isFa
-                ? `🔒 معاملات واقعی تا تسویه $${enf.totalDueUsd.toFixed(2)} قفل شد (بدهی: $${enf.accruedUsd.toFixed(2)} + جریمه دیرکرد: $${enf.penaltyUsd.toFixed(2)})`
-                : `🔒 Live Trading Locked ($${enf.totalDueUsd.toFixed(2)} overdue: $${enf.accruedUsd.toFixed(2)} + $${enf.penaltyUsd.toFixed(2)} late fee)`}
+                ? `معاملات واقعی تا تسویه $${enf.totalDueUsd.toFixed(2)} قفل شد (بدهی: $${enf.accruedUsd.toFixed(2)} + جریمه دیرکرد: $${enf.penaltyUsd.toFixed(2)})`
+                : `Live Trading Locked ($${enf.totalDueUsd.toFixed(2)} overdue: $${enf.accruedUsd.toFixed(2)} + $${enf.penaltyUsd.toFixed(2)} late fee)`}
             </p>
             <p className="text-main leading-relaxed">
               {isFa ? enf.reasonFa : enf.reasonEn}
@@ -464,308 +349,46 @@ export function SubscriptionPage({
         </div>
       </div>
 
-      {/* Central Treasury Direct Deposit Box ($10+ Minimum + Network First + Unique TX Hash) */}
-      <div className="panel rounded-3xl p-5 border border-sky-500/30 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
-              <Wallet className="w-4 h-4 text-[#0D47A1] dark:text-[#60A5FA]" />
-              <span>{isFa ? 'واریز به خزانه مرکزی و شارژ اعتبار دلارینو (حداقل ۱۰ دلار)' : 'Central Treasury Deposit & Credit Top-Up ($10+ Min)'}</span>
-            </h2>
-            <p className="text-[11px] text-dim mt-0.5">
-              {isFa
-                ? 'ابتدا شبکه انتقال را انتخاب کنید تا آدرس دقیق خزانه نمایش داده شود، سپس حداقل $۱۰ واریز و TX Hash منحصربه‌فرد را ثبت نمایید.'
-                : 'Select the deposit network first to view the exact Treasury receiver address, send >= $10, and submit your unique TX Hash.'}
-            </p>
-          </div>
-          <span className="text-[11px] font-black px-3 py-1 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA]">
-            {isFa ? `حداقل واریز: $${ledger?.minTreasuryDepositUsd ?? 10}` : `Min: $${ledger?.minTreasuryDepositUsd ?? 10}`}
-          </span>
-        </div>
-
-        <div className="grid sm:grid-cols-4 gap-2.5 text-xs">
-          <div>
-            <label className="text-[11px] font-bold text-dim block mb-1">{isFa ? '۱. انتخاب شبکه انتقال' : '1. Select Network'}</label>
-            <select
-              value={treasuryNetwork}
-              onChange={(e) => {
-                const net = e.target.value as typeof treasuryNetwork;
-                setTreasuryNetwork(net);
-                const spec = ledger?.treasury?.networks?.find((n) => n.network === net);
-                if (spec?.assets?.length) setTreasuryAsset(spec.assets[0]!);
-              }}
-              className="input-pro w-full rounded-xl px-3 py-2 font-bold"
-            >
-              {(ledger?.treasury?.networks || [
-                { network: 'BEP20', labelFa: 'BSC (BEP20)', labelEn: 'BEP20', assets: ['USDT', 'BNB'] },
-                { network: 'TRC20', labelFa: 'TRON (TRC20)', labelEn: 'TRC20', assets: ['USDT', 'TRX'] },
-                { network: 'ERC20', labelFa: 'Ethereum (ERC20)', labelEn: 'ERC20', assets: ['USDT', 'ETH'] },
-                { network: 'BASE', labelFa: 'Base Network', labelEn: 'BASE', assets: ['USDC', 'ETH'] },
-                { network: 'ARBITRUM', labelFa: 'Arbitrum One', labelEn: 'ARBITRUM', assets: ['USDT', 'ETH'] },
-                { network: 'SOLANA', labelFa: 'Solana', labelEn: 'SOLANA', assets: ['SOL', 'USDT'] },
-                { network: 'TON', labelFa: 'TON Network', labelEn: 'TON', assets: ['TON', 'USDT'] },
-              ]).map((n) => (
-                <option key={n.network} value={n.network}>
-                  {isFa ? n.labelFa : n.labelEn}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[11px] font-bold text-dim block mb-1">{isFa ? '۲. ارز' : '2. Asset'}</label>
-            <select
-              value={treasuryAsset}
-              onChange={(e) => setTreasuryAsset(e.target.value)}
-              className="input-pro w-full rounded-xl px-3 py-2 font-bold"
-            >
-              {(ledger?.treasury?.networks?.find((n) => n.network === treasuryNetwork)?.assets || ['USDT']).map((a) => (
-                <option key={a} value={a}>{a}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[11px] font-bold text-dim block mb-1">{isFa ? '۳. مبلغ (حداقل ۱۰$)' : '3. Amount ($10+)'}</label>
-            <input
-              type="number"
-              min={10}
-              step={1}
-              dir="ltr"
-              value={treasuryAmount}
-              onChange={(e) => setTreasuryAmount(e.target.value)}
-              className="input-pro w-full rounded-xl px-3 py-2 font-mono font-bold"
-            />
-          </div>
-
-          <div>
-            <label className="text-[11px] font-bold text-dim block mb-1">{isFa ? '۴. ثبت نهایی واریز' : '4. Submit Deposit'}</label>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void handleTreasuryDeposit()}
-              className="w-full h-10 px-4 rounded-xl bg-[#059669] hover:bg-[#047857] text-white font-black text-xs inline-flex items-center justify-center gap-1.5 shadow-sm"
-            >
-              <span>{isFa ? '✅ ثبت و بررسی آن‌چین' : '✅ Submit & Verify'}</span>
-            </button>
-          </div>
-        </div>
-
-        {(() => {
-          const selectedSpec = ledger?.treasury?.networks?.find((n) => n.network === treasuryNetwork);
-          return (
-            <div className="space-y-2.5">
-              <div className="rounded-2xl p-3 surface-soft border hairline flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="min-w-0">
-                  <p className="font-bold text-dim">
-                    {isFa ? `آدرس مقصد خزانه روی شبکه ${treasuryNetwork}:` : `Treasury Receiver (${treasuryNetwork}):`}
-                  </p>
-                  <p dir="ltr" className="font-mono text-main break-all font-bold mt-0.5">
-                    {selectedSpec?.address || (isFa ? 'آدرس این شبکه هنوز توسط مدیر ثبت نشده است.' : 'Not configured by admin yet')}
-                  </p>
-                </div>
-                {selectedSpec?.address && (
-                  <button
-                    type="button"
-                    onClick={() => copyText(selectedSpec.address!, 'treasury_addr')}
-                    className="px-3 py-1.5 rounded-xl bg-[#0D47A1] text-white text-[11px] font-black inline-flex items-center gap-1 shrink-0"
-                  >
-                    {copied === 'treasury_addr' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copied === 'treasury_addr' ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی آدرس' : 'Copy Address'}</span>
-                  </button>
-                )}
-              </div>
-              <input
-                dir="auto"
-                value={treasuryTxHash}
-                onChange={(e) => setTreasuryTxHash(e.target.value)}
-                placeholder={isFa ? `کد تراکنش واقعی (TX Hash) واریز روی ${treasuryNetwork} را وارد کنید...` : `Paste unique ${treasuryNetwork} TX Hash...`}
-                className="input-pro w-full rounded-xl px-3 py-2 text-xs font-mono"
-              />
+      {/* Quick shortcut to unified Wallet & Treasury Hub */}
+      {onNavigate && (
+        <div className="panel rounded-3xl p-4 sm:p-5 border border-sky-500/25 bg-gradient-to-br from-[#0D47A1]/8 via-transparent to-emerald-500/8 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-[#0D47A1]/15 text-[#0D47A1] dark:text-[#60A5FA] grid place-items-center shrink-0">
+              <Wallet className="w-5 h-5" />
             </div>
-          );
-        })()}
-
-        {ledger?.treasury?.deposits && ledger.treasury.deposits.length > 0 && (
-          <div className="space-y-1.5 pt-2 border-t hairline text-xs">
-            <p className="font-black text-dim">{isFa ? 'سابقه واریزهای خزانه شما:' : 'Your Treasury Deposits:'}</p>
-            {ledger.treasury.deposits.slice(0, 5).map((d) => (
-              <div key={d.id} className="surface-soft rounded-xl px-3 py-2 flex items-center justify-between gap-2">
-                <span>
-                  <b>${Number(d.amount_usd).toFixed(2)}</b> {d.asset} ({d.network})
-                </span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                  d.status === 'CONFIRMED' ? 'bg-emerald-500/15 text-[#059669]' : d.status === 'REJECTED' ? 'bg-rose-500/15 text-[#DC2626]' : 'bg-amber-500/15 text-[#D97706]'
-                }`}>
-                  {d.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Settle Accrued Fee OR Prepay Credit via Trust Wallet */}
-      <div className="panel rounded-3xl p-5 border hairline space-y-5">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
-            <Wallet className="w-4 h-4 text-[#0D47A1] dark:text-[#60A5FA]" />
-            <span>{isFa ? 'تسویه بدهی یا شارژ اعتبار پیش‌پرداخت کارمزد ۳٪ (Trust Wallet)' : 'Settle 3% Fee Debt or Top-Up Prepaid Credit'}</span>
-          </h2>
-          <span className="text-[11px] font-bold text-dim">
-            {isFa ? `نرخ لحظه‌ای تتر ایران: ${iranRate.toLocaleString('en-US')} تومان` : `Iran Rate: ${iranRate.toLocaleString('en-US')} IRT`}
-          </span>
-        </div>
-
-        {ledger?.receivers?.trust_wallet_evm_receiver || (ledger?.receivers?.usdt_trc20_wallet && !ledger.receivers.usdt_trc20_wallet.includes('YourTRC20WalletAddress')) ? (
-          <div className="grid sm:grid-cols-2 gap-3 text-xs">
-            {ledger?.receivers?.trust_wallet_evm_receiver && (
-              <div className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="font-bold text-dim">BEP20 / EVM Trust Wallet</p>
-                  <p dir="ltr" className="font-mono text-main truncate">{ledger.receivers.trust_wallet_evm_receiver}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copyText(ledger.receivers.trust_wallet_evm_receiver!, 'evm')}
-                  className="px-2.5 py-1 rounded-xl bg-[#0D47A1] text-white text-[10px] font-black shrink-0"
-                >
-                  {copied === 'evm' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            )}
-            {ledger?.receivers?.usdt_trc20_wallet && !ledger.receivers.usdt_trc20_wallet.includes('YourTRC20WalletAddress') && (
-              <div className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="font-bold text-dim">USDT TRC20</p>
-                  <p dir="ltr" className="font-mono text-main truncate">{ledger.receivers.usdt_trc20_wallet}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copyText(ledger.receivers.usdt_trc20_wallet!, 'trc')}
-                  className="px-2.5 py-1 rounded-xl bg-[#0D47A1] text-white text-[10px] font-black shrink-0"
-                >
-                  {copied === 'trc' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="rounded-2xl p-3.5 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-500 font-bold">
-            {isFa
-              ? '⚠️ آدرس ولت دریافت کارمزد (TRC20 / BEP20) هنوز توسط مدیر پلتفرم ثبت نشده است.'
-              : '⚠️ Settlement receiver wallet (TRC20 / BEP20) has not been configured in Admin yet.'}
-          </div>
-        )}
-
-        <div className="grid lg:grid-cols-2 gap-4">
-          {/* Settle Unpaid Debt */}
-          <div className="rounded-2xl p-4 surface-soft border hairline space-y-2.5 flex flex-col justify-between">
-            <p className="text-xs font-black text-main flex items-center gap-1.5">
-              <ShieldAlert className="w-4 h-4 text-[#D97706]" />
-              <span>{isFa ? '۱. تسویه بدهی معوق + باز کردن قفل حساب:' : '1. Settle Accrued Balance & Unlock:'}</span>
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                dir="auto"
-                value={txHash}
-                onChange={(e) => setTxHash(e.target.value)}
-                placeholder={isFa ? 'هش تراکنش واقعی (0x... یا TRC20/SOL)' : 'Real Settlement TX Hash'}
-                className="input-pro flex-1 h-10 rounded-xl px-3 text-xs font-mono"
-              />
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleSettle()}
-                className="h-10 px-4 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-black inline-flex items-center justify-center gap-1.5 shrink-0"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{isFa ? 'ثبت تسویه' : 'Submit TX'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Prepay Fee Credit */}
-          <div className="rounded-2xl p-4 surface-soft border hairline space-y-2.5 flex flex-col justify-between">
-            <p className="text-xs font-black text-main flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-[#059669]" />
-              <span>{isFa ? '۲. شارژ اعتبار پیش‌پرداخت (کسر خودکار ۳٪ بدون توقف):' : '2. Top-Up Prepaid Credit (Never Pauses):'}</span>
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="number"
-                min={1}
-                step={1}
-                dir="ltr"
-                value={prepayAmount}
-                onChange={(e) => setPrepayAmount(e.target.value)}
-                className="input-pro w-20 h-10 rounded-xl px-3 text-xs font-mono font-bold"
-              />
-              <input
-                dir="auto"
-                value={prepayTxHash}
-                onChange={(e) => setPrepayTxHash(e.target.value)}
-                placeholder={isFa ? 'هش تراکنش شارژ اعتبار ($)' : 'Credit Top-up TX Hash'}
-                className="input-pro flex-1 h-10 rounded-xl px-3 text-xs font-mono"
-              />
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handlePrepay()}
-                className="h-10 px-4 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white text-xs font-black shrink-0"
-              >
-                {isFa ? 'شارژ اعتبار' : 'Add Credit'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Ledger Entries */}
-        <div className="space-y-2 pt-2">
-          <p className="text-xs font-black text-main">{isFa ? 'تاریخچه دقیق کارمزد ۳٪ معاملات سودده و اعتبار:' : '3% Profit-Share & Credit Ledger:'}</p>
-          {ledger?.entries && ledger.entries.length > 0 ? (
-            <div className="space-y-2">
-              {ledger.entries.map((item) => (
-                <div key={item.id} className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-3 flex-wrap text-xs">
-                  <div>
-                    <p className="font-black text-main">
-                      {item.symbol} <span className="text-dim font-normal">({item.source})</span>
-                    </p>
-                    <p className="text-[11px] text-dim">{item.note || item.created_at}</p>
-                  </div>
-                  <div className="text-end" dir="ltr">
-                    <p className="font-black text-[#059669] dark:text-[#34D399]">
-                      {item.source === 'PREPAY_CREDIT'
-                        ? `Credit +$${Number(item.fee_usd).toFixed(2)}`
-                        : `Profit +$${Number(item.realized_pnl_usd).toFixed(2)} → ${Number(item.fee_pct || 3)}% Fee: $${Number(item.fee_usd).toFixed(4)}`}
-                    </p>
-                    <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      item.status === 'SETTLED_ONCHAIN' || item.status === 'SETTLED_PREPAID'
-                        ? 'bg-emerald-500/15 text-[#059669]'
-                        : item.status === 'REJECTED'
-                          ? 'bg-rose-500/15 text-[#DC2626]'
-                          : item.status === 'PENDING_VERIFY'
-                            ? 'bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA]'
-                            : 'bg-amber-500/15 text-[#D97706]'
-                    }`}>
-                      {item.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl p-4 surface-soft border hairline text-xs text-dim flex items-center gap-2">
-              <Info className="w-4 h-4 shrink-0" />
-              <span>
+            <div className="min-w-0">
+              <p className="text-xs sm:text-sm font-black text-main">
+                {isFa ? 'مدیریت سرمایه ۱۰۰٪ داخل Trust Wallet شخصی + تسویه ۳٪ کارمزد!' : '100% Personal Trust Wallet Capital + 3% Fee Hub!'}
+              </p>
+              <p className="text-[11px] text-dim mt-0.5">
                 {isFa
-                  ? 'هنوز کارمزد ۳٪ معوقی ثبت نشده است (۳ معامله سودده اول و تمام ابزارهای تحلیل و کیف‌پول دمو رایگان هستند).'
-                  : 'No accrued 3% server fees yet—your first 3 profitable live trades, demo wallet, and analytics tools are 100% free.'}
-              </span>
+                  ? 'سرمایه معاملاتی شما اصلاً به سایت واریز نمی‌شود و تماماً داخل Trust Wallet خودتان باقی می‌ماند. از صفحه Trust Wallet برای تنظیم سقف سرمایه و دیدن آدرس‌ها استفاده کنید یا از همین پایین کارمزد ۳٪ سود را تسویه نمایید.'
+                  : 'Your trading capital stays 100% inside your own Trust Wallet. Open Trust Wallet Hub to manage addresses & wallet cap, or settle 3% profit fees below.'}
+              </p>
             </div>
-          )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('dex')}
+            className="px-4 py-2.5 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white text-xs font-black inline-flex items-center gap-1.5 shrink-0"
+          >
+            <span>{isFa ? 'مدیریت Trust Wallet و سرمایه' : 'Open Trust Wallet Hub'}</span>
+            {isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* Unified Trust Wallet Banking, Fee Settlement, Prepaid Top-Up & Formal Invoices */}
+      <TreasuryBankingHub
+        lang={lang}
+        mode="fees"
+        defaultCategory={enf && enf.totalDueUsd > 0 ? 'FEE_SETTLEMENT' : 'CREDIT_TOPUP'}
+        defaultAmountUsd={enf && enf.totalDueUsd > 0 ? enf.totalDueUsd : undefined}
+        onAfterSuccess={async () => {
+          await loadAll();
+          await onRefreshDashboard();
+        }}
+      />
 
       {/* Referral Banner, Invite Kit & Anti-Fraud Prepaid Fee Credit Hub */}
       <div className="panel rounded-3xl p-5 sm:p-6 border hairline space-y-5">
@@ -818,7 +441,15 @@ export function SubscriptionPage({
             <div dir={isFa ? 'rtl' : 'ltr'} className="max-w-md text-start space-y-2 text-white">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-black">
                 <Sparkles className="w-3 h-3" />
-                <span>{isFa ? 'بدون اشتراک ماهانه · شبیه‌ساز دمو قابل تنظیم ($50–$10M)' : '$0 Monthly Sub · Free Custom Demo ($50–$10M)'}</span>
+                <span>
+                  {isFa ? (
+                    <>
+                      بدون اشتراک ماهانه · شبیه‌ساز دمو قابل تنظیم (<span dir="ltr" className="inline-block">$50–$10M</span>)
+                    </>
+                  ) : (
+                    '$0 Monthly Sub · Free Custom Demo ($50–$10M)'
+                  )}
+                </span>
               </span>
               <h3 className="font-display font-black text-base sm:text-xl leading-snug text-white">
                 {isFa
@@ -872,7 +503,7 @@ export function SubscriptionPage({
                       ctx.fillStyle = '#34D399';
                       ctx.font = 'bold 26px sans-serif';
                       ctx.textAlign = 'right';
-                      ctx.fillText('DOLLARINO V11.5 · AI + TRUST WALLET', 1135, 95);
+                      ctx.fillText('DOLLARINO V11.6 · AI + TRUST WALLET', 1135, 95);
 
                       ctx.fillStyle = '#FFFFFF';
                       ctx.font = 'bold 46px sans-serif';
@@ -1029,7 +660,7 @@ export function SubscriptionPage({
                             <span className="font-bold text-main">{fr.username}</span>
                             <span className="block text-[10px] text-dim">
                               {isFa
-                                ? `موجودی ≥۱۰$: ${fr.friendHasMinBalance ? 'بله ✅' : 'خیر'} · ترید واقعی: ${fr.friendLiveTradesCount ?? 0}`
+                                ? `موجودی ≥۱۰$: ${fr.friendHasMinBalance ? 'بله' : 'خیر'} · ترید واقعی: ${fr.friendLiveTradesCount ?? 0}`
                                 : `Bal ≥$10: ${fr.friendHasMinBalance ? 'Yes' : 'No'} · Live Trades: ${fr.friendLiveTradesCount ?? 0}`}
                             </span>
                           </div>

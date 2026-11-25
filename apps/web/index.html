@@ -70,9 +70,285 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Vazirmatn:wght@400;500;600;700;800;900&display=swap"
       rel="stylesheet"
     />
+    <style>
+      #dl-boot-splash {
+        position: relative;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        overflow: hidden;
+        font-family: 'Vazirmatn', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+        background: linear-gradient(180deg, #0b1220 0%, #0d1628 100%);
+        color: #f8fafc;
+        user-select: none;
+      }
+      html.theme-light #dl-boot-splash {
+        background: linear-gradient(180deg, #f4f7fd 0%, #eaeff8 100%);
+        color: #0f172a;
+      }
+      .dl-boot-glow-top {
+        position: absolute;
+        top: -110px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 560px;
+        height: 360px;
+        border-radius: 9999px;
+        filter: blur(110px);
+        opacity: 0.30;
+        pointer-events: none;
+        background: radial-gradient(circle, #1652f0 0%, rgba(14, 165, 233, 0.45) 55%, transparent 80%);
+      }
+      .dl-boot-card {
+        position: relative;
+        z-index: 2;
+        width: 100%;
+        max-width: 420px;
+        border-radius: 32px;
+        padding: 28px 24px;
+        text-align: center;
+        background: rgba(17, 27, 51, 0.88);
+        border: 1px solid rgba(56, 189, 248, 0.30);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(22px);
+      }
+      html.theme-light .dl-boot-card {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(22, 82, 240, 0.24);
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+      }
+      .dl-boot-emblem {
+        position: relative;
+        width: 124px;
+        height: 124px;
+        margin: 0 auto 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .dl-boot-ring-1 {
+        position: absolute;
+        inset: 0;
+        border-radius: 9999px;
+        border: 1px dashed rgba(56, 189, 248, 0.42);
+        animation: dlBootSpin 9s linear infinite;
+      }
+      .dl-boot-ring-1::after {
+        content: '';
+        position: absolute;
+        top: -4px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 9px;
+        height: 9px;
+        border-radius: 9999px;
+        background: #38bdf8;
+        box-shadow: 0 0 10px #38bdf8;
+      }
+      .dl-boot-ring-2 {
+        position: absolute;
+        inset: 12px;
+        border-radius: 9999px;
+        border: 1px solid rgba(22, 82, 240, 0.42);
+        animation: dlBootSpinRev 5.5s linear infinite;
+      }
+      .dl-boot-ring-2::after {
+        content: '';
+        position: absolute;
+        bottom: -4px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 8px;
+        height: 8px;
+        border-radius: 9999px;
+        background: #10d856;
+        box-shadow: 0 0 10px #10d856;
+      }
+      .dl-boot-logo-box {
+        position: relative;
+        width: 80px;
+        height: 80px;
+        border-radius: 24px;
+        background: linear-gradient(135deg, rgba(22, 82, 240, 0.18), rgba(14, 165, 233, 0.12));
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 14px 32px rgba(22, 82, 240, 0.22);
+        animation: dlBootFloat 3.4s ease-in-out infinite;
+      }
+      .dl-boot-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 9999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        color: #60a5fa;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        margin-bottom: 8px;
+      }
+      html.theme-light .dl-boot-badge {
+        color: #1652f0;
+        background: rgba(22, 82, 240, 0.08);
+        border-color: rgba(22, 82, 240, 0.2);
+      }
+      .dl-boot-title {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 900;
+        line-height: 1.2;
+      }
+      .dl-boot-sub {
+        margin: 6px auto 22px;
+        max-width: 280px;
+        font-size: 12px;
+        line-height: 1.7;
+        color: #9eb0cc;
+      }
+      html.theme-light .dl-boot-sub {
+        color: #475569;
+      }
+      .dl-boot-progress-box {
+        border-radius: 18px;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.055);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        text-align: start;
+      }
+      html.theme-light .dl-boot-progress-box {
+        background: rgba(15, 23, 42, 0.04);
+        border-color: rgba(30, 58, 138, 0.14);
+      }
+      .dl-boot-progress-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .dl-boot-status {
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .dl-boot-pct {
+        font-family: 'Space Grotesk', monospace;
+        font-size: 14px;
+        font-weight: 800;
+        color: #60a5fa;
+        font-variant-numeric: tabular-nums;
+      }
+      html.theme-light .dl-boot-pct {
+        color: #1652f0;
+      }
+      .dl-boot-track {
+        direction: ltr;
+        height: 10px;
+        width: 100%;
+        border-radius: 9999px;
+        background: rgba(15, 23, 42, 0.55);
+        overflow: hidden;
+      }
+      html.theme-light .dl-boot-track {
+        background: rgba(148, 163, 184, 0.35);
+      }
+      .dl-boot-fill {
+        position: relative;
+        height: 100%;
+        width: 18%;
+        border-radius: 9999px;
+        background: linear-gradient(90deg, #1652f0 0%, #0ea5e9 55%, #10d856 100%);
+        transition: width 140ms ease-out;
+        overflow: hidden;
+      }
+      .dl-boot-fill::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        width: 50%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+        animation: dlBootShine 1.8s ease-in-out infinite;
+      }
+      @keyframes dlBootSpin { to { transform: rotate(360deg); } }
+      @keyframes dlBootSpinRev { to { transform: rotate(-360deg); } }
+      @keyframes dlBootFloat {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-6px); }
+      }
+      @keyframes dlBootShine {
+        0% { transform: translateX(-120%); }
+        100% { transform: translateX(300%); }
+      }
+    </style>
   </head>
   <body class="antialiased">
-    <div id="root"></div>
+    <div id="root">
+      <div id="dl-boot-splash" aria-busy="true">
+        <div class="dl-boot-glow-top"></div>
+        <div class="dl-boot-card">
+          <div class="dl-boot-emblem">
+            <div class="dl-boot-ring-1"></div>
+            <div class="dl-boot-ring-2"></div>
+            <div class="dl-boot-logo-box">
+              <img src="/logo.png" alt="Dollarino" width="54" height="54" style="object-fit:contain" />
+            </div>
+          </div>
+          <div class="dl-boot-badge">
+            <span style="width:6px;height:6px;border-radius:9999px;background:#10d856;display:inline-block"></span>
+            <bdi dir="ltr">DOLLARINO AI · V11.6</bdi>
+          </div>
+          <h1 class="dl-boot-title">دلارینو</h1>
+          <p class="dl-boot-sub">دستیار ترید هوشمند ۲۴/۷، کپی‌ترید ولت‌ها و کیف‌پول چندزنجیره‌ای DEX</p>
+          <div class="dl-boot-progress-box">
+            <div class="dl-boot-progress-head">
+              <span class="dl-boot-status" id="dl-boot-status">در حال راه‌اندازی هسته اپلیکیشن...</span>
+              <span class="dl-boot-pct" dir="ltr" id="dl-boot-pct">18%</span>
+            </div>
+            <div class="dl-boot-track">
+              <div class="dl-boot-fill" id="dl-boot-fill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var isEn = false;
+        try { isEn = localStorage.getItem('dollarino_lang') === 'en'; } catch (e) {}
+        if (isEn) {
+          var sp = document.getElementById('dl-boot-splash');
+          if (sp) sp.setAttribute('dir', 'ltr');
+          var t = document.querySelector('.dl-boot-title');
+          var s = document.querySelector('.dl-boot-sub');
+          var st = document.getElementById('dl-boot-status');
+          if (t) t.textContent = 'Dollarino';
+          if (s) s.textContent = '24/7 AI Quant Trading, Smart Wallet Copy & Multi-Chain Trust DEX';
+          if (st) st.textContent = 'Initializing core modules & interface...';
+        }
+        var p = 18;
+        window.__dollarinoBootPct = p;
+        window.__dollarinoBootTimer = window.setInterval(function () {
+          var pctEl = document.getElementById('dl-boot-pct');
+          var fillEl = document.getElementById('dl-boot-fill');
+          if (!pctEl || !fillEl) {
+            window.clearInterval(window.__dollarinoBootTimer);
+            window.__dollarinoBootTimer = undefined;
+            return;
+          }
+          if (p < 48) {
+            p = Math.min(48, p + Math.max(0.6, (48 - p) * 0.14));
+            window.__dollarinoBootPct = p;
+            var r = Math.round(p);
+            pctEl.textContent = r + '%';
+            fillEl.style.width = r + '%';
+          }
+        }, 75);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

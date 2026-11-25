@@ -2,20 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Bell,
   CheckCircle2,
+  ExternalLink,
   Flame,
   Radar,
   Rocket,
   Save,
   ShieldCheck,
   Sparkles,
+  XCircle,
   Zap,
 } from 'lucide-react';
 import { ApiError, apiFetch } from '../lib/api';
 import { formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
+import { buildTrustWalletDappOpenUrl } from '../lib/trustwallet';
 import type { SniperCandidate, SniperSettings, SniperTargetType } from '../lib/types';
+import { SmoothSlider } from './SmoothSlider';
 
 interface SniperWorkbenchProps {
   lang: Lang;
@@ -59,6 +64,7 @@ interface SniperRecentRow {
   symbol?: string;
   chain_id?: string;
   chain?: string;
+  token_address?: string;
   status: string;
   amount_usd: string | number;
   entry_price_usd?: string | number;
@@ -66,6 +72,19 @@ interface SniperRecentRow {
   realized_pnl_usd?: string | number;
   pnl_usd?: string | number;
   opened_at: string;
+}
+
+function buildQuickSwapDappLink(chainId?: string, tokenAddress?: string): string {
+  const ch = (chainId || 'solana').toLowerCase();
+  const addr = encodeURIComponent(tokenAddress || '');
+  let dexUrl = `https://dexscreener.com/${encodeURIComponent(ch)}/${addr}`;
+  if (ch === 'solana' && addr) dexUrl = `https://jup.ag/swap/SOL-${addr}`;
+  else if (ch === 'bsc' && addr) dexUrl = `https://pancakeswap.finance/swap?outputCurrency=${addr}`;
+  else if ((ch === 'eth' || ch === 'ethereum') && addr) dexUrl = `https://app.uniswap.org/swap?outputCurrency=${addr}`;
+  else if (ch === 'base' && addr) dexUrl = `https://app.uniswap.org/swap?chain=base&outputCurrency=${addr}`;
+  else if (ch === 'arbitrum' && addr) dexUrl = `https://app.uniswap.org/swap?chain=arbitrum&outputCurrency=${addr}`;
+  else if (ch === 'ton' && addr) dexUrl = `https://app.ston.fi/swap?ft=TON&tt=${addr}`;
+  return buildTrustWalletDappOpenUrl(dexUrl);
 }
 
 export function SniperWorkbench({
@@ -87,7 +106,58 @@ export function SniperWorkbench({
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [buyingAddr, setBuyingAddr] = useState<string | null>(null);
+  const [confirmingTradeId, setConfirmingTradeId] = useState<string | null>(null);
+  const [confirmTxHash, setConfirmTxHash] = useState('');
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(uiMode === 'pro');
+
+  const handleConfirmPendingSnipe = async (tradeId: string) => {
+    setActionBusyId(tradeId);
+    try {
+      await apiFetch(`/api/trustwallet/dex-trades/${encodeURIComponent(tradeId)}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ txHash: confirmTxHash.trim() || undefined }),
+      });
+      setConfirmingTradeId(null);
+      setConfirmTxHash('');
+      pushFloatingToast(
+        isFa ? 'شکار تایید و به پوزیشن‌های فعال منتقل شد!' : 'Sniper trade confirmed & active!',
+        'success'
+      );
+      await loadSniperState();
+      await onRefreshDashboard();
+    } catch (err) {
+      pushFloatingToast(err instanceof Error ? err.message : 'Confirm failed', 'error');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleCancelOrCloseSnipe = async (tradeId: string, isPending: boolean) => {
+    setActionBusyId(tradeId);
+    try {
+      await apiFetch(`/api/trustwallet/dex-trades/${encodeURIComponent(tradeId)}/close`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      pushFloatingToast(
+        isPending
+          ? isFa
+            ? 'سفارش در انتظار امضا لغو شد'
+            : 'Pending order cancelled'
+          : isFa
+            ? 'پوزیشن اسنایپر بسته شد'
+            : 'Sniper position closed',
+        'info'
+      );
+      await loadSniperState();
+      await onRefreshDashboard();
+    } catch (err) {
+      pushFloatingToast(err instanceof Error ? err.message : 'Action failed', 'error');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
 
   useEffect(() => {
     if (uiMode === 'pro') setShowAdvancedFilters(true);
@@ -134,7 +204,7 @@ export function SniperWorkbench({
       });
       if (res.settings) setSettings(res.settings);
       pushFloatingToast(
-        isFa ? 'تنظیمات شکارچی ارزهای جدید و میم‌کوین با موفقیت ذخیره شد ✅' : 'Listing & Meme Sniper settings saved ✅',
+        isFa ? 'تنظیمات شکارچی ارزهای جدید و میم‌کوین با موفقیت ذخیره شد' : 'Listing & Meme Sniper settings saved',
         'success'
       );
       await Promise.all([loadSniperState(), onRefreshDashboard()]);
@@ -164,15 +234,15 @@ export function SniperWorkbench({
       if (executeTrades && (res.boughtCount ?? 0) > 0) {
         pushFloatingToast(
           isFa
-            ? `🚀 اسکن انجام شد: ${res.boughtCount} شکار جدید با موفقیت خریداری شد!`
-            : `🚀 Scan complete: ${res.boughtCount} token(s) sniped!`,
+            ? `اسکن انجام شد: ${res.boughtCount} شکار جدید با موفقیت خریداری شد!`
+            : `Scan complete: ${res.boughtCount} token(s) sniped!`,
           'success'
         );
       } else {
         pushFloatingToast(
           isFa
-            ? `🔍 اسکن زنده تکمیل شد (${res.candidates?.length ?? res.scannedCount ?? 0} فرصت منطبق با فیلتر شما پیدا شد)`
-            : `🔍 Live scan complete (${res.candidates?.length ?? res.scannedCount ?? 0} candidates matched)`,
+            ? `اسکن زنده تکمیل شد (${res.candidates?.length ?? res.scannedCount ?? 0} فرصت منطبق با فیلتر شما پیدا شد)`
+            : `Live scan complete (${res.candidates?.length ?? res.scannedCount ?? 0} candidates matched)`,
           'info'
         );
       }
@@ -198,8 +268,8 @@ export function SniperWorkbench({
       if (res.ok) {
         pushFloatingToast(
           isFa
-            ? `⚡ شکار ${cand.symbol} با مبلغ $${settings.budgetUsd} در حالت ${tradingMode === 'LIVE' ? 'واقعی' : 'دمو'} اجرا شد!`
-            : `⚡ Sniped ${cand.symbol} ($${settings.budgetUsd})!`,
+            ? `شکار ${cand.symbol} با مبلغ $${settings.budgetUsd} در حالت ${tradingMode === 'LIVE' ? 'واقعی' : 'دمو'} اجرا شد!`
+            : `Sniped ${cand.symbol} ($${settings.budgetUsd})!`,
           'success'
         );
         await Promise.all([loadSniperState(), onRefreshDashboard()]);
@@ -223,12 +293,8 @@ export function SniperWorkbench({
       {/* Header with 3D Rocket Asset */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b hairline pb-4">
         <div className="flex items-center gap-3.5 min-w-0">
-          <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-amber-500/20 via-orange-500/15 to-rose-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/10">
-            <img
-              src="/images/transparent/sniper-rocket-3d.png"
-              alt="Listing & Meme Sniper"
-              className="w-12 h-12 sm:w-14 sm:h-14 object-contain drop-shadow-[0_8px_14px_rgba(245,158,11,0.35)]"
-            />
+          <div className="w-11 h-11 rounded-2xl bg-amber-500/12 text-amber-500 flex items-center justify-center shrink-0">
+            <Rocket className="w-6 h-6" />
           </div>
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -328,24 +394,26 @@ export function SniperWorkbench({
             <button
               type="button"
               onClick={() => setSettings((s) => ({ ...s, autoExecute: true }))}
-              className={`px-3 py-2 rounded-xl text-[11px] font-bold border transition text-center ${
+              className={`px-3 py-2 rounded-xl text-[11px] font-bold border transition text-center inline-flex items-center justify-center gap-1.5 ${
                 settings.autoExecute
                   ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-500'
                   : 'border-transparent surface-soft text-dim hover:text-main'
               }`}
             >
-              {isFa ? '⚡ خرید خودکار طبق فیلترها' : '⚡ Auto Snipe'}
+              <Zap className="w-3.5 h-3.5" />
+              <span>{isFa ? 'خرید خودکار طبق فیلترها' : 'Auto Snipe'}</span>
             </button>
             <button
               type="button"
               onClick={() => setSettings((s) => ({ ...s, autoExecute: false }))}
-              className={`px-3 py-2 rounded-xl text-[11px] font-bold border transition text-center ${
+              className={`px-3 py-2 rounded-xl text-[11px] font-bold border transition text-center inline-flex items-center justify-center gap-1.5 ${
                 !settings.autoExecute
                   ? 'border-sky-500/50 bg-sky-500/15 text-sky-400'
                   : 'border-transparent surface-soft text-dim hover:text-main'
               }`}
             >
-              {isFa ? '🔔 فقط هشدار و خرید با تایید من' : '🔔 Alert & Manual Buy'}
+              <Bell className="w-3.5 h-3.5" />
+              <span>{isFa ? 'فقط هشدار و خرید با تایید من' : 'Alert & Manual Buy'}</span>
             </button>
           </div>
         </div>
@@ -396,22 +464,30 @@ export function SniperWorkbench({
           />
         </label>
 
-        <label className="panel rounded-2xl p-3 space-y-1.5 border hairline block">
-          <div className="flex items-center justify-between text-xs font-bold text-dim">
+        <div className="panel rounded-2xl p-3 space-y-2 border hairline flex flex-col justify-between min-w-0">
+          <div className="flex items-center justify-between text-xs font-bold text-dim gap-2">
             <span>{isFa ? 'حداقل امتیاز ایمنی' : 'Min Safety Score'}</span>
-            <span dir="ltr" className="text-amber-500 font-num">
+            <span dir="ltr" className="text-amber-500 font-num font-black px-2 py-0.5 rounded-lg bg-amber-500/12">
               {settings.minSafetyScore}/100
             </span>
           </div>
-          <input
-            type="range"
-            min={40}
-            max={98}
-            value={settings.minSafetyScore}
-            onChange={(e) => setSettings((s) => ({ ...s, minSafetyScore: Number(e.target.value) }))}
-            className="w-full accent-amber-500"
-          />
-        </label>
+          <div className="w-full pt-1">
+            <SmoothSlider
+              min={40}
+              max={98}
+              value={settings.minSafetyScore}
+              accent="amber"
+              dir="ltr"
+              ariaLabel={isFa ? 'حداقل امتیاز ایمنی' : 'Min Safety Score'}
+              onChange={(val) => setSettings((s) => ({ ...s, minSafetyScore: val }))}
+            />
+            <div dir="ltr" className="flex items-center justify-between text-[10px] text-dim font-num mt-0.5">
+              <span>40</span>
+              <span>70</span>
+              <span>98</span>
+            </div>
+          </div>
+        </div>
 
         <label className="panel rounded-2xl p-3 space-y-1.5 border hairline block">
           <span className="text-xs font-bold text-dim block">{isFa ? 'حد سود هدف (%)' : 'Take Profit (%)'}</span>
@@ -649,26 +725,129 @@ export function SniperWorkbench({
 
       {/* Recent Snipes Summary */}
       {recentSnipes.length > 0 && (
-        <div className="space-y-2 pt-2 border-t hairline">
+        <div className="space-y-2.5 pt-3 border-t hairline">
           <p className="text-xs font-bold text-dim flex items-center gap-1.5">
             <Activity className="w-3.5 h-3.5 text-jade" />
-            <span>{isFa ? 'آخرین شکارهای ثبت‌شده' : 'Recent Sniper Trades'}</span>
+            <span>{isFa ? 'آخرین شکارهای ثبت‌شده و در انتظار امضا' : 'Recent Sniper Trades'}</span>
           </p>
-          <div className="flex flex-wrap gap-2">
-            {recentSnipes.slice(0, 5).map((r) => {
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {recentSnipes.slice(0, 6).map((r) => {
               const sym = r.token_symbol || r.symbol || 'TOKEN';
               const ch = r.chain_id || r.chain || 'dex';
               const pnl = Number(r.realized_pnl_usd ?? r.pnl_usd ?? 0);
+              const isPending = r.status === 'PENDING_SIGN';
+              const isOpen = r.status === 'OPEN';
+              const isCancelled = r.status === 'CANCELLED';
+              const statusLabel = isPending
+                ? isFa
+                  ? 'در انتظار امضای کیف‌پول'
+                  : 'Pending Wallet Sign'
+                : isOpen
+                  ? isFa
+                    ? 'فعال (تحت رصد)'
+                    : 'Open'
+                  : isCancelled
+                    ? isFa
+                      ? 'لغو شده'
+                      : 'Cancelled'
+                    : isFa
+                      ? `بسته‌شده (${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)})`
+                      : `Closed (${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)})`;
+              const statusClass = isPending
+                ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
+                : isOpen
+                  ? 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                  : isCancelled
+                    ? 'surface-soft text-dim border-white/10'
+                    : pnl >= 0
+                      ? 'bg-emerald-500/15 text-jade border-emerald-500/30'
+                      : 'bg-rose-500/15 text-loss border-rose-500/30';
+
               return (
-                <div key={r.id} className="panel rounded-xl px-3 py-1.5 text-[11px] flex items-center gap-2 border hairline">
-                  <span className="font-bold text-main">{sym}</span>
-                  <span className="text-dim uppercase">{ch}</span>
-                  <span dir="ltr" className="font-num text-main">
-                    ${Number(r.amount_usd).toFixed(0)}
-                  </span>
-                  <span className={`font-bold ${r.status === 'OPEN' ? 'text-amber-500' : pnl >= 0 ? 'text-jade' : 'text-loss'}`}>
-                    {r.status}
-                  </span>
+                <div key={r.id} className="panel rounded-2xl p-3 text-xs border hairline space-y-2 min-w-0">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-black text-main truncate">{sym}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/15 dark:bg-white/10 text-dim uppercase font-bold">
+                        {ch}
+                      </span>
+                      <span dir="ltr" className="font-num font-bold text-main">
+                        ${Number(r.amount_usd).toFixed(0)}
+                      </span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${statusClass}`}>
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  {isPending && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {r.token_address && (
+                          <a
+                            href={buildQuickSwapDappLink(ch, r.token_address)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-jade border border-emerald-500/30 text-[10px] font-black inline-flex items-center gap-1 hover:bg-emerald-500/25"
+                          >
+                            <span>{isFa ? 'باز کردن در Trust Wallet' : 'Open in Trust Wallet'}</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingTradeId((cur) => (cur === r.id ? null : r.id))}
+                          className="px-2.5 py-1 rounded-xl btn-emerald text-[10px] font-black inline-flex items-center gap-1"
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>{isFa ? 'تایید و ثبت امضا' : 'Confirm Signed'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={actionBusyId === r.id}
+                          onClick={() => void handleCancelOrCloseSnipe(r.id, true)}
+                          className="px-2.5 py-1 rounded-xl bg-rose-500/12 text-loss border border-rose-500/25 text-[10px] font-bold inline-flex items-center gap-1"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          <span>{actionBusyId === r.id ? '...' : isFa ? 'لغو' : 'Cancel'}</span>
+                        </button>
+                      </div>
+
+                      {confirmingTradeId === r.id && (
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <input
+                            type="text"
+                            dir="ltr"
+                            value={confirmTxHash}
+                            onChange={(e) => setConfirmTxHash(e.target.value)}
+                            placeholder={isFa ? 'هش تراکنش (TX Hash اختیاری)' : 'Optional TX hash'}
+                            className="field text-[11px] font-mono-num flex-1 py-1.5"
+                          />
+                          <button
+                            type="button"
+                            disabled={actionBusyId === r.id}
+                            onClick={() => void handleConfirmPendingSnipe(r.id)}
+                            className="btn-gold px-3 py-1.5 rounded-xl text-[10px] font-black shrink-0"
+                          >
+                            {actionBusyId === r.id ? '...' : isFa ? 'ثبت نهایی' : 'Confirm'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isOpen && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        disabled={actionBusyId === r.id}
+                        onClick={() => void handleCancelOrCloseSnipe(r.id, false)}
+                        className="px-2.5 py-1 rounded-xl bg-rose-500/12 text-loss border border-rose-500/25 text-[10px] font-black"
+                      >
+                        {actionBusyId === r.id ? '...' : isFa ? 'بستن و خروج' : 'Close Position'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}

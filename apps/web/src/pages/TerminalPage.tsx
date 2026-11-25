@@ -44,6 +44,7 @@ import {
   type KbosChartOverlays,
 } from '../components/CandlestickChart';
 import { CoinIcon } from '../components/CoinIcon';
+import { SmoothSlider } from '../components/SmoothSlider';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { apiFetch } from '../lib/api';
@@ -779,9 +780,13 @@ export function TerminalPage({
             </span>
           </div>
           <p className="text-[10.5px] text-dim text-center">
-            {isFa
-              ? 'نکته: این پایانه روی شبیه‌ساز دمو قابل تنظیم ($50–$10M) یا مسیر Perp DEX تراست‌ولت اجرا می‌شود. برای سوآپ توکن‌ها و فیوچرز آنچین بدون KYC به تب «DEX و تراست‌ولت» بروید.'
-              : 'Tip: Executes on Custom Demo ($50–$10M) or Trust Wallet Perp DEX. For multi-chain DEX swaps & No-KYC perps, visit DEX & Trust Wallet.'}
+            {isFa ? (
+              <>
+                نکته: این پایانه روی شبیه‌ساز دمو قابل تنظیم (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>) یا مسیر Perp DEX تراست‌ولت اجرا می‌شود. برای سوآپ توکن‌ها و فیوچرز آنچین بدون KYC به تب «DEX و تراست‌ولت» بروید.
+              </>
+            ) : (
+              'Tip: Executes on Custom Demo ($50–$10M) or Trust Wallet Perp DEX. For multi-chain DEX swaps & No-KYC perps, visit DEX & Trust Wallet.'
+            )}
           </p>
         </div>
 
@@ -1162,15 +1167,7 @@ export function TerminalPage({
                   <span className="text-dim">{isFa ? 'اهرم معاملاتی' : 'Leverage'}</span>
                   <span dir="ltr" className="font-num font-bold" style={{ color: 'var(--gold)' }}>{lev}×</span>
                 </div>
-                <input
-                  type="range"
-                  min={1}
-                  max={50}
-                  value={lev}
-                  onChange={(e) => setLev(Number(e.target.value))}
-                  className="w-full"
-                  style={{ ['--fill' as string]: `${((lev - 1) / 49) * 100}%` }}
-                />
+                <SmoothSlider min={1} max={50} value={lev} onChange={setLev} dir="ltr" />
               </div>
             )}
 

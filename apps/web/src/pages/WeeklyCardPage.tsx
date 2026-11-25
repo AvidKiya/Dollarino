@@ -475,16 +475,16 @@ export function WeeklyCardPage({
             </div>
           )}
 
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="space-y-4">
             <div>
               <label className="text-[10px] font-black text-dim uppercase block mb-2">
                 {isFa ? '۳. قالب خروجی کارت' : '3. CARD LAYOUT'}
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
                   onClick={() => setLayout('horizontal')}
-                  className={`py-2 px-2.5 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 border ${
+                  className={`py-2.5 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 border ${
                     layout === 'horizontal' ? 'border-[#1652f0] bg-[#1652f0]/15 text-main' : 'surface-soft text-dim'
                   }`}
                 >
@@ -494,7 +494,7 @@ export function WeeklyCardPage({
                 <button
                   type="button"
                   onClick={() => setLayout('vertical')}
-                  className={`py-2 px-2.5 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 border ${
+                  className={`py-2.5 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5 border ${
                     layout === 'vertical' ? 'border-[#1652f0] bg-[#1652f0]/15 text-main' : 'surface-soft text-dim'
                   }`}
                 >
@@ -505,19 +505,22 @@ export function WeeklyCardPage({
             </div>
 
             <div>
-              <label className="text-[10px] font-black text-dim uppercase block mb-2">{isFa ? '۴. تم رنگی' : '4. THEME'}</label>
-              <div className="flex items-center gap-2.5">
+              <label className="text-[10px] font-black text-dim uppercase block mb-2">{isFa ? '۴. تم رنگی کارت' : '4. CARD THEME'}</label>
+              <div className="flex flex-wrap items-center gap-3">
                 {THEMES.map((th) => (
                   <button
                     key={th.id}
                     type="button"
                     onClick={() => setCardStyle(th.id)}
                     title={isFa ? th.labelFa : th.labelEn}
-                    className={`h-9 w-9 rounded-full transition ${
-                      cardStyle === th.id ? 'ring-2 ring-[var(--gold)] ring-offset-2 ring-offset-[var(--bg)] scale-110' : 'opacity-75 hover:opacity-100'
+                    className={`h-9 px-3 rounded-xl text-[11px] font-bold inline-flex items-center gap-2 transition ${
+                      cardStyle === th.id ? 'ring-2 ring-[var(--gold)] ring-offset-2 ring-offset-[var(--bg)] text-white' : 'opacity-80 hover:opacity-100 text-white/90'
                     }`}
                     style={{ background: `linear-gradient(135deg,${th.from},${th.to})`, border: `1px solid ${th.accent}77` }}
-                  />
+                  >
+                    <span className="w-3 h-3 rounded-full" style={{ background: th.accent }} />
+                    <span>{isFa ? th.labelFa : th.labelEn}</span>
+                  </button>
                 ))}
               </div>
             </div>

@@ -4,14 +4,17 @@ import {
   ArrowRight,
   Bot,
   CheckCircle2,
+  Hand,
   KeyRound,
   Wallet,
   X,
+  Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
 import { DollarinoBrandMark } from './BrandGraphics';
+import { SmoothSlider } from './SmoothSlider';
 import { TrustWalletConnectInline } from './TrustWalletConnectInline';
 
 export function SetupWizardModal({
@@ -166,8 +169,8 @@ export function SetupWizardModal({
 
       pushFloatingToast(
         isFa
-          ? 'تنظیمات ربات با موفقیت ذخیره شد ✅ هر زمان آماده بودید از صفحه اصلی ربات را روشن کنید.'
-          : 'Bot settings saved ✅ Start the bot manually from Home when ready.',
+          ? 'تنظیمات ربات با موفقیت ذخیره شد؛ هر زمان آماده بودید از صفحه اصلی ربات را روشن کنید.'
+          : 'Bot settings saved. Start the bot manually from Home when ready.',
         'success'
       );
       await onCompleted();
@@ -277,15 +280,13 @@ export function SetupWizardModal({
                         ${allocatedAmount.toLocaleString()} ({marginPct}%)
                       </span>
                     </div>
-                    <input
-                      type="range"
+                    <SmoothSlider
                       min={minAmt}
                       max={maxAmt}
                       step={Math.max(10, Math.round(safeAvail * 0.02))}
                       value={clampedVal}
-                      onChange={(e) => setAllocatedAmount(Number(e.target.value))}
-                      className="w-full"
-                      style={{ ['--fill' as string]: `${sliderFill}%` }}
+                      onChange={setAllocatedAmount}
+                      dir="ltr"
                     />
                     <div className="flex gap-2">
                       {[0.1, 0.25, 0.5, 1].map((p) => (
@@ -376,7 +377,10 @@ export function SetupWizardModal({
                       execMode === 'AUTO' ? 'border-emerald-400 bg-emerald-500/15 text-main' : 'surface-soft text-dim'
                     }`}
                   >
-                    <p className="font-black">{isFa ? '⚡ تمام‌اتوترید ۲۴/۷' : '⚡ Full 24/7 Auto'}</p>
+                    <p className="font-black inline-flex items-center gap-1">
+                      <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{isFa ? 'تمام‌اتوترید ۲۴/۷' : 'Full 24/7 Auto'}</span>
+                    </p>
                     <p className="text-[10px] opacity-80">{isFa ? 'بدون نیاز به تایید دستی' : 'Zero manual confirmation'}</p>
                   </button>
                   <button
@@ -386,7 +390,10 @@ export function SetupWizardModal({
                       execMode === 'MANUAL_CONFIRM' ? 'border-amber-400 bg-amber-500/15 text-main' : 'surface-soft text-dim'
                     }`}
                   >
-                    <p className="font-black">{isFa ? '✋ تایید دستی' : '✋ Manual Approval'}</p>
+                    <p className="font-black inline-flex items-center gap-1">
+                      <Hand className="w-3.5 h-3.5 text-amber-400" />
+                      <span>{isFa ? 'تایید دستی' : 'Manual Approval'}</span>
+                    </p>
                     <p className="text-[10px] opacity-80">{isFa ? 'تایید هر معامله در تراست‌ولت' : 'Confirm inside Trust Wallet'}</p>
                   </button>
                 </div>

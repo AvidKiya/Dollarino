@@ -1119,6 +1119,153 @@ input:focus {
   background: var(--rose);
 }
 
+/* V11.6 Simple-Mode Controls & 5-Engine Chips */
+.hero-irt {
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.mode-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.mode-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: 13px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  gap: 3px;
+}
+
+.mode-pill-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 5px 6px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.mode-pill-btn.active {
+  background: linear-gradient(135deg, var(--gold-a), var(--gold-b));
+  color: #ffffff;
+  box-shadow: 0 4px 10px -4px rgba(22, 82, 240, 0.5);
+}
+
+.mode-pill-btn.active-emerald {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #ffffff;
+  box-shadow: 0 4px 10px -4px rgba(16, 185, 129, 0.48);
+}
+
+.mode-pill-btn.active-amber {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #09111f;
+}
+
+.engine-panel {
+  padding: 9px 11px;
+  border-radius: 18px;
+}
+
+.engine-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--sub);
+}
+
+.engine-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.engine-chip {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--dim);
+  border-radius: 11px;
+  padding: 6px 3px;
+  font-family: inherit;
+  font-size: 9.5px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.2s ease;
+}
+
+.engine-chip:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.engine-chip.active {
+  background: color-mix(in srgb, var(--jade) 16%, transparent);
+  border-color: color-mix(in srgb, var(--jade) 48%, transparent);
+  color: var(--jade);
+}
+
+.engine-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--dim);
+}
+
+.engine-chip.active .engine-dot {
+  background: var(--jade);
+  box-shadow: 0 0 8px var(--jade);
+}
+
+.dex-verdict-box {
+  background: color-mix(in srgb, var(--gold) 10%, var(--soft));
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.dex-verdict-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-weight: 900;
+}
+
+.empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  color: var(--gold-a);
+  margin: 0 auto 4px;
+}
+
 .hidden {
   display: none !important;
 }

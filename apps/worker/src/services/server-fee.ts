@@ -70,7 +70,9 @@ export async function tryVerifyEvmReceiptOnchain(txHash: string): Promise<'CONFI
   if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) return 'UNAVAILABLE';
   const rpcs = [
     'https://bsc-dataseed.binance.org',
-    'https://eth.llamarpc.com',
+    'https://mainnet.base.org',
+    'https://arb1.arbitrum.io/rpc',
+    'https://ethereum-rpc.publicnode.com',
   ];
   for (const rpc of rpcs) {
     try {

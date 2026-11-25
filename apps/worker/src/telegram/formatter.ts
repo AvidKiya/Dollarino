@@ -72,15 +72,16 @@ export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'si
   const cleanWeb = webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
   const modeSummary =
     uiMode === 'simple'
-      ? `🌱 **حالت ساده فعال است:** همه‌چیز در ۳ دکمه! کیف‌پول دمو قابل تنظیم رایگان ($50 تا $10M)، ۳ معامله سودده اول واقعی ۰٪ و سپس فقط ۳٪ کارمزد سود، به‌همراه ربات چندموتوره AI.`
-      : `⚡ **حالت حرفه‌ای (Quant Pro) فعال است:** دسترسی همزمان به هوش مصنوعی، دُرنا V1، کپی‌ترید، هوش مصنوعی من، اسنایپ لیست/میم، ۲۵+ آلرت رایگان TradingView و اسکنر DEX.`;
+      ? `🌱 **حالت ساده فعال است (هماهنگ با نسخه جدید سایت V11.6):** مدیریت سریع کل پلتفرم، سوئیچ آنی دمو/واقعی، انتخاب ۵ موتور ترید هم‌زمان و تنظیم بودجه و ریسک پویا.`
+      : `⚡ **حالت حرفه‌ای (Quant Pro V11.6) فعال است:** دسترسی هم‌زمان به رادار زنده DexScreener + خرید مستقیم، کپی‌ترید هوشمند و سبد نهنگ‌ها، دُرنا V1، هوش مصنوعی من، ۲۵+ آلرت TradingView و اکستنشن کروم.`;
   return (
-    `🚀 به **دلارینو** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
+    `🚀 به **دلارینو V11.6** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
     `${modeSummary}\n\n` +
-    `✨ **امکانات کلیدی حساب شما:**\n` +
-    `🧠 **هوش مصنوعی اختصاصی + تحلیل عکس چارت** (همین‌جا سوال بپرس یا عکس چارت بفرست!)\n` +
-    `🛡 **۱۰۰٪ غیرامانی با Trust Wallet** (حداقل ۱۰ دلار واقعی · یا تمرین رایگان با کیف‌پول دمو قابل تنظیم)\n` +
-    `💎 **اشتراک ماهانه صفر:** ۳ معامله سودده اول واقعی ۱۰۰٪ رایگان (۰٪ کارمزد) و پس از آن ۹۷٪ سود برای شما (فقط ۳٪ کارمزد سرور از سود خالص).\n\n` +
+    `✨ **امکانات نسخه جدید حساب شما:**\n` +
+    `🧠 **هوش مصنوعی اختصاصی + تحلیل چارت + پیشنهاد صریح خرید/عدم خرید در DEX**\n` +
+    `🎯 **خرید مستقیم توکن‌های رادار داخل سایت با تنظیمات از پیش تعیین‌شده اسنایپر**\n` +
+    `🐋 **کپی‌ترید حرفه‌ای V2 با نمایش سبد ارزهای کیف‌پول هر تریدر و فیلتر هولدر/اسکلپر**\n` +
+    `🛡 **۱۰۰٪ غیرامانی با Trust Wallet** (۳ معامله سودده اول رایگان ۰٪، سپس فقط ۳٪ کارمزد از سود خالص · دمو رایگان قابل تنظیم)\n\n` +
     `━━━━━━━━━━━━━━\n` +
     `🌐 وب‌سایت رسمی دلارینو: ${cleanWeb}\n` +
     `${CREATOR_ATTRIBUTION_FA}\n\n` +
@@ -94,20 +95,20 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
   const rows: ReplyKeyboardButton[][] =
     uiMode === 'simple'
       ? [
-          [{ text: '🤖 شروع ربات هوشمند AI' }, { text: '🎛 انتخاب ۵ موتور ترید' }],
-          [{ text: '💰 بودجه مجاز و پیشنهاد پویا' }, { text: '🛡 اتصال Trust Wallet و دمو' }],
-          [{ text: '📊 وضعیت سود و معاملات' }, { text: '🏆 کپی‌ترید' }],
-          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '💰 کارمزد ۳٪ سود (رایگان)' }],
-          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '⚡ رفتن به حالت حرفه‌ای' }],
+          [{ text: '🤖 شروع / توقف ربات' }, { text: '⚡️ شکار فوری AI' }],
+          [{ text: '🎛 ۵ موتور ترید همزمان' }, { text: '💰 حالت دمو/واقعی و بودجه' }],
+          [{ text: '📊 معاملات باز و پورتفوی' }, { text: '🏆 کپی‌ترید حرفه‌ای (V2)' }],
+          [{ text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🧠 هوش مصنوعی من / چت AI' }],
+          [{ text: '🛡 Trust Wallet و کارمزد ۳٪' }, { text: '💬 پشتیبانی' }, { text: '⚡ حالت حرفه‌ای' }],
         ]
       : [
           [{ text: '🟢 شروع خودکار ربات' }, { text: '⚡️ شکار فوری AI' }],
           [{ text: '🎛 انتخاب ۵ موتور ترید' }, { text: '💰 بودجه مجاز و اهرم' }],
-          [{ text: '📈 معاملات باز' }, { text: 'حساب کاربری 👤' }, { text: '🛡 اتصال Trust Wallet' }],
-          [{ text: '🔍 اسکنر DEX' }, { text: '🏆 کپی‌ترید' }, { text: '📡 آلرت رایگان TradingView' }],
-          [{ text: 'تنظیمات ⚙️' }, { text: '💰 کارمزد ۳٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }],
-          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }],
-          [{ text: '🌱 رفتن به حالت ساده' }],
+          [{ text: '📈 معاملات باز و پورتفوی' }, { text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🏆 کپی‌ترید حرفه‌ای (V2)' }],
+          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '🤖 هوش مصنوعی من' }, { text: '🎯 اسنایپر و استراتژی' }],
+          [{ text: '🛡 اتصال Trust Wallet' }, { text: '📡 آلرت رایگان TradingView' }, { text: '🧩 اکستنشن کروم V11.6' }],
+          [{ text: '💰 کارمزد ۳٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }, { text: 'تنظیمات ⚙️' }],
+          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '🌱 رفتن به حالت ساده' }],
         ];
   if (isAdmin && safeUrl) {
     rows.push([{ text: 'پنل مدیریت 💼' }, { text: '🚀 باز کردن مینی‌اپ', web_app: { url: safeUrl } }]);
@@ -148,13 +149,21 @@ export function miniAppInlineKeyboard(
 
   if (openSection === 'none') {
     rows.push([
-      { text: '🧠 چت AI و عکس چارت', callback_data: 'tg_ai_chat', style: 'primary' },
-      { text: '🎛 انتخاب روش ترید', callback_data: 'tg_acc:ai' },
+      { text: '🎛 انتخاب ۵ موتور ترید', callback_data: 'tg_acc:ai', style: 'primary' },
+      { text: '🔍 رادار DEX & خرید مستقیم', callback_data: 'tg_dex_trending', style: 'success' },
+    ]);
+    rows.push([
+      { text: '🐋 کپی‌ترید و سبد نهنگ‌ها', callback_data: 'tg_copy_smart_v2' },
+      { text: '🧠 چت AI و عکس چارت', callback_data: 'tg_ai_chat' },
+    ]);
+    rows.push([
+      { text: '🛡 Trust Wallet و دمو', callback_data: 'tg_acc:trust' },
+      { text: '🛠 ابزارها و اکستنشن', callback_data: 'tg_acc:tools' },
     ]);
     if (hasHttps) {
       rows.push([
-        { text: '🚀 باز کردن مینی‌اپ', web_app: { url: fullUrl }, style: 'success' },
-        { text: '💬 صفحه چت کامل AI', web_app: { url: `${base}/?tab=aichat` }, style: 'primary' },
+        { text: '🚀 باز کردن مینی‌اپ سایت', web_app: { url: fullUrl }, style: 'success' },
+        { text: '📊 پورتفوی و معاملات', web_app: { url: `${base}/?tab=portfolio` }, style: 'primary' },
       ]);
     }
     return rows;
@@ -186,7 +195,7 @@ export function miniAppInlineKeyboard(
     rows.push([
       { text: '⚡️ استراتژی‌های آماده', callback_data: 'tg_hunt_ready', style: 'success' },
       ...(hasHttps
-        ? [{ text: '🛠 استراتژی شخصی', web_app: { url: `${base}/?tab=radar` }, style: 'primary' as const }]
+        ? [{ text: '🎯 رادار DEX و اسنایپر', web_app: { url: `${base}/?tab=radar` }, style: 'primary' as const }]
         : [{ text: '🛠 استراتژی شخصی', callback_data: 'tg_hunt_personal', style: 'primary' as const }]),
     ]);
   }
@@ -194,16 +203,17 @@ export function miniAppInlineKeyboard(
   if (openSection === 'copy') {
     rows.push([
       { text: '📋 تریدرهای تاییدشده', callback_data: 'tg_copy_list', style: 'success' },
-      ...(hasHttps
-        ? [{ text: '🌐 مدیریت در مینی‌اپ', web_app: { url: `${base}/?tab=copy` } }]
-        : [{ text: '📈 معاملات باز', callback_data: 'tg_positions' }]),
+      { text: '🐋 نهنگ‌ها و سبد ارزها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' },
     ]);
+    if (hasHttps) {
+      rows.push([{ text: '🌐 باز کردن هاب کپی‌ترید در مینی‌اپ', web_app: { url: `${base}/?tab=copy` } }]);
+    }
   }
 
   if (openSection === 'trust') {
     rows.push([
       { text: '🛡 وضعیت و اتصال Trust Wallet', callback_data: 'tg_tw_menu', style: 'primary' },
-      { text: '🔍 توکن‌های داغ DEX', callback_data: 'tg_dex_trending', style: 'success' },
+      { text: '🔍 رادار کامل DEX + خرید مستقیم', callback_data: 'tg_dex_trending', style: 'success' },
     ]);
     rows.push([
       { text: '🔎 جستجوی توکن', callback_data: 'tg_dex_search' },
@@ -213,12 +223,16 @@ export function miniAppInlineKeyboard(
 
   if (openSection === 'tools') {
     rows.push([
-      { text: '📈 معاملات باز', callback_data: 'tg_positions' },
+      { text: '📈 معاملات باز و بستن آنی', callback_data: 'tg_positions' },
       { text: '📡 آلرت رایگان TradingView', callback_data: 'tg_tv_alerts', style: 'success' },
     ]);
     rows.push([
-      { text: '🧩 اکستنشن و ویجت', callback_data: 'tg_ext_widgets' },
-      { text: '🌐 ورود به سایت', callback_data: 'tg_web_login' },
+      { text: '🧩 اکستنشن کروم V11.6', callback_data: 'tg_ext_widgets' },
+      { text: '📊 صدور کارت سود', callback_data: 'tg_profit_card' },
+    ]);
+    rows.push([
+      { text: '🌐 ورود سریع به سایت', callback_data: 'tg_web_login' },
+      ...(hasHttps ? [{ text: '⚙️ صفحه خدمات سایت', web_app: { url: `${base}/?tab=services` } }] : []),
     ]);
   }
 

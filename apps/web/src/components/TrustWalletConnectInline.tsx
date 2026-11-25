@@ -3,8 +3,10 @@ import {
   Bot,
   CheckCircle2,
   ExternalLink,
+  Gamepad2,
   Hand,
   KeyRound,
+  Lock,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -14,7 +16,20 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import {
+  approveErc20SpenderInDapp,
+  approveHyperliquidAgentInDapp,
+  connectAndPersistAllTrustWallets,
+  DEX_ROUTER_SPENDERS,
+  fundCopyVaultFromDapp,
+  hasAnyInjectedWallet,
+  isTrustWalletEnvironment,
+  launchTrustWalletUrl,
+  requestTrustWalletDappHandoff,
+  type TrustWalletDappHandoff,
+} from '../lib/trustwallet';
 import { ChainLogo, WalletLogo } from './BrandLogos';
+import { TrustWalletDirectModal } from './TrustWalletDirectModal';
 
 interface ExecutionModeState {
   executionMode: 'AUTO' | 'MANUAL_CONFIRM';
@@ -62,6 +77,14 @@ export function TrustWalletConnectInline({
   const [tronAddress, setTronAddress] = useState('');
   const [saving, setSaving] = useState(false);
   const [agentSaving, setAgentSaving] = useState(false);
+  const [dappBusy, setDappBusy] = useState(false);
+  const [vaultEvmAddr, setVaultEvmAddr] = useState<string>('');
+  const [allowanceNet, setAllowanceNet] = useState<'bsc' | 'arbitrum' | 'base' | 'ethereum'>('bsc');
+  const [allowanceCapUsd, setAllowanceCapUsd] = useState<number>(100);
+  const [twModalOpen, setTwModalOpen] = useState(false);
+  const [twHandoff, setTwHandoff] = useState<TrustWalletDappHandoff | null>(null);
+  const [twMobileLaunched, setTwMobileLaunched] = useState(false);
+  const [twModalError, setTwModalError] = useState<string | null>(null);
   const [balances, setBalances] = useState<{
     bnb?: number | null;
     eth?: number | null;
@@ -72,9 +95,10 @@ export function TrustWalletConnectInline({
 
   const load = useCallback(async () => {
     try {
-      const [em, tw] = await Promise.all([
+      const [em, tw, vRes] = await Promise.all([
         apiFetch<ExecutionModeState>('/api/trustwallet/execution-mode'),
         apiFetch<TrustStatusState>('/api/trustwallet/status'),
+        apiFetch<{ vault?: { evmAddress?: string } }>('/api/copy-trade/vault').catch(() => null),
       ]);
       setExecState(em);
       setTwStatus(tw);
@@ -82,6 +106,7 @@ export function TrustWalletConnectInline({
       if (tw.wallet.solanaAddress) setSolanaAddress(tw.wallet.solanaAddress);
       if (tw.wallet.tonAddress) setTonAddress(tw.wallet.tonAddress);
       if (tw.wallet.tronAddress) setTronAddress(tw.wallet.tronAddress);
+      if (vRes?.vault?.evmAddress) setVaultEvmAddr(vRes.vault.evmAddress);
     } catch {
       // ignore initial error
     }
@@ -114,31 +139,45 @@ export function TrustWalletConnectInline({
     }
   };
 
+  const openTrustDirectConnectModal = async () => {
+    setSaving(true);
+    setTwModalError(null);
+    try {
+      const handoff = await requestTrustWalletDappHandoff();
+      setTwHandoff(handoff);
+      const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+      setTwMobileLaunched(isMobile);
+      setTwModalOpen(true);
+      if (isMobile) {
+        launchTrustWalletUrl(handoff.universalLink, handoff.deepLink);
+      }
+    } catch (e) {
+      setTwModalError(e instanceof Error ? e.message : 'Unable to generate Trust Wallet link');
+      setTwModalOpen(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const connectBrowserWallet = async () => {
-    const eth = (window as unknown as { ethereum?: { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum;
-    if (!eth) {
-      onMsg(
-        isFa
-          ? 'مرورگر Trust Wallet یا افزونه کیف‌پول شناسایی نشد؛ آدرس عمومی خود را مستقیماً در کادر زیر وارد کنید.'
-          : 'Trust Wallet browser extension not detected — paste your public wallet address below.',
-        true
-      );
+    if (!hasAnyInjectedWallet()) {
+      await openTrustDirectConnectModal();
       return;
     }
     setSaving(true);
     try {
-      const accounts = (await eth.request({ method: 'eth_requestAccounts' })) as string[];
-      const addr = accounts?.[0];
-      if (!addr) throw new Error('No address returned');
-      const nonceRes = await apiFetch<{ message: string }>('/api/trustwallet/nonce', { method: 'POST' });
-      const sig = (await eth.request({ method: 'personal_sign', params: [nonceRes.message, addr] })) as string;
-      setEvmAddress(addr);
-      await apiFetch('/api/trustwallet/connect', {
-        method: 'POST',
-        body: JSON.stringify({ evmAddress: addr, signature: sig, signedMessage: nonceRes.message }),
-      });
+      const res = await connectAndPersistAllTrustWallets();
+      if (res.evmAddress) setEvmAddress(res.evmAddress);
+      if (res.solanaAddress) setSolanaAddress(res.solanaAddress);
+      if (res.tonAddress) setTonAddress(res.tonAddress);
+      if (res.tronAddress) setTronAddress(res.tronAddress);
+      setTwModalOpen(false);
       await Promise.all([load(), onRefresh()]);
-      onMsg(isFa ? 'کیف‌پول Trust Wallet با امضای رمزنگاری متصل شد!' : 'Trust Wallet connected & cryptographically verified!');
+      onMsg(
+        isFa
+          ? `کیف‌پول Trust Wallet روی تمام شبکه‌های فعال (${res.connectedFamilies.join(' + ')}) با امضای رمزنگاری ECDSA متصل شد!`
+          : `Trust Wallet connected & ECDSA verified across ${res.connectedFamilies.join(' + ')}!`
+      );
     } catch (e) {
       onMsg(e instanceof Error ? e.message : 'Wallet connection canceled', true);
     } finally {
@@ -186,17 +225,46 @@ export function TrustWalletConnectInline({
   const grantFullAutoPermissions = async () => {
     setAgentSaving(true);
     try {
+      if (hasAnyInjectedWallet()) {
+        try {
+          if (!evmAddress.trim() && !twStatus?.wallet.evmAddress) {
+            const conn = await connectAndPersistAllTrustWallets();
+            if (conn.evmAddress) setEvmAddress(conn.evmAddress);
+            if (conn.solanaAddress) setSolanaAddress(conn.solanaAddress);
+            if (conn.tonAddress) setTonAddress(conn.tonAddress);
+            if (conn.tronAddress) setTronAddress(conn.tronAddress);
+          }
+          const agentRes = await approveHyperliquidAgentInDapp('Dollarino24x7');
+          setEvmAddress(agentRes.masterAddress);
+          await apiFetch('/api/copy-trade/vault', { method: 'GET' }).catch(() => null);
+          await setAccountAndExecution({ executionMode: 'AUTO' });
+          onMsg(
+            (isFa ? agentRes.messageFa : agentRes.messageEn) ||
+              (isFa
+                ? 'اتصال کامل Trust Wallet + Agent Wallet هایپرلیکویید و خزانه ۲۴/۷ با ۱ کلیک فعال شد!'
+                : 'Trust Wallet + Hyperliquid Agent Wallet & 24/7 Copy-Vault authorized in 1 click!')
+          );
+          return;
+        } catch (dappErr) {
+          const errMsg = dappErr instanceof Error ? dappErr.message : '';
+          if (errMsg && !errMsg.includes('NO_INJECTED_WALLET')) {
+            onMsg(errMsg, true);
+            return;
+          }
+        }
+      }
+
       const targetWallet = evmAddress.trim() || twStatus?.wallet.evmAddress;
       if (!targetWallet) {
+        await openTrustDirectConnectModal();
         onMsg(
           isFa
-            ? 'ابتدا یک آدرس Trust Wallet (شروع با 0x) وارد یا متصل کنید تا مجوز اتوترید ۲۴/۷ ساخته شود.'
-            : 'Please connect your EVM Trust Wallet address (0x...) first to authorize 24/7 Perp & Copy-Vault.',
-          true
+            ? 'برای فعال‌سازی خودکار ۲۴/۷، ابتدا با QR یا اپ Trust Wallet متصل شوید (یا آدرس EVM را وارد کنید).'
+            : 'Scan QR or open Trust Wallet App to connect first, then 24/7 auto-trade enables immediately.'
         );
         return;
       }
-      // 1) Create / verify Copy-Vault + Perp Agent Key (Trade-only, zero withdraw permission)
+      // Fallback: Create Copy-Vault + Perp read-only tracking link when no DApp injector is present
       await Promise.all([
         apiFetch('/api/copy-trade/vault', { method: 'GET' }).catch(() => null),
         apiFetch('/api/dex/perp-connect', {
@@ -210,11 +278,64 @@ export function TrustWalletConnectInline({
       await setAccountAndExecution({ executionMode: 'AUTO' });
       onMsg(
         isFa
-          ? 'مجوزهای اتوترید خودکار ۲۴/۷ (Perp Agent Key بدون حق برداشت + Copy-Vault) با موفقیت فعال شد!'
-          : 'Full 24/7 Auto-Trade permissions (Trade-Only Agent Key + Copy-Vault) activated!'
+          ? 'خزانه ۲۴/۷ و لینک رصد فیوچرز ساخته شد؛ برای امضای ۱-کلیکی Agent Key این صفحه را داخل اپ Trust Wallet باز کنید.'
+          : '24/7 Copy-Vault & Perp tracking created! Open inside Trust Wallet DApp to 1-click approve Agent Key.'
       );
     } finally {
       setAgentSaving(false);
+    }
+  };
+
+  const handleQuickFundVault = async (usdApprox: number) => {
+    if (!vaultEvmAddr) {
+      onMsg(isFa ? 'ابتدا روی دکمه «تنظیم یک‌باره مجوز ۲۴/۷» بزنید تا خزانه شما ساخته شود.' : 'Initialize Copy-Vault first.', true);
+      return;
+    }
+    setDappBusy(true);
+    try {
+      const nativeAmt = allowanceNet === 'bsc' ? Number((usdApprox / 600).toFixed(4)) : Number((usdApprox / 3000).toFixed(4));
+      const txHash = await fundCopyVaultFromDapp({
+        networkKey: allowanceNet,
+        vaultAddress: vaultEvmAddr,
+        amountNative: nativeAmt,
+      });
+      onMsg(
+        isFa
+          ? `شارژ خزانه ۲۴/۷ (~$${usdApprox}) مستقیم از Trust Wallet ارسال شد! TX: ${txHash.slice(0, 14)}...`
+          : `Copy-Vault funded (~$${usdApprox}) directly from Trust Wallet! TX: ${txHash.slice(0, 14)}...`
+      );
+      await load();
+    } catch (e) {
+      onMsg(e instanceof Error ? e.message : 'Vault funding failed', true);
+    } finally {
+      setDappBusy(false);
+    }
+  };
+
+  const handleRouterAllowance = async (revoke: boolean) => {
+    setDappBusy(true);
+    try {
+      const spec = DEX_ROUTER_SPENDERS[allowanceNet];
+      const txHash = await approveErc20SpenderInDapp({
+        networkKey: allowanceNet,
+        tokenAddress: spec.usdtOrUsdc,
+        spenderAddress: spec.router,
+        amountTokens: revoke ? 0 : allowanceCapUsd,
+        decimals: spec.decimals,
+      });
+      onMsg(
+        revoke
+          ? isFa
+            ? `مجوز خرج روتر ${spec.name} با موفقیت لغو (Revoke = 0) شد! TX: ${txHash.slice(0, 12)}...`
+            : `Revoked allowance for ${spec.name}! TX: ${txHash.slice(0, 12)}...`
+          : isFa
+            ? `مجوز محدود $${allowanceCapUsd} برای ${spec.name} در Trust Wallet ثبت شد! TX: ${txHash.slice(0, 12)}...`
+            : `Capped $${allowanceCapUsd} allowance granted to ${spec.name}! TX: ${txHash.slice(0, 12)}...`
+      );
+    } catch (e) {
+      onMsg(e instanceof Error ? e.message : 'ERC-20 Approve failed', true);
+    } finally {
+      setDappBusy(false);
     }
   };
 
@@ -265,7 +386,16 @@ export function TrustWalletConnectInline({
                   : 'surface-soft hairline text-dim hover:text-main'
               }`}
             >
-              <p className="text-xs font-black">{isFa ? '🧪 شبیه‌ساز دمو ($50–$10M)' : '🧪 Custom Demo ($50–$10M)'}</p>
+              <p className="text-xs font-black flex items-center gap-1.5">
+                <Gamepad2 className="w-3.5 h-3.5 shrink-0" />
+                {isFa ? (
+                  <span>
+                    شبیه‌ساز دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>)
+                  </span>
+                ) : (
+                  <span>Custom Demo ($50–$10M)</span>
+                )}
+              </p>
               <p className="text-[10px] opacity-85 mt-0.5">
                 {isFa ? 'دقیقاً مشابه تراست‌ولت با قیمت زنده و بدون ریسک' : 'Mirrors Trust Wallet with live prices'}
               </p>
@@ -280,7 +410,10 @@ export function TrustWalletConnectInline({
                   : 'surface-soft hairline text-dim hover:text-main'
               }`}
             >
-              <p className="text-xs font-black">{isFa ? '🛡 Trust Wallet واقعی' : '🛡 Live Trust Wallet'}</p>
+              <p className="text-xs font-black flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                <span>{isFa ? 'Trust Wallet واقعی' : 'Live Trust Wallet'}</span>
+              </p>
               <p className="text-[10px] opacity-85 mt-0.5">
                 {isFa ? 'اجرای واقعی روی ETH، SOL، BSC، Base، TON و TRX' : 'Real execution across all chains'}
               </p>
@@ -365,8 +498,9 @@ export function TrustWalletConnectInline({
                 <Wallet className="w-3.5 h-3.5" />
                 <span>{isFa ? 'آدرس تراست‌ولت' : 'Trust Wallet'}</span>
               </span>
-              <span className={execState?.permissions.trustWalletConnected ? 'text-jade font-black' : 'text-goldsoft font-bold'}>
-                {execState?.permissions.trustWalletConnected ? (isFa ? 'متصل ✅' : 'Connected ✅') : (isFa ? 'نیاز به ثبت' : 'Required')}
+              <span className={execState?.permissions.trustWalletConnected ? 'text-jade font-black inline-flex items-center gap-1' : 'text-goldsoft font-bold'}>
+                {execState?.permissions.trustWalletConnected && <CheckCircle2 className="w-3 h-3" />}
+                <span>{execState?.permissions.trustWalletConnected ? (isFa ? 'متصل' : 'Connected') : (isFa ? 'نیاز به ثبت' : 'Required')}</span>
               </span>
             </div>
             <div className="rounded-xl surface-soft border hairline px-3 py-2 flex items-center justify-between">
@@ -374,8 +508,9 @@ export function TrustWalletConnectInline({
                 <KeyRound className="w-3.5 h-3.5" />
                 <span>{isFa ? 'کلید فیوچرز ۱۰۰x' : 'Perp Agent Key'}</span>
               </span>
-              <span className={execState?.permissions.perpAgentConnected ? 'text-jade font-black' : 'text-dim font-bold'}>
-                {execState?.permissions.perpAgentConnected ? (isFa ? 'فعال ✅' : 'Ready ✅') : (isFa ? 'آماده ساخت' : 'Pending')}
+              <span className={execState?.permissions.perpAgentConnected ? 'text-jade font-black inline-flex items-center gap-1' : 'text-dim font-bold'}>
+                {execState?.permissions.perpAgentConnected && <CheckCircle2 className="w-3 h-3" />}
+                <span>{execState?.permissions.perpAgentConnected ? (isFa ? 'فعال' : 'Ready') : (isFa ? 'آماده ساخت' : 'Pending')}</span>
               </span>
             </div>
             <div className="rounded-xl surface-soft border hairline px-3 py-2 flex items-center justify-between">
@@ -383,13 +518,88 @@ export function TrustWalletConnectInline({
                 <Vault className="w-3.5 h-3.5" />
                 <span>{isFa ? 'خزانه ۲۴/۷ (اسپات/کپی)' : '24/7 Copy-Vault'}</span>
               </span>
-              <span className={execState?.permissions.copyVaultReady ? 'text-jade font-black' : 'text-dim font-bold'}>
-                {execState?.permissions.copyVaultReady
-                  ? `$${execState.permissions.copyVaultAllowanceUsd} ✅`
-                  : (isFa ? 'آماده ساخت' : 'Pending')}
+              <span className={execState?.permissions.copyVaultReady ? 'text-jade font-black inline-flex items-center gap-1' : 'text-dim font-bold'}>
+                {execState?.permissions.copyVaultReady && <CheckCircle2 className="w-3 h-3" />}
+                <span>
+                  {execState?.permissions.copyVaultReady
+                    ? `$${execState.permissions.copyVaultAllowanceUsd}`
+                    : (isFa ? 'آماده ساخت' : 'Pending')}
+                </span>
               </span>
             </div>
           </div>
+
+          {hasAnyInjectedWallet() && (
+            <div className="pt-2 border-t hairline space-y-2.5 text-[11px]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-black text-main inline-flex items-center gap-1">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{isFa ? 'شارژ سریع خزانه ۲۴/۷ و مجوز محدود روتر DEX:' : 'Quick 24/7 Vault Funding & Capped Router Allowance:'}</span>
+                  </span>
+                  {isTrustWalletEnvironment() && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-jade font-black text-[10px]">
+                      Trust Wallet DApp
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={allowanceNet}
+                  onChange={(e) => setAllowanceNet(e.target.value as 'bsc' | 'arbitrum' | 'base' | 'ethereum')}
+                  dir="ltr"
+                  className="surface-soft border hairline rounded-xl px-2 py-1 text-[10px] font-bold text-main"
+                >
+                  <option value="bsc">BSC (BNB / BEP20)</option>
+                  <option value="arbitrum">Arbitrum (ETH / USDC)</option>
+                  <option value="base">Base (ETH / USDC)</option>
+                  <option value="ethereum">Ethereum (ETH / USDT)</option>
+                </select>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[25, 50, 100].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    disabled={dappBusy || !vaultEvmAddr}
+                    onClick={() => void handleQuickFundVault(amt)}
+                    className="btn-cobalt px-2.5 py-1.5 rounded-xl text-[10px] font-black disabled:opacity-50"
+                  >
+                    <span dir="ltr">+${amt}</span> {isFa ? 'شارژ خزانه' : 'Fund Vault'}
+                  </button>
+                ))}
+
+                <div className="flex items-center gap-1 ms-auto">
+                  <span className="text-[10px] text-dim">{isFa ? 'سقف روتر:' : 'Cap $:'}</span>
+                  <input
+                    type="number"
+                    min={10}
+                    max={5000}
+                    value={allowanceCapUsd}
+                    onChange={(e) => setAllowanceCapUsd(Math.max(10, Number(e.target.value || 100)))}
+                    dir="ltr"
+                    className="input-field w-16 py-1 px-2 rounded-xl text-[10px] text-center font-num"
+                  />
+                  <button
+                    type="button"
+                    disabled={dappBusy}
+                    onClick={() => void handleRouterAllowance(false)}
+                    className="btn-gold px-2.5 py-1.5 rounded-xl text-[10px] font-black disabled:opacity-50"
+                  >
+                    {isFa ? 'تایید سقف روتر' : 'Approve Cap'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={dappBusy}
+                    onClick={() => void handleRouterAllowance(true)}
+                    className="btn-ghost px-2.5 py-1.5 rounded-xl text-[10px] font-bold text-loss disabled:opacity-50"
+                  >
+                    {isFa ? 'لغو (Revoke)' : 'Revoke'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -512,6 +722,23 @@ export function TrustWalletConnectInline({
           </div>
         )}
       </form>
+
+      <TrustWalletDirectModal
+        open={twModalOpen}
+        lang={lang}
+        handoff={twHandoff}
+        mobileLaunched={twMobileLaunched}
+        busyRetry={saving}
+        errorText={twModalError}
+        onRetryInjected={connectBrowserWallet}
+        onConnected={async () => {
+          setTwModalOpen(false);
+          await Promise.all([load(), onRefresh()]);
+          onMsg(isFa ? 'کیف‌پول Trust Wallet با موفقیت متصل شد!' : 'Trust Wallet connected!');
+        }}
+        onGoToWalletPage={() => setTwModalOpen(false)}
+        onClose={() => setTwModalOpen(false)}
+      />
     </div>
   );
 }

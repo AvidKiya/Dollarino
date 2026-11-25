@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
-import { DollarinoBrandMark } from './components/BrandGraphics';
+import { AppInlineTabLoader, AppSplashLoader } from './components/AppSplashLoader';
+import { CompleteProfileGate } from './components/CompleteProfileGate';
 import { FloatingAiChat } from './components/FloatingAiChat';
 import { FloatingToastHost } from './components/FloatingToastHost';
 import { Layout, type UiMode } from './components/Layout';
@@ -72,6 +73,7 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [pending2faToken, setPending2faToken] = useState<string | null>(null);
   const [supportOpen, setSupportOpen] = useState(false);
   const [academyOpen, setAcademyOpen] = useState(false);
   const [installOpen, setInstallOpen] = useState(() => {
@@ -86,12 +88,16 @@ export function App() {
 
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     const qp = new URLSearchParams(window.location.search);
-    const tab = qp.get('tab') as NavTab | null;
+    const tab = qp.get('tab');
     const quick = qp.get('quick');
     if (quick === 'dex' || tab === 'dex') return 'dex';
     if (quick === 'report') return 'portfolio';
+    if (tab === 'sniper') {
+      sessionStorage.setItem('dollarino_copy_subtab', 'sniper');
+      return 'copy';
+    }
     if (tab && ['overview', 'aichat', 'myai', 'terminal', 'markets', 'dex', 'radar', 'copy', 'portfolio', 'services', 'card', 'pricing', 'faq', 'admin'].includes(tab)) {
-      return tab;
+      return tab as NavTab;
     }
     return 'overview';
   });
@@ -165,32 +171,74 @@ export function App() {
       const tgLoginToken = urlParams.get('tg_login');
       const tgWidgetHash = urlParams.get('hash');
       const tgWidgetId = urlParams.get('id');
-      if (tgLoginToken) {
-        const magicRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-magic-login', {
+      const googleToken = urlParams.get('google_token') || urlParams.get('auth_token');
+      const google2fa = urlParams.get('google_2fa') || urlParams.get('twofa_token');
+      const googleError = urlParams.get('google_error') || urlParams.get('auth_error');
+
+      if (googleError) {
+        setAuthError(googleError);
+        setPublicScreen('auth');
+        setAuthMode('login');
+        urlParams.delete('google_error');
+        urlParams.delete('auth_error');
+        const nextQuery = urlParams.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+      } else if (google2fa) {
+        setPending2faToken(google2fa);
+        setPublicScreen('auth');
+        setAuthMode('login');
+        urlParams.delete('google_2fa');
+        urlParams.delete('twofa_token');
+        const nextQuery = urlParams.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+      } else if (googleToken) {
+        setStoredToken(googleToken);
+        urlParams.delete('google_token');
+        urlParams.delete('auth_token');
+        const nextQuery = urlParams.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+      } else if (tgLoginToken) {
+        const magicRes = await apiFetch<{ token?: string; user?: AuthUserInfo; requires2fa?: boolean; challengeToken?: string }>('/api/auth/telegram-magic-login', {
           method: 'POST',
           body: JSON.stringify({ token: tgLoginToken }),
         });
-        setStoredToken(magicRes.token);
         urlParams.delete('tg_login');
         urlParams.delete('install');
         const nextQuery = urlParams.toString();
         window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+        if (magicRes.requires2fa && magicRes.challengeToken) {
+          setPending2faToken(magicRes.challengeToken);
+          setPublicScreen('auth');
+          setAuthMode('login');
+          setUser(null);
+          setDashboard(null);
+          return;
+        }
+        if (magicRes.token) setStoredToken(magicRes.token);
       } else if (tgWidgetHash && tgWidgetId) {
         const widgetPayload: Record<string, string> = {};
         for (const k of ['id', 'first_name', 'last_name', 'username', 'photo_url', 'auth_date', 'hash']) {
           const v = urlParams.get(k);
           if (v) widgetPayload[k] = v;
         }
-        const widgetRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-login-widget', {
+        const widgetRes = await apiFetch<{ token?: string; user?: AuthUserInfo; requires2fa?: boolean; challengeToken?: string }>('/api/auth/telegram-login-widget', {
           method: 'POST',
           body: JSON.stringify(widgetPayload),
         });
-        setStoredToken(widgetRes.token);
         for (const k of ['id', 'first_name', 'last_name', 'username', 'photo_url', 'auth_date', 'hash']) {
           urlParams.delete(k);
         }
         const nextQuery = urlParams.toString();
         window.history.replaceState({}, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
+        if (widgetRes.requires2fa && widgetRes.challengeToken) {
+          setPending2faToken(widgetRes.challengeToken);
+          setPublicScreen('auth');
+          setAuthMode('login');
+          setUser(null);
+          setDashboard(null);
+          return;
+        }
+        if (widgetRes.token) setStoredToken(widgetRes.token);
       }
 
       let me: { user: AuthUserInfo } | null = null;
@@ -200,12 +248,22 @@ export function App() {
       } else if (isInsideTelegramMiniApp()) {
         const tg = getTelegramWebApp();
         if (tg?.initData) {
-          const authRes = await apiFetch<{ token: string; user: AuthUserInfo }>('/api/auth/telegram-webapp', {
+          const authRes = await apiFetch<{ token?: string; user?: AuthUserInfo; requires2fa?: boolean; challengeToken?: string }>('/api/auth/telegram-webapp', {
             method: 'POST',
             body: JSON.stringify({ initData: tg.initData }),
           });
-          setStoredToken(authRes.token);
-          me = { user: authRes.user };
+          if (authRes.requires2fa && authRes.challengeToken) {
+            setPending2faToken(authRes.challengeToken);
+            setPublicScreen('auth');
+            setAuthMode('login');
+            setUser(null);
+            setDashboard(null);
+            return;
+          }
+          if (authRes.token && authRes.user) {
+            setStoredToken(authRes.token);
+            me = { user: authRes.user };
+          }
         }
       }
       if (!me) {
@@ -250,6 +308,45 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
+    let tickInFlight = false;
+    const tickIv = setInterval(() => {
+      if (tickInFlight) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      tickInFlight = true;
+      void apiFetch<{
+        ok: boolean;
+        balance?: DashboardPayload['balance'];
+        openTrades?: DashboardPayload['openTrades'];
+        dexTrades?: DashboardPayload['dexTrades'];
+        smartCopyPositions?: DashboardPayload['smartCopyPositions'];
+        perpOrders?: DashboardPayload['perpOrders'];
+        totalUnrealizedPnl?: number;
+      }>('/api/trading/live-ticks')
+        .then((t) => {
+          if (!t?.ok) return;
+          setDashboard((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  balance: t.balance ?? prev.balance,
+                  openTrades: t.openTrades ?? prev.openTrades,
+                  dexTrades: t.dexTrades ?? prev.dexTrades,
+                  smartCopyPositions: t.smartCopyPositions ?? prev.smartCopyPositions,
+                  perpOrders: t.perpOrders ?? prev.perpOrders,
+                  stats: {
+                    ...prev.stats,
+                    unrealizedPnl: t.totalUnrealizedPnl ?? prev.stats.unrealizedPnl,
+                  },
+                }
+              : prev
+          );
+        })
+        .catch(() => {})
+        .finally(() => {
+          tickInFlight = false;
+        });
+    }, 1_500);
+
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       void apiFetch<DashboardPayload>('/api/trading/dashboard?lite=1')
@@ -262,8 +359,11 @@ export function App() {
           );
         })
         .catch(() => {});
-    }, 45_000);
-    return () => clearInterval(iv);
+    }, 30_000);
+    return () => {
+      clearInterval(tickIv);
+      clearInterval(iv);
+    };
   }, [user]);
 
   // Real-time Tether/Toman rate polling (45s while tab is visible to minimize edge/D1 load)
@@ -331,7 +431,7 @@ export function App() {
       } else {
         await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
         pushFloatingToast(
-          lang === 'fa' ? '✅ ربات معاملاتی با موفقیت روشن شد' : '✅ Trading bot is now active',
+          lang === 'fa' ? 'ربات معاملاتی با موفقیت روشن شد' : 'Trading bot is now active',
           'success'
         );
       }
@@ -472,13 +572,7 @@ export function App() {
 
   if (verifyCardId) {
     return (
-      <Suspense
-        fallback={
-          <div className="min-h-screen app-shell flex items-center justify-center">
-            <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
-          </div>
-        }
-      >
+      <Suspense fallback={<AppSplashLoader lang={lang} stage="card" />}>
         <VerifyCardPage
           cardId={verifyCardId}
           lang={lang}
@@ -492,14 +586,7 @@ export function App() {
   }
 
   if (!authChecked) {
-    return (
-      <div className="min-h-screen app-shell flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <DollarinoBrandMark size={52} glow />
-          <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
-        </div>
-      </div>
-    );
+    return <AppSplashLoader lang={lang} stage="auth" />;
   }
 
   if (!user) {
@@ -524,9 +611,16 @@ export function App() {
             isLight={look === 'paper'}
             onToggleDaylight={handleToggleDaylight}
             initialMode={authMode}
+            initial2faToken={pending2faToken}
             externalError={authError}
-            onBack={() => setPublicScreen('landing')}
-            onSuccess={loadSessionAndDashboard}
+            onBack={() => {
+              setPending2faToken(null);
+              setPublicScreen('landing');
+            }}
+            onSuccess={() => {
+              setPending2faToken(null);
+              return loadSessionAndDashboard();
+            }}
           />
         )}
         <SupportModal
@@ -553,25 +647,30 @@ export function App() {
     );
   }
 
+  if (Number(user.profile_completed ?? 1) === 0) {
+    return (
+      <CompleteProfileGate
+        lang={lang}
+        user={user}
+        onCompleted={(updated) => {
+          setUser(updated);
+          void loadSessionAndDashboard();
+        }}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
   if (!dashboard) {
     return (
       <>
-        <div className="min-h-screen app-shell flex items-center justify-center p-4">
-          <div className="panel rounded-3xl p-6 text-center space-y-3 max-w-sm w-full">
-            <DollarinoBrandMark size={44} glow />
-            <p className="text-sm font-bold text-main">
-              {authError || (lang === 'fa' ? 'در حال آماده‌سازی میز کار معاملاتی...' : 'Loading your trading desk...')}
-            </p>
-            <div className="flex items-center justify-center gap-2">
-              <button type="button" onClick={() => void loadSessionAndDashboard()} className="btn-gold px-4 py-2 rounded-xl text-xs">
-                {lang === 'fa' ? 'تلاش مجدد' : 'Retry'}
-              </button>
-              <button type="button" onClick={() => void handleLogout()} className="btn-ghost px-4 py-2 rounded-xl text-xs">
-                {lang === 'fa' ? 'بازگشت' : 'Back'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AppSplashLoader
+          lang={lang}
+          stage="desk"
+          error={authError || null}
+          onRetry={() => void loadSessionAndDashboard()}
+          onBack={() => void handleLogout()}
+        />
         <SupportModal
           open={supportOpen}
           lang={lang}
@@ -605,7 +704,12 @@ export function App() {
       activeExchangeLabel={dashboard.activeExchange?.label || dashboard.activeExchange?.provider || 'Exchange'}
       freeBalance={dashboard.balance.free || '0'}
       markets={markets}
-      openTradesCount={dashboard.openTrades.length}
+      openTradesCount={
+        dashboard.openTrades.length +
+        (dashboard.dexTrades?.filter((d) => d.status === 'OPEN').length || 0) +
+        (dashboard.smartCopyPositions?.filter((p) => p.status === 'OPEN').length || 0) +
+        (dashboard.perpOrders?.filter((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED').length || 0)
+      }
       recentSignalsCount={dashboard.recentSignals.length}
       onStartStop={handleTopbarStartStop}
       onKillSwitch={handleKillSwitch}
@@ -617,14 +721,7 @@ export function App() {
       walletConnecting={walletConnecting}
       onLogout={handleLogout}
     >
-      <Suspense
-        fallback={
-          <div className="py-16 flex flex-col items-center justify-center gap-3">
-            <div className="w-8 h-8 rounded-full border-2 border-[var(--gold)] border-t-transparent animate-spin" />
-            <p className="text-xs font-bold text-dim">{lang === 'fa' ? 'در حال بارگذاری...' : 'Loading...'}</p>
-          </div>
-        }
-      >
+      <Suspense fallback={<AppInlineTabLoader lang={lang} />}>
       {activeTab === 'overview' && (
         <OverviewPage
           lang={lang}
@@ -683,8 +780,10 @@ export function App() {
           markets={markets}
           iranRate={dashboard.iranRate?.usdtIrt}
           marketType={marketType}
+          walletEvmAddress={user.trust_wallet_address}
           onChangeMarketType={handleChangeMarketType}
           onTradeSymbol={(sym) => openTerminalWithSymbol(sym, marketType)}
+          onRefresh={loadSessionAndDashboard}
         />
       )}
       {activeTab === 'radar' && (
@@ -739,7 +838,7 @@ export function App() {
         />
       )}
       {activeTab === 'pricing' && (
-        <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} />
+        <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} onNavigate={setActiveTab} />
       )}
       {activeTab === 'faq' && <FaqPage lang={lang} />}
       {activeTab === 'admin' && (user.role.toUpperCase() === 'ADMIN' || user.role.toUpperCase() === 'OWNER') && (

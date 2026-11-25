@@ -12,9 +12,9 @@ const FALLBACK_BANNERS: PromoBannerItem[] = [
     title_fa: 'کپی‌ترید هوشمند ولت‌ها با باکس مارجین اختصاصی',
     title_en: 'Smart-Money Wallet Copy with Isolated Margin Boxes',
     subtitle_fa:
-      '۱۰ ولت برتر یا آدرس دلخواه را رصد کنید، ۷ روز بک‌تست واقعی بگیرید و با خزانه ۲۴/۷ یا Trust Wallet معامله کنید.',
+      '۱۰ ولت برتر یا آدرس دلخواه را رصد کنید، ۷ روز بک‌تست واقعی بگیرید و مستقیم با Trust Wallet یا ولت اختصاصی ۲۴/۷ معامله کنید.',
     subtitle_en:
-      'Track Top-10 or custom wallets, run a 7-day backtest, and execute via 24/7 Copy-Vault or Trust Wallet.',
+      'Track Top-10 or custom wallets, run a 7-day backtest, and execute directly via Trust Wallet or your 24/7 private wallet.',
     cta_label_fa: 'شروع کپی‌ترید ولت‌ها',
     cta_label_en: 'Open Smart Copy V2',
     cta_target: 'copy',

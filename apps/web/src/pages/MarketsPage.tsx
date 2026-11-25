@@ -4,6 +4,8 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Flame,
+  Gauge,
+  Globe,
   LayoutGrid,
   List,
   Search,
@@ -17,6 +19,7 @@ import type { Lang } from '../lib/i18n';
 import type { ExchangeMarket } from '../components/SymbolPickerModal';
 import { CoinIcon } from '../components/CoinIcon';
 import { Sparkline } from '../components/DollarinoViz';
+import { PerpDexPanel } from '../components/PerpDexPanel';
 
 function fmtPx(px: number): string {
   if (!Number.isFinite(px) || px <= 0) return '—';
@@ -34,18 +37,23 @@ export function MarketsPage({
   markets,
   iranRate,
   marketType = 'FUTURES',
+  walletEvmAddress,
   onChangeMarketType,
   onTradeSymbol,
+  onRefresh,
 }: {
   lang: Lang;
   uiMode?: 'simple' | 'pro';
   markets: ExchangeMarket[];
   iranRate?: number;
   marketType?: 'SPOT' | 'FUTURES';
+  walletEvmAddress?: string | null;
   onChangeMarketType?: (next: 'SPOT' | 'FUTURES') => void;
   onTradeSymbol: (sym: string) => void;
+  onRefresh?: () => Promise<void> | void;
 }) {
   const isFa = lang === 'fa';
+  const [section, setSection] = useState<'markets' | 'perp'>('markets');
   const [q, setQ] = useState('');
   const [category, setCategory] = useState<'all' | 'favs' | 'layer1' | 'meme'>('all');
   const [sortBy, setSortBy] = useState<'volume' | 'gainers' | 'losers'>('volume');
@@ -119,6 +127,37 @@ export function MarketsPage({
 
   const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount]);
 
+  const sectionToggleBar = (
+    <div className="tab-bar w-full sm:w-auto">
+      {[
+        { id: 'markets' as const, icon: Globe, fa: 'بازارهای اسپات و فیوچرز', en: 'Spot & Futures Markets' },
+        { id: 'perp' as const, icon: Gauge, fa: 'فیوچرز کیف‌پول (Perp DEX تا ۱۰۰x)', en: 'Wallet Perp DEX (Up to 100x)' },
+      ].map((t) => {
+        const Icon = t.icon;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setSection(t.id)}
+            className={`tab-pill flex-1 sm:flex-initial ${section === t.id ? 'tab-pill-active' : ''}`}
+          >
+            <Icon className="w-4 h-4 shrink-0" />
+            <span>{isFa ? t.fa : t.en}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (section === 'perp') {
+    return (
+      <div className="space-y-4">
+        {sectionToggleBar}
+        <PerpDexPanel lang={lang} walletEvmAddress={walletEvmAddress} onAfterChange={onRefresh} />
+      </div>
+    );
+  }
+
   if (uiMode === 'simple') {
     const totalVol = markets.reduce((acc, m) => acc + Number(m.volume24h || 0), 0);
     const btcRow = markets.find((m) => m.symbol === 'BTCUSDT');
@@ -128,6 +167,7 @@ export function MarketsPage({
 
     return (
       <div className="space-y-4 max-w-3xl mx-auto">
+        {sectionToggleBar}
         {/* Top 5 Market Pulse Strip incl. Live Iran Tether/USD */}
         <div className="panel rounded-2xl p-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center items-center">
           <div className="col-span-2 sm:col-span-1 space-y-0.5 border-b sm:border-b-0 sm:border-e hairline pb-2 sm:pb-0 sm:pe-2">
@@ -399,6 +439,7 @@ export function MarketsPage({
 
   return (
     <div className="space-y-6">
+      {sectionToggleBar}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center gap-2" style={{ color: 'var(--gold)' }}>
@@ -582,7 +623,7 @@ export function MarketsPage({
                   <div className="min-w-0">
                     <p className="font-bold text-sm text-main truncate">
                       {c.base}
-                      <span className="text-dim text-[10px]"> /USDT</span>
+                      <span className="text-dim text-[10px]"> /{c.quote || 'USDT'}</span>
                     </p>
                     <p dir="ltr" className="text-[10px] text-dim tabular">
                       {marketType === 'SPOT' ? 'Spot 1×' : `Max ${c.maxLeverage}×`}

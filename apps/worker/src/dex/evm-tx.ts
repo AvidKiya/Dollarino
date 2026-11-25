@@ -41,6 +41,7 @@ export const EVM_CHAIN_CONFIG: Record<
     rpcUrls: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com'],
     nativeSymbol: 'ETH',
     wrappedNative: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+    v2Router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
     explorerTx: 'https://arbiscan.io/tx/',
   },
 };

@@ -62,12 +62,334 @@ import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS, normalizeCanonicalSymbol } from '../exchanges/markets.js';
 import { publishProfitCardToTelegram, publishSignalClosedCard } from '../telegram/publisher.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
-import { checkLiveFeeEnforcement, getUserServerFeeSummary } from '../services/server-fee.js';
+import { checkLiveFeeEnforcement, getUserServerFeeSummary, recordProfitShareServerFee } from '../services/server-fee.js';
 import { getTrustWalletLiveTotalUsd } from './trustwallet.js';
+import { buildTrustWalletSwapLinks, getDexTokenPools } from '../dex/screener.js';
+import { closeCopyPositionV2, type CopyPositionV2Row } from '../dex/smart-copy.js';
 import type { ExchangeProviderId } from '@dollarino/core';
 
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 tradingRoutes.use('*', requireAuth);
+
+function resolveTradeSourceInfo(strategyKey?: string | null): {
+  sourceKey: 'COPY' | 'AI' | 'MANUAL' | 'BOT';
+  sourceLabelFa: string;
+  sourceLabelEn: string;
+} {
+  const k = String(strategyKey || '').toLowerCase();
+  if (k.includes('copy')) {
+    return { sourceKey: 'COPY', sourceLabelFa: 'کپی‌ترید', sourceLabelEn: 'Copy Trade' };
+  }
+  if (k.startsWith('user_ai') || k.startsWith('ai_') || k === 'ai_exclusive') {
+    return { sourceKey: 'AI', sourceLabelFa: 'هوش مصنوعی', sourceLabelEn: 'AI Bot' };
+  }
+  if (k.startsWith('manual')) {
+    return { sourceKey: 'MANUAL', sourceLabelFa: 'ترمینال دستی', sourceLabelEn: 'Manual Terminal' };
+  }
+  return { sourceKey: 'BOT', sourceLabelFa: 'ربات استراتژی', sourceLabelEn: 'Strategy Bot' };
+}
+
+async function withFastTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms);
+    promise
+      .then((res) => {
+        clearTimeout(t);
+        resolve(res);
+      })
+      .catch(() => {
+        clearTimeout(t);
+        resolve(fallback);
+      });
+  });
+}
+
+async function buildLivePositionsSnapshot(
+  env: Env,
+  userId: string,
+  effectiveMode: 'PAPER' | 'LIVE',
+  cfg: Pick<UserBotConfigRow, 'paper_balance'> | null,
+  adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
+  balanceTotal: number,
+  opts?: { lite?: boolean; includeClosed?: boolean }
+) {
+  const isLitePoll = Boolean(opts?.lite);
+  const includeClosed = opts?.includeClosed !== false;
+  const rawTotalEq = Math.max(0, Number(balanceTotal ?? 0));
+  const totalEq = effectiveMode === 'LIVE' ? rawTotalEq : rawTotalEq || Number(cfg?.paper_balance ?? 10000);
+  const totalEqDenom = Math.max(1, totalEq);
+
+  const [openTradesRaw, dexTradesRaw, smartCopyRaw, perpOrdersRaw] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC`)
+      .bind(userId, effectiveMode)
+      .all<{
+        id: string;
+        symbol: string;
+        direction: Direction;
+        market_type?: MarketType;
+        strategy_key?: string | null;
+        entry_price: string;
+        initial_quantity?: string;
+        remaining_quantity: string;
+        leverage: number;
+        margin_used: string;
+        current_stop_loss: string;
+        tp1: string;
+        tp2: string | null;
+        tp3: string | null;
+        tp1_hit: number;
+        tp2_hit: number;
+        risk_free_active: number;
+        trailing_active?: number;
+        realized_pnl: string;
+        mode: string;
+        exchange_provider: string;
+        opened_at: string;
+      }>(),
+    env.DB.prepare(
+      effectiveMode === 'PAPER'
+        ? includeClosed
+          ? `SELECT * FROM dex_trades WHERE user_id = ? AND tx_hash LIKE 'PAPER_%' ORDER BY opened_at DESC LIMIT 40`
+          : `SELECT * FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') AND tx_hash LIKE 'PAPER_%' ORDER BY opened_at DESC LIMIT 30`
+        : includeClosed
+          ? `SELECT * FROM dex_trades WHERE user_id = ? AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%') ORDER BY opened_at DESC LIMIT 40`
+          : `SELECT * FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%') ORDER BY opened_at DESC LIMIT 30`
+    )
+      .bind(userId)
+      .all<{
+        id: string;
+        chain_id: string;
+        dex_id: string | null;
+        pair_address: string | null;
+        token_address: string;
+        token_symbol: string;
+        quote_symbol: string | null;
+        direction: string;
+        amount_usd: number;
+        token_qty: number;
+        entry_price_usd: number;
+        exit_price_usd: number | null;
+        stop_loss_usd: number | null;
+        tp1_usd: number | null;
+        status: string;
+        tx_hash: string | null;
+        note: string | null;
+        realized_pnl_usd: number;
+        realized_pnl_pct: number;
+        opened_at: string;
+        closed_at: string | null;
+      }>()
+      .catch(() => ({ results: [] })),
+    env.DB.prepare(
+      effectiveMode === 'PAPER'
+        ? includeClosed
+          ? `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND execution_mode = 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 40`
+          : `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND status IN ('OPEN', 'PENDING_TRUST_SIGN') AND execution_mode = 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 30`
+        : includeClosed
+          ? `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND execution_mode != 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 40`
+          : `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND status IN ('OPEN', 'PENDING_TRUST_SIGN') AND execution_mode != 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 30`
+    )
+      .bind(userId)
+      .all<CopyPositionV2Row>()
+      .catch(() => ({ results: [] })),
+    env.DB.prepare(
+      effectiveMode === 'PAPER'
+        ? includeClosed
+          ? `SELECT * FROM perp_dex_orders WHERE user_id = ? AND execution_kind IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 30`
+          : `SELECT * FROM perp_dex_orders WHERE user_id = ? AND status NOT IN ('CLOSED', 'CANCELLED') AND execution_kind IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 20`
+        : includeClosed
+          ? `SELECT * FROM perp_dex_orders WHERE user_id = ? AND execution_kind NOT IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 30`
+          : `SELECT * FROM perp_dex_orders WHERE user_id = ? AND status NOT IN ('CLOSED', 'CANCELLED') AND execution_kind NOT IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 20`
+    )
+      .bind(userId)
+      .all<{
+        id: string;
+        user_id: string;
+        venue: string;
+        symbol: string;
+        side: string;
+        leverage: number;
+        margin_usd: number;
+        entry_price: number;
+        tp_price: number | null;
+        sl_price: number | null;
+        execution_kind: string;
+        external_order_id: string | null;
+        status: string;
+        note: string | null;
+        created_at: string;
+      }>()
+      .catch(() => ({ results: [] })),
+  ]);
+
+  let totalUnrealizedPnl = 0;
+
+  // 1) CEX Open Trades
+  const priceCache = new Map<string, number>();
+  const sparkCache = new Map<string, number[]>();
+  const uniqueCexSymbols = [...new Set(openTradesRaw.results.map((p) => p.symbol))];
+  await Promise.all(
+    uniqueCexSymbols.slice(0, 12).map(async (sym) => {
+      if (isLitePoll) {
+        const px = await withFastTimeout(adapter.getTickerPrice(sym), 2000, '0');
+        const num = Number(px);
+        if (num > 0) priceCache.set(sym, num);
+      } else {
+        const k = await withFastTimeout(adapter.getKlines(sym, '5m', 24), 2500, []);
+        const last = k.length ? k[k.length - 1]!.close : Number(await withFastTimeout(adapter.getTickerPrice(sym), 2000, '0'));
+        if (last > 0) {
+          priceCache.set(sym, last);
+          sparkCache.set(sym, k.length ? k.map((c) => c.close) : [last]);
+        }
+      }
+    })
+  );
+
+  const openTrades = openTradesRaw.results.map((pos) => {
+    const entry = Number(pos.entry_price);
+    const mark = priceCache.get(pos.symbol) ?? entry;
+    const spark = sparkCache.get(pos.symbol) ?? [entry, mark];
+    const qty = Number(pos.remaining_quantity);
+    const margin = Math.max(0.01, Number(pos.margin_used));
+    const uPnl = pos.direction === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
+    totalUnrealizedPnl += uPnl;
+    const roePct = (uPnl / margin) * 100;
+    const capitalPct = (margin / totalEqDenom) * 100;
+    const liqEst =
+      pos.direction === 'LONG'
+        ? entry * (1 - 0.9 / Math.max(1, pos.leverage))
+        : entry * (1 + 0.9 / Math.max(1, pos.leverage));
+    const srcInfo = resolveTradeSourceInfo(pos.strategy_key);
+    return {
+      ...pos,
+      mark_price: mark.toFixed(mark >= 100 ? 2 : 4),
+      unrealized_pnl: uPnl.toFixed(2),
+      roe_pct: Number(roePct.toFixed(2)),
+      capital_pct: Number(capitalPct.toFixed(1)),
+      funding_usd: Number((-(margin * pos.leverage * 0.0001)).toFixed(3)),
+      liq_price_est: liqEst.toFixed(liqEst >= 100 ? 2 : 4),
+      sparkline: spark,
+      source_key: srcInfo.sourceKey,
+      source_label_fa: srcInfo.sourceLabelFa,
+      source_label_en: srcInfo.sourceLabelEn,
+    };
+  });
+
+  // 2) Live DEX / Sniper token pool quotes (shared by dexTrades and smartCopyPositions)
+  const dexPriceMap = new Map<string, number>();
+  const uniqueDexTokens = new Map<string, { chainId: string; tokenAddress: string }>();
+  for (const d of dexTradesRaw.results) {
+    if (d.status === 'OPEN' || d.status === 'PENDING_SIGN') {
+      uniqueDexTokens.set(`${d.chain_id}:${d.token_address}`, { chainId: d.chain_id, tokenAddress: d.token_address });
+    }
+  }
+  for (const cp of smartCopyRaw.results) {
+    if (cp.status === 'OPEN' || cp.status === 'PENDING_TRUST_SIGN') {
+      uniqueDexTokens.set(`${cp.chain_id}:${cp.token_address}`, { chainId: cp.chain_id, tokenAddress: cp.token_address });
+    }
+  }
+  await Promise.all(
+    [...uniqueDexTokens.values()].slice(0, 8).map(async (item) => {
+      const pools = await withFastTimeout(getDexTokenPools(item.chainId, item.tokenAddress), 2200, []);
+      const px = Number(pools[0]?.priceUsd || 0);
+      if (px > 0) dexPriceMap.set(`${item.chainId}:${item.tokenAddress}`, px);
+    })
+  );
+
+  const dexTrades = dexTradesRaw.results.map((d) => {
+    const livePx = dexPriceMap.get(`${d.chain_id}:${d.token_address}`) ?? d.entry_price_usd;
+    const unrealizedPct = d.entry_price_usd > 0 ? ((livePx - d.entry_price_usd) / d.entry_price_usd) * 100 : 0;
+    const unrealizedUsd = (d.amount_usd * unrealizedPct) / 100;
+    if (d.status === 'OPEN') {
+      totalUnrealizedPnl += unrealizedUsd;
+    }
+    const isSniper = Boolean((d.note && /اسنایپ|sniper|شکار/i.test(d.note)) || !d.dex_id || d.dex_id === 'sniper');
+    return {
+      ...d,
+      mode: d.tx_hash && d.tx_hash.startsWith('PAPER_') ? 'PAPER' : 'LIVE',
+      live_price_usd: livePx,
+      unrealized_pnl_pct: Number(unrealizedPct.toFixed(2)),
+      unrealized_pnl_usd: Number(unrealizedUsd.toFixed(2)),
+      source_key: isSniper ? ('SNIPER' as const) : ('DEX' as const),
+      source_label_fa: isSniper ? 'اسنایپر آن‌چین' : 'سوآپ DEX',
+      source_label_en: isSniper ? 'On-Chain Sniper' : 'DEX Swap',
+      trustWallet: buildTrustWalletSwapLinks(d.chain_id, d.token_address),
+    };
+  });
+
+  // 3) Smart Copy V2 Positions
+  const smartCopyPositions = smartCopyRaw.results.map((cp) => {
+    const fallbackPx = Number(cp.current_price_usd || cp.entry_price_usd || 0);
+    const livePx = dexPriceMap.get(`${cp.chain_id}:${cp.token_address}`) ?? fallbackPx;
+    const entry = Math.max(1e-12, Number(cp.entry_price_usd || livePx));
+    const rawPct = ((livePx - entry) / entry) * 100;
+    const dirPct = cp.direction === 'SHORT' ? -rawPct : rawPct;
+    const remFrac = Number(cp.remaining_pct ?? 100) / 100;
+    const openUsd = (Number(cp.margin_usd || 0) * remFrac * dirPct) / 100 + Number(cp.pnl_usd || 0);
+    if (cp.status === 'OPEN') {
+      totalUnrealizedPnl += openUsd;
+    }
+    return {
+      ...cp,
+      mode: cp.execution_mode === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE',
+      live_price_usd: livePx,
+      unrealized_pnl_pct: Number(dirPct.toFixed(2)),
+      unrealized_pnl_usd: Number(openUsd.toFixed(2)),
+      source_key: 'SMART_COPY' as const,
+      source_label_fa: `کپی‌ترید هوشمند (${cp.trader_label})`,
+      source_label_en: `Smart Copy (${cp.trader_label})`,
+    };
+  });
+
+  // 4) Perp DEX Orders
+  const perpOpenSymbols = [
+    ...new Set(
+      perpOrdersRaw.results
+        .filter((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED')
+        .map((o) => o.symbol)
+    ),
+  ];
+  const perpPriceMap = new Map<string, number>();
+  await Promise.all(
+    perpOpenSymbols.slice(0, 8).map(async (sym) => {
+      const cleanBase = sym.toUpperCase().replace(/-PERP$/i, '').replace(/\/USDT$|USDT$/i, '');
+      const pairSym = `${cleanBase}USDT`;
+      const px = priceCache.get(pairSym) ?? Number(await withFastTimeout(adapter.getTickerPrice(pairSym), 1800, '0'));
+      if (px > 0) perpPriceMap.set(sym, px);
+    })
+  );
+
+  const perpOrders = perpOrdersRaw.results.map((po) => {
+    const entry = Number(po.entry_price || 0);
+    const livePx = perpPriceMap.get(po.symbol) ?? entry;
+    const isShort = /SELL|SHORT/i.test(po.side);
+    const rawPct = entry > 0 ? ((livePx - entry) / entry) * 100 : 0;
+    const levPct = (isShort ? -rawPct : rawPct) * Math.max(1, Number(po.leverage || 1));
+    const uPnl = (Number(po.margin_usd || 0) * levPct) / 100;
+    const isOpen = po.status !== 'CLOSED' && po.status !== 'CANCELLED';
+    if (isOpen && entry > 0) {
+      totalUnrealizedPnl += uPnl;
+    }
+    return {
+      ...po,
+      mode: po.execution_kind === 'PAPER' || po.execution_kind === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE',
+      live_price_usd: livePx,
+      unrealized_pnl_pct: Number(levPct.toFixed(2)),
+      unrealized_pnl_usd: Number(uPnl.toFixed(2)),
+      source_key: 'PERP_DEX' as const,
+      source_label_fa: `فیوچرز DEX (${po.venue})`,
+      source_label_en: `Perp DEX (${po.venue})`,
+    };
+  });
+
+  return {
+    openTrades,
+    dexTrades,
+    smartCopyPositions,
+    perpOrders,
+    totalUnrealizedPnl,
+  };
+}
 
 async function resolveModeAwareWalletAndBalance(
   env: Env,
@@ -87,7 +409,7 @@ async function resolveModeAwareWalletAndBalance(
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(env, userId, effectiveProvider);
 
-  const [demoCfgBal, openLiveMarginRow, openPaperMarginRow, liveReadiness] = await Promise.all([
+  const [demoCfgBal, openLiveMarginRow, openPaperMarginRow, openDexPaperRow, openDexLiveRow, liveReadiness] = await Promise.all([
     Promise.resolve(Number(cfg?.paper_balance ?? 10000) || 0),
     env.DB.prepare(
       `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used
@@ -96,6 +418,14 @@ async function resolveModeAwareWalletAndBalance(
     env.DB.prepare(
       `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used
        FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = 'PAPER'`
+    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
+    env.DB.prepare(
+      `SELECT COALESCE(SUM(amount_usd), 0) AS used
+       FROM dex_trades WHERE user_id = ? AND status = 'OPEN' AND tx_hash LIKE 'PAPER_%'`
+    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
+    env.DB.prepare(
+      `SELECT COALESCE(SUM(amount_usd), 0) AS used
+       FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%')`
     ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
     getTrustWalletLiveTotalUsd(env.DB, userId).catch(() => ({
       hasWallet: false,
@@ -107,6 +437,9 @@ async function resolveModeAwareWalletAndBalance(
     })),
   ]);
 
+  const openDexPaperUsd = Math.max(0, Number(openDexPaperRow?.used || 0));
+  const openDexLiveUsd = Math.max(0, Number(openDexLiveRow?.used || 0));
+
   let balance: { free: string; used: string; total: string; currency: string };
   let displayProvider = provider;
   let displayLabel = label;
@@ -114,7 +447,7 @@ async function resolveModeAwareWalletAndBalance(
   if (effectiveMode === 'LIVE' && provider === 'paper') {
     // Non-custodial Trust Wallet LIVE mode without CEX/Hyperliquid keys:
     // NEVER return Demo/Paper balance here — always reflect real Trust Wallet balance!
-    const usedLive = Math.max(0, Number(openLiveMarginRow?.used || 0));
+    const usedLive = Math.max(0, Number(openLiveMarginRow?.used || 0) + openDexLiveUsd);
     const liveTotal = Math.max(0, Number(liveReadiness.totalUsd || 0));
     const freeLive = Math.max(0, liveTotal - usedLive);
     balance = {
@@ -134,9 +467,19 @@ async function resolveModeAwareWalletAndBalance(
       total: effectiveMode === 'LIVE' ? '0.00' : demoCfgBal.toFixed(2),
       currency: 'USDT',
     }));
+    if (effectiveMode === 'PAPER' && openDexPaperUsd > 0) {
+      const freeNum = Math.max(0, Number(balance.free || 0));
+      const usedNum = Math.max(0, Number(balance.used || 0)) + openDexPaperUsd;
+      balance = {
+        ...balance,
+        free: freeNum.toFixed(2),
+        used: usedNum.toFixed(2),
+        total: (freeNum + usedNum).toFixed(2),
+      };
+    }
   }
 
-  const usedPaper = Math.max(0, Number(openPaperMarginRow?.used || 0));
+  const usedPaper = Math.max(0, Number(openPaperMarginRow?.used || 0) + openDexPaperUsd);
   const demoTotalUsd = Math.max(0, demoCfgBal + usedPaper);
   const liveBalanceUsd =
     effectiveMode === 'LIVE' && provider !== 'paper'
@@ -273,7 +616,7 @@ tradingRoutes.get('/dashboard', async (c) => {
   const isLitePoll = c.req.query('lite') === '1';
 
   const [
-    openTradesRaw,
+    positionsSnap,
     pendingOrders,
     closedTrades,
     recentSignals,
@@ -287,28 +630,10 @@ tradingRoutes.get('/dashboard', async (c) => {
     platformAI,
     activeEngine,
   ] = await Promise.all([
-    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC`).bind(user.id, effectiveMode).all<{
-      id: string;
-      symbol: string;
-      direction: Direction;
-      market_type?: MarketType;
-      entry_price: string;
-      remaining_quantity: string;
-      leverage: number;
-      margin_used: string;
-      current_stop_loss: string;
-      tp1: string;
-      tp2: string | null;
-      tp3: string | null;
-      tp1_hit: number;
-      tp2_hit: number;
-      risk_free_active: number;
-      trailing_active?: number;
-      realized_pnl: string;
-      mode: string;
-      exchange_provider: string;
-      opened_at: string;
-    }>(),
+    buildLivePositionsSnapshot(c.env, user.id, effectiveMode, cfg ?? null, adapter, Number(balance.total ?? 0), {
+      lite: isLitePoll,
+      includeClosed: true,
+    }),
     c.env.DB.prepare(`SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC`).bind(user.id).all(),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? ORDER BY closed_at DESC LIMIT 60`).bind(user.id, effectiveMode).all(),
     c.env.DB.prepare(
@@ -369,45 +694,7 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   const rawTotalEq = Math.max(0, Number(balance.total ?? 0));
   const totalEq = effectiveMode === 'LIVE' ? rawTotalEq : (rawTotalEq || Number(cfg?.paper_balance ?? 10000));
-  const totalEqDenom = Math.max(1, totalEq);
-
-  // Enrich open positions with live mark price, ROE %, sparkline, and unrealized PnL
-  const priceCache = new Map<string, number>();
-  const sparkCache = new Map<string, number[]>();
-  const openTrades = [];
-  let totalUnrealizedPnl = 0;
-
-  for (const pos of openTradesRaw.results) {
-    let mark = priceCache.get(pos.symbol);
-    let spark = sparkCache.get(pos.symbol);
-    if (mark === undefined) {
-      const k = isLitePoll ? [] : await adapter.getKlines(pos.symbol, '5m', 24).catch(() => []);
-      mark = k.length ? k[k.length - 1]!.close : Number(await adapter.getTickerPrice(pos.symbol).catch(() => pos.entry_price));
-      spark = k.length ? k.map((c) => c.close) : [Number(pos.entry_price), mark];
-      priceCache.set(pos.symbol, mark);
-      sparkCache.set(pos.symbol, spark);
-    }
-    const entry = Number(pos.entry_price);
-    const qty = Number(pos.remaining_quantity);
-    const margin = Math.max(0.01, Number(pos.margin_used));
-    const uPnl = pos.direction === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
-    totalUnrealizedPnl += uPnl;
-    const roePct = (uPnl / margin) * 100;
-    const capitalPct = (margin / totalEqDenom) * 100;
-    const liqEst = pos.direction === 'LONG'
-      ? entry * (1 - 0.9 / Math.max(1, pos.leverage))
-      : entry * (1 + 0.9 / Math.max(1, pos.leverage));
-    openTrades.push({
-      ...pos,
-      mark_price: mark.toFixed(mark >= 100 ? 2 : 4),
-      unrealized_pnl: uPnl.toFixed(2),
-      roe_pct: Number(roePct.toFixed(2)),
-      capital_pct: Number(capitalPct.toFixed(1)),
-      funding_usd: Number((-(margin * pos.leverage * 0.0001)).toFixed(3)),
-      liq_price_est: liqEst.toFixed(liqEst >= 100 ? 2 : 4),
-      sparkline: spark ?? [entry, mark],
-    });
-  }
+  const { openTrades, dexTrades, smartCopyPositions, perpOrders, totalUnrealizedPnl } = positionsSnap;
 
   // Derive hourly, 30d daily, 7d weekly, & chronological Equity Curve in-memory from single closedSeriesRaw scan
   const seriesSource = isLitePoll
@@ -607,6 +894,9 @@ tradingRoutes.get('/dashboard', async (c) => {
     iranRate,
     serverFeeSummary,
     openTrades,
+    dexTrades,
+    smartCopyPositions,
+    perpOrders,
     pendingOrders: pendingOrders.results,
     closedTrades: closedTrades.results,
     recentSignals: recentSignals.results,
@@ -1533,11 +1823,18 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   await Promise.race([runTick, new Promise((resolve) => setTimeout(resolve, 4500))]);
 
+  const requiresAgentApproval =
+    cfg?.trading_mode === 'LIVE' && resolvedExecMode === 'AUTO' && activeExProvider === 'paper';
+
   return c.json({
     ok: true,
     bot_state: nextState,
     strategy_key: targetStrategy,
     activeExchangeProvider: activeExProvider,
+    requiresAgentApproval,
+    executionNote: requiresAgentApproval
+      ? 'ربات در حالت LIVE فعال شد. برای اجرای خودکار ۲۴/۷ فیوچرز بدون مجوز برداشت، در تب Trust Wallet / DEX دکمه «فعال‌سازی خودکار Hyperliquid با ۱ کلیک» را تایید کنید.'
+      : undefined,
   });
 });
 
@@ -1999,6 +2296,208 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
   return c.json({ ok: true, exitPrice: cls.filledPrice, realizedPnl: totalRealized });
 });
 
+tradingRoutes.get('/live-ticks', async (c) => {
+  const user = c.get('user');
+  const [cfg, activeRow] = await Promise.all([
+    c.env.DB.prepare('SELECT trading_mode, market_type, paper_balance FROM bot_configs WHERE user_id = ?')
+      .bind(user.id)
+      .first<Pick<UserBotConfigRow, 'trading_mode' | 'market_type' | 'paper_balance'>>(),
+    c.env.DB.prepare(
+      `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{ provider: ExchangeProviderId; label: string }>(),
+  ]);
+  const { effectiveMode, adapter, balance } = await resolveModeAwareWalletAndBalance(
+    c.env,
+    user.id,
+    cfg ?? null,
+    activeRow?.provider
+  );
+  const snap = await buildLivePositionsSnapshot(c.env, user.id, effectiveMode, cfg ?? null, adapter, Number(balance.total ?? 0), {
+    lite: true,
+    includeClosed: false,
+  });
+  return c.json({
+    ok: true,
+    serverTime: new Date().toISOString(),
+    tradingMode: effectiveMode,
+    balance,
+    openTrades: snap.openTrades,
+    dexTrades: snap.dexTrades,
+    smartCopyPositions: snap.smartCopyPositions,
+    perpOrders: snap.perpOrders,
+    totalUnrealizedPnl: Number(snap.totalUnrealizedPnl.toFixed(2)),
+  });
+});
+
+tradingRoutes.post('/positions/close-batch', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as { scope?: string };
+  const scope = body.scope === 'ALL_LOSING' ? 'ALL_LOSING' : body.scope === 'ALL_PROFITABLE' ? 'ALL_PROFITABLE' : null;
+  if (!scope) {
+    return c.json({ ok: false, error: 'نوع عملیات دسته‌ای نامعتبر است (ALL_PROFITABLE یا ALL_LOSING).' }, 400);
+  }
+
+  const [cfg, activeRow] = await Promise.all([
+    c.env.DB.prepare('SELECT trading_mode, market_type, paper_balance FROM bot_configs WHERE user_id = ?')
+      .bind(user.id)
+      .first<Pick<UserBotConfigRow, 'trading_mode' | 'market_type' | 'paper_balance'>>(),
+    c.env.DB.prepare(
+      `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{ provider: ExchangeProviderId; label: string }>(),
+  ]);
+
+  const { effectiveMode, adapter, balance } = await resolveModeAwareWalletAndBalance(
+    c.env,
+    user.id,
+    cfg ?? null,
+    activeRow?.provider
+  );
+  const snap = await buildLivePositionsSnapshot(c.env, user.id, effectiveMode, cfg ?? null, adapter, Number(balance.total ?? 0), {
+    lite: true,
+    includeClosed: false,
+  });
+
+  const matchScope = (pnlUsd: number) => (scope === 'ALL_PROFITABLE' ? pnlUsd > 0 : pnlUsd < 0);
+  const reasonTag = scope === 'ALL_PROFITABLE' ? 'BATCH_TAKE_PROFIT' : 'BATCH_STOP_LOSING';
+  const reasonFa = scope === 'ALL_PROFITABLE' ? 'بستن یکجای سودها (Take All Profit)' : 'بستن یکجای ضررها (Close All Losing)';
+
+  const closedItems: Array<{ kind: 'CEX' | 'DEX' | 'COPY_V2' | 'PERP'; id: string; symbol: string; realizedPnlUsd: number }> = [];
+  let realizedTotalUsd = 0;
+
+  // 1) Close matching CEX positions
+  for (const t of snap.openTrades) {
+    const uPnl = Number(t.unrealized_pnl || 0);
+    if (!matchScope(uPnl)) continue;
+    const { adapter: closeAdapter } = await resolveUserExchangeAdapter(c.env, user.id, t.mode === 'PAPER' ? 'paper' : undefined);
+    const cls = await closeAdapter
+      .closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `batch_${Date.now()}`, t.market_type ?? 'FUTURES')
+      .catch(() => null);
+    const exitPx = Number(cls?.filledPrice || t.mark_price || t.entry_price);
+    const fee = Number(cls?.fee || 0);
+    const entryPx = Number(t.entry_price);
+    const qty = Number(t.remaining_quantity);
+    const pnl = t.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
+    const totalRealized = Number(t.realized_pnl || 0) + pnl - fee;
+
+    if (t.mode === 'PAPER') {
+      const cfgRow = await c.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
+        .bind(user.id)
+        .first<{ paper_balance: string }>();
+      const remMarginShare = Number(t.margin_used) * (qty / Math.max(1e-9, Number(t.initial_quantity || qty)));
+      const nextBal = Number(cfgRow?.paper_balance ?? 0) + remMarginShare + pnl - fee;
+      await c.env.DB.prepare('UPDATE bot_configs SET paper_balance = ?, updated_at = datetime(\'now\') WHERE user_id = ?')
+        .bind(nextBal.toFixed(2), user.id)
+        .run();
+    }
+
+    await c.env.DB.prepare(
+      `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = ?, closed_at = datetime('now') WHERE id = ? AND user_id = ?`
+    )
+      .bind(String(exitPx), totalRealized.toFixed(4), reasonTag, t.id, user.id)
+      .run();
+
+    realizedTotalUsd += totalRealized;
+    closedItems.push({ kind: 'CEX', id: t.id, symbol: t.symbol, realizedPnlUsd: Number(totalRealized.toFixed(2)) });
+  }
+
+  // 2) Close matching DEX / Sniper OPEN positions
+  for (const d of snap.dexTrades) {
+    if (d.status !== 'OPEN') continue;
+    const uPnl = Number(d.unrealized_pnl_usd || 0);
+    if (!matchScope(uPnl)) continue;
+    const exitPx = Number(d.live_price_usd || d.entry_price_usd);
+    const pnlPct = d.entry_price_usd > 0 ? ((exitPx - d.entry_price_usd) / d.entry_price_usd) * 100 : 0;
+    const pnlUsd = (Number(d.amount_usd || 0) * pnlPct) / 100;
+
+    await c.env.DB.prepare(
+      `UPDATE dex_trades SET status = 'CLOSED', exit_price_usd = ?, realized_pnl_usd = ?, realized_pnl_pct = ?, closed_at = datetime('now') WHERE id = ? AND user_id = ?`
+    )
+      .bind(exitPx, Number(pnlUsd.toFixed(2)), Number(pnlPct.toFixed(2)), d.id, user.id)
+      .run();
+
+    const isPaper = Boolean(d.tx_hash && d.tx_hash.startsWith('PAPER_'));
+    if (isPaper) {
+      const balRow = await c.env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
+        .bind(user.id)
+        .first<{ paper_balance: string }>()
+        .catch(() => null);
+      const nextBal = Number((Number(balRow?.paper_balance ?? 0) + Math.max(0, Number(d.amount_usd || 0) + pnlUsd)).toFixed(2));
+      await c.env.DB.prepare(`UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`)
+        .bind(String(nextBal), user.id)
+        .run()
+        .catch(() => {});
+      await c.env.DB.prepare(
+        `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+         VALUES (?, ?, 'PAPER', 'DEX_CLOSE', ?, ?, ?)`
+      )
+        .bind(randomId('wl'), user.id, Number(pnlUsd.toFixed(2)), nextBal, `${reasonFa} - ${d.token_symbol}`)
+        .run()
+        .catch(() => {});
+    } else {
+      await recordProfitShareServerFee(c.env.DB, {
+        userId: user.id,
+        tradeId: d.id,
+        source: d.source_key === 'SNIPER' ? 'SNIPER_LIVE' : 'DEX_LIVE',
+        symbol: d.token_symbol,
+        mode: 'LIVE',
+        realizedPnlUsd: Number(pnlUsd.toFixed(2)),
+        tradeAmountUsd: Number(d.amount_usd || 0),
+        note: `${reasonFa} (${d.token_symbol})`,
+      }).catch(() => {});
+    }
+
+    realizedTotalUsd += pnlUsd;
+    closedItems.push({ kind: 'DEX', id: d.id, symbol: d.token_symbol, realizedPnlUsd: Number(pnlUsd.toFixed(2)) });
+  }
+
+  // 3) Close matching Smart Copy V2 positions
+  for (const cp of snap.smartCopyPositions) {
+    if (cp.status !== 'OPEN') continue;
+    const uPnl = Number(cp.unrealized_pnl_usd || 0);
+    if (!matchScope(uPnl)) continue;
+    const exitPx = Number(cp.live_price_usd || cp.current_price_usd || cp.entry_price_usd);
+    await closeCopyPositionV2(c.env, cp, exitPx, reasonFa);
+    realizedTotalUsd += uPnl;
+    closedItems.push({ kind: 'COPY_V2', id: cp.id, symbol: cp.token_symbol, realizedPnlUsd: Number(uPnl.toFixed(2)) });
+  }
+
+  // 4) Close matching Perp DEX orders
+  for (const po of snap.perpOrders) {
+    if (po.status === 'CLOSED' || po.status === 'CANCELLED') continue;
+    const uPnl = Number(po.unrealized_pnl_usd || 0);
+    if (!matchScope(uPnl)) continue;
+    await c.env.DB.prepare(
+      `UPDATE perp_dex_orders SET status = 'CLOSED', note = COALESCE(note, '') || ? WHERE id = ? AND user_id = ?`
+    )
+      .bind(` [${reasonFa}: ${uPnl >= 0 ? '+' : ''}$${uPnl.toFixed(2)}]`, po.id, user.id)
+      .run();
+    realizedTotalUsd += uPnl;
+    closedItems.push({ kind: 'PERP', id: po.id, symbol: po.symbol, realizedPnlUsd: Number(uPnl.toFixed(2)) });
+  }
+
+  if (closedItems.length > 0) {
+    await logAudit(
+      c.env.DB,
+      user.id,
+      'ORDER',
+      'INFO',
+      `${reasonFa}: ${closedItems.length} معامله بسته شد (مجموع PnL: $${realizedTotalUsd.toFixed(2)})`
+    ).catch(() => {});
+  }
+
+  return c.json({
+    ok: true,
+    scope,
+    closedCount: closedItems.length,
+    realizedTotalUsd: Number(realizedTotalUsd.toFixed(2)),
+    closedItems,
+  });
+});
+
 tradingRoutes.post('/orders/manual', async (c) => {
   const user = c.get('user');
   const rl = await enforceRateLimit(c.env, `order:${user.id}`, 30, 60);
@@ -2025,8 +2524,19 @@ tradingRoutes.post('/orders/manual', async (c) => {
     timeframe?: string;
   }>();
 
-  const cfgRow = await c.env.DB.prepare('SELECT trading_mode, market_type, margin_pct, paper_balance FROM bot_configs WHERE user_id = ?')
-    .bind(user.id).first<{ trading_mode: string; market_type?: MarketType; margin_pct: number; paper_balance: string }>();
+  const cfgRow = await c.env.DB.prepare(
+    'SELECT trading_mode, market_type, margin_pct, paper_balance, bot_budget_mode, bot_budget_usd, bot_budget_pct FROM bot_configs WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{
+      trading_mode: string;
+      market_type?: MarketType;
+      margin_pct: number;
+      paper_balance: string;
+      bot_budget_mode?: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
+      bot_budget_usd?: number;
+      bot_budget_pct?: number;
+    }>();
   const marketType: MarketType = body.marketType ?? cfgRow?.market_type ?? 'FUTURES';
   const effectiveLeverage = marketType === 'SPOT' ? 1 : Math.max(1, Number(body.leverage || 1));
 
@@ -2038,11 +2548,59 @@ tradingRoutes.post('/orders/manual', async (c) => {
     const activeRow = await c.env.DB.prepare(
       `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
     ).bind(user.id).first<{ provider: ExchangeProviderId }>();
-    const bal = Number(cfgRow?.paper_balance ?? 10000);
+
+    if (cfgRow?.trading_mode === 'LIVE') {
+      const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
+      if (!feeCheck.allowed) {
+        return c.json(
+          {
+            ok: false,
+            code: 'FEE_SETTLEMENT_REQUIRED',
+            error: 'باز کردن سفارش جدید واقعی تا تسویه کارمزد ۳٪ سود متوقف است (پوزیشن‌های باز همچنان مدیریت می‌شوند).',
+          },
+          403
+        );
+      }
+    }
+
+    const resolvedWallet = await resolveModeAwareWalletAndBalance(
+      c.env,
+      user.id,
+      {
+        trading_mode: (cfgRow?.trading_mode as 'PAPER' | 'LIVE') ?? 'PAPER',
+        market_type: marketType,
+        paper_balance: cfgRow?.paper_balance ?? '10000',
+      },
+      activeRow?.provider
+    );
+
+    if (cfgRow?.trading_mode === 'LIVE' && resolvedWallet.provider === 'trustwallet') {
+      return c.json(
+        {
+          ok: false,
+          code: 'AGENT_KEY_REQUIRED',
+          error:
+            'برای ثبت سفارش لیمیت خودکار روی حساب واقعی (LIVE)، ابتدا در تب DEX / Trust Wallet دکمه «⚡ تایید ۱-کلیکی Hyperliquid (ApproveAgent)» را تایید کنید یا حساب صرافی متصل نمایید.',
+        },
+        400
+      );
+    }
+
+    const rawFree = Number(resolvedWallet.balance.free || resolvedWallet.balance.total || 0);
+    const bal = resolveEffectiveBotCapital({
+      walletBalanceUsd: rawFree,
+      budgetMode: cfgRow?.bot_budget_mode ?? 'FULL_BALANCE',
+      budgetUsd: Number(cfgRow?.bot_budget_usd ?? 0),
+      budgetPct: Number(cfgRow?.bot_budget_pct ?? 100),
+    }).effectiveCapitalUsd;
+    if (!Number.isFinite(bal) || bal <= 0) {
+      return c.json({ ok: false, error: 'موجودی آزاد یا سقف سرمایه مجاز برای ثبت سفارش کافی نیست.' }, 400);
+    }
+
     const pct = body.marginPct && Number.isFinite(body.marginPct) ? body.marginPct : (cfgRow?.margin_pct ?? 10);
     const rawQty = ((bal * (pct / 100)) * effectiveLeverage) / Number(body.limitPrice);
     const qty = rawQty >= 100 ? rawQty.toFixed(1) : rawQty >= 1 ? rawQty.toFixed(3) : rawQty.toFixed(5);
-    const exProvider = cfgRow?.trading_mode === 'PAPER' ? 'paper' : (activeRow?.provider || 'paper');
+    const exProvider = cfgRow?.trading_mode === 'PAPER' ? 'paper' : resolvedWallet.provider;
     const id = randomId('ord');
     await c.env.DB.prepare(
       `INSERT INTO pending_orders (id, user_id, mode, exchange_provider, symbol, strategy_key, direction, order_type, price, quantity, leverage, stop_loss, tp1, tp2, tp3)

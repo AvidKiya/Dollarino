@@ -25,7 +25,7 @@ export const dict = {
     addBalance: 'مدیریت موجودی',
     showTradingCard: 'کارت سود تاییدشده',
     logout: 'خروج از حساب',
-    paperMode: 'شبیه‌ساز دمو ($50–$10M)',
+    paperMode: 'شبیه‌ساز دمو (\u2066$50–$10M\u2069)',
     liveMode: 'Trust Wallet واقعی',
     autoTrade: 'معامله خودکار',
     manualTrade: 'تایید دستی',

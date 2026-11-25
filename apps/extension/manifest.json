@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Dollarino — پایانه و رادار هوشمند دلارینو",
   "short_name": "Dollarino",
-  "version": "9.7.1",
-  "description": "Apple Liquid-Glass Trading Companion matching Dollarino Web: Live Bot Control, Hero Equity Card, AI Scan, Markets, DEX & Trust Wallet Radar.",
+  "version": "11.6.0",
+  "description": "Dollarino V11.6 Companion: Simple-Mode Bot & 5-Engine Controls, Demo/Live & 24/7 Auto Toggles, Live USD/IRT Ticks, AI DEX Analyzer & Trust Wallet Radar.",
   "icons": {
     "48": "icons/icon-192.png",
     "128": "icons/icon-192.png",
@@ -12,7 +12,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "دلارینو | ترمینال سریع و هوشمند",
+    "default_title": "دلارینو | ترمینال سریع و هوشمند V11.6",
     "default_icon": {
       "48": "icons/icon-192.png",
       "128": "icons/icon-192.png"
@@ -25,6 +25,7 @@
   "host_permissions": [
     "https://*.pages.dev/*",
     "https://*.workers.dev/*",
+    "https://*.e2b.app/*",
     "https://api.dexscreener.com/*",
     "https://api.geckoterminal.com/*",
     "https://api.coinbase.com/*"

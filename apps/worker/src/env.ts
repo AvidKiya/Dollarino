@@ -10,6 +10,8 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   PUBLIC_WEB_URL?: string;
   ALLOW_LIVE_TRADING?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
   TOOBIT_PROXY_URL?: string;
   EXCHANGE_PROXY_SECRET?: string;
   HILINKUP_API_KEY?: string;

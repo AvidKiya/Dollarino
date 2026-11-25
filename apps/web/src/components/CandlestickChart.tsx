@@ -219,28 +219,28 @@ export function CandlestickChart({
 
     if (showEmas || (!kbosOverlays && overlays)) {
       if (overlays?.ema20?.length) {
-        const s20 = chart.addLineSeries({ color: '#1464F6', lineWidth: 1, priceLineVisible: false });
+        const s20 = chart.addLineSeries({ color: '#1464F6', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
         s20.setData(dedupAsc(overlays.ema20.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
       if (overlays?.ema50?.length) {
-        const s50 = chart.addLineSeries({ color: '#FF8A00', lineWidth: 1, priceLineVisible: false });
+        const s50 = chart.addLineSeries({ color: '#FF8A00', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
         s50.setData(dedupAsc(overlays.ema50.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
       if (overlays?.ema200?.length) {
-        const s200 = chart.addLineSeries({ color: '#8b5cf6', lineWidth: 2, priceLineVisible: false });
+        const s200 = chart.addLineSeries({ color: '#8b5cf6', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
         s200.setData(dedupAsc(overlays.ema200.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
     }
 
     if (showKbosHtf && kbosOverlays?.closeSeriesAlt?.length && kbosOverlays?.openSeriesAlt?.length) {
-      const cLine = chart.addLineSeries({ color: '#10D856', lineWidth: 2, priceLineVisible: false, title: 'KBOs Close' });
+      const cLine = chart.addLineSeries({ color: '#10D856', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: 'KBOs Close' });
       cLine.setData(dedupAsc(kbosOverlays.closeSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value }))));
-      const oLine = chart.addLineSeries({ color: '#f43f5e', lineWidth: 2, priceLineVisible: false, title: 'KBOs Open' });
+      const oLine = chart.addLineSeries({ color: '#f43f5e', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: 'KBOs Open' });
       oLine.setData(dedupAsc(kbosOverlays.openSeriesAlt.map((p) => ({ time: p.time as Time, value: p.value }))));
     }
 
     if (showDemaAtr && kbosOverlays?.demaAtr?.length) {
-      const daLine = chart.addLineSeries({ lineWidth: 2, priceLineVisible: false, title: 'DEMA ATR' });
+      const daLine = chart.addLineSeries({ lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: 'DEMA ATR' });
       daLine.setData(
         dedupAsc(
           kbosOverlays.demaAtr.map((p) => ({

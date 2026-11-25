@@ -179,27 +179,27 @@ export function InlineMyAiHub({
   const quickPrompts = isFa
     ? [
         {
-          label: '⚡ اسکالپ ۵ دقیقه',
+          label: 'اسکالپ ۵ دقیقه',
           prompt: 'اسکالپ ۵ دقیقه روی BTC و ETH با EMA 9/21 و RSI زیر ۳۵، حد ضرر ۱.۵٪ و سود ۴٪ و اهرم ۵x',
         },
         {
-          label: '🌊 سوئینگ ۴ ساعته',
+          label: 'سوئینگ ۴ ساعته',
           prompt: 'سوئینگ ۴ ساعته کم‌ریسک روی BTC/ETH/SOL با EMA 20/50 و RSI، حد ضرر ۲٪ و تارگت ۷٪ با اهرم ۳x',
         },
         {
-          label: '🪙 ترید طلا و بیت‌کوین',
+          label: 'ترید طلا و بیت‌کوین',
           prompt: 'معاملات لانگ و شورت ۱۵ دقیقه‌ای روی PAXG و BTC با SuperTrend و حد ضرر ۱.۸٪ و سود ۵٪ با اهرم ۴x',
         },
         {
-          label: '🛡 ریسک کم ۲٪',
+          label: 'ریسک کم ۲٪',
           prompt: 'استراتژی محافظه‌کارانه تایم ۱ ساعته روی BTC و BNB با حداکثر اهرم ۲x، حد ضرر ۱.۲٪ و تارگت ۳.۶٪',
         },
       ]
     : [
-        { label: '⚡ 5m Scalp', prompt: '5m scalp on BTC and ETH with EMA 9/21 + RSI < 35, SL 1.5%, TP 4%, 5x' },
-        { label: '🌊 4h Swing', prompt: '4h low-risk swing on BTC/ETH/SOL with EMA 20/50 + RSI, SL 2%, TP 7%, 3x' },
-        { label: '🪙 Gold & BTC', prompt: '15m PAXG & BTC with SuperTrend, SL 1.8%, TP 5%, 4x leverage' },
-        { label: '🛡 Low Risk 2%', prompt: 'Conservative 1h on BTC & BNB with 2x leverage, SL 1.2%, TP 3.6%' },
+        { label: '5m Scalp', prompt: '5m scalp on BTC and ETH with EMA 9/21 + RSI < 35, SL 1.5%, TP 4%, 5x' },
+        { label: '4h Swing', prompt: '4h low-risk swing on BTC/ETH/SOL with EMA 20/50 + RSI, SL 2%, TP 7%, 3x' },
+        { label: 'Gold & BTC', prompt: '15m PAXG & BTC with SuperTrend, SL 1.8%, TP 5%, 4x leverage' },
+        { label: 'Low Risk 2%', prompt: 'Conservative 1h on BTC & BNB with 2x leverage, SL 1.2%, TP 3.6%' },
       ];
 
   return (
@@ -251,7 +251,7 @@ export function InlineMyAiHub({
             <Zap className="w-3.5 h-3.5" />
             <span>
               {isActive
-                ? isFa ? 'فعال و در حال ترید ✅' : 'Active & Live ✅'
+                ? isFa ? 'فعال و در حال ترید' : 'Active & Live'
                 : isFa ? 'فعال‌سازی و شروع خودکار' : 'Activate & Start'}
             </span>
           </button>

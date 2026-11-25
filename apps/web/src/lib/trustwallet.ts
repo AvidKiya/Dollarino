@@ -1,3 +1,5 @@
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { apiFetch } from './api';
 import { getTelegramWebApp, isInsideTelegramMiniApp } from './telegram';
 
@@ -14,6 +16,8 @@ export interface SolanaInjectedProvider {
   publicKey?: { toString: () => string; toBase58?: () => string };
   connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey?: { toString: () => string } }>;
   signMessage?: (msg: Uint8Array, encoding?: string) => Promise<{ signature?: Uint8Array }>;
+  signAndSendTransaction?: (tx: unknown) => Promise<{ signature?: string } | string>;
+  request?: (args: { method: string; params?: unknown }) => Promise<{ signature?: string } | string>;
 }
 
 export interface TronInjectedProvider {
@@ -601,3 +605,510 @@ export async function sendBep20UsdtViaTrustWallet(params: {
 
   return txHash;
 }
+
+export interface TrustWalletDappCapabilities {
+  isInsideTrustWallet: boolean;
+  hasAnyWallet: boolean;
+  hasEvm: boolean;
+  hasSolana: boolean;
+  hasTron: boolean;
+  hasTon: boolean;
+}
+
+export function getTrustWalletDappCapabilities(): TrustWalletDappCapabilities {
+  return {
+    isInsideTrustWallet: isTrustWalletEnvironment(),
+    hasAnyWallet: hasAnyInjectedWallet(),
+    hasEvm: Boolean(getInjectedTrustProvider()),
+    hasSolana: Boolean(getInjectedSolanaProvider()),
+    hasTron: Boolean(getInjectedTronProvider().tronWeb || getInjectedTronProvider().link),
+    hasTon: Boolean(getInjectedTonProvider()),
+  };
+}
+
+function bytesToHexPrefixed(bytes: Uint8Array): string {
+  return (
+    '0x' +
+    Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+  );
+}
+
+export function generateClientHyperliquidAgentKeypair(): {
+  agentAddress: string;
+  agentPrivateKey: string;
+} {
+  const priv = new Uint8Array(32);
+  crypto.getRandomValues(priv);
+  const pubUncompressed = secp256k1.getPublicKey(priv, false);
+  const addrBytes = keccak_256(pubUncompressed.slice(1)).slice(-20);
+  return {
+    agentAddress: bytesToHexPrefixed(addrBytes),
+    agentPrivateKey: bytesToHexPrefixed(priv),
+  };
+}
+
+function splitEip712Signature(sigHex: string): { r: string; s: string; v: number } {
+  const clean = sigHex.trim().replace(/^0x/i, '');
+  if (clean.length < 130) {
+    throw new Error('امضای EIP-712 ناقص است.');
+  }
+  const r = '0x' + clean.slice(0, 64);
+  const s = '0x' + clean.slice(64, 128);
+  let v = parseInt(clean.slice(128, 130), 16);
+  if (v === 0 || v === 1) v += 27;
+  return { r, s, v };
+}
+
+/**
+ * 1-Click Trust Wallet EIP-712 ApproveAgent wizard for non-custodial 24/7 Hyperliquid trading.
+ * Generates a fresh client-side trade-only keypair, prompts Trust Wallet EIP-712 signature on Arbitrum (0xa4b1),
+ * and submits the signed ApproveAgent payload to /api/dex/perp-approve-agent.
+ */
+export async function approveHyperliquidAgentInDapp(agentName = 'Dollarino24x7'): Promise<{
+  ok: boolean;
+  masterAddress: string;
+  agentAddress: string;
+  messageFa?: string;
+  messageEn?: string;
+}> {
+  const provider = getInjectedTrustProvider();
+  if (!provider) {
+    throw new Error('NO_INJECTED_WALLET');
+  }
+
+  const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
+  const masterAddress = accounts?.[0];
+  if (!masterAddress) throw new Error('NO_ACCOUNT_SELECTED');
+
+  // Hyperliquid ApproveAgent uses Arbitrum One (0xa4b1 = 42161)
+  await switchEvmNetwork('arbitrum');
+
+  const { agentAddress, agentPrivateKey } = generateClientHyperliquidAgentKeypair();
+  const nonce = Date.now();
+  const cleanAgentName = agentName.slice(0, 16) || 'Dollarino24x7';
+
+  const typedData = {
+    domain: {
+      name: 'HyperliquidSignTransaction',
+      version: '1',
+      chainId: 42161,
+      verifyingContract: '0x0000000000000000000000000000000000000000',
+    },
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' },
+      ],
+      'HyperliquidTransaction:ApproveAgent': [
+        { name: 'hyperliquidChain', type: 'string' },
+        { name: 'agentAddress', type: 'address' },
+        { name: 'agentName', type: 'string' },
+        { name: 'nonce', type: 'uint64' },
+      ],
+    },
+    primaryType: 'HyperliquidTransaction:ApproveAgent',
+    message: {
+      hyperliquidChain: 'Mainnet',
+      agentAddress: agentAddress.toLowerCase(),
+      agentName: cleanAgentName,
+      nonce,
+    },
+  };
+
+  const sigHex = (await provider.request({
+    method: 'eth_signTypedData_v4',
+    params: [masterAddress, JSON.stringify(typedData)],
+  })) as string;
+
+  const signature = splitEip712Signature(sigHex);
+
+  const res = await apiFetch<{
+    ok: boolean;
+    messageFa?: string;
+    messageEn?: string;
+  }>('/api/dex/perp-approve-agent', {
+    method: 'POST',
+    body: JSON.stringify({
+      masterAddress,
+      agentAddress,
+      agentPrivateKey,
+      agentName: cleanAgentName,
+      nonce,
+      signature,
+      hyperliquidChain: 'Mainnet',
+    }),
+  });
+
+  return {
+    ok: Boolean(res.ok),
+    masterAddress,
+    agentAddress,
+    messageFa: res.messageFa,
+    messageEn: res.messageEn,
+  };
+}
+
+/**
+ * Fund user's isolated 24/7 Copy-Vault directly from their connected Trust Wallet via eth_sendTransaction.
+ */
+export async function fundCopyVaultFromDapp(params: {
+  networkKey: 'bsc' | 'ethereum' | 'base' | 'arbitrum';
+  vaultAddress: string;
+  amountNative: number;
+}): Promise<string> {
+  const provider = getInjectedTrustProvider();
+  if (!provider) throw new Error('NO_INJECTED_WALLET');
+  const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
+  const from = accounts?.[0];
+  if (!from) throw new Error('NO_ACCOUNT_SELECTED');
+
+  await switchEvmNetwork(params.networkKey);
+
+  const wei = BigInt(Math.max(1, Math.round(params.amountNative * 1e9))) * 1_000_000_000n;
+  const txHash = (await provider.request({
+    method: 'eth_sendTransaction',
+    params: [
+      {
+        from,
+        to: params.vaultAddress,
+        value: '0x' + wei.toString(16),
+      },
+    ],
+  })) as string;
+
+  return txHash;
+}
+
+/**
+ * Grant a capped ERC-20 spending allowance (or 0 to revoke immediately) inside Trust Wallet DApp.
+ */
+export async function approveErc20SpenderInDapp(params: {
+  networkKey: 'bsc' | 'ethereum' | 'base' | 'arbitrum';
+  tokenAddress: string;
+  spenderAddress: string;
+  amountTokens: number;
+  decimals?: number;
+}): Promise<string> {
+  const provider = getInjectedTrustProvider();
+  if (!provider) throw new Error('NO_INJECTED_WALLET');
+  const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
+  const from = accounts?.[0];
+  if (!from) throw new Error('NO_ACCOUNT_SELECTED');
+
+  await switchEvmNetwork(params.networkKey);
+
+  const dec = Math.max(0, Math.min(18, params.decimals ?? 18));
+  const scaled =
+    params.amountTokens <= 0
+      ? 0n
+      : BigInt(Math.round(params.amountTokens * 1_000_000)) * 10n ** BigInt(Math.max(0, dec - 6));
+
+  const spenderPad = params.spenderAddress.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+  const amtHex = scaled.toString(16).padStart(64, '0');
+  // ERC20 approve(address,uint256) selector = 0x095ea7b3
+  const data = `0x095ea7b3${spenderPad}${amtHex}`;
+
+  const txHash = (await provider.request({
+    method: 'eth_sendTransaction',
+    params: [
+      {
+        from,
+        to: params.tokenAddress,
+        data,
+        value: '0x0',
+      },
+    ],
+  })) as string;
+
+  return txHash;
+}
+
+export const DEX_ROUTER_SPENDERS: Record<'bsc' | 'ethereum' | 'base' | 'arbitrum', { name: string; router: string; usdtOrUsdc: string; decimals: number }> = {
+  bsc: {
+    name: 'PancakeSwap V2 (BSC)',
+    router: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
+    usdtOrUsdc: '0x55d398326f99059fF775485246999027B3197955',
+    decimals: 18,
+  },
+  arbitrum: {
+    name: 'Uniswap Router (Arbitrum)',
+    router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
+    usdtOrUsdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    decimals: 6,
+  },
+  base: {
+    name: 'Uniswap Router (Base)',
+    router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
+    usdtOrUsdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    decimals: 6,
+  },
+  ethereum: {
+    name: 'Uniswap V2 (Ethereum)',
+    router: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',
+    usdtOrUsdc: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    decimals: 6,
+  },
+};
+
+export interface BuiltSwapResponse {
+  ok: boolean;
+  kind: 'EVM_TX' | 'SOLANA_TX' | 'DAPP_URL';
+  chainId: string;
+  chainIdHex?: string;
+  tx?: { from: string; to: string; data: string; value: string };
+  swapTransactionBase64?: string;
+  quoteSummary?: {
+    inputSymbol: string;
+    amountInput: number;
+    approxUsd: number;
+    slippagePct: number;
+    router: string;
+  };
+  dappUrl: string;
+  note?: string;
+}
+
+/**
+ * Execute a 1-Click live swap directly inside Trust Wallet DApp (or open deep link fallback).
+ */
+export async function executeLiveSwapInDapp(params: {
+  chainId: string;
+  tokenAddress: string;
+  amountUsd: number;
+  slippagePct?: number;
+  fallbackEvmAddress?: string | null;
+  fallbackSolAddress?: string | null;
+}): Promise<{ mode: 'ONCHAIN_TX' | 'DAPP_REDIRECT'; txHash?: string; router?: string; dappUrl: string }> {
+  const cid = params.chainId.toLowerCase();
+  const evmProv = getInjectedTrustProvider();
+  const solProv = getInjectedSolanaProvider();
+
+  let userAddress = '';
+  if (cid === 'solana') {
+    if (solProv) {
+      const resp = await solProv.connect().catch(() => null);
+      userAddress = resp?.publicKey?.toString() || solProv.publicKey?.toString() || params.fallbackSolAddress || '';
+    } else {
+      userAddress = params.fallbackSolAddress || '';
+    }
+  } else if (['bsc', 'ethereum', 'base', 'arbitrum'].includes(cid)) {
+    if (evmProv) {
+      const accs = (await evmProv.request({ method: 'eth_requestAccounts' }).catch(() => [])) as string[];
+      userAddress = accs?.[0] || params.fallbackEvmAddress || '';
+    } else {
+      userAddress = params.fallbackEvmAddress || '';
+    }
+  }
+
+  const built = await apiFetch<BuiltSwapResponse>('/api/dex/build-swap-tx', {
+    method: 'POST',
+    body: JSON.stringify({
+      chainId: cid,
+      tokenAddress: params.tokenAddress,
+      amountUsd: params.amountUsd,
+      userAddress,
+      slippagePct: params.slippagePct ?? 5,
+    }),
+  });
+
+  if (built.kind === 'EVM_TX' && built.tx && evmProv) {
+    const netKey = (['bsc', 'ethereum', 'base', 'arbitrum'].includes(cid) ? cid : 'bsc') as EvmNetworkSpec['key'];
+    await switchEvmNetwork(netKey);
+    const txHash = (await evmProv.request({
+      method: 'eth_sendTransaction',
+      params: [built.tx],
+    })) as string;
+    return {
+      mode: 'ONCHAIN_TX',
+      txHash,
+      router: built.quoteSummary?.router,
+      dappUrl: built.dappUrl,
+    };
+  }
+
+  if (built.kind === 'SOLANA_TX' && built.swapTransactionBase64 && solProv?.request) {
+    try {
+      const solRes = await solProv.request({
+        method: 'signAndSendTransaction',
+        params: { message: built.swapTransactionBase64 },
+      });
+      const sig = typeof solRes === 'string' ? solRes : solRes?.signature;
+      if (sig) {
+        return {
+          mode: 'ONCHAIN_TX',
+          txHash: sig,
+          router: built.quoteSummary?.router || 'Jupiter v6',
+          dappUrl: built.dappUrl,
+        };
+      }
+    } catch {
+      // Fallback safely to Trust Wallet DApp Jupiter link below
+    }
+  }
+
+  return {
+    mode: 'DAPP_REDIRECT',
+    dappUrl: built.dappUrl,
+  };
+}
+
+export const TREASURY_TOKEN_CONTRACTS: Record<
+  string,
+  Record<string, { contract?: string; decimals: number; coinId: number; isNative?: boolean }>
+> = {
+  BEP20: {
+    USDT: { contract: '0x55d398326f99059fF775485246999027B3197955', decimals: 18, coinId: 20000714 },
+    USDC: { contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18, coinId: 20000714 },
+    BNB: { decimals: 18, coinId: 20000714, isNative: true },
+  },
+  ERC20: {
+    USDT: { contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6, coinId: 60 },
+    USDC: { contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6, coinId: 60 },
+    ETH: { decimals: 18, coinId: 60, isNative: true },
+  },
+  BASE: {
+    USDC: { contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, coinId: 8453 },
+    ETH: { decimals: 18, coinId: 8453, isNative: true },
+  },
+  ARBITRUM: {
+    USDT: { contract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6, coinId: 42161 },
+    USDC: { contract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals: 6, coinId: 42161 },
+    ETH: { decimals: 18, coinId: 42161, isNative: true },
+  },
+  TRC20: {
+    USDT: { contract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', decimals: 6, coinId: 195 },
+    TRX: { decimals: 6, coinId: 195, isNative: true },
+  },
+  SOLANA: {
+    SOL: { decimals: 9, coinId: 501, isNative: true },
+    USDC: { contract: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, coinId: 501 },
+  },
+  TON: {
+    TON: { decimals: 9, coinId: 607, isNative: true },
+    USDT: { contract: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs', decimals: 6, coinId: 607 },
+  },
+};
+
+function decimalToBaseUnits(amount: number, decimals: number): bigint {
+  const fixed = Math.max(0, amount).toFixed(Math.min(decimals, 8));
+  const [intPart = '0', fracPart = ''] = fixed.split('.');
+  const paddedFrac = fracPart.padEnd(decimals, '0').slice(0, decimals);
+  return BigInt(intPart) * 10n ** BigInt(decimals) + BigInt(paddedFrac || '0');
+}
+
+function encodeErc20TransferData(toAddress: string, amountUnits: bigint): string {
+  const cleanTo = toAddress.trim().replace(/^0x/i, '').toLowerCase().padStart(64, '0');
+  const amountHex = amountUnits.toString(16).padStart(64, '0');
+  return `0xa9059cbb${cleanTo}${amountHex}`;
+}
+
+export function buildTreasuryTrustWalletDeepLink(params: {
+  network: string;
+  asset: string;
+  receiverAddress: string;
+  amount: number;
+}): { sendDeepLink: string; openInTrustDappUrl: string } {
+  const net = params.network.toUpperCase();
+  const ast = params.asset.toUpperCase();
+  const netTokens = TREASURY_TOKEN_CONTRACTS[net] ?? TREASURY_TOKEN_CONTRACTS.BEP20!;
+  const spec = netTokens[ast] ?? Object.values(netTokens)[0] ?? { coinId: 20000714, decimals: 18 };
+  const cleanAmt = Number(Math.max(0, params.amount).toFixed(6));
+
+  const qs = new URLSearchParams({
+    coin: String(spec.coinId),
+    address: params.receiverAddress.trim(),
+    amount: String(cleanAmt),
+  });
+  if (spec.contract) {
+    qs.set('asset', `c${spec.coinId}_t${spec.contract}`);
+  }
+  const sendDeepLink = `https://link.trustwallet.com/send?${qs.toString()}`;
+
+  let openInTrustDappUrl = sendDeepLink;
+  if (typeof window !== 'undefined') {
+    const targetUrl = new URL(window.location.href);
+    targetUrl.searchParams.set('tw_autoconnect', '1');
+    openInTrustDappUrl = `https://link.trustwallet.com/open_url?coin_id=${spec.coinId}&url=${encodeURIComponent(targetUrl.toString())}`;
+  }
+  return { sendDeepLink, openInTrustDappUrl };
+}
+
+export async function sendTreasuryPaymentViaTrustWallet(params: {
+  network: 'BEP20' | 'TRC20' | 'ERC20' | 'BASE' | 'ARBITRUM' | 'SOLANA' | 'TON';
+  asset: string;
+  receiverAddress: string;
+  amountUsd: number;
+}): Promise<
+  | { mode: 'ONCHAIN_TX'; txHash: string; senderAddress: string }
+  | { mode: 'DEEP_LINK'; sendDeepLink: string; openInTrustDappUrl: string }
+> {
+  const net = params.network.toUpperCase();
+  const ast = (params.asset || 'USDT').toUpperCase();
+  const receiver = params.receiverAddress.trim();
+  const links = buildTreasuryTrustWalletDeepLink({
+    network: net,
+    asset: ast,
+    receiverAddress: receiver,
+    amount: params.amountUsd,
+  });
+
+  const evmNetMap: Record<string, EvmNetworkSpec['key']> = {
+    BEP20: 'bsc',
+    ERC20: 'ethereum',
+    BASE: 'base',
+    ARBITRUM: 'arbitrum',
+  };
+
+  const evmKey = evmNetMap[net];
+  const evmProv = getInjectedTrustProvider();
+
+  if (evmKey && evmProv && /^0x[a-fA-F0-9]{40}$/.test(receiver)) {
+    const accs = (await evmProv.request({ method: 'eth_requestAccounts' }).catch(() => [])) as string[];
+    const sender = accs?.[0];
+    if (sender) {
+      await switchEvmNetwork(evmKey);
+      const spec = TREASURY_TOKEN_CONTRACTS[net]?.[ast];
+      if (spec?.isNative) {
+        const units = decimalToBaseUnits(params.amountUsd, spec.decimals);
+        const txHash = (await evmProv.request({
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              from: sender,
+              to: receiver,
+              value: '0x' + units.toString(16),
+            },
+          ],
+        })) as string;
+        return { mode: 'ONCHAIN_TX', txHash, senderAddress: sender };
+      }
+      if (spec?.contract) {
+        const units = decimalToBaseUnits(params.amountUsd, spec.decimals);
+        const data = encodeErc20TransferData(receiver, units);
+        const txHash = (await evmProv.request({
+          method: 'eth_sendTransaction',
+          params: [
+            {
+              from: sender,
+              to: spec.contract,
+              value: '0x0',
+              data,
+            },
+          ],
+        })) as string;
+        return { mode: 'ONCHAIN_TX', txHash, senderAddress: sender };
+      }
+    }
+  }
+
+  return {
+    mode: 'DEEP_LINK',
+    sendDeepLink: links.sendDeepLink,
+    openInTrustDappUrl: links.openInTrustDappUrl,
+  };
+}
+

@@ -114,7 +114,7 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '11.5.0',
+    version: '11.6.0',
     openSource: false,
     paidSubscriptions: false,
     profitShareFeePct: SERVER_PROFIT_FEE_PCT,
@@ -422,57 +422,23 @@ app.get('/api/public/plans', async (c) => {
   return c.json({ plans });
 });
 
-const FALLBACK_COPY_TRADERS = [
-  {
-    id: 'ct_parsa_scalp',
-    display_name: 'پارسا اسکلپر (حرفه‌ای)',
-    handle: '@parsa_scalp',
-    specialty: 'Altcoin Scalping',
-    win_rate: 71.8,
-    roi_30d_pct: 64.9,
-    max_drawdown_pct: 9.1,
-    followers_count: 245,
-    risk_level: 'MEDIUM',
-  },
-  {
-    id: 'ct_aria_quant',
-    display_name: 'آریا کوانت (تاییدشده دلارینو)',
-    handle: '@aria_quant',
-    specialty: 'BTC/ETH Futures',
-    win_rate: 76.4,
-    roi_30d_pct: 48.2,
-    max_drawdown_pct: 5.4,
-    followers_count: 318,
-    risk_level: 'LOW',
-  },
-  {
-    id: 'ct_negin_ai',
-    display_name: 'نگین ترید (ترکیبی هوش مصنوعی)',
-    handle: '@negin_ai',
-    specialty: 'Swing & AI Hybrid',
-    win_rate: 79.2,
-    roi_30d_pct: 39.6,
-    max_drawdown_pct: 4.3,
-    followers_count: 412,
-    risk_level: 'LOW',
-  },
-];
-
 app.get('/api/public/copy-traders', async (c) => {
   try {
     const cached = getCachedPublicCopyTraders(c.env.DB);
     if (cached) {
-      return c.json({ traders: cached.length > 0 ? cached : FALLBACK_COPY_TRADERS, cached: true });
+      return c.json({ traders: cached, cached: true });
     }
     const rows = await c.env.DB.prepare(
       `SELECT id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level
-       FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 12`
+       FROM copy_traders
+       WHERE is_active = 1 AND is_verified = 1
+         AND id NOT IN ('ct_aria_quant', 'ct_parsa_scalp', 'ct_negin_ai')
+       ORDER BY roi_30d_pct DESC LIMIT 12`
     ).all();
-    const list = rows.results.length > 0 ? rows.results : FALLBACK_COPY_TRADERS;
     setCachedPublicCopyTraders(c.env.DB, rows.results);
-    return c.json({ traders: list });
+    return c.json({ traders: rows.results });
   } catch {
-    return c.json({ traders: FALLBACK_COPY_TRADERS });
+    return c.json({ traders: [] });
   }
 });
 
@@ -584,7 +550,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // Runs every 5 minutes (*/5): check lightweight indexed flags first so idle periods consume minimal D1 Rows Read
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '11.5.0').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '11.6.0').catch(() => {});
 
       const activity = await env.DB.prepare(
         `SELECT

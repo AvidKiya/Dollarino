@@ -320,7 +320,7 @@ export function AreaChart({
           bottomColor: `${color!}04`,
           lineWidth: 2,
           priceLineVisible: false,
-          lastValueVisible: true,
+          lastValueVisible: !showHud,
         })
       : chart.addBaselineSeries({
           baseValue: { type: 'price', price: normalized.basePrice },
@@ -332,7 +332,7 @@ export function AreaChart({
           bottomFillColor2: 'rgba(244, 63, 94, 0.30)',
           lineWidth: 2,
           priceLineVisible: false,
-          lastValueVisible: true,
+          lastValueVisible: !showHud,
         });
 
     mainSeries.setData(normalized.rawPts.map((p) => ({ time: p.time, value: p.value })));

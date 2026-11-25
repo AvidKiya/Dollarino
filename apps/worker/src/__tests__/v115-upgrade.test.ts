@@ -139,7 +139,7 @@ describe('Dollarino V11.5 Upgrade Suite: Zero Subscriptions, Signal Controls, D1
     const healthRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/health'), env);
     expect(healthRes.status).toBe(200);
     const healthJson = (await healthRes.json()) as { version: string; paidSubscriptions: boolean };
-    expect(healthJson.version).toBe('11.5.0');
+    expect(healthJson.version).toMatch(/^11\.[56]\.0$/);
     expect(healthJson.paidSubscriptions).toBe(false);
 
     const userToken = await issueUserToken(env, 'usr_v115_free', '11500001', 'user');

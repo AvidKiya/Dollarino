@@ -1,5 +1,51 @@
 # Changelog
 
+## [11.6.5] - 2026-11-25
+### Zero-Custody UI Redesign, Visual Assets Fix, Cache Busting & 4-Mode QA
+- **100% Non-Custodial User Treasury UI (`TreasuryBankingHub.tsx`, `DexTrustPage.tsx`, `SubscriptionPage.tsx`, `ServicesPage.tsx`, `Layout.tsx`, `PortfolioPage.tsx`, `SmartCopyProHub.tsx`, `PromoBannerCarousel.tsx`)**:
+  - Eliminated all legacy "deposit trading funds to platform treasury" phrasing across user-facing screens; clearly established that **user trading funds always stay 100% inside the user's own Trust Wallet**, controlled directly via on-wallet capital budget caps (`$50–$1000`, `25%–75%`, or Full Wallet).
+  - Separated profit-fee settlement (`تسویه بدهی کارمزد ۳٪ سود واقعی`) and optional prepaid fee credit (`شارژ اختیاری اعتبار کارمزد ۳٪`) cleanly with custom `ProDropdown` selectors (`0` native `<select>` elements).
+- **Simple Mode 5-Card Grid Symmetry & Clean 3D Icons (`OverviewPage.tsx`, `OnboardingAcademyModal.tsx`, `apps/web/public/images/transparent/`)**:
+  - Replaced the asymmetrical `lg:grid-cols-6` layout with a uniform `lg:grid-cols-5` grid (`185×261px` equal cards on `1440px` desktop) and fixed `setSimpleModel('hunting')` type typing.
+  - Regenerated and flood-fill extracted 3 clean `512×512` transparent PNG icons (`my-ai-brain-3d.png`, `sniper-rocket-3d.png`, `capital-vault-3d.png`) and verified all 11 transparent icons.
+- **PWA & CDN Cache Busting (`sw.js`, `_headers`, `main.tsx`)**:
+  - Upgraded Service Worker to `dollarino-pwa-v11.6.5` with Network-First routing for HTML, JS/CSS, and `/images/*`, set `Cache-Control: no-cache, no-store, must-revalidate` for `/`, `/index.html`, and `/sw.js`, added startup legacy cache purging + `controllerchange` single reload in `main.tsx`, and appended `?v=1165` to updated icon paths.
+- **Documentation & Live 4-Mode QA Verification (`DOLLARINO-COMPLETE-DOCUMENTATION.md`, `QA-VERIFICATION-REPORT.md`)**:
+  - Authored complete V1.0–V11.6.5 technical documentation inside `/home/user/Dollarino/` and executed 4-mode Playwright live verification (**Desktop Light/Dark & Mobile Light/Dark**, `84` screenshots, `21/21` functional checks passed, `0` JS errors, `0` HTTP 500s, `0` horizontal overflow).
+
+## [11.6.0] - 2026-11-24
+### Real Trust Wallet DApp Execution, Multi-Method Auth & TOTP 2FA (`0042`–`0044`)
+- **Cryptographic Wallet Verification & Placeholder Cleanup (`migrations/0042_clean_placeholders_and_tw_nonces.sql`, `routes/trustwallet.ts`)**:
+  - Added single-use 5-minute D1 nonces (`trust_wallet_nonces`) and real EIP-191 `personal_sign` `secp256k1` `ecrecover` address verification via `@noble/curves`; purged all legacy placeholder wallet addresses.
+- **Real In-App Trust Wallet DApp Trading (`routes/dex.ts`, `dex/perp-dex.ts`, `engine/executor.ts`, `engine/listing-sniper.ts`)**:
+  - Added 1-click **Hyperliquid EIP-712 `ApproveAgent`** wizard (trade-only agent key with zero withdrawal access, AES-256-GCM encrypted).
+  - Added `POST /api/dex/build-swap-tx` for real on-chain calldata (Jupiter v6 on Solana; ParaSwap/1inch/Router on BSC, Base, Arbitrum, Ethereum), limited ERC-20 router allowance + Revoke, and full `LIVE + AUTO` execution paths.
+- **Clean Verified Copy List & Invoice Sender Tracking (`migrations/0043_remove_default_copy_traders.sql`)**:
+  - Removed hardcoded demo copy traders so the verified copy list reflects only real admin/user-registered traders, and added `sender_address` invoice tracking.
+- **3-Path Auth, Mandatory Profile Gate & Google Authenticator TOTP 2FA (`migrations/0044_auth_profile_totp_2fa.sql`, `crypto.ts`, `auth.ts`, `AuthPage.tsx`, `ServicesPage.tsx`, `CompleteProfileGate.tsx`)**:
+  - Enabled 3-path signup/login (**Trust Wallet**, **Google**, **Telegram**), mandatory profile completion (`CompleteProfileGate`), and RFC 6238 **TOTP 2FA** setup/verification/disable flows.
+- **Extension V11.6 Update (`apps/extension/`)**: Synchronized Chrome MV3 extension with V11.6 APIs and non-custodial controls.
+
+## [11.5.0] - 2026-11-24
+### Cloudflare D1 Optimization, Zero Subscription Enforcement, Signal Controls & D1 Admin Suite (`0041`)
+- **D1 Performance & Free-Tier Scaling (`migrations/0041_v11_5_indexes_and_controls.sql`, `services/settings-cache.ts`)**:
+  - Added 15 composite covering indexes across hot tables, `WeakMap<D1Database>` in-memory TTL cache (`45s` settings / `60s` copy traders) with instant write invalidation, merged dashboard queries + `?lite=1` polling route, `90s` idle `TradingBotCoordinator` alarm, and visibility-gated client polling.
+- **0% Monthly Subscription + 3 Free Profitable Live Trades + 3% Profit-Share Only**:
+  - Eliminated all legacy `402 SUBSCRIPTION_REQUIRED` paywalls; all tools, `$50–$10M` customizable simulator, and 25+ indicators are free for everyone.
+- **Independent Signal Controls & Owner D1 Database Manager (`routes/admin.ts`, `AdminPage.tsx`)**:
+  - Added instant `publish_signals_to_channels` vs. `publish_signals_to_bot_users` switches, plus Owner-only D1 Database Manager (`stats`, `prune-logs`, `backup` JSON with optional secret exclusion, `restore` MERGE/REPLACE, and `wipe`).
+
+## [11.0.0] – [11.4.0] - 2026-11-23
+### Simultaneous 5-Engine Execution, Listing/Meme Sniper, Dynamic Capital Budget & Interactive Academy (`0037`–`0040`)
+- **V11.0 (`0037`)**: Simultaneous multi-engine bot execution (`active_engines_json` across Central AI, Dorna V1, My AI, Copy Trade, and Sniper), customizable `$50–$10M` paper demo balance, `listing-sniper.ts` & `SniperPage.tsx`, 3 free profitable live trades + 3% profit-only fee, and mandatory risk terms acceptance.
+- **V11.1–V11.2 (`0038`–`0039`)**: Dynamic wallet capital budget controls (`FULL_BALANCE`, fixed USD, or percentage cap) and per-user personal trading journal (`account_notes`).
+- **V11.4 (`0040`)**: Strict initial mode+risk onboarding gate, interactive `OnboardingAcademyModal`, and complete Sniper filters (`LISTING | MEME | BOTH`, minimum liquidity, anti-rug safety score).
+
+## [10.0.0] – [10.5.0] - 2026-11-23
+### Smart Copy Pro V2, Trust Wallet Exclusivity, Profit-Share Model & Transparency (`0027`–`0036`)
+- **V10.0–V10.2 (`0027`–`0031`)**: Top-10 On-Chain Whale discovery & Copy-Vault V2 with self-owned 24/7 sub-wallet keys, Perp DEX (`Hyperliquid / Jupiter Perps / GMX`), WebP `promo_banners` carousel, scheduled admin broadcasts + Copy-Vault PIN verification, and removal of CEX references in favor of exclusive Trust Wallet + `$10K` simulator integration.
+- **V10.3–V10.5 (`0032`–`0036`)**: Transitioned from paid monthly subscriptions (`subscription_required = false`) to profit-only server fee ledger (`1%` -> `5%` -> refined to `3%` in V11.0), free TradingView webhook alerts, 5 separated Telegram channels, admin-editable Founder Anti-Ponzi transparency profile (`founder-profile.ts`), and automated Telegram community group moderation (`group-moderator.ts`).
+
 ## [9.9.2] - 2026-11-22
 ### Added & Improved
 - **Screenshot & Receipt Image Support End-to-End (Web, Admin & Telegram Bot + D1 Migration `0025`)**:

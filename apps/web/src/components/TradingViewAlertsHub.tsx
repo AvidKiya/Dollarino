@@ -95,7 +95,7 @@ export function TradingViewAlertsHub({
       });
       tgHaptic('medium');
       pushFloatingToast(
-        isFa ? 'آلرت رایگان با موفقیت ساخته شد و به ربات متصل است ✅' : 'Free TradingView Alert created and wired to your bot ✅',
+        isFa ? 'آلرت رایگان با موفقیت ساخته شد و به ربات متصل است' : 'Free TradingView Alert created and wired to your bot',
         'success'
       );
       await load();
@@ -251,8 +251,9 @@ export function TradingViewAlertsHub({
             {alerts.map((a) => (
               <div key={a.id} className="rounded-2xl p-3 surface-soft border hairline flex items-center justify-between gap-2 flex-wrap">
                 <div>
-                  <p className="text-xs font-black text-main">
-                    {a.is_active ? '🟢' : '⏸️'} {a.name}
+                  <p className="text-xs font-black text-main flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${a.is_active ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span>{a.name}</span>
                   </p>
                   <p className="text-[11px] text-dim mt-0.5" dir="ltr">
                     {a.symbol} · {a.timeframe} · {a.indicator_id} · Triggers: {a.trigger_count}

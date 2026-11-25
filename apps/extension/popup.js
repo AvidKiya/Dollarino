@@ -6,10 +6,15 @@ const state = {
   theme: 'cosmic',
   isRunning: false,
   tradingMode: 'PAPER',
+  executionMode: 'AUTO',
+  usdtIrtRate: 290000,
+  activeEngines: [],
+  dexPairsCache: [],
   referralUrl: '',
   marketsCache: [],
   marketFilter: 'all',
   activeTab: 'bot',
+  liveTickTimer: null,
 };
 
 const COIN_COLORS = {
@@ -45,6 +50,12 @@ const CHAIN_COLORS = {
   arbitrum: '#28A0F0',
 };
 
+const ICON_BOLT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>`;
+const ICON_LOCK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const ICON_SEARCH = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`;
+const ICON_ALERT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`;
+const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
+
 const els = {
   connDot: document.getElementById('connDot'),
   userMeta: document.getElementById('userMeta'),
@@ -57,10 +68,18 @@ const els = {
   goSyncBtn: document.getElementById('goSyncBtn'),
   welcomeHeroCard: document.getElementById('welcomeHeroCard'),
   connectedHeroCard: document.getElementById('connectedHeroCard'),
+  quickModeBar: document.getElementById('quickModeBar'),
+  modeDemoBtn: document.getElementById('modeDemoBtn'),
+  modeLiveBtn: document.getElementById('modeLiveBtn'),
+  execAutoBtn: document.getElementById('execAutoBtn'),
+  execAskBtn: document.getElementById('execAskBtn'),
+  enginesPanel: document.getElementById('enginesPanel'),
+  activeEnginesCount: document.getElementById('activeEnginesCount'),
   botPulseDot: document.getElementById('botPulseDot'),
   botStateLabel: document.getElementById('botStateLabel'),
   botModeLabel: document.getElementById('botModeLabel'),
   balanceTotal: document.getElementById('balanceTotal'),
+  balanceIrt: document.getElementById('balanceIrt'),
   heroSparkWrap: document.getElementById('heroSparkWrap'),
   openPnl: document.getElementById('openPnl'),
   openCount: document.getElementById('openCount'),
@@ -75,6 +94,7 @@ const els = {
   refreshMarketsBtn: document.getElementById('refreshMarketsBtn'),
   dexSearchInput: document.getElementById('dexSearchInput'),
   dexSearchBtn: document.getElementById('dexSearchBtn'),
+  dexAiResultBox: document.getElementById('dexAiResultBox'),
   dexList: document.getElementById('dexList'),
   accountProfileCard: document.getElementById('accountProfileCard'),
   profileAvatar: document.getElementById('profileAvatar'),
@@ -146,6 +166,11 @@ function escHtml(v) {
 function setToast(msg, tone = 'info') {
   els.toastText.textContent = msg;
   els.toastDot.className = `toast-dot ${tone === 'ok' ? 'ok' : tone === 'err' ? 'err' : ''}`;
+}
+
+function formatToman(usd) {
+  const rate = Number(state.usdtIrtRate || 290000);
+  return Math.round(Number(usd || 0) * rate).toLocaleString('fa-IR');
 }
 
 function extractBaseSymbol(raw) {
@@ -255,26 +280,117 @@ function applyTheme(theme) {
   els.themeIconSun.classList.toggle('hidden', !isLight);
 }
 
+function syncModeButtonsUi() {
+  const isLive = state.tradingMode === 'LIVE';
+  const isAuto = state.executionMode !== 'MANUAL_CONFIRM';
+  els.modeDemoBtn.className = `mode-pill-btn ${!isLive ? 'active-amber' : ''}`;
+  els.modeLiveBtn.className = `mode-pill-btn ${isLive ? 'active-emerald' : ''}`;
+  els.execAutoBtn.className = `mode-pill-btn ${isAuto ? 'active-emerald' : ''}`;
+  els.execAskBtn.className = `mode-pill-btn ${!isAuto ? 'active' : ''}`;
+}
+
+function syncEnginesUi() {
+  const activeSet = new Set(Array.isArray(state.activeEngines) ? state.activeEngines : []);
+  document.querySelectorAll('.engine-chip').forEach((btn) => {
+    const eng = btn.dataset.engine || '';
+    btn.classList.toggle('active', activeSet.has(eng));
+  });
+  if (els.activeEnginesCount) {
+    els.activeEnginesCount.textContent = `${activeSet.size}/5 روشن`;
+  }
+}
+
+function renderPositions(openTrades) {
+  const list = Array.isArray(openTrades) ? openTrades : [];
+  const totalPnl = list.reduce((acc, t) => acc + Number(t.unrealized_pnl || 0), 0);
+  els.openPnl.textContent = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+  els.openPnl.style.color = totalPnl >= 0 ? '#6ee7b7' : '#fda4af';
+  els.openCount.textContent = String(list.length);
+  renderHeroSparkline(totalPnl);
+
+  if (!list.length) {
+    els.positionsList.innerHTML = `<div class="empty-card">
+      <span class="empty-icon">${ICON_CHECK}</span>
+      <p>در حال حاضر معامله بازی در حالت (${escHtml(state.tradingMode)}) وجود ندارد.</p>
+    </div>`;
+    return;
+  }
+
+  els.positionsList.innerHTML = list
+    .slice(0, 10)
+    .map((t) => {
+      const pnl = Number(t.unrealized_pnl || 0);
+      const isLong = String(t.direction || '').toUpperCase() !== 'SHORT';
+      return `<div class="item-row">
+        <div class="row-left">
+          ${renderCoinAvatar(t.symbol)}
+          <div style="min-width:0">
+            <div class="item-title">
+              <span>${escHtml(t.symbol)}</span>
+              <span class="dir-pill ${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'} ${escHtml(t.leverage)}x</span>
+            </div>
+            <div class="item-sub" dir="ltr">Entry $${escHtml(t.entry_price)} · SL $${escHtml(t.current_stop_loss)}</div>
+          </div>
+        </div>
+        <div class="item-actions">
+          <strong class="pos-pnl ${pnl >= 0 ? 'pos' : 'neg'}" dir="ltr">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</strong>
+          <button class="btn btn-danger-soft btn-xs close-pos-btn" data-id="${escHtml(t.id)}">بستن</button>
+        </div>
+      </div>`;
+    })
+    .join('');
+}
+
+function stopLiveTickLoop() {
+  if (state.liveTickTimer) {
+    clearInterval(state.liveTickTimer);
+    state.liveTickTimer = null;
+  }
+}
+
+function startLiveTickLoop() {
+  stopLiveTickLoop();
+  if (!state.extKey) return;
+  state.liveTickTimer = setInterval(async () => {
+    if (!state.extKey || state.activeTab !== 'bot') return;
+    try {
+      const ticks = await apiFetch('/api/trading/live-ticks');
+      const totalBal = Number(ticks.balance?.total || 0);
+      els.balanceTotal.textContent = `$${totalBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      els.balanceIrt.textContent = `معادل ~ ${formatToman(totalBal)} تومان`;
+      renderPositions(ticks.openTrades);
+    } catch {
+      // silent background tick ignore
+    }
+  }, 2500);
+}
+
 async function loadOverview() {
   const base = (state.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
   els.openWebHeaderBtn.href = base;
   els.openWebLink.href = base;
 
   if (!state.extKey) {
+    stopLiveTickLoop();
     els.connDot.className = 'conn-dot offline';
     els.userMeta.textContent = 'در انتظار اتصال امن حساب';
     els.welcomeHeroCard.classList.remove('hidden');
     els.connectedHeroCard.classList.add('hidden');
+    els.quickModeBar.classList.add('hidden');
+    els.enginesPanel.classList.add('hidden');
     els.accountProfileCard.classList.add('hidden');
     els.positionsList.innerHTML = `<div class="empty-card">
-      <span class="empty-emoji">🔐</span>
+      <span class="empty-icon">${ICON_LOCK}</span>
       <p>کلید اکستنشن هنوز ثبت نشده است. از تب «اتصال» کلید را وارد کنید تا ربات و پوزیشن‌هایتان ظاهر شود.</p>
     </div>`;
     return;
   }
 
   try {
-    const [sess, ov] = await Promise.all([apiFetch('/api/auth/session'), apiFetch('/api/trading/overview')]);
+    const [sess, dash] = await Promise.all([
+      apiFetch('/api/auth/session'),
+      apiFetch('/api/trading/dashboard?lite=1').catch(() => apiFetch('/api/trading/overview')),
+    ]);
     const u = sess.user || {};
     const uname = u.username || 'کاربر دلارینو';
 
@@ -283,71 +399,52 @@ async function loadOverview() {
 
     els.welcomeHeroCard.classList.add('hidden');
     els.connectedHeroCard.classList.remove('hidden');
+    els.quickModeBar.classList.remove('hidden');
+    els.enginesPanel.classList.remove('hidden');
     els.accountProfileCard.classList.remove('hidden');
 
     els.profileAvatar.textContent = uname.charAt(0).toUpperCase() || 'D';
     els.profileName.textContent = uname;
-    els.profileVerifiedBadge.textContent = u.phone_verified ? 'تاییدشده ✓' : 'اکستنشن فعال';
-    els.profilePlanLine.textContent = `${ov.config?.trading_mode || 'PAPER'} · همگام با سایت`;
+    els.profileVerifiedBadge.textContent = u.phone_verified ? 'تاییدشده' : 'اکستنشن فعال';
 
-    const cfg = ov.config || {};
+    const cfg = dash.config || {};
     const botState = cfg.bot_state || 'STOPPED';
     state.isRunning = botState === 'RUNNING_PAPER' || botState === 'RUNNING_LIVE';
-    state.tradingMode = cfg.trading_mode || 'PAPER';
+    state.tradingMode = cfg.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+    state.executionMode = cfg.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';
+    if (dash.iranRate?.usdtIrt >= 30000) {
+      state.usdtIrtRate = Number(dash.iranRate.usdtIrt);
+    }
+    state.activeEngines = Array.isArray(dash.activeEngine?.activeEngines)
+      ? dash.activeEngine.activeEngines
+      : cfg.active_engines_json
+        ? (() => {
+            try { return JSON.parse(cfg.active_engines_json); } catch { return []; }
+          })()
+        : [];
 
+    els.profilePlanLine.textContent = `${state.tradingMode} · همگام با سایت`;
     els.botStateLabel.textContent = state.isRunning ? 'ربات فعال و در حال ترید ۲۴/۷' : 'ربات آماده و متوقف';
     els.botPulseDot.className = `pulse-dot ${state.isRunning ? 'emerald' : ''}`;
-    els.botModeLabel.textContent = `${state.tradingMode} · ${cfg.market_type || 'FUTURES'}`;
-    els.heroModeShort.textContent = `${state.tradingMode === 'LIVE' ? 'LIVE' : 'DEMO'} · ${cfg.leverage || 10}x`;
+    els.botModeLabel.textContent = `${state.tradingMode} · ${state.executionMode === 'MANUAL_CONFIRM' ? 'ASK' : 'AUTO'}`;
+    els.heroModeShort.textContent = `${state.tradingMode === 'LIVE' ? 'LIVE' : 'DEMO'} · ${cfg.max_leverage || cfg.leverage || 10}x`;
 
-    const totalBal = Number(ov.balance?.total || 0);
-    const openTrades = Array.isArray(ov.openTrades) ? ov.openTrades : [];
-    const totalPnl = openTrades.reduce((acc, t) => acc + Number(t.unrealized_pnl || 0), 0);
-
+    const totalBal = Number(dash.balance?.total || 0);
     els.balanceTotal.textContent = `$${totalBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    els.openPnl.textContent = `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
-    els.openPnl.style.color = totalPnl >= 0 ? '#6ee7b7' : '#fda4af';
-    els.openCount.textContent = String(openTrades.length);
-    renderHeroSparkline(totalPnl);
+    els.balanceIrt.textContent = `معادل ~ ${formatToman(totalBal)} تومان`;
+
+    syncModeButtonsUi();
+    syncEnginesUi();
+    renderPositions(dash.openTrades);
 
     els.toggleBotBtn.innerHTML = state.isRunning
       ? `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg><span>خاموش کردن ربات</span>`
       : `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg><span>روشن کردن ربات</span>`;
     els.toggleBotBtn.className = `btn flex-1 ${state.isRunning ? 'btn-danger' : 'btn-emerald'}`;
 
-    if (!openTrades.length) {
-      els.positionsList.innerHTML = `<div class="empty-card">
-        <span class="empty-emoji">✨</span>
-        <p>در حال حاضر معامله بازی در این حالت (${escHtml(state.tradingMode)}) وجود ندارد.</p>
-      </div>`;
-    } else {
-      els.positionsList.innerHTML = openTrades
-        .slice(0, 8)
-        .map((t) => {
-          const pnl = Number(t.unrealized_pnl || 0);
-          const isLong = String(t.direction || '').toUpperCase() !== 'SHORT';
-          return `<div class="item-row">
-            <div class="row-left">
-              ${renderCoinAvatar(t.symbol)}
-              <div style="min-width:0">
-                <div class="item-title">
-                  <span>${escHtml(t.symbol)}</span>
-                  <span class="dir-pill ${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'} ${escHtml(t.leverage)}x</span>
-                </div>
-                <div class="item-sub" dir="ltr">Entry $${escHtml(t.entry_price)} · SL $${escHtml(t.current_stop_loss)}</div>
-              </div>
-            </div>
-            <div class="item-actions">
-              <strong class="pos-pnl ${pnl >= 0 ? 'pos' : 'neg'}" dir="ltr">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</strong>
-              <button class="btn btn-danger-soft btn-xs close-pos-btn" data-id="${escHtml(t.id)}">بستن</button>
-            </div>
-          </div>`;
-        })
-        .join('');
-    }
-
     void loadReferralInfo();
     notifyBadgeSync();
+    startLiveTickLoop();
     setToast('همگام‌سازی زنده با سایت برقرار است', 'ok');
   } catch (err) {
     els.connDot.className = 'conn-dot offline';
@@ -380,12 +477,12 @@ function renderMarketsList() {
   if (state.marketFilter === 'losers') list = list.filter((m) => Number(m.changePct24h || 0) < 0);
 
   if (!list.length) {
-    els.marketsList.innerHTML = `<div class="empty-card"><span class="empty-emoji">🔍</span><p>بازاری با این فیلتر یافت نشد.</p></div>`;
+    els.marketsList.innerHTML = `<div class="empty-card"><span class="empty-icon">${ICON_SEARCH}</span><p>بازاری با این فیلتر یافت نشد.</p></div>`;
     return;
   }
 
   els.marketsList.innerHTML = list
-    .slice(0, 16)
+    .slice(0, 24)
     .map((m) => {
       const ch = Number(m.changePct24h || 0);
       const px = Number(m.lastPrice || 0);
@@ -423,6 +520,7 @@ async function loadMarkets() {
       const list = Array.isArray(res.markets) ? res.markets : [];
       if (list.length) {
         state.marketsCache = list;
+        if (res.usdtIrt >= 30000) state.usdtIrtRate = Number(res.usdtIrt);
         renderMarketsList();
         return;
       }
@@ -439,7 +537,7 @@ async function loadMarkets() {
     state.marketsCache = raw.filter((x) => x.lastPrice > 0);
     renderMarketsList();
   } catch (err) {
-    els.marketsList.innerHTML = `<div class="empty-card"><span class="empty-emoji">⚠️</span><p>خطا در دریافت بازار: ${escHtml(err.message)}</p></div>`;
+    els.marketsList.innerHTML = `<div class="empty-card"><span class="empty-icon">${ICON_ALERT}</span><p>خطا در دریافت بازار: ${escHtml(err.message)}</p></div>`;
   }
 }
 
@@ -450,7 +548,7 @@ async function fetchPublicDex(query = '') {
       : 'https://api.dexscreener.com/latest/dex/search?q=PEPE';
     const raw = await fetch(dexUrl).then((r) => r.json());
     if (Array.isArray(raw?.pairs) && raw.pairs.length) {
-      return raw.pairs.slice(0, 10);
+      return raw.pairs.slice(0, 24);
     }
   } catch {
     /* fallback to GeckoTerminal */
@@ -460,7 +558,7 @@ async function fetchPublicDex(query = '') {
     : 'https://api.geckoterminal.com/api/v2/networks/trending_pools?include=base_token';
   const g = await fetch(gUrl).then((r) => r.json());
   const inc = new Map((g.included || []).map((x) => [x.id, x.attributes]));
-  return (g.data || []).slice(0, 10).map((p) => {
+  return (g.data || []).slice(0, 24).map((p) => {
     const a = p.attributes || {};
     const rawNet = p.relationships?.network?.data?.id || 'bsc';
     const b = inc.get(p.relationships?.base_token?.data?.id || '') || {};
@@ -478,6 +576,7 @@ async function fetchPublicDex(query = '') {
 
 async function loadDexTokens(query = '') {
   renderSkeletons(els.dexList, 5);
+  els.dexAiResultBox.classList.add('hidden');
   try {
     let pairs = [];
     if (state.extKey) {
@@ -493,14 +592,14 @@ async function loadDexTokens(query = '') {
       pairs = await fetchPublicDex(query);
     }
 
-    if (!pairs.length) {
-      els.dexList.innerHTML = `<div class="empty-card"><span class="empty-emoji">🔍</span><p>توکنی با این نام یافت نشد.</p></div>`;
+    state.dexPairsCache = pairs.slice(0, 24);
+    if (!state.dexPairsCache.length) {
+      els.dexList.innerHTML = `<div class="empty-card"><span class="empty-icon">${ICON_SEARCH}</span><p>توکنی با این نام یافت نشد.</p></div>`;
       return;
     }
 
-    els.dexList.innerHTML = pairs
-      .slice(0, 10)
-      .map((p) => {
+    els.dexList.innerHTML = state.dexPairsCache
+      .map((p, idx) => {
         const sym = p.baseToken?.symbol || 'TOKEN';
         const addr = p.baseToken?.address || '';
         const chain = String(p.chainId || 'dex').toLowerCase();
@@ -533,14 +632,16 @@ async function loadDexTokens(query = '') {
             </div>
           </div>
           <div class="item-actions">
+            ${state.extKey && addr ? `<button class="btn btn-ghost btn-xs dex-ai-btn" data-idx="${idx}" title="تحلیل هوش مصنوعی">AI</button>` : ''}
+            ${state.extKey && addr ? `<button class="btn btn-emerald btn-xs dex-buy-btn" data-idx="${idx}" title="خرید سریع در سایت">خرید</button>` : ''}
             ${addr ? `<button class="btn btn-ghost btn-xs copy-addr-btn" data-addr="${escHtml(addr)}" title="کپی آدرس کانترکت">کپی</button>` : ''}
-            <a href="${escHtml(twUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-cobalt btn-xs">سوآپ TW</a>
+            <a href="${escHtml(twUrl)}" target="_blank" rel="noopener noreferrer" class="btn btn-cobalt btn-xs">TW</a>
           </div>
         </div>`;
       })
       .join('');
   } catch (err) {
-    els.dexList.innerHTML = `<div class="empty-card"><span class="empty-emoji">⚠️</span><p>خطا در رادار DEX: ${escHtml(err.message)}</p></div>`;
+    els.dexList.innerHTML = `<div class="empty-card"><span class="empty-icon">${ICON_ALERT}</span><p>خطا در رادار DEX: ${escHtml(err.message)}</p></div>`;
   }
 }
 
@@ -564,6 +665,54 @@ document.querySelectorAll('.dex-chip').forEach((chip) => {
     const q = chip.dataset.q || '';
     els.dexSearchInput.value = q;
     void loadDexTokens(q);
+  });
+});
+
+async function switchExecutionSettings(patch) {
+  if (!state.extKey) return switchTab('sync');
+  try {
+    setToast('در حال اعمال تنظیمات...');
+    await apiFetch('/api/trustwallet/execution-mode', {
+      method: 'POST',
+      body: JSON.stringify({
+        tradingMode: patch.tradingMode ?? state.tradingMode,
+        executionMode: patch.executionMode ?? state.executionMode,
+        syncCopyRules: true,
+      }),
+    });
+    await loadOverview();
+  } catch (err) {
+    setToast(err.message, 'err');
+  }
+}
+
+els.modeDemoBtn.addEventListener('click', () => void switchExecutionSettings({ tradingMode: 'PAPER' }));
+els.modeLiveBtn.addEventListener('click', () => void switchExecutionSettings({ tradingMode: 'LIVE' }));
+els.execAutoBtn.addEventListener('click', () => void switchExecutionSettings({ executionMode: 'AUTO' }));
+els.execAskBtn.addEventListener('click', () => void switchExecutionSettings({ executionMode: 'MANUAL_CONFIRM' }));
+
+document.querySelectorAll('.engine-chip').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    if (!state.extKey) return switchTab('sync');
+    const engine = btn.dataset.engine;
+    if (!engine) return;
+    const nextOn = !state.activeEngines.includes(engine);
+    try {
+      setToast('در حال تغییر موتور...');
+      const res = await apiFetch('/api/trading/engines/toggle', {
+        method: 'POST',
+        body: JSON.stringify({ engine, enabled: nextOn }),
+      });
+      if (Array.isArray(res.activeEngine?.activeEngines)) {
+        state.activeEngines = res.activeEngine.activeEngines;
+        syncEnginesUi();
+      } else {
+        await loadOverview();
+      }
+      setToast(`${engine} ${nextOn ? 'روشن' : 'خاموش'} شد`, 'ok');
+    } catch (err) {
+      setToast(err.message, 'err');
+    }
   });
 });
 
@@ -665,17 +814,82 @@ els.positionsList.addEventListener('click', async (e) => {
   }
 });
 
-els.dexList.addEventListener('click', (e) => {
-  const btn = e.target.closest('.copy-addr-btn');
-  if (!btn) return;
-  const addr = btn.dataset.addr;
-  if (!addr) return;
-  navigator.clipboard.writeText(addr).catch(() => {});
-  btn.textContent = '✓';
-  setToast('آدرس کانترکت کپی شد', 'ok');
-  setTimeout(() => {
-    btn.textContent = 'کپی';
-  }, 1500);
+els.dexList.addEventListener('click', async (e) => {
+  const copyBtn = e.target.closest('.copy-addr-btn');
+  if (copyBtn) {
+    const addr = copyBtn.dataset.addr;
+    if (!addr) return;
+    navigator.clipboard.writeText(addr).catch(() => {});
+    copyBtn.textContent = 'کپی شد';
+    setToast('آدرس کانترکت کپی شد', 'ok');
+    setTimeout(() => { copyBtn.textContent = 'کپی'; }, 1500);
+    return;
+  }
+
+  const aiBtn = e.target.closest('.dex-ai-btn');
+  if (aiBtn) {
+    const item = state.dexPairsCache[Number(aiBtn.dataset.idx)];
+    if (!item || !state.extKey) return;
+    try {
+      aiBtn.disabled = true;
+      setToast('در حال تحلیل AI توکن...');
+      const res = await apiFetch('/api/dex/ai-analyze', {
+        method: 'POST',
+        body: JSON.stringify({
+          chainId: item.chainId,
+          tokenAddress: item.baseToken?.address,
+          symbol: item.baseToken?.symbol,
+          priceUsd: Number(item.priceUsd || 0),
+          liquidityUsd: Number(item.liquidity?.usd || 0),
+          volume24hUsd: Number(item.volume?.h24 || 0),
+          priceChange24h: Number(item.priceChange?.h24 || 0),
+          safetyScore: item.safetyScore ?? 75,
+        }),
+      });
+      els.dexAiResultBox.classList.remove('hidden');
+      const verdictColor = res.verdict === 'STRONG_BUY' || res.verdict === 'BUY'
+        ? 'var(--jade)'
+        : res.verdict === 'WATCH'
+          ? 'var(--amber)'
+          : 'var(--rose)';
+      els.dexAiResultBox.innerHTML = `<div class="dex-verdict-head">
+          <span>تحلیل AI: ${escHtml(item.baseToken?.symbol || 'TOKEN')}</span>
+          <span style="color:${verdictColor}">${escHtml(res.verdictLabel || res.verdict)} (${escHtml(res.confidencePct ?? 70)}%)</span>
+        </div>
+        <div style="color:var(--sub)">${escHtml(res.analysis || '')}</div>`;
+      setToast('تحلیل AI آماده شد', 'ok');
+    } catch (err) {
+      setToast(`خطای تحلیل: ${err.message}`, 'err');
+    } finally {
+      aiBtn.disabled = false;
+    }
+    return;
+  }
+
+  const buyBtn = e.target.closest('.dex-buy-btn');
+  if (buyBtn) {
+    const item = state.dexPairsCache[Number(buyBtn.dataset.idx)];
+    if (!item || !state.extKey) return;
+    try {
+      buyBtn.disabled = true;
+      setToast('در حال ثبت خرید سریع DEX...');
+      const res = await apiFetch('/api/dex/direct-buy', {
+        method: 'POST',
+        body: JSON.stringify({
+          chainId: item.chainId,
+          tokenAddress: item.baseToken?.address,
+          symbol: item.baseToken?.symbol,
+          priceUsd: Number(item.priceUsd || 0),
+        }),
+      });
+      setToast(res.message || `خرید ${item.baseToken?.symbol || ''} ثبت شد`, 'ok');
+      await loadOverview();
+    } catch (err) {
+      setToast(err.message, 'err');
+    } finally {
+      buyBtn.disabled = false;
+    }
+  }
 });
 
 els.dexSearchBtn.addEventListener('click', () => void loadDexTokens(els.dexSearchInput.value.trim()));
@@ -686,7 +900,7 @@ els.dexSearchInput.addEventListener('keydown', (e) => {
 els.copyRefBtn.addEventListener('click', () => {
   if (!state.referralUrl) return;
   navigator.clipboard.writeText(state.referralUrl).catch(() => {});
-  els.copyRefBtn.textContent = 'کپی شد ✓';
+  els.copyRefBtn.textContent = 'کپی شد';
   setToast('لینک رفرال با موفقیت کپی شد', 'ok');
   setTimeout(() => {
     els.copyRefBtn.textContent = 'کپی لینک';
@@ -694,6 +908,7 @@ els.copyRefBtn.addEventListener('click', () => {
 });
 
 window.addEventListener('resize', positionSegThumb);
+window.addEventListener('unload', stopLiveTickLoop);
 
 (async () => {
   const saved = await extStorage.get(['apiBase', 'extKey', 'theme']);

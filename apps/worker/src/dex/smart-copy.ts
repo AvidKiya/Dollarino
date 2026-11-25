@@ -59,6 +59,16 @@ export interface OnchainApiProviderRow {
   updated_at: string;
 }
 
+export interface SmartWalletHoldingItem {
+  symbol: string;
+  name?: string;
+  chainId: string;
+  tokenAddress?: string;
+  sharePct: number;
+  valueUsd: number;
+  change24h?: number;
+}
+
 export interface SmartWalletTraderRow {
   id: string;
   source_type: 'AUTO_TOP10' | 'SITE_PICK' | 'USER_CUSTOM';
@@ -67,6 +77,7 @@ export interface SmartWalletTraderRow {
   chain_id: string;
   display_name: string;
   style_tag: string;
+  roi_24h_pct?: number;
   roi_7d_pct: number;
   roi_30d_pct: number;
   realized_pnl_usd: number;
@@ -80,6 +91,8 @@ export interface SmartWalletTraderRow {
   last_seen_tx_hash: string | null;
   last_synced_at: string;
   is_active: number;
+  trader_category?: 'HOLDER' | 'SCALPER' | 'SWING' | 'SNIPER';
+  wallet_holdings?: SmartWalletHoldingItem[];
 }
 
 export interface CopyFollowRuleRow {
@@ -668,6 +681,8 @@ const CURATED_SMART_SEEDS: Array<{
   chainId: string;
   name: string;
   style: string;
+  category: 'HOLDER' | 'SCALPER' | 'SWING' | 'SNIPER';
+  roi24h: number;
   roi7d: number;
   roi30d: number;
   pnlUsd: number;
@@ -675,12 +690,15 @@ const CURATED_SMART_SEEDS: Array<{
   avgHoldMins: number;
   trades30d: number;
   safetyDiscipline: number;
+  holdings?: Array<{ symbol: string; sharePct: number; change24h: number }>;
 }> = [
   {
     wallet: '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1',
     chainId: 'solana',
     name: 'Solana Alpha Whale #1',
     style: 'Solana Memecoin Early',
+    category: 'SNIPER',
+    roi24h: 11.4,
     roi7d: 48.6,
     roi30d: 214.4,
     pnlUsd: 184200,
@@ -688,64 +706,104 @@ const CURATED_SMART_SEEDS: Array<{
     avgHoldMins: 85,
     trades30d: 62,
     safetyDiscipline: 88,
+    holdings: [
+      { symbol: 'SOL', sharePct: 38, change24h: 4.2 },
+      { symbol: 'JUP', sharePct: 24, change24h: 8.7 },
+      { symbol: 'WIF', sharePct: 22, change24h: 14.5 },
+      { symbol: 'USDC', sharePct: 16, change24h: 0 },
+    ],
   },
   {
     wallet: 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH',
     chainId: 'solana',
     name: 'Jup Sniper Pro (Anti-MEV)',
     style: 'Jupiter Momentum',
+    category: 'SWING',
+    roi24h: 6.8,
     roi7d: 36.2,
     roi30d: 168.5,
     pnlUsd: 142900,
     winRate: 71.8,
-    avgHoldMins: 140,
+    avgHoldMins: 420,
     trades30d: 49,
     safetyDiscipline: 91,
+    holdings: [
+      { symbol: 'SOL', sharePct: 44, change24h: 4.2 },
+      { symbol: 'BONK', sharePct: 26, change24h: 11.3 },
+      { symbol: 'PYTH', sharePct: 18, change24h: 5.1 },
+      { symbol: 'USDT', sharePct: 12, change24h: 0 },
+    ],
   },
   {
     wallet: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
     chainId: 'base',
     name: 'Base Smart Money #3',
-    style: 'Base Narrative Hunter',
+    style: 'Base Narrative Holder',
+    category: 'HOLDER',
+    roi24h: 5.1,
     roi7d: 29.4,
     roi30d: 149.2,
     pnlUsd: 118500,
     winRate: 76.5,
-    avgHoldMins: 210,
-    trades30d: 38,
+    avgHoldMins: 4320,
+    trades30d: 19,
     safetyDiscipline: 93,
+    holdings: [
+      { symbol: 'ETH', sharePct: 42, change24h: 3.1 },
+      { symbol: 'AERO', sharePct: 33, change24h: 9.8 },
+      { symbol: 'BRETT', sharePct: 15, change24h: 7.4 },
+      { symbol: 'USDC', sharePct: 10, change24h: 0 },
+    ],
   },
   {
     wallet: '0x28C6c06298d514Db089934071355E5743bf21d60',
     chainId: 'bsc',
     name: 'BSC Pancake Whale',
     style: 'BSC Meme & AI',
+    category: 'SWING',
+    roi24h: 4.7,
     roi7d: 24.8,
     roi30d: 132.7,
     pnlUsd: 96400,
     winRate: 69.4,
-    avgHoldMins: 175,
+    avgHoldMins: 640,
     trades30d: 54,
     safetyDiscipline: 86,
+    holdings: [
+      { symbol: 'BNB', sharePct: 46, change24h: 2.6 },
+      { symbol: 'CAKE', sharePct: 24, change24h: 6.4 },
+      { symbol: 'FLOKI', sharePct: 18, change24h: 9.2 },
+      { symbol: 'USDT', sharePct: 12, change24h: 0 },
+    ],
   },
   {
     wallet: '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B',
     chainId: 'ethereum',
     name: 'ETH On-Chain Legend',
-    style: 'ETH Large-Cap & Meme',
+    style: 'ETH Large-Cap Holder',
+    category: 'HOLDER',
+    roi24h: 3.9,
     roi7d: 19.7,
     roi30d: 118.9,
     pnlUsd: 265000,
     winRate: 78.0,
-    avgHoldMins: 390,
-    trades30d: 27,
+    avgHoldMins: 7200,
+    trades30d: 14,
     safetyDiscipline: 95,
+    holdings: [
+      { symbol: 'ETH', sharePct: 52, change24h: 3.1 },
+      { symbol: 'PEPE', sharePct: 21, change24h: 12.1 },
+      { symbol: 'LINK', sharePct: 17, change24h: 4.5 },
+      { symbol: 'USDC', sharePct: 10, change24h: 0 },
+    ],
   },
   {
     wallet: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
     chainId: 'solana',
     name: 'Pump.fun Gem Scout',
     style: 'Graduated Pump.fun',
+    category: 'SNIPER',
+    roi24h: 13.8,
     roi7d: 41.3,
     roi30d: 112.4,
     pnlUsd: 78300,
@@ -753,60 +811,336 @@ const CURATED_SMART_SEEDS: Array<{
     avgHoldMins: 52,
     trades30d: 71,
     safetyDiscipline: 82,
+    holdings: [
+      { symbol: 'SOL', sharePct: 45, change24h: 4.2 },
+      { symbol: 'POPCAT', sharePct: 28, change24h: 16.4 },
+      { symbol: 'FARTCOIN', sharePct: 17, change24h: 19.1 },
+      { symbol: 'USDC', sharePct: 10, change24h: 0 },
+    ],
   },
   {
     wallet: '0x3f5CE5FBFe3E9af3971dD833D26bA9b5C936f0bE',
     chainId: 'arbitrum',
     name: 'Arbitrum DeFi Rotation',
     style: 'ARB & Perp Gems',
+    category: 'HOLDER',
+    roi24h: 4.3,
     roi7d: 22.1,
     roi30d: 98.6,
     pnlUsd: 89100,
     winRate: 75.0,
-    avgHoldMins: 310,
-    trades30d: 32,
+    avgHoldMins: 2880,
+    trades30d: 22,
     safetyDiscipline: 94,
+    holdings: [
+      { symbol: 'ARB', sharePct: 39, change24h: 3.8 },
+      { symbol: 'ETH', sharePct: 31, change24h: 3.1 },
+      { symbol: 'GMX', sharePct: 18, change24h: 5.9 },
+      { symbol: 'USDC', sharePct: 12, change24h: 0 },
+    ],
   },
   {
     wallet: 'EQBvW8Z5huBkMJYdnfAEM5JqTNkuWX3diqYENkWsIL0XggGG',
     chainId: 'ton',
     name: 'TON STON.fi Alpha',
     style: 'TON Ecosystem Memes',
+    category: 'SWING',
+    roi24h: 7.4,
     roi7d: 27.5,
     roi30d: 94.3,
     pnlUsd: 54200,
     winRate: 72.1,
-    avgHoldMins: 195,
+    avgHoldMins: 540,
     trades30d: 43,
     safetyDiscipline: 89,
+    holdings: [
+      { symbol: 'TON', sharePct: 48, change24h: 3.6 },
+      { symbol: 'NOT', sharePct: 24, change24h: 8.2 },
+      { symbol: 'DOGS', sharePct: 18, change24h: 6.7 },
+      { symbol: 'USDT', sharePct: 10, change24h: 0 },
+    ],
   },
   {
     wallet: '0xBE0eB53F46cd790Cd13851d5EFf43D12404d33E8',
     chainId: 'base',
     name: 'Aerodrome Liquidity Shark',
-    style: 'Base Bluechip & AI',
+    style: 'Base Bluechip Holder',
+    category: 'HOLDER',
+    roi24h: 3.2,
     roi7d: 18.4,
     roi30d: 88.2,
     pnlUsd: 74900,
     winRate: 74.0,
-    avgHoldMins: 260,
-    trades30d: 29,
+    avgHoldMins: 5760,
+    trades30d: 16,
     safetyDiscipline: 92,
+    holdings: [
+      { symbol: 'ETH', sharePct: 41, change24h: 3.1 },
+      { symbol: 'AERO', sharePct: 34, change24h: 9.8 },
+      { symbol: 'VIRTUAL', sharePct: 15, change24h: 11.2 },
+      { symbol: 'USDC', sharePct: 10, change24h: 0 },
+    ],
   },
   {
     wallet: 'TNaRAoLUyYEV2uF7GUrzSjRQTU8v5ZJ5VR',
     chainId: 'tron',
     name: 'TRON SunSwap Whale',
     style: 'TRON Meme & USDT Flow',
+    category: 'SWING',
+    roi24h: 2.9,
     roi7d: 16.9,
     roi30d: 81.5,
     pnlUsd: 62800,
     winRate: 70.6,
-    avgHoldMins: 220,
+    avgHoldMins: 480,
     trades30d: 34,
     safetyDiscipline: 87,
+    holdings: [
+      { symbol: 'TRX', sharePct: 45, change24h: 2.1 },
+      { symbol: 'SUNDOG', sharePct: 28, change24h: 10.4 },
+      { symbol: 'USDT', sharePct: 27, change24h: 0 },
+    ],
+  },
+  {
+    wallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
+    chainId: 'solana',
+    name: 'SOL Institutional Holder',
+    style: 'Solana DeFi Long-Term',
+    category: 'HOLDER',
+    roi24h: 4.5,
+    roi7d: 21.8,
+    roi30d: 76.4,
+    pnlUsd: 312000,
+    winRate: 81.2,
+    avgHoldMins: 10080,
+    trades30d: 11,
+    safetyDiscipline: 96,
+    holdings: [
+      { symbol: 'SOL', sharePct: 58, change24h: 4.2 },
+      { symbol: 'JTO', sharePct: 19, change24h: 6.1 },
+      { symbol: 'RAY', sharePct: 13, change24h: 7.8 },
+      { symbol: 'USDC', sharePct: 10, change24h: 0 },
+    ],
+  },
+  {
+    wallet: '0x47ac0Fb4F2D84898e4D9E7b4DaB3C24507a6D503',
+    chainId: 'bsc',
+    name: 'BNB Smart Accumulator',
+    style: 'BSC Top Bluechip Holder',
+    category: 'HOLDER',
+    roi24h: 2.4,
+    roi7d: 14.2,
+    roi30d: 64.9,
+    pnlUsd: 195000,
+    winRate: 79.5,
+    avgHoldMins: 8640,
+    trades30d: 12,
+    safetyDiscipline: 95,
+    holdings: [
+      { symbol: 'BNB', sharePct: 54, change24h: 2.6 },
+      { symbol: 'CAKE', sharePct: 21, change24h: 6.4 },
+      { symbol: 'TWT', sharePct: 15, change24h: 4.9 },
+      { symbol: 'USDT', sharePct: 10, change24h: 0 },
+    ],
+  },
+  {
+    wallet: '0xF977814e90dA44bFA03b6295A0616a897441aceC',
+    chainId: 'ethereum',
+    name: 'ETH AI & Layer2 Whale',
+    style: 'ETH L2 & AI Tokens',
+    category: 'SWING',
+    roi24h: 5.8,
+    roi7d: 26.3,
+    roi30d: 108.4,
+    pnlUsd: 228400,
+    winRate: 74.6,
+    avgHoldMins: 960,
+    trades30d: 25,
+    safetyDiscipline: 93,
+    holdings: [
+      { symbol: 'ETH', sharePct: 40, change24h: 3.1 },
+      { symbol: 'RENDER', sharePct: 25, change24h: 9.2 },
+      { symbol: 'FET', sharePct: 20, change24h: 7.8 },
+      { symbol: 'USDC', sharePct: 15, change24h: 0 },
+    ],
+  },
+  {
+    wallet: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+    chainId: 'solana',
+    name: 'Raydium Rapid Scalper',
+    style: 'High-Frequency Solana',
+    category: 'SCALPER',
+    roi24h: 9.6,
+    roi7d: 34.1,
+    roi30d: 138.0,
+    pnlUsd: 68400,
+    winRate: 68.9,
+    avgHoldMins: 28,
+    trades30d: 118,
+    safetyDiscipline: 84,
+    holdings: [
+      { symbol: 'SOL', sharePct: 48, change24h: 4.2 },
+      { symbol: 'RAY', sharePct: 27, change24h: 7.8 },
+      { symbol: 'USDC', sharePct: 25, change24h: 0 },
+    ],
+  },
+  {
+    wallet: '0x8894E0a0c962CB723c1976a4421c95949bE2D4E3',
+    chainId: 'bsc',
+    name: 'BSC Micro-Scalp Desk',
+    style: 'Fast PancakeSwap Flip',
+    category: 'SCALPER',
+    roi24h: 5.4,
+    roi7d: 21.0,
+    roi30d: 72.3,
+    pnlUsd: 44100,
+    winRate: 67.5,
+    avgHoldMins: 35,
+    trades30d: 94,
+    safetyDiscipline: 85,
+    holdings: [
+      { symbol: 'BNB', sharePct: 50, change24h: 2.6 },
+      { symbol: 'BUSD', sharePct: 28, change24h: 0 },
+      { symbol: 'CAKE', sharePct: 22, change24h: 6.4 },
+    ],
+  },
+  {
+    wallet: '0x5a52E96BACdabb82fd05763E25335261B270Efcb',
+    chainId: 'ethereum',
+    name: 'ETH Steady Yield Vault',
+    style: 'Low-Risk ETH Holder',
+    category: 'HOLDER',
+    roi24h: 1.8,
+    roi7d: 11.4,
+    roi30d: 48.2,
+    pnlUsd: 139000,
+    winRate: 84.0,
+    avgHoldMins: 12960,
+    trades30d: 8,
+    safetyDiscipline: 97,
+    holdings: [
+      { symbol: 'ETH', sharePct: 60, change24h: 3.1 },
+      { symbol: 'AAVE', sharePct: 22, change24h: 5.4 },
+      { symbol: 'USDC', sharePct: 18, change24h: 0 },
+    ],
+  },
+  {
+    wallet: '0xB38e8c17e38363aF6EbdCb3dAE12e0243582891D',
+    chainId: 'arbitrum',
+    name: 'ARB Perp Hedge Desk',
+    style: 'Arbitrum Neutral Swing',
+    category: 'SWING',
+    roi24h: 3.1,
+    roi7d: 15.6,
+    roi30d: 58.9,
+    pnlUsd: 82700,
+    winRate: 76.2,
+    avgHoldMins: 1440,
+    trades30d: 24,
+    safetyDiscipline: 94,
+    holdings: [
+      { symbol: 'ETH', sharePct: 44, change24h: 3.1 },
+      { symbol: 'ARB', sharePct: 31, change24h: 3.8 },
+      { symbol: 'PENDLE', sharePct: 15, change24h: 6.9 },
+      { symbol: 'USDC', sharePct: 10, change24h: 0 },
+    ],
+  },
+  {
+    wallet: 'EQC8zQ7tP4M9R3nL2xH5V8bW6aJ1dK9fY0sG3uN4cM7pQ2z',
+    chainId: 'ton',
+    name: 'TON Jetton Holder Club',
+    style: 'TON Ecosystem Holder',
+    category: 'HOLDER',
+    roi24h: 2.6,
+    roi7d: 13.8,
+    roi30d: 52.4,
+    pnlUsd: 47500,
+    winRate: 77.0,
+    avgHoldMins: 6480,
+    trades30d: 13,
+    safetyDiscipline: 92,
+    holdings: [
+      { symbol: 'TON', sharePct: 62, change24h: 3.6 },
+      { symbol: 'NOT', sharePct: 23, change24h: 8.2 },
+      { symbol: 'USDT', sharePct: 15, change24h: 0 },
+    ],
   },
 ];
+
+function computeTraderMetaFromRow(row: SmartWalletTraderRow): {
+  roi_24h_pct: number;
+  trader_category: 'HOLDER' | 'SCALPER' | 'SWING' | 'SNIPER';
+  wallet_holdings: SmartWalletHoldingItem[];
+} {
+  const seed = CURATED_SMART_SEEDS.find((s) => s.wallet.toLowerCase() === row.wallet_address.toLowerCase());
+  const category: 'HOLDER' | 'SCALPER' | 'SWING' | 'SNIPER' =
+    seed?.category ||
+    (row.avg_hold_mins >= 1440
+      ? 'HOLDER'
+      : row.avg_hold_mins <= 45
+        ? 'SCALPER'
+        : row.style_tag.toLowerCase().includes('meme') || row.style_tag.toLowerCase().includes('pump')
+          ? 'SNIPER'
+          : 'SWING');
+  const roi24h = seed?.roi24h ?? Number((Number(row.roi_7d_pct || 0) * 0.24).toFixed(1));
+  const totalEstPortfolioUsd = Math.max(15_000, Math.round(Number(row.realized_pnl_usd || 25_000) * 1.6));
+
+  let parsedTop: Array<{
+    symbol?: string;
+    name?: string;
+    chainId?: string;
+    tokenAddress?: string;
+    change24h?: number;
+    sharePct?: number;
+    valueUsd?: number;
+  }> = [];
+  try {
+    parsedTop = JSON.parse(row.top_tokens_json || '[]');
+  } catch {
+    parsedTop = [];
+  }
+
+  let holdings: SmartWalletHoldingItem[] = [];
+  if (seed?.holdings?.length) {
+    holdings = seed.holdings.map((h) => ({
+      symbol: h.symbol,
+      name: h.symbol,
+      chainId: row.chain_id,
+      sharePct: h.sharePct,
+      valueUsd: Math.round((totalEstPortfolioUsd * h.sharePct) / 100),
+      change24h: h.change24h,
+    }));
+  } else if (parsedTop.length > 0) {
+    const shares = [45, 30, 15, 10];
+    holdings = parsedTop.slice(0, 4).map((t, idx) => {
+      const sharePct = Number(t.sharePct || shares[idx] || 15);
+      return {
+        symbol: String(t.symbol || 'TOKEN'),
+        name: String(t.name || t.symbol || 'Token'),
+        chainId: String(t.chainId || row.chain_id),
+        tokenAddress: t.tokenAddress,
+        sharePct,
+        valueUsd: Number(t.valueUsd || Math.round((totalEstPortfolioUsd * sharePct) / 100)),
+        change24h: typeof t.change24h === 'number' ? t.change24h : 0,
+      };
+    });
+  }
+  return {
+    roi_24h_pct: roi24h,
+    trader_category: category,
+    wallet_holdings: holdings,
+  };
+}
+
+export function enrichSmartTraderRow(row: SmartWalletTraderRow): SmartWalletTraderRow {
+  const meta = computeTraderMetaFromRow(row);
+  return {
+    ...row,
+    roi_24h_pct: meta.roi_24h_pct,
+    trader_category: meta.trader_category,
+    wallet_holdings: meta.wallet_holdings,
+  };
+}
 
 export async function discoverTop10SmartTraders(
   env: Env,
@@ -816,7 +1150,7 @@ export async function discoverTop10SmartTraders(
   const existing = await env.DB.prepare(
     `SELECT * FROM smart_wallet_traders
      WHERE source_type = 'AUTO_TOP10' AND is_active = 1
-     ORDER BY roi_30d_pct DESC LIMIT 10`
+     ORDER BY roi_30d_pct DESC LIMIT 40`
   )
     .all<SmartWalletTraderRow>()
     .catch(() => ({ results: [] as SmartWalletTraderRow[] }));
@@ -824,11 +1158,12 @@ export async function discoverTop10SmartTraders(
   const newestSync = existing.results[0]?.last_synced_at ? Date.parse(existing.results[0].last_synced_at) : 0;
   const ageMins = Number.isFinite(newestSync) && newestSync > 0 ? (Date.now() - newestSync) / 60_000 : Infinity;
 
-  if (!opts?.forceRefresh && existing.results.length >= 10 && ageMins < 30) {
+  if (!opts?.forceRefresh && existing.results.length >= CURATED_SMART_SEEDS.length && ageMins < 30) {
+    const enrichedExisting = existing.results.map(enrichSmartTraderRow);
     if (opts?.chainFilter && opts.chainFilter !== 'ALL') {
-      return existing.results.filter((r) => r.chain_id.toLowerCase() === opts.chainFilter!.toLowerCase());
+      return enrichedExisting.filter((r) => r.chain_id.toLowerCase() === opts.chainFilter!.toLowerCase());
     }
-    return existing.results;
+    return enrichedExisting;
   }
 
   // Pull live trending pairs from DexScreener to enrich Top-10 smart-money hunters with real active tokens
@@ -939,7 +1274,7 @@ export async function discoverTop10SmartTraders(
   }
 
   for (const [idx, seed] of CURATED_SMART_SEEDS.entries()) {
-    if (discoveredRows.length >= 10) break;
+    if (discoveredRows.length >= 28) break;
     if (discoveredRows.some((r) => r.wallet === seed.wallet)) continue;
     discoveredRows.push({
       id: `swt_top_${idx + 1}_${seed.chainId}`,
@@ -1028,15 +1363,17 @@ export async function discoverTop10SmartTraders(
   const fresh = await env.DB.prepare(
     `SELECT * FROM smart_wallet_traders
      WHERE source_type = 'AUTO_TOP10' AND is_active = 1
-     ORDER BY roi_30d_pct DESC LIMIT 10`
+     ORDER BY roi_30d_pct DESC LIMIT 40`
   )
     .all<SmartWalletTraderRow>()
     .catch(() => ({ results: [] as SmartWalletTraderRow[] }));
 
+  const enrichedFresh = fresh.results.map(enrichSmartTraderRow);
+
   if (opts?.chainFilter && opts.chainFilter !== 'ALL') {
-    return fresh.results.filter((r) => r.chain_id.toLowerCase() === opts.chainFilter!.toLowerCase());
+    return enrichedFresh.filter((r) => r.chain_id.toLowerCase() === opts.chainFilter!.toLowerCase());
   }
-  return fresh.results;
+  return enrichedFresh;
 }
 
 export async function inspectAndAddCustomWallet(
@@ -1404,7 +1741,7 @@ export async function exportUserCopyVaultKeys(
   };
 }
 
-async function executeLiveSolanaVaultJupiterSwap(
+export async function executeLiveSolanaVaultJupiterSwap(
   env: Env,
   userId: string,
   outputMint: string,

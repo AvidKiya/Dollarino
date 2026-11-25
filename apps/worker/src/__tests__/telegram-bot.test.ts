@@ -432,15 +432,15 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const autoMagicCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('tg_login='));
     expect(autoMagicCall).toBeTruthy();
 
-    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو</b> خوش آمدید، علی!'));
+    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو V11.6</b> خوش آمدید، علی!'));
     expect(welcomeCall).toBeTruthy();
     expect(String(welcomeCall!.body.text)).not.toContain('**');
     expect(welcomeCall!.body.parse_mode).toBe('HTML');
     const kbText = JSON.stringify(welcomeCall!.body.reply_markup);
-    expect(kbText).toContain('🛡 اتصال Trust Wallet');
-    expect(kbText).toContain('⚡ رفتن به حالت حرفه‌ای');
-    expect(kbText).toContain('💰 کارمزد ۳٪ سود (رایگان)');
-    expect(kbText).toContain('راهنما 📚');
+    expect(kbText).toContain('🛡 Trust Wallet و کارمزد ۳٪');
+    expect(kbText).toContain('⚡ حالت حرفه‌ای');
+    expect(kbText).toContain('🔍 رادار DEX & خرید مستقیم');
+    expect(kbText).toContain('🏆 کپی‌ترید حرفه‌ای (V2)');
 
     // Help text must never emit literal backslash-n or giant 10-row inline menu
     tgCalls = [];

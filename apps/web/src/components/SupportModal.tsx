@@ -455,9 +455,13 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
                     </span>
                   </p>
                   <p className="text-[11px] text-dim leading-relaxed">
-                    {isFa
-                      ? 'درباره اتصال چندزنجیره‌ای Trust Wallet، شبیه‌ساز دمو $10K، حالت ۲۴/۷ اتوترید یا اکستنشن سوال بپرسید.'
-                      : 'Ask about multi-chain Trust Wallet, $10K Demo Simulator, 24/7 Auto-Trade, or plans.'}
+                    {isFa ? (
+                      <>
+                        درباره اتصال چندزنجیره‌ای Trust Wallet، شبیه‌ساز دمو <span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>، حالت ۲۴/۷ اتوترید یا کارمزد ۳٪ سود سوال بپرسید.
+                      </>
+                    ) : (
+                      'Ask about multi-chain Trust Wallet, Custom Demo ($50–$10M), 24/7 Auto-Trade, or 3% profit fee.'
+                    )}
                   </p>
                 </div>
               </div>
@@ -625,7 +629,7 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
               <img src={pendingImage} alt="Preview" className="h-12 w-16 object-cover rounded-xl border hairline" />
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] font-bold text-main truncate">
-                  {isFa ? '📸 عکس پیوست آماده ارسال به پشتیبانی' : '📸 Image ready to send'}
+                  {isFa ? 'عکس پیوست آماده ارسال به پشتیبانی' : 'Image ready to send'}
                 </p>
                 <p className="text-[10px] text-dim truncate">
                   {isFa ? 'توضیح اضافه بنویسید یا دکمه ارسال را بزنید.' : 'Add note or send.'}

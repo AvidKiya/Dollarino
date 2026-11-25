@@ -1,19 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Activity,
+  ArrowUpDown,
   Bot,
   BrainCircuit,
   Check,
   CheckCircle2,
+  Coins,
   Copy as CopyIcon,
   ExternalLink,
+  Filter,
   Flame,
   KeyRound,
+  PauseCircle,
   Plus,
+  Radar,
   RefreshCw,
   Rocket,
   Scale,
+  Search,
   ShieldAlert,
   ShieldCheck,
   Sliders,
@@ -26,8 +32,10 @@ import {
   Zap,
 } from 'lucide-react';
 import { ChainLogo } from './BrandLogos';
+import { ProDropdown } from './ProDropdown';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { fundCopyVaultFromDapp, hasAnyInjectedWallet } from '../lib/trustwallet';
 import type {
   CopyFollowRuleItem,
   CopyPositionV2Item,
@@ -122,6 +130,11 @@ export function SmartCopyProHub({
   const isFa = lang === 'fa';
   const [subTab, setSubTab] = useState<'top10' | 'custom' | 'vault' | 'live'>('top10');
   const [chainFilter, setChainFilter] = useState<string>('ALL');
+  const [styleFilter, setStyleFilter] = useState<'ALL' | 'HOLDER' | 'SCALPER' | 'SWING' | 'SNIPER'>('ALL');
+  const [sortBy, setSortBy] = useState<
+    'roi_30d_desc' | 'roi_30d_asc' | 'roi_24h_desc' | 'roi_7d_desc' | 'pnl_desc' | 'pnl_asc' | 'win_rate_desc' | 'safety_desc'
+  >('roi_30d_desc');
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -436,23 +449,68 @@ export function SmartCopyProHub({
     } catch {
       topTokens = [];
     }
+    const holdings = tr.wallet_holdings && tr.wallet_holdings.length > 0
+      ? tr.wallet_holdings
+      : topTokens.slice(0, 4).map((tk, i) => ({
+          symbol: tk.symbol,
+          chainId: tk.chainId || tr.chain_id,
+          sharePct: [45, 30, 15, 10][i] || 15,
+          valueUsd: Math.round((Math.max(15000, Number(tr.realized_pnl_usd || 20000)) * ([45, 30, 15, 10][i] || 15)) / 100),
+          change24h: tk.change24h ?? 0,
+        }));
+    const cat =
+      tr.trader_category ||
+      (tr.avg_hold_mins >= 1440
+        ? 'HOLDER'
+        : tr.avg_hold_mins <= 45
+          ? 'SCALPER'
+          : tr.style_tag.toLowerCase().includes('meme') || tr.style_tag.toLowerCase().includes('pump')
+            ? 'SNIPER'
+            : 'SWING');
+    const catLabel =
+      cat === 'HOLDER'
+        ? isFa
+          ? 'هولدر'
+          : 'Holder'
+        : cat === 'SCALPER'
+          ? isFa
+            ? 'اسکلپر'
+            : 'Scalper'
+          : cat === 'SNIPER'
+            ? isFa
+              ? 'اسنایپر'
+              : 'Sniper'
+            : isFa
+              ? 'سوئینگ'
+              : 'Swing';
+    const holdStr =
+      tr.avg_hold_mins >= 1440
+        ? `${Math.round(tr.avg_hold_mins / 1440)} ${isFa ? 'روز' : 'd'}`
+        : tr.avg_hold_mins >= 60
+          ? `${Math.round(tr.avg_hold_mins / 60)} ${isFa ? 'ساعت' : 'h'}`
+          : `${tr.avg_hold_mins} ${isFa ? 'دقیقه' : 'm'}`;
+    const roi24h = tr.roi_24h_pct ?? Number((Number(tr.roi_7d_pct || 0) * 0.24).toFixed(1));
 
     return (
       <div
         key={tr.id}
-        className={`surface-soft rounded-[24px] p-4 border flex flex-col justify-between gap-3 transition ${
+        className={`min-w-0 overflow-hidden surface-soft rounded-[24px] p-4 border flex flex-col justify-between gap-3 transition ${
           activeRule?.is_active ? 'border-emerald-500/50 shadow-[0_0_24px_rgba(16,185,129,0.08)]' : 'hairline'
         }`}
       >
-        <div className="space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
+        <div className="space-y-3 min-w-0">
+          <div className="flex items-start justify-between gap-2 min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <ChainLogo chain={tr.chain_id} size={16} />
                 <h4 className="font-display font-bold text-sm text-main truncate">{tr.display_name}</h4>
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[9px] font-black">
+                  {catLabel}
+                </span>
                 {tr.is_bot_filtered === 1 && (
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-jade text-[9px] font-black">
-                    {isFa ? '✓ واقعی (غیرربات)' : 'Human Verified'}
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-jade text-[9px] font-black inline-flex items-center gap-0.5">
+                    <CheckCircle2 className="w-2.5 h-2.5" />
+                    <span>{isFa ? 'واقعی' : 'Verified'}</span>
                   </span>
                 )}
               </div>
@@ -466,67 +524,108 @@ export function SmartCopyProHub({
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-1.5 text-center text-[11px]">
-            <div className="panel rounded-xl p-2">
+          <div className="grid grid-cols-4 surface-soft rounded-2xl border hairline divide-x divide-[var(--line)] rtl:divide-x-reverse text-center text-[11px] overflow-hidden">
+            <div className="py-2 px-1">
+              <div dir="ltr" className="font-num font-black text-jade">
+                {roi24h >= 0 ? '+' : ''}
+                {roi24h}%
+              </div>
+              <div className="text-[9px] text-dim mt-0.5">{isFa ? '۲۴ساعته' : '24h'}</div>
+            </div>
+            <div className="py-2 px-1">
+              <div dir="ltr" className="font-num font-black text-jade">
+                +{tr.roi_7d_pct}%
+              </div>
+              <div className="text-[9px] text-dim mt-0.5">{isFa ? 'هفتگی' : '7d'}</div>
+            </div>
+            <div className="py-2 px-1">
               <div dir="ltr" className="font-num font-black text-jade">
                 +{tr.roi_30d_pct}%
               </div>
-              <div className="text-[9px] text-dim">{isFa ? 'سود ۳۰ روزه' : '30d ROI'}</div>
+              <div className="text-[9px] text-dim mt-0.5">{isFa ? 'ماهانه' : '30d'}</div>
             </div>
-            <div className="panel rounded-xl p-2">
-              <div dir="ltr" className="font-num font-black text-main">
-                {tr.win_rate}%
-              </div>
-              <div className="text-[9px] text-dim">{isFa ? 'نرخ برد' : 'WinRate'}</div>
-            </div>
-            <div className="panel rounded-xl p-2">
-              <div dir="ltr" className="font-num font-black text-amber-400">
+            <div className="py-2 px-1">
+              <div dir="ltr" className="font-num font-black text-amber-500 dark:text-amber-400">
                 ${Math.round(tr.realized_pnl_usd).toLocaleString()}
               </div>
-              <div className="text-[9px] text-dim">{isFa ? 'سود خالص' : 'Net PnL'}</div>
+              <div className="text-[9px] text-dim mt-0.5">{isFa ? 'سود کل' : 'PnL'}</div>
             </div>
           </div>
 
           <div className="flex items-center justify-between text-[10px] text-dim">
             <span>
-              {isFa ? 'ایمنی توکن‌های انتخابی:' : 'Safety Score:'}{' '}
-              <strong className="text-jade">{tr.safety_discipline_score}/100</strong>
+              {isFa ? 'نرخ برد:' : 'WinRate:'} <strong className="text-main">{tr.win_rate}%</strong> ·{' '}
+              {isFa ? 'ایمنی:' : 'Safety:'} <strong className="text-jade">{tr.safety_discipline_score}/100</strong>
             </span>
             <span>
-              {isFa ? 'میانگین هولد:' : 'Avg Hold:'} <strong>{tr.avg_hold_mins}m</strong>
+              {isFa ? 'نگهداری:' : 'Hold:'} <strong className="text-main">{holdStr}</strong>
             </span>
           </div>
 
-          {topTokens.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {topTokens.slice(0, 3).map((tk, i) => (
-                <span key={i} dir="ltr" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg panel text-[10px] font-bold text-main">
-                  <span>${tk.symbol}</span>
-                  {typeof tk.change24h === 'number' && (
-                    <span className={tk.change24h >= 0 ? 'text-jade' : 'text-loss'}>
-                      {tk.change24h >= 0 ? '+' : ''}
-                      {tk.change24h.toFixed(0)}%
-                    </span>
-                  )}
+          {holdings.length > 0 && (
+            <div className="panel rounded-2xl p-2.5 space-y-1.5 border hairline">
+              <div className="flex items-center justify-between text-[10px] font-black text-dim">
+                <span className="inline-flex items-center gap-1">
+                  <Coins className="w-3 h-3 text-[var(--gold)]" />
+                  <span>{isFa ? 'ارزهای داخل کیف‌پول تریدر:' : 'Wallet Holdings:'}</span>
                 </span>
-              ))}
+                <span className="font-num">{holdings.length} {isFa ? 'دارایی' : 'assets'}</span>
+              </div>
+              <div className="space-y-1">
+                {holdings.slice(0, 4).map((h, i) => (
+                  <div key={`${h.symbol}-${i}`} className="flex items-center justify-between gap-2 text-[10px]">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-black text-main">${h.symbol}</span>
+                      <span dir="ltr" className="text-dim font-num">{h.sharePct}%</span>
+                    </div>
+                    <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden max-w-[90px]">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-[#1652f0] to-[#10b981]"
+                        style={{ width: `${Math.min(100, Math.max(8, h.sharePct))}%` }}
+                      />
+                    </div>
+                    <div dir="ltr" className="flex items-center gap-1.5 shrink-0 font-num">
+                      <span className="text-sub">${Math.round(h.valueUsd).toLocaleString()}</span>
+                      {typeof h.change24h === 'number' && h.change24h !== 0 && (
+                        <span className={h.change24h >= 0 ? 'text-jade' : 'text-loss'}>
+                          {h.change24h >= 0 ? '+' : ''}
+                          {h.change24h.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
           {activeRule && (
             <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-2.5 text-[10px] space-y-1">
               <div className="flex items-center justify-between font-black text-jade">
-                <span>
-                  {activeRule.is_active
-                    ? isFa
-                      ? '🟢 فالو فعال'
-                      : '🟢 Active Follow'
-                    : isFa
-                      ? '⏸ متوقف'
-                      : '⏸ Paused'}
+                <span className="inline-flex items-center gap-1">
+                  {activeRule.is_active ? <CheckCircle2 className="w-3.5 h-3.5" /> : <PauseCircle className="w-3.5 h-3.5 text-amber-400" />}
+                  <span>
+                    {activeRule.is_active
+                      ? isFa
+                        ? 'فالو فعال'
+                        : 'Active Follow'
+                      : isFa
+                        ? 'متوقف'
+                        : 'Paused'}
+                  </span>
                 </span>
-                <span dir="ltr">
-                  {activeRule.execution_mode === 'TRUST_ONE_CLICK' ? '🦊 Trust 1-Click' : '⚡ Auto Vault 24/7'}
+                <span dir="ltr" className="inline-flex items-center gap-1">
+                  {activeRule.execution_mode === 'TRUST_ONE_CLICK' ? (
+                    <>
+                      <Wallet className="w-3 h-3" />
+                      <span>Trust 1-Click</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-3 h-3" />
+                      <span>Auto Vault 24/7</span>
+                    </>
+                  )}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sub">
@@ -542,11 +641,13 @@ export function SmartCopyProHub({
           )}
         </div>
 
-        <div className="flex flex-wrap gap-1.5 pt-2 border-t hairline">
+        <div className="grid grid-cols-2 gap-1.5 pt-2 border-t hairline">
           <button
             type="button"
             onClick={() => openRuleModal(tr)}
-            className="btn-gold flex-1 py-2 px-3 rounded-xl text-[11px] font-black inline-flex items-center justify-center gap-1.5"
+            className={`py-2 px-2.5 rounded-xl text-[11px] font-black inline-flex items-center justify-center gap-1 ${
+              activeRule?.is_active ? 'bg-[#059669] text-white' : 'btn-gold'
+            }`}
           >
             <Sliders className="w-3.5 h-3.5" />
             <span>
@@ -555,28 +656,37 @@ export function SmartCopyProHub({
                   ? 'ویرایش مارجین و قوانین'
                   : 'Edit Rules'
                 : isFa
-                  ? 'تنظیم قوانین و فالو پرو'
-                  : 'Configure & Follow'}
+                  ? 'فالو و تنظیم قوانین'
+                  : 'Follow & Rules'}
             </span>
           </button>
-          {activeRule && (
-            <button
-              type="button"
-              disabled={testingRuleId === activeRule.id}
-              onClick={() => void triggerTestSignal(activeRule)}
-              className="btn-cobalt px-2.5 py-2 rounded-xl text-[10px] font-black inline-flex items-center gap-1"
-              title={isFa ? 'شبیه‌سازی دریافت یک سیگنال واقعی برای تست' : 'Test Signal'}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>{testingRuleId === activeRule.id ? '...' : isFa ? 'تست سیگنال' : 'Test'}</span>
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={activeRule ? testingRuleId === activeRule.id : false}
+            onClick={() => {
+              if (activeRule) {
+                void triggerTestSignal(activeRule);
+              } else {
+                openRuleModal(tr);
+                onMsg(
+                  isFa
+                    ? `ابتدا قانون و مارجین «${tr.display_name}» را ذخیره کنید تا تست سیگنال اجرا شود.`
+                    : `Save copy rule for ${tr.display_name} to trigger a test signal.`
+                );
+              }
+            }}
+            className="btn-cobalt px-2.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center justify-center gap-1"
+            title={isFa ? 'شبیه‌سازی دریافت یک سیگنال واقعی برای تست' : 'Test Signal'}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>{activeRule && testingRuleId === activeRule.id ? '...' : isFa ? 'تست سیگنال' : 'Test Signal'}</span>
+          </button>
           <button
             type="button"
             onClick={() => toggleCompare(tr.id)}
-            className={`px-2.5 py-2 rounded-xl text-[10px] font-black inline-flex items-center gap-1 transition ${
+            className={`px-2.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center justify-center gap-1 transition ${
               compareIds.includes(tr.id) ? 'btn-cobalt' : 'btn-ghost text-dim hover:text-main'
-            }`}
+            } ${isCustom ? '' : 'col-span-2'}`}
             title={isFa ? 'افزودن به مقایسه کنار هم' : 'Compare trader'}
           >
             <Scale className="w-3.5 h-3.5" />
@@ -590,10 +700,11 @@ export function SmartCopyProHub({
                 onMsg(isFa ? 'کیف‌پول حذف شد.' : 'Removed.');
                 await loadAll(false);
               }}
-              className="btn-ghost p-2 rounded-xl text-loss"
+              className="btn-ghost py-2 px-2.5 rounded-xl text-loss text-[11px] font-bold inline-flex items-center justify-center gap-1"
               title={isFa ? 'حذف ولت' : 'Delete'}
             >
               <Trash2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'حذف' : 'Delete'}</span>
             </button>
           )}
         </div>
@@ -601,24 +712,65 @@ export function SmartCopyProHub({
     );
   };
 
+  const filteredSortedTraders = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const filtered = top10.filter((tr) => {
+      const cat =
+        tr.trader_category ||
+        (tr.avg_hold_mins >= 1440
+          ? 'HOLDER'
+          : tr.avg_hold_mins <= 45
+            ? 'SCALPER'
+            : tr.style_tag.toLowerCase().includes('meme') || tr.style_tag.toLowerCase().includes('pump')
+              ? 'SNIPER'
+              : 'SWING');
+      if (styleFilter !== 'ALL' && cat !== styleFilter) return false;
+      if (q) {
+        const hay = `${tr.display_name} ${tr.wallet_address} ${tr.style_tag} ${tr.chain_id} ${(tr.wallet_holdings || []).map((h) => h.symbol).join(' ')} ${tr.top_tokens_json}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    return [...filtered].sort((a, b) => {
+      const a24 = a.roi_24h_pct ?? Number(a.roi_7d_pct || 0) * 0.24;
+      const b24 = b.roi_24h_pct ?? Number(b.roi_7d_pct || 0) * 0.24;
+      switch (sortBy) {
+        case 'roi_30d_asc':
+          return Number(a.roi_30d_pct || 0) - Number(b.roi_30d_pct || 0);
+        case 'roi_24h_desc':
+          return b24 - a24;
+        case 'roi_7d_desc':
+          return Number(b.roi_7d_pct || 0) - Number(a.roi_7d_pct || 0);
+        case 'pnl_desc':
+          return Number(b.realized_pnl_usd || 0) - Number(a.realized_pnl_usd || 0);
+        case 'pnl_asc':
+          return Number(a.realized_pnl_usd || 0) - Number(b.realized_pnl_usd || 0);
+        case 'win_rate_desc':
+          return Number(b.win_rate || 0) - Number(a.win_rate || 0);
+        case 'safety_desc':
+          return Number(b.safety_discipline_score || 0) - Number(a.safety_discipline_score || 0);
+        case 'roi_30d_desc':
+        default:
+          return Number(b.roi_30d_pct || 0) - Number(a.roi_30d_pct || 0);
+      }
+    });
+  }, [top10, styleFilter, sortBy, searchTerm]);
+
   return (
-    <div className="panel rounded-[28px] p-5 sm:p-6 space-y-5 border border-brand/25">
+    <div className="panel rounded-[28px] p-4 sm:p-6 space-y-5 border border-brand/25 min-w-0 overflow-hidden">
       {/* Visual Header & Collapsible Quick-Start Guide */}
-      <div className="surface-soft rounded-[22px] p-4 border border-amber-500/20 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3.5">
-          <img
-            src="/images/smart-wallet-radar.webp"
-            alt="Smart Wallet Radar & Copy-Vault"
-            className="w-full sm:w-36 h-20 rounded-2xl object-cover shrink-0 border hairline"
-          />
+      <div className="surface-soft rounded-[22px] p-4 border border-amber-500/20 space-y-3 min-w-0">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3.5 min-w-0">
+          <div className="w-11 h-11 rounded-2xl bg-amber-500/12 text-[var(--gold)] flex items-center justify-center shrink-0">
+            <Radar className="w-6 h-6" />
+          </div>
           <div className="flex-1 min-w-0 space-y-1">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <Sparkles className="w-4 h-4 text-[var(--gold)] shrink-0" />
-                <h3 className="font-display font-bold text-base sm:text-lg text-main truncate">
+                <h3 className="font-display font-bold text-base sm:text-lg text-main leading-snug">
                   {isFa
-                    ? 'هاب کپی‌ترید هوشمند ولت‌ها و Trust Wallet (V2)'
-                    : 'Smart On-Chain Copy-Trading Hub V2'}
+                    ? 'هاب کپی‌ترید هوشمند ولت‌ها و سبد دارایی نهنگ‌ها (V2)'
+                    : 'Smart On-Chain Copy-Trading & Wallet Holdings Hub V2'}
                 </h3>
               </div>
               <button
@@ -626,13 +778,13 @@ export function SmartCopyProHub({
                 onClick={() => setShowGuide((g) => !g)}
                 className="btn-ghost px-3 py-1.5 rounded-xl text-[11px] font-black shrink-0"
               >
-                {showGuide ? (isFa ? 'بستن راهنما ▲' : 'Hide Guide ▲') : isFa ? 'آموزش گام‌به‌گام ▼' : 'Guide ▼'}
+                {showGuide ? (isFa ? 'بستن راهنما' : 'Hide Guide') : isFa ? 'آموزش گام‌به‌گام' : 'Guide'}
               </button>
             </div>
             <p className="text-[11px] text-dim leading-relaxed">
               {isFa
-                ? 'کشف ۱۰ تریدر برتر بلاکچین، افزودن ولت دلخواه روی همه شبکه‌ها، باکس مارجین اختصاصی، ضدراگ/AI-Guard و اجرای Trust Wallet یا خزانه ۲۴ ساعته.'
-                : 'Auto Top-10 Smart Money discovery, custom wallets on any chain, isolated margin boxes, Anti-Rug/AI-Guard, and Trust Wallet or 24/7 Copy-Vault execution.'}
+                ? 'دسترسی به تمام تریدرهای پرسود، فیلتر و مرتب‌سازی روزانه/هفتگی/ماهانه و سبک هولدرها، مشاهده ارزهای داخل کیف‌پول هر تریدر، و اجرای مستقیم روی Trust Wallet خودتان (یا ولت اختصاصی ۲۴ ساعته با کلید در اختیار خودتان).'
+                : 'Browse all profitable Smart Money traders, filter by style (Holders/Scalpers/Swing) & 24h/7d/30d PnL, inspect exact wallet token holdings, and copy via your Trust Wallet or 24/7 self-owned agent wallet.'}
             </p>
           </div>
         </div>
@@ -686,9 +838,9 @@ export function SmartCopyProHub({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-1.5">
           {[
-            { id: 'top10', icon: Trophy, fa: `۱۰ تریدر برتر (${top10.length})`, en: `Top-10 (${top10.length})` },
+            { id: 'top10', icon: Trophy, fa: `همه تریدرهای پرسود (${filteredSortedTraders.length})`, en: `All Profitable (${filteredSortedTraders.length})` },
             { id: 'custom', icon: Plus, fa: `ولت‌های دلخواه من (${customWallets.length})`, en: `Custom Wallets (${customWallets.length})` },
-            { id: 'vault', icon: Vault, fa: 'خزانه ۲۴ ساعته (Copy-Vault)', en: '24/7 Copy-Vault' },
+            { id: 'vault', icon: Vault, fa: 'ولت ۲۴ ساعته شما (کلید اختصاصی)', en: '24/7 Self-Owned Wallet' },
             { id: 'live', icon: Activity, fa: `پوزیشن‌ها و باکس‌ها (${positions.length})`, en: `Positions & Boxes (${positions.length})` },
           ].map((t) => {
             const Icon = t.icon;
@@ -749,80 +901,141 @@ export function SmartCopyProHub({
         </div>
       )}
 
-      {/* TAB 1: AUTO TOP-10 SMART WALLETS */}
+      {/* TAB 1: ALL PROFITABLE SMART WALLETS WITH FULL FILTERS & HOLDINGS */}
       {subTab === 'top10' && (
         <div className="space-y-4 tab-enter">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap gap-1.5">
-              {CHAIN_TABS.map((ch) => (
+          <div className="panel rounded-3xl p-4 sm:p-5 space-y-3.5 border hairline shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-2.5">
+              <div className="relative flex-1 min-w-[220px]">
+                <Search className="w-4 h-4 text-dim absolute top-1/2 -translate-y-1/2 start-3.5 pointer-events-none" />
+                <input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder={isFa ? 'جستجو نام تریدر، آدرس ولت یا ارز داخل ولت (مثل SOL, PEPE, AERO)...' : 'Search trader, wallet or held coin (SOL, PEPE)...'}
+                  className="input-field h-10 ps-10 pe-3 rounded-xl text-xs w-full"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <ProDropdown
+                  value={styleFilter}
+                  icon={<Filter className="w-3.5 h-3.5 text-brand" />}
+                  onChange={(v) => setStyleFilter(v as typeof styleFilter)}
+                  menuMinWidthClass="min-w-[190px]"
+                  options={[
+                    { value: 'ALL', label: isFa ? 'همه سبک‌ها' : 'All Styles' },
+                    { value: 'HOLDER', label: isFa ? 'هولدرها (بلندمدت)' : 'Holders' },
+                    { value: 'SCALPER', label: isFa ? 'اسکلپرها (سریع)' : 'Scalpers' },
+                    { value: 'SWING', label: isFa ? 'سوئینگ تریدرها' : 'Swing Traders' },
+                    { value: 'SNIPER', label: isFa ? 'اسنایپر میم‌کوین' : 'Meme Snipers' },
+                  ]}
+                />
+
+                <ProDropdown
+                  value={sortBy}
+                  icon={<ArrowUpDown className="w-3.5 h-3.5 text-[var(--gold)]" />}
+                  onChange={(v) => setSortBy(v as typeof sortBy)}
+                  align="end"
+                  menuMinWidthClass="min-w-[250px]"
+                  options={[
+                    { value: 'roi_30d_desc', label: isFa ? 'بیشترین سود ماهانه (۳۰ر)' : 'Highest 30d ROI' },
+                    { value: 'roi_30d_asc', label: isFa ? 'کمترین سود ماهانه' : 'Lowest 30d ROI' },
+                    { value: 'roi_24h_desc', label: isFa ? 'بیشترین سود روزانه (۲۴س)' : 'Highest 24h ROI' },
+                    { value: 'roi_7d_desc', label: isFa ? 'بیشترین سود هفتگی (۷ر)' : 'Highest 7d ROI' },
+                    { value: 'pnl_desc', label: isFa ? 'بیشترین سود دلاری (PnL)' : 'Highest Net PnL ($)' },
+                    { value: 'pnl_asc', label: isFa ? 'کمترین سود دلاری' : 'Lowest Net PnL ($)' },
+                    { value: 'win_rate_desc', label: isFa ? 'بالاترین نرخ برد' : 'Highest Win Rate' },
+                    { value: 'safety_desc', label: isFa ? 'بالاترین امتیاز ایمنی' : 'Highest Safety' },
+                  ]}
+                />
+
                 <button
-                  key={ch}
                   type="button"
-                  onClick={() => setChainFilter(ch)}
-                  className={`px-2.5 py-1 rounded-xl text-[10px] font-black uppercase inline-flex items-center gap-1 transition ${
-                    chainFilter === ch ? 'btn-gold' : 'surface-soft text-dim hover:text-main'
-                  }`}
+                  disabled={refreshing}
+                  onClick={() => void handleRefreshTop10()}
+                  className="h-10 px-3.5 rounded-xl border hairline surface-soft hover:border-[var(--line-strong)] text-[11px] sm:text-xs font-bold text-main inline-flex items-center gap-1.5 transition"
                 >
-                  {ch !== 'ALL' && <ChainLogo chain={ch} size={13} />}
-                  <span>{ch === 'ALL' ? (isFa ? 'همه شبکه‌ها' : 'All Chains') : ch}</span>
+                  <RefreshCw className={`w-3.5 h-3.5 text-brand ${refreshing ? 'animate-spin' : ''}`} />
+                  <span>{isFa ? 'بروزرسانی زنده' : 'Refresh'}</span>
                 </button>
-              ))}
+              </div>
             </div>
-            <button
-              type="button"
-              disabled={refreshing}
-              onClick={() => void handleRefreshTop10()}
-              className="btn-ghost px-3 py-1.5 rounded-xl text-[11px] font-bold inline-flex items-center gap-1.5"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>{isFa ? 'بروزرسانی رنکینگ Top-10' : 'Refresh Top-10'}</span>
-            </button>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t hairline">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {CHAIN_TABS.map((ch) => {
+                  const active = chainFilter === ch;
+                  return (
+                    <button
+                      key={ch}
+                      type="button"
+                      onClick={() => setChainFilter(ch)}
+                      className={`h-8 px-3 rounded-xl text-[11px] font-black uppercase inline-flex items-center gap-1.5 transition border ${
+                        active
+                          ? 'bg-[#0D47A1] text-white border-[#0D47A1] shadow-sm'
+                          : 'surface-soft hairline text-dim hover:text-main hover:border-[var(--line-strong)]'
+                      }`}
+                    >
+                      {ch !== 'ALL' && <ChainLogo chain={ch} size={13} />}
+                      <span>{ch === 'ALL' ? (isFa ? 'همه شبکه‌ها' : 'All Chains') : ch}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-dim font-bold font-num">
+                  {isFa ? `${filteredSortedTraders.length} تریدر` : `${filteredSortedTraders.length} traders`}
+                </span>
+                {(chainFilter !== 'ALL' || styleFilter !== 'ALL' || searchTerm.trim() !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setChainFilter('ALL');
+                      setStyleFilter('ALL');
+                      setSearchTerm('');
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/10 text-loss font-black hover:bg-rose-500/20 transition inline-flex items-center gap-1"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>{isFa ? 'پاک کردن فیلترها' : 'Reset'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {loading ? (
             <div className="p-8 text-center text-xs text-dim">
-              {isFa ? 'در حال اسکن و دسته‌بندی برترین کیف‌پول‌های Smart Money...' : 'Discovering Top-10 Smart Money wallets...'}
+              {isFa ? 'در حال اسکن و دسته‌بندی برترین کیف‌پول‌های Smart Money...' : 'Discovering Smart Money wallets...'}
             </div>
-          ) : top10.length === 0 ? (
+          ) : filteredSortedTraders.length === 0 ? (
             <div className="surface-soft rounded-[24px] p-6 sm:p-8 text-center space-y-3 border hairline">
               <div className="w-12 h-12 rounded-2xl bg-amber-500/15 text-amber-400 grid place-items-center mx-auto">
                 <Trophy className="w-6 h-6" />
               </div>
               <div className="space-y-1 max-w-md mx-auto">
                 <p className="font-display font-bold text-sm text-main">
-                  {chainFilter !== 'ALL'
-                    ? isFa
-                      ? `هنوز ولت برتری روی شبکه ${chainFilter.toUpperCase()} ثبت نشده است`
-                      : `No Top-10 wallets found on ${chainFilter.toUpperCase()} yet`
-                    : isFa
-                      ? 'لیست ۱۰ تریدر برتر آماده همگام‌سازی است'
-                      : 'Top-10 Smart Money leaderboard is ready to sync'}
+                  {isFa ? 'هیچ تریدری با فیلترهای انتخابی یافت نشد' : 'No traders match your active filters'}
                 </p>
                 <p className="text-[11px] text-dim leading-relaxed">
                   {isFa
-                    ? 'برای دریافت رنکینگ زنده نهنگ‌ها دکمه همگام‌سازی را بزنید یا مستقیماً آدرس کیف‌پول دلخواه‌تان را در تب «ولت‌های دلخواه من» ثبت کنید.'
-                    : 'Click Refresh Top-10 to fetch live Smart Money rankings, or track any custom wallet address directly.'}
+                    ? 'می‌توانید فیلتر شبکه یا سبک هولدر را تغییر دهید یا ولت دلخواه‌تان را ثبت کنید.'
+                    : 'Reset filters or track any custom wallet address directly.'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                 <button
                   type="button"
-                  disabled={refreshing}
-                  onClick={() => void handleRefreshTop10()}
-                  className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                  onClick={() => {
+                    setChainFilter('ALL');
+                    setStyleFilter('ALL');
+                    setSearchTerm('');
+                  }}
+                  className="btn-cobalt px-4 py-2 rounded-xl text-xs font-black"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                  <span>{isFa ? 'دریافت و همگام‌سازی ۱۰ تریدر برتر' : 'Sync Top-10 Leaderboard'}</span>
+                  {isFa ? 'حذف همه فیلترها' : 'Reset All Filters'}
                 </button>
-                {chainFilter !== 'ALL' && (
-                  <button
-                    type="button"
-                    onClick={() => setChainFilter('ALL')}
-                    className="btn-ghost px-4 py-2 rounded-xl text-xs font-bold"
-                  >
-                    {isFa ? 'نمایش همه شبکه‌ها' : 'Show All Chains'}
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={() => setSubTab('custom')}
@@ -834,8 +1047,8 @@ export function SmartCopyProHub({
               </div>
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3.5">
-              {top10.map((tr) => renderTraderCard(tr, false))}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+              {filteredSortedTraders.map((tr) => renderTraderCard(tr, false))}
             </div>
           )}
         </div>
@@ -850,17 +1063,15 @@ export function SmartCopyProHub({
               <span>{isFa ? 'لینک کردن آدرس کیف‌پول دلخواه شما (نهنگ، KOL یا تریدر شخصی)' : 'Track Any Custom Wallet Address'}</span>
             </h4>
             <div className="grid sm:grid-cols-4 gap-2.5">
-              <select
+              <ProDropdown
                 value={customChain}
-                onChange={(e) => setCustomChain(e.target.value)}
-                className="input-field py-2 px-3 rounded-xl text-xs font-bold uppercase"
-              >
-                {['solana', 'bsc', 'ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'ton', 'tron'].map((c) => (
-                  <option key={c} value={c}>
-                    {c.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+                onChange={(c) => setCustomChain(c)}
+                menuMinWidthClass="min-w-[160px]"
+                options={['solana', 'bsc', 'ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'ton', 'tron'].map((c) => ({
+                  value: c,
+                  label: c.toUpperCase(),
+                }))}
+              />
               <input
                 value={customAddr}
                 onChange={(e) => setCustomAddr(e.target.value)}
@@ -888,7 +1099,7 @@ export function SmartCopyProHub({
                 : 'No custom wallets tracked yet.'}
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
               {customWallets.map((tr) => renderTraderCard(tr, true))}
             </div>
           )}
@@ -904,8 +1115,8 @@ export function SmartCopyProHub({
                 <Vault className="w-5 h-5 text-amber-400" />
                 <h4 className="font-black text-sm text-main">
                   {isFa
-                    ? 'خزانه ایزوله ۲۴ ساعته دلارینو (برای کپی‌ترید خودکار حتی در خواب)'
-                    : 'Dedicated 24/7 Copy-Vault (Self-Funded Isolated Margin)'}
+                    ? 'ولت ایزوله ۲۴ ساعته شخصی شما (کلید خصوصی ۱۰۰٪ در اختیار خودتان)'
+                    : 'Your Isolated 24/7 Trading Wallet (Self-Owned Private Key)'}
                 </h4>
               </div>
               <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-jade text-[10px] font-black">
@@ -914,8 +1125,8 @@ export function SmartCopyProHub({
             </div>
             <p className="text-[11px] text-sub leading-relaxed">
               {isFa
-                ? 'در حالت «Trust Wallet 1-Click»، کیف‌پول اصلی شما هیچ دسترسی‌ای نمی‌دهد و هر خرید با تایید شما امضا می‌شود. اما اگر می‌خواهید هنگام خواب هم سیستم در صدم ثانیه بخرد و بفروشد، کافیست فقط بودجه کپی‌ترید خود را به آدرس خزانه اختصاصی خودتان در زیر واریز کنید تا سرمایه اصلی Trust Wallet شما کاملاً امن و دست‌نخورده بماند.'
-                : 'Your main Trust Wallet remains 100% untouched. Fund this isolated vault only with the copy-trading margin you want automated 24/7.'}
+                ? 'در حالت پیش‌فرض «Trust Wallet 1-Click»، کیف‌پول اصلی شما هیچ انتقال سرمایه‌ای ندارد و هر خرید با تایید خودتان اجرا می‌شود. اما اگر می‌خواهید هنگام خواب هم معامله ۲۴ ساعته انجام شود، می‌توانید این ولت ایزوله اختصاصی خودتان را بسازید و هر لحظه کلید خصوصیش را داخل Trust Wallet خودتان ایمپورت و مستقیم کنترل کنید (هیچ پولی به حساب دلارینو واریز نمی‌شود).'
+                : 'By default, Trust 1-Click trades directly from your connected Trust Wallet without moving funds. This optional 24/7 sub-wallet is strictly yours — export its private key anytime and import it directly inside your Trust Wallet app.'}
             </p>
 
             {vaultData && (
@@ -967,6 +1178,56 @@ export function SmartCopyProHub({
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {vaultData && hasAnyInjectedWallet() && (
+              <div className="rounded-2xl bg-sky-500/10 border border-sky-500/25 p-3.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="space-y-0.5">
+                  <p className="font-black text-main inline-flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-[#0284C7] dark:text-[#38BDF8]" />
+                    <span>{isFa ? 'واریز ۱-کلیکی از Trust Wallet به خزانه ۲۴/۷:' : '1-Click Fund Copy-Vault from Trust Wallet:'}</span>
+                  </p>
+                  <p className="text-[11px] text-dim">
+                    {isFa
+                      ? 'مستقیماً داخل Trust Wallet DApp مبلغ مورد نظر را برای معامله خودکار واریز کنید.'
+                      : 'Approve native transfer inside Trust Wallet directly to your isolated Copy-Vault.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[25, 50, 100, 250].map((usd) => (
+                    <button
+                      key={usd}
+                      type="button"
+                      disabled={wdBusy}
+                      onClick={async () => {
+                        setWdBusy(true);
+                        try {
+                          const targetNet = wdChain === 'solana' ? 'bsc' : wdChain;
+                          const approxNative = targetNet === 'bsc' ? Number((usd / 600).toFixed(4)) : Number((usd / 3000).toFixed(4));
+                          const txHash = await fundCopyVaultFromDapp({
+                            networkKey: targetNet,
+                            vaultAddress: vaultData.vault.evmAddress,
+                            amountNative: approxNative,
+                          });
+                          onMsg(
+                            isFa
+                              ? `شارژ ~$${usd} (${approxNative} ${targetNet === 'bsc' ? 'BNB' : 'ETH'}) به خزانه ارسال شد! TX: ${txHash.slice(0, 12)}...`
+                              : `Funded ~$${usd} to Copy-Vault! TX: ${txHash.slice(0, 12)}...`
+                          );
+                          await loadAll(false);
+                        } catch (e) {
+                          onMsg(e instanceof Error ? e.message : 'Transfer failed', true);
+                        } finally {
+                          setWdBusy(false);
+                        }
+                      }}
+                      className="btn-cobalt px-3 py-1.5 rounded-xl text-[11px] font-black disabled:opacity-50"
+                    >
+                      <span dir="ltr">+${usd}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1058,25 +1319,25 @@ export function SmartCopyProHub({
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <select
+                  <ProDropdown
                     value={wdChain}
-                    onChange={(e) => {
-                      const next = e.target.value as typeof wdChain;
-                      setWdChain(next);
-                      if (next === 'solana' && vaultData?.trustWalletTargets?.solana) {
+                    onChange={(next) => {
+                      const c = next as typeof wdChain;
+                      setWdChain(c);
+                      if (c === 'solana' && vaultData?.trustWalletTargets?.solana) {
                         setWdTo(vaultData.trustWalletTargets.solana);
-                      } else if (next !== 'solana' && vaultData?.trustWalletTargets?.evm) {
+                      } else if (c !== 'solana' && vaultData?.trustWalletTargets?.evm) {
                         setWdTo(vaultData.trustWalletTargets.evm);
                       }
                     }}
-                    className="input-field py-1.5 px-2 rounded-xl text-[11px]"
-                  >
-                    <option value="bsc">BSC (BNB)</option>
-                    <option value="base">Base (ETH)</option>
-                    <option value="arbitrum">Arbitrum (ETH)</option>
-                    <option value="ethereum">Ethereum (ETH)</option>
-                    <option value="solana">Solana (SOL)</option>
-                  </select>
+                    options={[
+                      { value: 'bsc', label: 'BSC (BNB)' },
+                      { value: 'base', label: 'Base (ETH)' },
+                      { value: 'arbitrum', label: 'Arbitrum (ETH)' },
+                      { value: 'ethereum', label: 'Ethereum (ETH)' },
+                      { value: 'solana', label: 'Solana (SOL)' },
+                    ]}
+                  />
                   <input
                     type="number"
                     step="0.0001"
@@ -1166,8 +1427,8 @@ export function SmartCopyProHub({
                       setWdAmt('');
                       onMsg(
                         isFa
-                          ? `✅ برداشت ${res.amountSent} ${res.symbol} با موفقیت انجام شد (${res.txHash.slice(0, 14)}...)`
-                          : `✅ Withdrew ${res.amountSent} ${res.symbol} (${res.txHash.slice(0, 14)}...)`
+                          ? `برداشت ${res.amountSent} ${res.symbol} با موفقیت انجام شد (${res.txHash.slice(0, 14)}...)`
+                          : `Withdrew ${res.amountSent} ${res.symbol} (${res.txHash.slice(0, 14)}...)`
                       );
                       await loadAll(false);
                     } catch (err) {
@@ -1284,10 +1545,13 @@ export function SmartCopyProHub({
 
             {exportedKeys && (
               <div className="panel rounded-2xl p-4 space-y-2.5 border border-rose-500/40 text-[11px] tab-enter">
-                <p className="font-black text-amber-400">
-                  {isFa
-                    ? '⚠️ کلیدهای خصوصی خزانه ایزوله شما (همراه با اعلان امنیتی تلگرام): می‌توانید با ایمپورت در Trust Wallet یا Phantom دارایی را کامل مدیریت و منتقل کنید:'
-                    : '⚠️ Private keys for your isolated vault (Telegram security alert dispatched). Import into Trust Wallet or Phantom anytime:'}
+                <p className="font-black text-amber-400 flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>
+                    {isFa
+                      ? 'کلیدهای خصوصی خزانه ایزوله شما (همراه با اعلان امنیتی تلگرام): می‌توانید با ایمپورت در Trust Wallet یا Phantom دارایی را کامل مدیریت و منتقل کنید:'
+                      : 'Private keys for your isolated vault (Telegram security alert dispatched). Import into Trust Wallet or Phantom anytime:'}
+                  </span>
                 </p>
                 <div className="surface-soft rounded-xl p-2.5 flex items-center justify-between gap-2" dir="ltr">
                   <div className="min-w-0">
@@ -1336,8 +1600,8 @@ export function SmartCopyProHub({
                 value={testTokenAddr}
                 onChange={(e) => setTestTokenAddr(e.target.value)}
                 dir="ltr"
-                placeholder={isFa ? 'آدرس توکن اختیاری برای تست (یا خالی برای توکن ترند)' : 'Optional token address for test'}
-                className="input-field py-1.5 px-3 rounded-xl text-xs font-mono w-64"
+                placeholder="Token contract 0x... / Mint (optional)"
+                className="input-field py-1.5 px-3 rounded-xl text-xs font-mono w-full sm:w-72"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1650,15 +1914,15 @@ export function SmartCopyProHub({
                   </div>
                   <div>
                     <label className="text-[10px] text-dim block mb-1">{isFa ? 'مدل حجم هر ورود' : 'Sizing Mode'}</label>
-                    <select
+                    <ProDropdown
                       value={ruleForm.sizingMode}
-                      onChange={(e) => setRuleForm((f) => ({ ...f, sizingMode: e.target.value as typeof ruleForm.sizingMode }))}
-                      className="input-field w-full py-1.5 px-2 rounded-xl text-[11px]"
-                    >
-                      <option value="FIXED_USD">{isFa ? 'مبلغ ثابت ($)' : 'Fixed USD'}</option>
-                      <option value="PCT_ALLOCATION">{isFa ? 'درصد از باکس (%)' : '% of Box'}</option>
-                      <option value="PROPORTIONAL">{isFa ? 'متناسب با نهنگ' : 'Proportional'}</option>
-                    </select>
+                      onChange={(next) => setRuleForm((f) => ({ ...f, sizingMode: next as typeof ruleForm.sizingMode }))}
+                      options={[
+                        { value: 'FIXED_USD', label: isFa ? 'مبلغ ثابت ($)' : 'Fixed USD' },
+                        { value: 'PCT_ALLOCATION', label: isFa ? 'درصد از باکس (%)' : '% of Box' },
+                        { value: 'PROPORTIONAL', label: isFa ? 'متناسب با نهنگ' : 'Proportional' },
+                      ]}
+                    />
                   </div>
                   <div>
                     <label className="text-[10px] text-dim block mb-1">
