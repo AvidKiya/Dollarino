@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import {
   atr,
+  computeDynamicRecommendedSettings,
   computeKbosV11Detailed,
   computeStrategySignals,
   DEFAULT_KBOS_PARAMS,
@@ -11,12 +12,14 @@ import {
   formatDollarinoSignal,
   mergeKbosParams,
   parseDollarinoSignal,
+  resolveEffectiveBotCapital,
   resolveEngineDisplayLabel,
   rsi,
   runBacktest,
   SAMPLE_CUSTOM_STRATEGIES,
   selectClosedCandles,
   strategyOutputToDollarinoSignal,
+  type CapitalPresetId,
   type CustomStrategyLanguage,
   type Direction,
   type DirectionMode,
@@ -32,15 +35,22 @@ import { buildProfitCardSvg, renderProfitCardPng } from '../cards/renderer.js';
 import { decryptVaultJson, hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
 import { enforceRateLimit } from '../security.js';
 import {
-  activateExclusiveTradingEngine,
   getActiveEngineState,
+  normalizeEngineArray,
+  setActiveTradingEngines,
+  toggleTradingEngine,
   type TradingEngineChoice,
 } from '../engine/exclusive-engine.js';
+import {
+  discoverListingAndBoomCandidates,
+  runNewListingAndMemeSniperForUser,
+} from '../engine/listing-sniper.js';
 import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
   logAudit,
   reconcileOpenPositionsForUser,
+  resolveUserCapitalSummary,
   type UserBotConfigRow,
 } from '../engine/executor.js';
 import type { Env } from '../env.js';
@@ -55,6 +65,97 @@ import type { ExchangeProviderId } from '@dollarino/core';
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 tradingRoutes.use('*', requireAuth);
 
+async function resolveModeAwareWalletAndBalance(
+  env: Env,
+  userId: string,
+  cfg: Pick<UserBotConfigRow, 'trading_mode' | 'market_type' | 'paper_balance'> | null,
+  activeProvider: ExchangeProviderId | undefined
+) {
+  const effectiveMode: 'PAPER' | 'LIVE' = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+  const effectiveProvider: ExchangeProviderId | undefined =
+    activeProvider === 'kcex'
+      ? 'kcex'
+      : effectiveMode === 'PAPER'
+        ? 'paper'
+        : activeProvider && activeProvider !== 'paper'
+          ? activeProvider
+          : undefined;
+
+  const { adapter, provider, label } = await resolveUserExchangeAdapter(env, userId, effectiveProvider);
+
+  const [demoCfgBal, openLiveMarginRow, openPaperMarginRow, liveReadiness] = await Promise.all([
+    Promise.resolve(Number(cfg?.paper_balance ?? 10000) || 0),
+    env.DB.prepare(
+      `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used
+       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = 'LIVE'`
+    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
+    env.DB.prepare(
+      `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used
+       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = 'PAPER'`
+    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
+    getTrustWalletLiveTotalUsd(env.DB, userId).catch(() => ({
+      hasWallet: false,
+      totalUsd: 0,
+      rpcReachable: false,
+      meetsMinimum: false,
+      minRequiredUsd: 10,
+      breakdown: {} as Record<string, number>,
+    })),
+  ]);
+
+  let balance: { free: string; used: string; total: string; currency: string };
+  let displayProvider = provider;
+  let displayLabel = label;
+
+  if (effectiveMode === 'LIVE' && provider === 'paper') {
+    // Non-custodial Trust Wallet LIVE mode without CEX/Hyperliquid keys:
+    // NEVER return Demo/Paper balance here — always reflect real Trust Wallet balance!
+    const usedLive = Math.max(0, Number(openLiveMarginRow?.used || 0));
+    const liveTotal = Math.max(0, Number(liveReadiness.totalUsd || 0));
+    const freeLive = Math.max(0, liveTotal - usedLive);
+    balance = {
+      free: freeLive.toFixed(2),
+      used: usedLive.toFixed(2),
+      total: Math.max(liveTotal, freeLive + usedLive).toFixed(2),
+      currency: 'USDT',
+    };
+    displayProvider = 'trustwallet';
+    displayLabel = liveReadiness.hasWallet
+      ? 'Trust Wallet (حساب واقعی)'
+      : 'Trust Wallet (متصل نشده)';
+  } else {
+    balance = await adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => ({
+      free: effectiveMode === 'LIVE' ? '0.00' : demoCfgBal.toFixed(2),
+      used: '0.00',
+      total: effectiveMode === 'LIVE' ? '0.00' : demoCfgBal.toFixed(2),
+      currency: 'USDT',
+    }));
+  }
+
+  const usedPaper = Math.max(0, Number(openPaperMarginRow?.used || 0));
+  const demoTotalUsd = Math.max(0, demoCfgBal + usedPaper);
+  const liveBalanceUsd =
+    effectiveMode === 'LIVE' && provider !== 'paper'
+      ? Math.max(0, Number(balance.total || 0))
+      : Math.max(0, Number(liveReadiness.totalUsd || 0));
+
+  return {
+    effectiveMode,
+    adapter,
+    provider: displayProvider,
+    label: displayLabel,
+    balance,
+    walletSummary: {
+      activeMode: effectiveMode,
+      demoBalanceUsd: Number(demoTotalUsd.toFixed(2)),
+      liveBalanceUsd: Number(liveBalanceUsd.toFixed(2)),
+      liveHasWallet: liveReadiness.hasWallet || (effectiveMode === 'LIVE' && provider !== 'paper'),
+      liveMeetsMinimum: liveReadiness.meetsMinimum || (effectiveMode === 'LIVE' && provider !== 'paper' && liveBalanceUsd >= 10),
+      minLiveUsd: liveReadiness.minRequiredUsd,
+    },
+  };
+}
+
 tradingRoutes.get('/overview', async (c) => {
   const user = c.get('user');
   const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
@@ -65,20 +166,11 @@ tradingRoutes.get('/overview', async (c) => {
     `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
   ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
 
-  const effectiveProvider: ExchangeProviderId | undefined =
-    activeRow?.provider === 'kcex'
-      ? 'kcex'
-      : cfg?.trading_mode === 'PAPER'
-        ? 'paper'
-        : activeRow?.provider && activeRow.provider !== 'paper'
-          ? activeRow.provider
-          : undefined;
+  const { effectiveMode, adapter, provider, label, balance, walletSummary } =
+    await resolveModeAwareWalletAndBalance(c.env, user.id, cfg ?? null, activeRow?.provider);
 
-  const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
-
-  const [balance, openTradesRaw, unreadNotifications, stats] = await Promise.all([
-    adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
-    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 25`).bind(user.id).all<{
+  const [openTradesRaw, unreadNotifications, stats] = await Promise.all([
+    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC LIMIT 25`).bind(user.id, effectiveMode).all<{
       id: string;
       symbol: string;
       direction: Direction;
@@ -97,8 +189,8 @@ tradingRoutes.get('/overview', async (c) => {
       `SELECT COUNT(*) as total_trades,
               SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN 1 ELSE 0 END) as winning_trades,
               SUM(CAST(realized_pnl AS REAL)) as total_realized_pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED'`
-    ).bind(user.id).first<{ total_trades: number; winning_trades: number | null; total_realized_pnl: number | null }>(),
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
+    ).bind(user.id, effectiveMode).first<{ total_trades: number; winning_trades: number | null; total_realized_pnl: number | null }>(),
   ]);
 
   const openTrades = [];
@@ -117,14 +209,17 @@ tradingRoutes.get('/overview', async (c) => {
 
   const totalClosed = Number(stats?.total_trades || 0);
   const wins = Number(stats?.winning_trades || 0);
-  const [iranRate, serverFeeSummary] = await Promise.all([
+  const [iranRate, serverFeeSummary, capitalSummary] = await Promise.all([
     fetchIranUsdtRate().catch(() => null),
     getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
+    resolveUserCapitalSummary(c.env.DB, user.id, cfg ?? null, balance).catch(() => null),
   ]);
   return c.json({
     config: cfg,
     activeExchange: { provider, label },
     balance,
+    walletSummary,
+    capitalSummary,
     openTrades,
     unreadNotifications: Number(unreadNotifications?.cnt || 0),
     iranRate,
@@ -168,20 +263,11 @@ tradingRoutes.get('/dashboard', async (c) => {
     `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
   ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
 
-  const effectiveProvider: ExchangeProviderId | undefined =
-    activeRow?.provider === 'kcex'
-      ? 'kcex'
-      : cfg?.trading_mode === 'PAPER'
-        ? 'paper'
-        : activeRow?.provider && activeRow.provider !== 'paper'
-          ? activeRow.provider
-          : undefined;
+  const { effectiveMode, adapter, provider, label, balance, walletSummary } =
+    await resolveModeAwareWalletAndBalance(c.env, user.id, cfg ?? null, activeRow?.provider);
 
-  const { adapter, provider, label } = await resolveUserExchangeAdapter(c.env, user.id, effectiveProvider);
-
-  const [balance, openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement, platformAI, activeEngine] = await Promise.all([
-    adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => ({ free: '0.00', used: '0.00', total: '0.00', currency: 'USDT' })),
-    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC`).bind(user.id).all<{
+  const [openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement, platformAI, activeEngine] = await Promise.all([
+    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC`).bind(user.id, effectiveMode).all<{
       id: string;
       symbol: string;
       direction: Direction;
@@ -204,7 +290,7 @@ tradingRoutes.get('/dashboard', async (c) => {
       opened_at: string;
     }>(),
     c.env.DB.prepare(`SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC`).bind(user.id).all(),
-    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 60`).bind(user.id).all(),
+    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? ORDER BY closed_at DESC LIMIT 60`).bind(user.id, effectiveMode).all(),
     c.env.DB.prepare(`SELECT * FROM signals WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC LIMIT 24`).bind(user.id).all(),
     c.env.DB.prepare(
       `SELECT
@@ -214,8 +300,8 @@ tradingRoutes.get('/dashboard', async (c) => {
         COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as gross_wins,
         COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) < 0 THEN ABS(CAST(realized_pnl AS REAL)) ELSE 0 END), 0) as gross_losses,
         COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as today_pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED'`
-    ).bind(user.id).first<{
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
+    ).bind(user.id, effectiveMode).first<{
       total_trades: number;
       wins: number;
       total_pnl: number;
@@ -227,12 +313,12 @@ tradingRoutes.get('/dashboard', async (c) => {
       `SELECT
         COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-24 hours') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_24h_pnl,
         COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-7 days') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_7d_pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED'`
-    ).bind(user.id).first<{ last_24h_pnl: number; last_7d_pnl: number }>(),
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
+    ).bind(user.id, effectiveMode).first<{ last_24h_pnl: number; last_7d_pnl: number }>(),
     c.env.DB.prepare(
       `SELECT COALESCE(SUM(CASE WHEN event_type IN ('DEPOSIT','TOPUP') THEN amount_usd ELSE 0 END), 0) as deposited
        FROM wallet_ledger WHERE user_id = ? AND mode = ?`
-    ).bind(user.id, cfg?.trading_mode ?? 'PAPER').first<{ deposited: number }>().catch(() => ({ deposited: 0 })),
+    ).bind(user.id, effectiveMode).first<{ deposited: number }>().catch(() => ({ deposited: 0 })),
     c.env.DB.prepare(
       `SELECT * FROM wallet_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
     ).bind(user.id).all().catch(() => ({ results: [] })),
@@ -246,7 +332,9 @@ tradingRoutes.get('/dashboard', async (c) => {
     getActiveEngineState(c.env.DB, user.id),
   ]);
 
-  const totalEq = Math.max(1, Number(balance.total) || Number(cfg?.paper_balance ?? 10000));
+  const rawTotalEq = Math.max(0, Number(balance.total ?? 0));
+  const totalEq = effectiveMode === 'LIVE' ? rawTotalEq : (rawTotalEq || Number(cfg?.paper_balance ?? 10000));
+  const totalEqDenom = Math.max(1, totalEq);
 
   // Enrich open positions with live mark price, ROE %, sparkline, and unrealized PnL
   const priceCache = new Map<string, number>();
@@ -270,7 +358,7 @@ tradingRoutes.get('/dashboard', async (c) => {
     const uPnl = pos.direction === 'LONG' ? (mark - entry) * qty : (entry - mark) * qty;
     totalUnrealizedPnl += uPnl;
     const roePct = (uPnl / margin) * 100;
-    const capitalPct = (margin / totalEq) * 100;
+    const capitalPct = (margin / totalEqDenom) * 100;
     const liqEst = pos.direction === 'LONG'
       ? entry * (1 - 0.9 / Math.max(1, pos.leverage))
       : entry * (1 + 0.9 / Math.max(1, pos.leverage));
@@ -290,21 +378,21 @@ tradingRoutes.get('/dashboard', async (c) => {
   const [hourlyAgg, dailyAgg, weeklyAgg] = await Promise.all([
     c.env.DB.prepare(
       `SELECT substr(closed_at, 1, 13) || ':00' as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl, COUNT(*) as trades
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at IS NOT NULL
        GROUP BY bucket ORDER BY bucket DESC LIMIT 24`
-    ).bind(user.id).all<{ bucket: string; pnl: number; trades: number }>(),
+    ).bind(user.id, effectiveMode).all<{ bucket: string; pnl: number; trades: number }>(),
     c.env.DB.prepare(
       `SELECT date(closed_at) as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at >= date('now', '-30 days') AND closed_at IS NOT NULL
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at >= date('now', '-30 days') AND closed_at IS NOT NULL
        GROUP BY bucket ORDER BY bucket ASC`
-    ).bind(user.id).all<{ bucket: string; pnl: number }>(),
+    ).bind(user.id, effectiveMode).all<{ bucket: string; pnl: number }>(),
     c.env.DB.prepare(
       `SELECT date(closed_at) as day, COUNT(*) as count,
               SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN 1 ELSE 0 END) as wins,
               SUM(CAST(realized_pnl AS REAL)) as pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND closed_at >= date('now', '-7 days')
+       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at >= date('now', '-7 days')
        GROUP BY day ORDER BY day ASC`
-    ).bind(user.id).all<{ day: string; count: number; wins: number; pnl: number }>(),
+    ).bind(user.id, effectiveMode).all<{ day: string; count: number; wins: number; pnl: number }>(),
   ]);
 
   let runningCum = 0;
@@ -317,14 +405,17 @@ tradingRoutes.get('/dashboard', async (c) => {
   const closedAscRows = await c.env.DB.prepare(
     `SELECT symbol, realized_pnl, closed_at
      FROM trades
-     WHERE user_id = ? AND status = 'CLOSED' AND closed_at IS NOT NULL
+     WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at IS NOT NULL
      ORDER BY closed_at ASC LIMIT 240`
-  ).bind(user.id).all<{ symbol: string; realized_pnl: string; closed_at: string }>().catch(() => ({ results: [] }));
+  ).bind(user.id, effectiveMode).all<{ symbol: string; realized_pnl: string; closed_at: string }>().catch(() => ({ results: [] }));
 
   const closedSum = closedAscRows.results.reduce((s, r) => s + Number(r.realized_pnl || 0), 0);
   const currentEqTotal = Math.max(0, Number(balance.total || 0) + totalUnrealizedPnl);
-  const totalDepositedEst = (walletRow?.deposited ?? 0) > 0 ? Number(walletRow!.deposited) : Math.max(10, currentEqTotal - closedSum - totalUnrealizedPnl);
-  const curveStartEq = Math.max(10, Number((totalEq - closedSum).toFixed(2)));
+  const totalDepositedEst =
+    (walletRow?.deposited ?? 0) > 0
+      ? Number(walletRow!.deposited)
+      : Math.max(effectiveMode === 'LIVE' ? 0 : 10, currentEqTotal - closedSum - totalUnrealizedPnl);
+  const curveStartEq = Math.max(effectiveMode === 'LIVE' ? 0 : 10, Number((totalEq - closedSum).toFixed(2)));
   const startUnix = closedAscRows.results[0]?.closed_at
     ? Math.floor(Date.parse(closedAscRows.results[0].closed_at.replace(' ', 'T') + 'Z') / 1000) - 3600
     : Math.floor(Date.now() / 1000) - 7200;
@@ -426,27 +517,40 @@ tradingRoutes.get('/dashboard', async (c) => {
     if (cfg?.risk_profile_json) riskProfile = { ...riskProfile, ...JSON.parse(cfg.risk_profile_json) };
   } catch { /* default */ }
 
-  const totalDeposited = (walletRow?.deposited ?? 0) > 0 ? walletRow!.deposited : 10000;
+  const totalDeposited = (walletRow?.deposited ?? 0) > 0 ? walletRow!.deposited : (effectiveMode === 'LIVE' ? totalEq : 10000);
   const totalPnl = stats?.total_pnl ?? 0;
   const tfSecs: Record<string, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400 };
   const cyclePeriod = tfSecs[cfg?.entry_timeframe ?? '15m'] ?? 900;
   const nextCycleInSec = cyclePeriod - (Math.floor(Date.now() / 1000) % cyclePeriod);
 
-  const [iranRate, serverFeeSummary] = await Promise.all([
+  const [iranRate, serverFeeSummary, uRiskRow, sniperEventsRows, capitalSummary] = await Promise.all([
     fetchIranUsdtRate().catch(() => null),
     getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
+    c.env.DB.prepare(`SELECT risk_terms_accepted_at FROM users WHERE id = ?`).bind(user.id).first<{ risk_terms_accepted_at: string | null }>().catch(() => null),
+    c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 12`).all().catch(() => ({ results: [] })),
+    resolveUserCapitalSummary(c.env.DB, user.id, cfg ?? null, balance).catch(() => null),
   ]);
+
+  if (capitalSummary) {
+    riskProfile.allocatedAmount = Math.round(
+      capitalSummary.effectiveCapitalUsd * ((cfg?.margin_pct ?? capitalSummary.recommended.marginPct) / 100)
+    );
+  }
 
   return c.json({
     config: cfg,
     activeEngine,
+    riskTermsAcceptedAt: uRiskRow?.risk_terms_accepted_at ?? null,
+    sniperEvents: sniperEventsRows.results,
     kbosParams,
     riskProfile,
+    capitalSummary,
     activeExchange: { provider, label },
     activeAI: aiRow || null,
     platformAI,
     entitlement,
     balance,
+    walletSummary,
     iranRate,
     serverFeeSummary,
     openTrades,
@@ -512,19 +616,130 @@ tradingRoutes.post('/wallet/topup', async (c) => {
   return c.json({ ok: true, balanceAfter: nextBal });
 });
 
+tradingRoutes.post('/accept-risk-terms', async (c) => {
+  const user = c.get('user');
+  const nowIso = new Date().toISOString();
+  await c.env.DB.prepare(`UPDATE users SET risk_terms_accepted_at = COALESCE(risk_terms_accepted_at, ?) WHERE id = ?`)
+    .bind(nowIso, user.id)
+    .run();
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'کاربر متن پذیرش ریسک و قوانین معاملات را تایید کرد.');
+  return c.json({ ok: true, riskTermsAcceptedAt: nowIso });
+});
+
+tradingRoutes.post('/engines', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ engines?: unknown; strategyKey?: string; customStrategyId?: string | null }>().catch(() => ({} as Record<string, unknown>));
+  const list = normalizeEngineArray(body.engines);
+  const state = await setActiveTradingEngines(c.env.DB, user.id, list, {
+    strategyKey: typeof body.strategyKey === 'string' ? body.strategyKey : undefined,
+    customStrategyId: typeof body.customStrategyId === 'string' ? body.customStrategyId : null,
+    auditSource: 'multi_engine_selector',
+  });
+  return c.json({ ok: true, activeEngine: state });
+});
+
+tradingRoutes.post('/engines/toggle', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ engine?: string; enabled?: boolean; strategyKey?: string }>().catch(() => ({} as Record<string, unknown>));
+  const eng = normalizeEngineArray([body.engine])[0];
+  if (!eng) return c.json({ error: 'موتور معاملاتی نامعتبر است.' }, 400);
+  const state = await toggleTradingEngine(c.env.DB, user.id, eng, Boolean(body.enabled), {
+    strategyKey: typeof body.strategyKey === 'string' ? body.strategyKey : undefined,
+    auditSource: 'engine_toggle',
+  });
+  return c.json({ ok: true, activeEngine: state });
+});
+
+tradingRoutes.get('/sniper', async (c) => {
+  const user = c.get('user');
+  const [cfg, events, candidates] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COALESCE(sniper_enabled, 0) AS sniper_enabled,
+              COALESCE(sniper_budget_usd, 25) AS sniper_budget_usd,
+              COALESCE(sniper_min_safety_score, 75) AS sniper_min_safety_score,
+              COALESCE(sniper_networks_json, '["solana","bsc","base"]') AS sniper_networks_json
+       FROM bot_configs WHERE user_id = ?`
+    )
+      .bind(user.id)
+      .first<{
+        sniper_enabled: number;
+        sniper_budget_usd: number;
+        sniper_min_safety_score: number;
+        sniper_networks_json: string;
+      }>()
+      .catch(() => null),
+    c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 20`).all().catch(() => ({ results: [] })),
+    discoverListingAndBoomCandidates({
+      minSafetyScore: 70,
+      minLiquidityUsd: 20_000,
+    }).catch(() => []),
+  ]);
+  return c.json({
+    ok: true,
+    settings: {
+      enabled: Boolean(cfg?.sniper_enabled),
+      budgetUsd: Number(cfg?.sniper_budget_usd ?? 25),
+      minSafetyScore: Number(cfg?.sniper_min_safety_score ?? 75),
+      networks: (() => {
+        try {
+          return JSON.parse(cfg?.sniper_networks_json || '["solana","bsc","base"]');
+        } catch {
+          return ['solana', 'bsc', 'base'];
+        }
+      })(),
+    },
+    events: events.results,
+    candidates,
+  });
+});
+
+tradingRoutes.post('/sniper/scan-now', async (c) => {
+  const user = c.get('user');
+  const cfg = await c.env.DB.prepare(`SELECT * FROM bot_configs WHERE user_id = ?`).bind(user.id).first<UserBotConfigRow>();
+  if (!cfg) return c.json({ error: 'Bot config not found' }, 404);
+  if (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE') {
+    const candidates = await discoverListingAndBoomCandidates({
+      minSafetyScore: Math.max(50, Number(cfg.sniper_min_safety_score ?? 75)),
+    }).catch(() => []);
+    return c.json({
+      ok: true,
+      boughtCount: 0,
+      scannedCount: candidates.length,
+      candidates,
+      note: 'ربات خاموش است؛ فقط لیست ارزهای تازه لیست‌شده و میم‌کوین‌های امن نمایش داده شد. برای خرید خودکار، ربات را از صفحه اصلی روشن کنید.',
+    });
+  }
+  const res = await runNewListingAndMemeSniperForUser(c.env, user.id, cfg);
+  return c.json(res);
+});
+
 tradingRoutes.post('/wallet/reset', async (c) => {
   const user = c.get('user');
   const gate = await requirePaidEntitlement(c.env.DB, user);
   if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  const targetBal = 10000;
-  await c.env.DB.prepare(`UPDATE bot_configs SET paper_balance = '10000.00', updated_at = datetime('now') WHERE user_id = ?`)
-    .bind(user.id).run();
+  const body = await c.req.json<{ balance?: number }>().catch(() => ({} as { balance?: number }));
+  let targetBal = Number(body.balance);
+  if (!Number.isFinite(targetBal) || targetBal <= 0) {
+    const curRow = await c.env.DB.prepare(`SELECT COALESCE(custom_paper_balance, 10000) AS bal FROM bot_configs WHERE user_id = ?`)
+      .bind(user.id).first<{ bal: number }>().catch(() => null);
+    targetBal = Number(curRow?.bal ?? 10000);
+  }
+  targetBal = Math.max(50, Math.min(10_000_000, Math.round(targetBal * 100) / 100));
+  await c.env.DB.prepare(
+    `UPDATE bot_configs SET paper_balance = ?, custom_paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`
+  )
+    .bind(targetBal.toFixed(2), targetBal, user.id).run();
   await c.env.DB.prepare(
     `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
-     VALUES (?, ?, 'PAPER', 'TOPUP', ?, ?, 'Reset Simulation Balance to $10,000')`
-  ).bind(randomId('wl'), user.id, targetBal, targetBal).run().catch(() => {});
-  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'Simulation balance reset to $10,000.00');
-  return c.json({ ok: true, balanceAfter: targetBal });
+     VALUES (?, ?, 'PAPER', 'TOPUP', ?, ?, ?)`
+  ).bind(randomId('wl'), user.id, targetBal, targetBal, `Set Custom Demo Balance to $${targetBal.toLocaleString('en-US')}`).run().catch(() => {});
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Simulation balance configured to $${targetBal.toFixed(2)}`);
+  return c.json({
+    ok: true,
+    balance: targetBal,
+    balanceAfter: targetBal,
+    customPaperBalance: targetBal,
+  });
 });
 
 tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
@@ -572,6 +787,15 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     trailing_stop_enabled: 'trailing_stop_enabled',
     trailing_stop_pct: 'trailing_stop_pct',
     trail_after_tp1: 'trail_after_tp1',
+    active_engines_json: 'active_engines_json',
+    custom_paper_balance: 'custom_paper_balance',
+    sniper_enabled: 'sniper_enabled',
+    sniper_budget_usd: 'sniper_budget_usd',
+    sniper_min_safety_score: 'sniper_min_safety_score',
+    sniper_networks_json: 'sniper_networks_json',
+    bot_budget_mode: 'bot_budget_mode',
+    bot_budget_usd: 'bot_budget_usd',
+    bot_budget_pct: 'bot_budget_pct',
   };
 
   const sets: string[] = [];
@@ -611,12 +835,36 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
   }
   for (const [k, col] of Object.entries(allowedFields)) {
     if (body[k] !== undefined) {
+      // Point #9: Only Admin/Owner may customize platform signal broadcast channel handles
+      if (k === 'signal_channel_handle' && user.role !== 'owner' && user.role !== 'admin') {
+        continue;
+      }
       let val = typeof body[k] === 'object' && body[k] !== null ? JSON.stringify(body[k]) : body[k];
-      if (k === 'hedge_mode') val = body[k] ? 1 : 0;
+      if (k === 'hedge_mode' || k === 'sniper_enabled') val = body[k] ? 1 : 0;
       if (k === 'market_type') val = String(body[k]).toUpperCase() === 'SPOT' ? 'SPOT' : 'FUTURES';
       if (k === 'direction_mode') {
         const d = String(body[k]).toUpperCase();
         val = d === 'LONG_ONLY' || d === 'SHORT_ONLY' ? d : 'BOTH';
+      }
+      if (k === 'sniper_budget_usd') {
+        val = Math.max(5, Math.min(5000, Number(body[k]) || 25));
+      }
+      if (k === 'sniper_min_safety_score') {
+        val = Math.max(50, Math.min(98, Math.round(Number(body[k]) || 75)));
+      }
+      if (k === 'custom_paper_balance') {
+        val = Math.max(50, Math.min(10_000_000, Number(body[k]) || 10000));
+      }
+      if (k === 'bot_budget_mode') {
+        const m = String(body[k]).toUpperCase();
+        val = m === 'FIXED_USD' || m === 'PERCENT_OF_BALANCE' ? m : 'FULL_BALANCE';
+      }
+      if (k === 'bot_budget_usd') {
+        const num = Number(body[k] ?? 0);
+        val = num > 0 ? Math.max(10, Math.min(10_000_000, Math.round(num * 100) / 100)) : 0;
+      }
+      if (k === 'bot_budget_pct') {
+        val = Math.max(5, Math.min(100, Math.round((Number(body[k]) || 100) * 10) / 10));
       }
       sets.push(`${col} = ?`);
       vals.push(val);
@@ -633,10 +881,15 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
   sets.push(`updated_at = datetime('now')`);
   vals.push(user.id);
 
-  let engineSwitchResult: Awaited<ReturnType<typeof activateExclusiveTradingEngine>> | null = null;
-  if (typeof body.strategy_key === 'string' && body.strategy_key.trim()) {
+  let engineSwitchResult: Awaited<ReturnType<typeof toggleTradingEngine>> | null = null;
+  if (Array.isArray(body.activeEngines)) {
+    engineSwitchResult = await setActiveTradingEngines(c.env.DB, user.id, normalizeEngineArray(body.activeEngines), {
+      strategyKey: typeof body.strategy_key === 'string' ? body.strategy_key : undefined,
+      auditSource: 'config_update_multi',
+    });
+  } else if (typeof body.strategy_key === 'string' && body.strategy_key.trim()) {
     const sk = body.strategy_key.trim();
-    const targetChoice: TradingEngineChoice =
+    const targetChoice: Exclude<TradingEngineChoice, 'LISTING_SNIPER'> =
       sk === 'ai_autonomous_agent'
         ? 'CENTRAL_AI'
         : sk === 'my_custom_ai'
@@ -644,7 +897,7 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
           : sk === 'copy_trade'
             ? 'COPY_TRADE'
             : 'STRATEGY';
-    engineSwitchResult = await activateExclusiveTradingEngine(c.env.DB, user.id, targetChoice, {
+    engineSwitchResult = await toggleTradingEngine(c.env.DB, user.id, targetChoice, true, {
       strategyKey: sk,
       auditSource: 'config_update',
     });
@@ -652,10 +905,11 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
 
   await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
   const [updated, activeEngine] = await Promise.all([
-    c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first(),
+    c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first<UserBotConfigRow>(),
     getActiveEngineState(c.env.DB, user.id),
   ]);
-  return c.json({ ok: true, config: updated, activeEngine, switchedFrom: engineSwitchResult });
+  const capitalSummary = await resolveUserCapitalSummary(c.env.DB, user.id, updated ?? null).catch(() => null);
+  return c.json({ ok: true, config: updated, activeEngine, capitalSummary, switchedFrom: engineSwitchResult });
 });
 
 tradingRoutes.post('/bot/start', async (c) => {
@@ -682,8 +936,8 @@ tradingRoutes.post('/bot/start', async (c) => {
   }>().catch(() => ({} as Record<string, unknown>));
 
   const [cfg, ensemble, entitlement, twUser] = await Promise.all([
-    c.env.DB.prepare('SELECT trading_mode, trade_execution_mode, market_type, strategy_key, risk_profile_json FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ trading_mode: string; trade_execution_mode?: string; market_type?: MarketType; strategy_key: string; risk_profile_json?: string }>(),
+    c.env.DB.prepare('SELECT trading_mode, trade_execution_mode, market_type, strategy_key, active_engines_json, risk_profile_json FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<{ trading_mode: string; trade_execution_mode?: string; market_type?: MarketType; strategy_key: string; active_engines_json?: string | null; risk_profile_json?: string }>(),
     resolveAIEnsemble(c.env, user.id),
     resolveUserEntitlement(c.env.DB, user),
     c.env.DB.prepare(
@@ -695,6 +949,14 @@ tradingRoutes.post('/bot/start', async (c) => {
       trust_wallet_ton: string | null;
     }>(),
   ]);
+
+  let nonCentralEngines: string[] = [];
+  try {
+    const parsed = cfg?.active_engines_json ? JSON.parse(cfg.active_engines_json) : [];
+    if (Array.isArray(parsed)) {
+      nonCentralEngines = parsed.filter((e) => typeof e === 'string' && e !== 'CENTRAL_AI');
+    }
+  } catch { /* ignore */ }
 
   const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'dollarino_v01');
   if (!entitlement.hasPaidPlan && entitlement.subscriptionRequired) {
@@ -715,7 +977,8 @@ tradingRoutes.post('/bot/start', async (c) => {
       code: 'SUBSCRIPTION_REQUIRED',
     }, 402);
   }
-  if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0) {
+  const allowPaperFallback = (cfg?.trading_mode ?? 'PAPER') === 'PAPER' && !ensemble.capExceeded;
+  if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0 && nonCentralEngines.length === 0 && !allowPaperFallback) {
     return c.json({
       error: ensemble.capExceeded
         ? 'سقف درخواست روزانه موتور «هوش مصنوعی دلارینو» پر شده است. لطفاً در پنل مدیریت سقف روزانه موتور را افزایش دهید.'
@@ -733,23 +996,31 @@ tradingRoutes.post('/bot/start', async (c) => {
     twUser?.trust_wallet_address || twUser?.trust_wallet_tron || twUser?.trust_wallet_solana || twUser?.trust_wallet_ton
   );
 
-  if (cfg?.trading_mode === 'LIVE' && hasTrustConnected) {
+  if (cfg?.trading_mode === 'LIVE') {
     const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
     if (!feeCheck.allowed) {
       return c.json({
-        error: feeCheck.reasonFa || 'حساب ترید واقعی تا زمان تسویه کارمزد معوق ۵٪ قفل است.',
+        error: feeCheck.reasonFa || 'حساب ترید واقعی تا زمان تسویه کارمزد معوق ۳٪ قفل است.',
         code: 'FEE_SETTLEMENT_REQUIRED',
         enforcement: feeCheck,
       }, 402);
     }
-    const readiness = await getTrustWalletLiveTotalUsd(c.env.DB, user.id);
-    if (!readiness.meetsMinimum) {
+    if (!hasTrustConnected && activeExProvider === 'paper') {
       return c.json({
-        error: `برای اجرای ربات روی کیف‌پول واقعی، حداقل ${readiness.minRequiredUsd} دلار موجودی در Trust Wallet نیاز است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}). می‌توانید همین الان با شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان شروع کنید.`,
-        code: 'MIN_BALANCE_10_USD',
-        currentUsd: readiness.totalUsd,
-        minRequiredUsd: readiness.minRequiredUsd,
+        error: 'برای شروع ربات روی حساب واقعی، ابتدا کیف‌پول Trust Wallet خود را متصل کنید (یا به حالت کیف‌پول دمو سوییچ کنید).',
+        code: 'NO_TRUST_WALLET',
       }, 400);
+    }
+    if (hasTrustConnected) {
+      const readiness = await getTrustWalletLiveTotalUsd(c.env.DB, user.id);
+      if (!readiness.meetsMinimum) {
+        return c.json({
+          error: `برای اجرای ربات روی کیف‌پول واقعی، حداقل ${readiness.minRequiredUsd} دلار موجودی در Trust Wallet نیاز است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}). می‌توانید همین الان با کیف‌پول دمو قابل تنظیم رایگان ($50 تا $10M) شروع کنید.`,
+          code: 'MIN_BALANCE_10_USD',
+          currentUsd: readiness.totalUsd,
+          minRequiredUsd: readiness.minRequiredUsd,
+        }, 400);
+      }
     }
   }
 
@@ -848,30 +1119,57 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
 
   vals.push(user.id);
-  const startChoice: TradingEngineChoice =
-    targetStrategy === 'ai_autonomous_agent'
-      ? 'CENTRAL_AI'
-      : targetStrategy === 'my_custom_ai'
-        ? 'MY_AI'
-        : targetStrategy === 'copy_trade'
-          ? 'COPY_TRADE'
-          : 'STRATEGY';
-  const exclRes = await activateExclusiveTradingEngine(c.env.DB, user.id, startChoice, {
-    strategyKey: targetStrategy,
-    customStrategyId: typeof body.customStrategyId === 'string' ? (body.customStrategyId || null) : undefined,
-    auditSource: 'bot_start',
-  });
+  if ((body as { acceptRiskTerms?: boolean }).acceptRiskTerms === true) {
+    await c.env.DB.prepare(`UPDATE users SET risk_terms_accepted_at = COALESCE(risk_terms_accepted_at, ?) WHERE id = ?`)
+      .bind(new Date().toISOString(), user.id)
+      .run()
+      .catch(() => {});
+  }
+
+  const explicitEngines = normalizeEngineArray((body as { activeEngines?: unknown }).activeEngines);
+  let resolvedEngines: TradingEngineChoice[];
+  if (explicitEngines.length > 0) {
+    const st = await setActiveTradingEngines(c.env.DB, user.id, explicitEngines, {
+      strategyKey: targetStrategy,
+      customStrategyId: typeof body.customStrategyId === 'string' ? (body.customStrategyId || null) : undefined,
+      auditSource: 'bot_start_multi',
+    });
+    resolvedEngines = st.activeEngines;
+  } else if (typeof body.strategyKey === 'string' && body.strategyKey.trim()) {
+    const startChoice: Exclude<TradingEngineChoice, 'LISTING_SNIPER'> =
+      targetStrategy === 'ai_autonomous_agent'
+        ? 'CENTRAL_AI'
+        : targetStrategy === 'my_custom_ai'
+          ? 'MY_AI'
+          : targetStrategy === 'copy_trade'
+            ? 'COPY_TRADE'
+            : 'STRATEGY';
+    const st = await toggleTradingEngine(c.env.DB, user.id, startChoice, true, {
+      strategyKey: targetStrategy,
+      customStrategyId: typeof body.customStrategyId === 'string' ? (body.customStrategyId || null) : undefined,
+      auditSource: 'bot_start',
+    });
+    resolvedEngines = st.activeEngines;
+  } else {
+    const st = await getActiveEngineState(c.env.DB, user.id);
+    resolvedEngines = st.activeEngines.length > 0 ? st.activeEngines : ['CENTRAL_AI'];
+  }
+
   await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
+
+  if (resolvedEngines.includes('COPY_TRADE')) {
+    await c.env.DB.prepare(`UPDATE copy_subscriptions SET auto_mirror = 1, updated_at = datetime('now') WHERE user_id = ? AND is_active = 1`)
+      .bind(user.id)
+      .run()
+      .catch(() => {});
+  }
 
   await logAudit(
     c.env.DB,
     user.id,
     'SYSTEM',
     'INFO',
-    (targetStrategy === 'ai_autonomous_agent'
-      ? 'ربات با «هوش مصنوعی دلارینو» روشن شد و اسکن کل بازار آغاز گردید'
-      : 'ربات با «استراتژی منتخب دلارینو (موتور دُرنا V1)» روشن شد و اسکن کل بازار آغاز گردید') +
-      (exclRes.cancelledCopyCount > 0 ? ` (${exclRes.cancelledCopyCount} کپی‌ترید غیرفعال شد)` : '')
+    `ربات اتوترید روشن شد · موتورهای فعال: [${resolvedEngines.join(', ')}]`
   );
 
   const id = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
@@ -892,29 +1190,91 @@ tradingRoutes.post('/bot/start', async (c) => {
     bot_state: nextState,
     strategy_key: targetStrategy,
     activeExchangeProvider: activeExProvider,
-    warning:
-      cfg?.trading_mode === 'LIVE' && !hasTrustConnected && activeExProvider === 'paper'
-        ? 'کیف‌پول Trust Wallet هنوز متصل نیست؛ ربات در شبیه‌ساز دمو مشابه تراست‌ولت ($10,000) فعال شد.'
-        : undefined,
   });
+});
+
+tradingRoutes.get('/config/recommended-preview', async (c) => {
+  const user = c.get('user');
+  const presetRaw = String(c.req.query('preset') || 'balanced').toLowerCase();
+  const preset: CapitalPresetId =
+    presetRaw === 'conservative' || presetRaw === 'aggressive' ? presetRaw : 'balanced';
+
+  const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+    .bind(user.id)
+    .first<UserBotConfigRow>();
+
+  const queryWalletUsd = Number(c.req.query('walletUsd') || 0);
+  let walletBalanceUsd = Number.isFinite(queryWalletUsd) && queryWalletUsd > 0 ? queryWalletUsd : 0;
+  if (walletBalanceUsd <= 0) {
+    if (cfg?.trading_mode === 'LIVE') {
+      const activeRow = await c.env.DB.prepare(
+        `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+      ).bind(user.id).first<{ provider: ExchangeProviderId }>().catch(() => null);
+      const { balance } = await resolveModeAwareWalletAndBalance(c.env, user.id, cfg, activeRow?.provider);
+      walletBalanceUsd = Math.max(0, Number(balance.total || 0));
+    } else {
+      walletBalanceUsd = Number(cfg?.paper_balance ?? 10000) || 10000;
+    }
+  }
+
+  const capRes = resolveEffectiveBotCapital({
+    walletBalanceUsd,
+    budgetMode: c.req.query('budgetMode') || cfg?.bot_budget_mode || 'FULL_BALANCE',
+    budgetUsd: c.req.query('budgetUsd') !== undefined ? Number(c.req.query('budgetUsd')) : cfg?.bot_budget_usd,
+    budgetPct: c.req.query('budgetPct') !== undefined ? Number(c.req.query('budgetPct')) : cfg?.bot_budget_pct,
+  });
+
+  const recommended = computeDynamicRecommendedSettings(capRes.effectiveCapitalUsd, preset);
+  return c.json({ ok: true, capital: capRes, recommended });
 });
 
 tradingRoutes.post('/config/reset-defaults', async (c) => {
   const user = c.get('user');
-  const defaultRiskProfile = JSON.stringify({
-    preset: 'balanced',
-    marketBias: 'neutral',
-    preferredSession: 'automatic',
-    entryStyle: 'balanced',
-    maxSpread: 0.5,
-    cooldownMinutes: 10,
-    trailingStop: true,
-    trailingDistance: 2.0,
-  });
+  const body = await c.req.json<{ preset?: CapitalPresetId; budgetMode?: string; budgetUsd?: number; budgetPct?: number }>()
+    .catch(() => ({} as { preset?: CapitalPresetId; budgetMode?: string; budgetUsd?: number; budgetPct?: number }));
+  const preset: CapitalPresetId =
+    body.preset === 'conservative' || body.preset === 'aggressive' ? body.preset : 'balanced';
 
   await c.env.DB.prepare(
     `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
   ).bind(user.id, randomId('wh')).run().catch(() => {});
+
+  const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+    .bind(user.id)
+    .first<UserBotConfigRow>();
+
+  let liveBalance: { free?: string; total?: string } | null = null;
+  if (cfg?.trading_mode === 'LIVE') {
+    const activeRow = await c.env.DB.prepare(
+      `SELECT provider FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    ).bind(user.id).first<{ provider: ExchangeProviderId }>().catch(() => null);
+    const { balance } = await resolveModeAwareWalletAndBalance(c.env, user.id, cfg, activeRow?.provider);
+    liveBalance = balance;
+  }
+
+  const effectiveCfg = cfg
+    ? {
+        ...cfg,
+        bot_budget_mode: (body.budgetMode as UserBotConfigRow['bot_budget_mode']) || cfg.bot_budget_mode,
+        bot_budget_usd: body.budgetUsd !== undefined ? Number(body.budgetUsd) : cfg.bot_budget_usd,
+        bot_budget_pct: body.budgetPct !== undefined ? Number(body.budgetPct) : cfg.bot_budget_pct,
+      }
+    : null;
+
+  const capitalSummary = await resolveUserCapitalSummary(c.env.DB, user.id, effectiveCfg, liveBalance);
+  const rec = computeDynamicRecommendedSettings(capitalSummary.effectiveCapitalUsd, preset);
+
+  const dynamicRiskProfile = JSON.stringify({
+    preset: rec.preset,
+    marketBias: 'neutral',
+    preferredSession: 'automatic',
+    entryStyle: rec.preset,
+    maxSpread: 0.5,
+    cooldownMinutes: rec.effectiveCapitalUsd <= 150 ? 15 : 10,
+    trailingStop: true,
+    trailingDistance: rec.trailingStopPct,
+    allocatedAmount: rec.perTradeUsd,
+  });
 
   await c.env.DB.prepare(
     `UPDATE bot_configs SET
@@ -922,32 +1282,53 @@ tradingRoutes.post('/config/reset-defaults', async (c) => {
        symbol = 'BTCUSDT',
        entry_timeframe = '15m',
        higher_timeframe = '1h',
-       margin_pct = 10,
-       max_leverage = 10,
-       daily_max_loss_pct = 5,
+       margin_pct = ?,
+       max_leverage = ?,
+       daily_max_loss_pct = ?,
        market_type = 'FUTURES',
        direction_mode = 'BOTH',
        hedge_mode = 0,
        scan_scope = 'TOP_COINS',
        auto_scan_top = 1,
-       max_open_positions = 4,
-       tp1_close_pct = 50,
-       tp2_close_pct = 25,
-       tp3_close_pct = 25,
+       max_open_positions = ?,
+       tp1_close_pct = ?,
+       tp2_close_pct = ?,
+       tp3_close_pct = ?,
        auto_breakeven_on_tp1 = 1,
        move_sl_to_tp1_on_tp2 = 1,
        trailing_stop_enabled = 1,
-       trailing_stop_pct = 2.0,
+       trailing_stop_pct = ?,
        trail_after_tp1 = 1,
        kbos_params_json = ?,
        risk_profile_json = ?,
        updated_at = datetime('now')
      WHERE user_id = ?`
-  ).bind(JSON.stringify(DEFAULT_KBOS_PARAMS), defaultRiskProfile, user.id).run();
+  )
+    .bind(
+      rec.marginPct,
+      rec.maxLeverage,
+      rec.dailyMaxLossPct,
+      rec.maxOpenPositions,
+      rec.tp1ClosePct,
+      rec.tp2ClosePct,
+      rec.tp3ClosePct,
+      rec.trailingStopPct,
+      JSON.stringify(DEFAULT_KBOS_PARAMS),
+      dynamicRiskProfile,
+      user.id
+    )
+    .run();
 
-  await logAudit(c.env.DB, user.id, 'BOT', 'INFO', 'تنظیمات ربات به بهترین حالت پیش‌فرض دلارینو بازگردانی شد.');
-  const updated = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first();
-  return c.json({ ok: true, config: updated, message: 'تنظیمات ربات با موفقیت به بهترین پیش‌فرض دلارینو بازگردانی شد ✅' });
+  await logAudit(c.env.DB, user.id, 'BOT', 'INFO', `تنظیمات پیش‌فرض بر اساس بودجه اعمال شد: ${rec.summaryFa}`);
+  const updated = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first<UserBotConfigRow>();
+  const nextCapitalSummary = await resolveUserCapitalSummary(c.env.DB, user.id, updated ?? null, liveBalance).catch(() => capitalSummary);
+  return c.json({
+    ok: true,
+    config: updated,
+    recommended: rec,
+    capitalSummary: nextCapitalSummary,
+    message: `تنظیمات پیشنهادی هوشمند برای $${Math.round(rec.effectiveCapitalUsd).toLocaleString('en-US')} اعمال شد: ${rec.summaryFa} ✅`,
+  });
 });
 
 tradingRoutes.post('/bot/stop', async (c) => {
@@ -2469,7 +2850,7 @@ tradingRoutes.post('/strategies/:id/activate', async (c) => {
   if (!row) return c.json({ error: 'Custom strategy not found' }, 404);
 
   const strategyKey = row.language === 'pine' ? 'custom_pine' : row.language === 'python' ? 'custom_python' : 'custom_visual';
-  await activateExclusiveTradingEngine(c.env.DB, user.id, 'STRATEGY', {
+  await toggleTradingEngine(c.env.DB, user.id, 'STRATEGY', true, {
     strategyKey,
     customStrategyId: row.id,
     auditSource: 'custom_strategy_activate',
@@ -2684,6 +3065,70 @@ tradingRoutes.delete('/alerts/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   await c.env.DB.prepare(`DELETE FROM price_alerts WHERE id = ? AND user_id = ?`).bind(id, user.id).run();
+  return c.json({ ok: true });
+});
+
+// =========================================================================
+// V11.2 Personal Account Notes & AI Actionable Suggestions (Portfolio Journal)
+// =========================================================================
+async function ensureAccountNotesTable(db: D1Database): Promise<void> {
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS account_notes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'NOTE',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`
+    )
+    .run()
+    .catch(() => {});
+}
+
+tradingRoutes.get('/notes', async (c) => {
+  const user = c.get('user');
+  await ensureAccountNotesTable(c.env.DB);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, title, content, category, created_at FROM account_notes WHERE user_id = ? ORDER BY created_at DESC LIMIT 60`
+  )
+    .bind(user.id)
+    .all<{ id: string; title: string; content: string; category: string; created_at: string }>()
+    .catch(() => ({ results: [] }));
+  return c.json({ ok: true, notes: rows.results });
+});
+
+tradingRoutes.post('/notes', async (c) => {
+  const user = c.get('user');
+  await ensureAccountNotesTable(c.env.DB);
+  const body = await c.req
+    .json<{ title?: string; content?: string; category?: string }>()
+    .catch(() => ({} as { title?: string; content?: string; category?: string }));
+  const content = String(body.content || '').trim().slice(0, 1500);
+  if (!content) return c.json({ error: 'متن یادداشت نمی‌تواند خالی باشد.' }, 400);
+  const title = String(body.title || '').trim().slice(0, 120);
+  const category = ['NOTE', 'STRATEGY', 'AI_ADVICE'].includes(String(body.category || '').toUpperCase())
+    ? String(body.category).toUpperCase()
+    : 'NOTE';
+  const id = randomId('note');
+  await c.env.DB.prepare(
+    `INSERT INTO account_notes (id, user_id, title, content, category) VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(id, user.id, title, content, category)
+    .run();
+  const note = await c.env.DB.prepare(`SELECT id, title, content, category, created_at FROM account_notes WHERE id = ?`)
+    .bind(id)
+    .first();
+  return c.json({ ok: true, note }, 201);
+});
+
+tradingRoutes.delete('/notes/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  await ensureAccountNotesTable(c.env.DB);
+  await c.env.DB.prepare(`DELETE FROM account_notes WHERE id = ? AND user_id = ?`).bind(id, user.id).run();
   return c.json({ ok: true });
 });
 

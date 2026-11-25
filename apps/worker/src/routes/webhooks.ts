@@ -47,6 +47,15 @@ webhookRoutes.post('/tv/:secret', async (c) => {
   }>();
 
   if (!cfg) return c.json({ error: 'Invalid TradingView webhook secret' }, 404);
+  if (cfg.role !== 'owner' && cfg.role !== 'admin') {
+    return c.json(
+      {
+        error: 'وبهوک تریدینگ‌ویو و چنل سیگنال تلگرام فقط در اختیار ادمین و مدیریت سیستم است.',
+        code: 'WEBHOOK_ADMIN_ONLY',
+      },
+      403
+    );
+  }
 
   const rawBody = await c.req.text();
   const signal = parseDollarinoSignal(rawBody);
@@ -254,13 +263,15 @@ webhookRoutes.get('/alerts', requireAuth, async (c) => {
       .bind(user.id).first<{ webhook_secret: string; trade_execution_mode: string }>(),
   ]);
 
+  const isPrivileged = user.role === 'owner' || user.role === 'admin';
   const origin = new URL(c.req.url).origin.replace(/\/$/, '');
-  const webhookUrl = cfg?.webhook_secret ? `${origin}/api/webhook/tv/${cfg.webhook_secret}` : null;
+  const webhookUrl = isPrivileged && cfg?.webhook_secret ? `${origin}/api/webhook/tv/${cfg.webhook_secret}` : null;
 
   return c.json({
     ok: true,
     freeForever: true,
     webhookUrl,
+    webhookAdminOnly: !isPrivileged,
     executionMode: cfg?.trade_execution_mode ?? 'AUTO',
     alerts: rows.results,
     templates: FREE_TV_ALERT_TEMPLATES,

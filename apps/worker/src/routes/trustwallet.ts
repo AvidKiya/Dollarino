@@ -178,6 +178,42 @@ trustWalletRoutes.post('/nonce', async (c) => {
   return c.json({ ok: true, nonce, message });
 });
 
+trustWalletRoutes.post('/dapp-handoff', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as { origin?: string; coinId?: number };
+  let base = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
+  if (body.origin) {
+    try {
+      const parsed = new URL(body.origin);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        base = parsed.origin;
+      }
+    } catch {
+      // fall back to PUBLIC_WEB_URL
+    }
+  }
+
+  const handoffToken = `twlink_${randomId('tw')}_${Math.random().toString(36).slice(2, 10)}`;
+  await c.env.DB.prepare(
+    `UPDATE users SET web_magic_token = ?, web_magic_expires_at = datetime('now', '+10 minutes') WHERE id = ?`
+  )
+    .bind(handoffToken, user.id)
+    .run();
+
+  const coinId = typeof body.coinId === 'number' && Number.isFinite(body.coinId) ? Math.floor(body.coinId) : 20000714;
+  const targetUrl = `${base}/?tg_login=${encodeURIComponent(handoffToken)}&tw_autoconnect=1&tab=dex`;
+  const universalLink = `https://link.trustwallet.com/open_url?coin_id=${coinId}&url=${encodeURIComponent(targetUrl)}`;
+  const deepLink = `trust://open_url?coin_id=${coinId}&url=${encodeURIComponent(targetUrl)}`;
+
+  return c.json({
+    ok: true,
+    targetUrl,
+    universalLink,
+    deepLink,
+    expiresInSeconds: 600,
+  });
+});
+
 trustWalletRoutes.post('/connect', async (c) => {
   const user = c.get('user');
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -701,32 +737,34 @@ trustWalletRoutes.post('/execution-mode', async (c) => {
   const vals: unknown[] = [nextExec];
 
   let liveBalanceUsd = 0;
+  let liveReady = true;
+  let warningCode: string | undefined;
+  let liveNoticeMsg: string | undefined;
+
   if (body.tradingMode === 'LIVE' || body.tradingMode === 'PAPER') {
     if (body.tradingMode === 'LIVE') {
       const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
       if (!feeCheck.allowed) {
         return c.json({
-          error: feeCheck.reasonFa || 'حساب معاملات واقعی تا تسویه کارمزد ۵٪ معوق قفل شده است.',
+          error: feeCheck.reasonFa || 'معاملات جدید واقعی تا تسویه کارمزد ۳٪ معوق متوقف است (پوزیشن‌های باز همچنان مدیریت می‌شوند).',
           code: 'FEE_SETTLEMENT_REQUIRED',
           enforcement: feeCheck,
         }, 402);
       }
       const readiness = await getTrustWalletLiveTotalUsd(c.env.DB, user.id);
-      if (!readiness.hasWallet) {
-        return c.json({
-          error: 'ابتدا کیف‌پول Trust Wallet خود را متصل کنید (یا برای تست بدون ریسک روی شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری بمانید).',
-          code: 'NO_TRUST_WALLET',
-        }, 400);
-      }
-      if (!readiness.meetsMinimum) {
-        return c.json({
-          error: `برای اجرای ربات روی کیف‌پول واقعی، حداقل موجودی ${readiness.minRequiredUsd} دلار (USDT/BNB/SOL/TRX) در Trust Wallet لازم است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}). فعلاً می‌توانید رایگان از شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری استفاده کنید.`,
-          code: 'MIN_BALANCE_10_USD',
-          currentUsd: readiness.totalUsd,
-          minRequiredUsd: readiness.minRequiredUsd,
-        }, 400);
-      }
       liveBalanceUsd = readiness.totalUsd;
+      liveReady = readiness.hasWallet && readiness.meetsMinimum;
+      if (!readiness.hasWallet) {
+        warningCode = 'NO_TRUST_WALLET';
+        liveNoticeMsg = 'حالت کیف‌پول واقعی انتخاب شد (موجودی واقعی: $0.00). برای معامله واقعی، آدرس Trust Wallet خود را متصل کنید.';
+        sets.push(`bot_state = 'STOPPED'`);
+      } else if (!readiness.meetsMinimum) {
+        warningCode = 'MIN_BALANCE_10_USD';
+        liveNoticeMsg = `حالت کیف‌پول واقعی انتخاب شد — موجودی واقعی Trust Wallet: $${readiness.totalUsd.toFixed(2)} (برای استارت خودکار ربات حداقل $${readiness.minRequiredUsd} لازم است).`;
+        sets.push(`bot_state = 'STOPPED'`);
+      } else {
+        liveNoticeMsg = `کیف‌پول واقعی Trust Wallet فعال شد — موجودی واقعی: $${readiness.totalUsd.toFixed(2)} ✅`;
+      }
     }
     sets.push(`trading_mode = ?`);
     vals.push(body.tradingMode);
@@ -758,10 +796,16 @@ trustWalletRoutes.post('/execution-mode', async (c) => {
     executionMode: nextExec,
     tradingMode: body.tradingMode ?? undefined,
     liveBalanceUsd: body.tradingMode === 'LIVE' ? liveBalanceUsd : undefined,
+    liveReady: body.tradingMode === 'LIVE' ? liveReady : undefined,
+    minRequiredUsd: body.tradingMode === 'LIVE' ? 10 : undefined,
+    warningCode,
     message:
-      nextExec === 'AUTO'
-        ? 'حالت تمام‌اتوترید خودکار ۲۴/۷ فعال شد (بدون نیاز به تایید دستی هر معامله).'
-        : 'حالت تایید دستی فعال شد (هر معامله قبل از ثبت، با یک کلیک در Trust Wallet تایید می‌شود).',
+      liveNoticeMsg ||
+      (body.tradingMode === 'PAPER'
+        ? 'حساب روی کیف‌پول دمو قرار گرفت 🧪'
+        : nextExec === 'AUTO'
+          ? 'حالت تمام‌اتوترید خودکار ۲۴/۷ فعال شد (بدون نیاز به تایید دستی هر معامله).'
+          : 'حالت تایید دستی فعال شد (هر معامله قبل از ثبت، با یک کلیک در Trust Wallet تایید می‌شود).'),
   });
 });
 

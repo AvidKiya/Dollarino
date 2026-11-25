@@ -223,11 +223,10 @@ describe('Trust Wallet Exclusive Redesign & 24/7 Controls', () => {
       }),
       env
     );
-    expect(startRes.status).toBe(200);
-    const body = (await startRes.json()) as { ok: boolean; bot_state: string; warning?: string };
-    expect(body.ok).toBe(true);
-    expect(body.bot_state).toBe('RUNNING_PAPER');
-    expect(body.warning).toContain('Trust Wallet');
+    expect(startRes.status).toBe(400);
+    const body = (await startRes.json()) as { error: string; code: string };
+    expect(body.code).toBe('NO_TRUST_WALLET');
+    expect(body.error).toContain('Trust Wallet');
   });
 
   it('exposes clean Trust Wallet plans without legacy CEX names on public /api/public/plans', async () => {
@@ -302,5 +301,91 @@ describe('Trust Wallet Exclusive Redesign & 24/7 Controls', () => {
     expect(report.tokenAgeHours).not.toBeNull();
     expect(report.tokenAgeHours!).toBeLessThan(6);
     expect(report.flags.some((f: string) => f.includes('توکن بسیار تازه'))).toBe(true);
+  });
+
+  it('generates direct Trust Wallet DApp handoff auto-login links and saves all 4 chain addresses atomically', async () => {
+    const env = makeEnv();
+    const userId = 'usr_tw_handoff_1';
+    const token = await issueUserToken(env, userId, '778899222');
+
+    // 1) Request DApp handoff link (used when user taps top Wallet button outside Trust Wallet browser)
+    const handoffRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trustwallet/dapp-handoff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ origin: 'https://dollarino.pages.dev' }),
+      }),
+      env
+    );
+    expect(handoffRes.status).toBe(200);
+    const handoff = (await handoffRes.json()) as {
+      ok: boolean;
+      targetUrl: string;
+      universalLink: string;
+      deepLink: string;
+      expiresInSeconds: number;
+    };
+    expect(handoff.ok).toBe(true);
+    expect(handoff.universalLink).toContain('https://link.trustwallet.com/open_url?');
+    expect(handoff.deepLink).toContain('trust://open_url?');
+    expect(handoff.targetUrl).toContain('tw_autoconnect=1');
+    expect(handoff.targetUrl).toContain('tab=dex');
+
+    // 2) Verify the handoff token logs the user in seamlessly inside Trust Wallet DApp Browser
+    const tgLoginParam = new URL(handoff.targetUrl).searchParams.get('tg_login');
+    expect(tgLoginParam).toBeTruthy();
+    const magicLoginRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/auth/telegram-magic-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tgLoginParam }),
+      }),
+      env
+    );
+    expect(magicLoginRes.status).toBe(200);
+    const magicJson = (await magicLoginRes.json()) as { token: string; user: { id: string } };
+    expect(magicJson.user.id).toBe(userId);
+
+    // 3) Connect ALL 4 chain families simultaneously inside Trust Wallet
+    const connectAllRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trustwallet/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${magicJson.token}` },
+        body: JSON.stringify({
+          evmAddress: '0x1111111111111111111111111111111111111111',
+          solanaAddress: 'So11111111111111111111111111111111111111112',
+          tronAddress: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
+          tonAddress: 'EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N',
+          signature: '0x' + 'ab'.repeat(65),
+          signedMessage: 'Dollarino Trust Wallet Verification',
+        }),
+      }),
+      env
+    );
+    expect(connectAllRes.status).toBe(200);
+
+    const statusRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trustwallet/status', {
+        headers: { Authorization: `Bearer ${magicJson.token}` },
+      }),
+      env
+    );
+    expect(statusRes.status).toBe(200);
+    const statusJson = (await statusRes.json()) as {
+      connected: boolean;
+      wallet: {
+        evmAddress: string;
+        solanaAddress: string;
+        tronAddress: string;
+        tonAddress: string;
+        verified: boolean;
+      };
+    };
+    expect(statusJson.connected).toBe(true);
+    expect(statusJson.wallet.evmAddress).toBe('0x1111111111111111111111111111111111111111');
+    expect(statusJson.wallet.solanaAddress).toBe('So11111111111111111111111111111111111111112');
+    expect(statusJson.wallet.tronAddress).toBe('T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb');
+    expect(statusJson.wallet.tonAddress).toBe('EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N');
+    expect(statusJson.wallet.verified).toBe(true);
   });
 });

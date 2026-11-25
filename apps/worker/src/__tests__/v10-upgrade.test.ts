@@ -168,9 +168,9 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       demoSimulatorUsd: number;
       freeTradingViewAlerts: boolean;
     };
-    expect(health.version).toBe('10.0.0');
+    expect(health.version).toBe('11.0.0');
     expect(health.paidSubscriptions).toBe(false);
-    expect(health.profitShareFeePct).toBe(5);
+    expect(health.profitShareFeePct).toBe(3);
     expect(health.trustWalletOnly).toBe(true);
     expect(health.minLiveBalanceUsd).toBe(10);
     expect(health.demoSimulatorUsd).toBe(10000);
@@ -211,7 +211,20 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
     expect(rLoss.recorded).toBe(false);
     expect(rLoss.feeUsd).toBe(0);
 
-    // 3. LIVE profit +$125 -> 5% = $6.25 fee accrued
+    // 3. First 3 LIVE profitable trades are 0% FREE TRIAL; 4th LIVE profit (+$125) -> 3% = $3.75 fee accrued!
+    for (let i = 1; i <= 3; i++) {
+      const freeWin = await recordProfitShareServerFee(db, {
+        userId: 'usr_v10_fee',
+        tradeId: `trd_live_free_${i}`,
+        mode: 'LIVE',
+        source: 'PERP_LIVE',
+        symbol: 'BTCUSDT',
+        realizedPnlUsd: 25,
+      });
+      expect(freeWin.freeTrialUsed).toBe(true);
+      expect(freeWin.feeUsd).toBe(0);
+    }
+
     const rWin = await recordProfitShareServerFee(db, {
       userId: 'usr_v10_fee',
       tradeId: 'trd_live_win_1',
@@ -221,7 +234,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       realizedPnlUsd: 125,
     });
     expect(rWin.recorded).toBe(true);
-    expect(rWin.feeUsd).toBeCloseTo(6.25, 4);
+    expect(rWin.feeUsd).toBeCloseTo(3.75, 4);
 
     // 4. Ledger endpoint + settlement
     const ledgerRes = await worker.fetch(
@@ -236,9 +249,9 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       accruedFeeUsd: number;
       entries: Array<{ id: string; status: string }>;
     };
-    expect(ledger.feePct).toBe(5);
-    expect(ledger.accruedFeeUsd).toBeCloseTo(6.25, 2);
-    expect(ledger.entries.length).toBe(1);
+    expect(ledger.feePct).toBe(3);
+    expect(ledger.accruedFeeUsd).toBeCloseTo(3.75, 2);
+    expect(ledger.entries.length).toBe(4); // 3 FREE_TRIAL + 1 ACCRUED
 
     const settleRes = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/subscriptions/server-fees/settle', {
@@ -267,7 +280,8 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       env
     );
 
-    // RPC mock returns 0 balance -> switching to LIVE must return MIN_BALANCE_10_USD (400)
+    // RPC mock returns 0 balance -> switching view to LIVE is allowed with readyToTrade=false & warningCode=MIN_BALANCE_10_USD,
+    // and starting the bot in LIVE mode enforces 400 MIN_BALANCE_10_USD
     const liveAttempt = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/trustwallet/execution-mode', {
         method: 'POST',
@@ -276,8 +290,23 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       }),
       env
     );
-    expect(liveAttempt.status).toBe(400);
-    const errJson = (await liveAttempt.json()) as { code: string; minRequiredUsd: number };
+    expect(liveAttempt.status).toBe(200);
+    const modeJson = (await liveAttempt.json()) as { ok: boolean; liveReady: boolean; warningCode: string; minRequiredUsd: number };
+    expect(modeJson.ok).toBe(true);
+    expect(modeJson.liveReady).toBe(false);
+    expect(modeJson.warningCode).toBe('MIN_BALANCE_10_USD');
+    expect(modeJson.minRequiredUsd).toBe(10);
+
+    const startLiveAttempt = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/bot/start', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+      }),
+      env
+    );
+    expect(startLiveAttempt.status).toBe(400);
+    const errJson = (await startLiveAttempt.json()) as { code: string; minRequiredUsd: number };
     expect(errJson.code).toBe('MIN_BALANCE_10_USD');
     expect(errJson.minRequiredUsd).toBe(10);
 
@@ -408,7 +437,17 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
     );
     expect(badTx.status).toBe(400);
 
-    // Record large LIVE profit -> $30.00 fee at 5% (>2.5x $2 grace cap -> immediate LOCKED + 25% late penalty = $7.50)
+    // Consume the 3 free profitable LIVE trial trades first, then record large LIVE profit -> $18.00 fee at 3% (>2.5x $2 grace cap -> immediate LOCKED + 25% late penalty = $4.50)
+    for (let i = 1; i <= 3; i++) {
+      await recordProfitShareServerFee(db, {
+        userId: 'usr_v10_enforce',
+        tradeId: `trd_enf_free_${i}`,
+        mode: 'LIVE',
+        source: 'PERP_LIVE',
+        symbol: 'BTCUSDT',
+        realizedPnlUsd: 20,
+      });
+    }
     await recordProfitShareServerFee(db, {
       userId: 'usr_v10_enforce',
       tradeId: 'trd_big_win_lock',
@@ -431,7 +470,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
     const blockedJson = (await blockedLive.json()) as { code: string; enforcement: { penaltyUsd: number; totalDueUsd: number; lockStatus: string } };
     expect(blockedJson.code).toBe('FEE_SETTLEMENT_REQUIRED');
     expect(blockedJson.enforcement.lockStatus).toBe('LOCKED');
-    expect(blockedJson.enforcement.penaltyUsd).toBeCloseTo(7.5, 2);
+    expect(blockedJson.enforcement.penaltyUsd).toBeCloseTo(4.5, 2);
 
     // Demo Simulator ($10K) remains completely unlocked!
     const demoOk = await worker.fetch(
@@ -475,7 +514,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       env
     );
 
-    // Next LIVE winning trade (+$80 -> 5% = $4.00) auto-deducts directly from $5 prepaid credit!
+    // Next LIVE winning trade (+$80 -> 3% = $2.40) auto-deducts directly from $5 prepaid credit!
     const prepaidFee = await recordProfitShareServerFee(db, {
       userId: 'usr_v10_enforce',
       tradeId: 'trd_prepaid_win',
@@ -485,7 +524,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       realizedPnlUsd: 80,
     });
     expect(prepaidFee.paidFromCredit).toBe(true);
-    expect(prepaidFee.feeUsd).toBeCloseTo(4.0, 2);
+    expect(prepaidFee.feeUsd).toBeCloseTo(2.4, 2);
   });
 
   it('supports fresh owner bootstrap, real chronological dashboard equityCurve, Hyperliquid agent routing, and production readiness checks', async () => {
@@ -767,8 +806,20 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       .first<{ fee_prepaid_credit_usd: number }>();
     expect(Number(refAfterSmall?.fee_prepaid_credit_usd ?? 0)).toBe(0);
 
-    // 3b. Friend deposits >= $10 ($25) and closes profitable real LIVE trade (+$15 profit -> 5% = $0.75 fee)
+    // 3b. Note: trd_leg_small (at $4 balance) already consumed free-trial slot #1!
+    // Deposit >= $10 ($25), close slots #2 and #3 (0% fee), then slot #4 (+$15 profit -> 3% = $0.45 fee)
     await db.prepare(`UPDATE users SET wallet_balance_usdt = 25 WHERE id = ?`).bind(legData.user.id).run();
+    for (let i = 1; i <= 2; i++) {
+      await recordProfitShareServerFee(db, {
+        userId: legData.user.id,
+        tradeId: `trd_leg_free_${i}`,
+        mode: 'LIVE',
+        source: 'PERP_LIVE',
+        symbol: 'BTCUSDT',
+        realizedPnlUsd: 10,
+        tradeAmountUsd: 15,
+      });
+    }
     await recordProfitShareServerFee(db, {
       userId: legData.user.id,
       tradeId: 'trd_leg_real',
@@ -787,11 +838,11 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       .prepare(`SELECT fee_prepaid_credit_usd FROM users WHERE id = ?`)
       .bind(legData.user.id)
       .first<{ fee_prepaid_credit_usd: number }>();
-    expect(Number(refFinal?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(2.15, 2); // $2.00 unlock + $0.15 (20% of $0.75)
+    expect(Number(refFinal?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(2.09, 2); // $2.00 unlock + $0.09 (20% of $0.45)
     expect(Number(refFinal?.referral_balance_usd ?? 0)).toBe(0); // NEVER cash-withdrawable!
-    expect(Number(legFinal?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(1.0, 2); // $1 welcome unlocked after first qualified trade
+    expect(Number(legFinal?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(0.55, 2); // $1.00 welcome unlocked on free trade 1 - $0.45 deducted on trade 4!
 
-    // 3c. Second LIVE winning trade (+$15 -> 5% = $0.75) auto-deducts from friend's $1 welcome credit!
+    // 3c. Next LIVE winning trade (+$15 -> 3% = $0.45) auto-deducts from friend's remaining $0.55 welcome credit!
     const secondTrade = await recordProfitShareServerFee(db, {
       userId: legData.user.id,
       tradeId: 'trd_leg_real_2',
@@ -802,7 +853,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       tradeAmountUsd: 15,
     });
     expect(secondTrade.paidFromCredit).toBe(true);
-    expect(secondTrade.feeUsd).toBeCloseTo(0.75, 2);
+    expect(secondTrade.feeUsd).toBeCloseTo(0.45, 2);
 
     const refAfterSecond = await db
       .prepare(`SELECT fee_prepaid_credit_usd FROM users WHERE id = ?`)
@@ -812,8 +863,8 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       .prepare(`SELECT fee_prepaid_credit_usd FROM users WHERE id = ?`)
       .bind(legData.user.id)
       .first<{ fee_prepaid_credit_usd: number }>();
-    expect(Number(refAfterSecond?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(2.3, 2); // +$0.15 (20% of $0.75)
-    expect(Number(legAfterSecond?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(0.25, 2); // $1.00 - $0.75 = $0.25 left
+    expect(Number(refAfterSecond?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(2.18, 2); // +$0.09 (20% of $0.45)
+    expect(Number(legAfterSecond?.fee_prepaid_credit_usd ?? 0)).toBeCloseTo(0.10, 2); // $0.55 - $0.45 = $0.10 left
 
     // 4. Attempting cash withdrawal of fee credits is blocked with NON_WITHDRAWABLE_FEE_CREDIT
     const wdBlocked = await worker.fetch(

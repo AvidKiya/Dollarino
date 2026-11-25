@@ -1,6 +1,142 @@
 import { decimalCmp, decimalDiv, decimalMul, quantizeDown } from './decimal.js';
 import type { BotConfig, Direction, DollarinoSignal, InstrumentSpec } from './types.js';
 
+export type BotBudgetMode = 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
+export type CapitalPresetId = 'conservative' | 'balanced' | 'aggressive';
+
+export interface EffectiveBotCapitalResult {
+  walletBalanceUsd: number;
+  budgetMode: BotBudgetMode;
+  effectiveCapitalUsd: number;
+  isCapped: boolean;
+}
+
+export interface DynamicRecommendedSettings {
+  effectiveCapitalUsd: number;
+  preset: CapitalPresetId;
+  marginPct: number;
+  perTradeUsd: number;
+  maxOpenPositions: number;
+  maxLeverage: number;
+  dailyMaxLossPct: number;
+  trailingStopPct: number;
+  tp1ClosePct: number;
+  tp2ClosePct: number;
+  tp3ClosePct: number;
+  summaryFa: string;
+  summaryEn: string;
+}
+
+export function resolveEffectiveBotCapital(input: {
+  walletBalanceUsd: number;
+  budgetMode?: string | null;
+  budgetUsd?: number | null;
+  budgetPct?: number | null;
+}): EffectiveBotCapitalResult {
+  const wallet = Math.max(0, Number(input.walletBalanceUsd || 0));
+  const modeRaw = String(input.budgetMode || 'FULL_BALANCE').toUpperCase();
+  const budgetMode: BotBudgetMode =
+    modeRaw === 'FIXED_USD' || modeRaw === 'PERCENT_OF_BALANCE' ? modeRaw : 'FULL_BALANCE';
+
+  if (budgetMode === 'FIXED_USD') {
+    const fixed = Math.max(0, Number(input.budgetUsd || 0));
+    if (fixed > 0) {
+      const cap = Math.round(Math.min(wallet, Math.max(10, fixed)) * 100) / 100;
+      return {
+        walletBalanceUsd: Math.round(wallet * 100) / 100,
+        budgetMode,
+        effectiveCapitalUsd: cap,
+        isCapped: cap < wallet - 0.01,
+      };
+    }
+  }
+
+  if (budgetMode === 'PERCENT_OF_BALANCE') {
+    const pct = Math.max(5, Math.min(100, Number(input.budgetPct || 100)));
+    const cap = Math.round(wallet * (pct / 100) * 100) / 100;
+    return {
+      walletBalanceUsd: Math.round(wallet * 100) / 100,
+      budgetMode,
+      effectiveCapitalUsd: cap,
+      isCapped: pct < 100,
+    };
+  }
+
+  return {
+    walletBalanceUsd: Math.round(wallet * 100) / 100,
+    budgetMode: 'FULL_BALANCE',
+    effectiveCapitalUsd: Math.round(wallet * 100) / 100,
+    isCapped: false,
+  };
+}
+
+/**
+ * Computes completely dynamic, capital-aware recommended risk & sizing settings
+ * based on the effective capital allocated to the bot (whether $50, $100, $1,000 or $100,000).
+ */
+export function computeDynamicRecommendedSettings(
+  effectiveCapitalUsd: number,
+  preset: CapitalPresetId = 'balanced'
+): DynamicRecommendedSettings {
+  const cap = Math.max(10, Number(effectiveCapitalUsd || 0));
+  let maxOpenPositions = 4;
+  let totalDeployPct = 85;
+  let maxLeverage = 5;
+  let dailyMaxLossPct = 5;
+  let trailingStopPct = 1.8;
+
+  if (cap <= 40) {
+    maxOpenPositions = preset === 'aggressive' ? 1 : 2;
+    totalDeployPct = preset === 'conservative' ? 60 : preset === 'balanced' ? 80 : 100;
+    maxLeverage = preset === 'conservative' ? 3 : preset === 'balanced' ? 4 : 6;
+  } else if (cap <= 140) {
+    // Example: $100 effective budget -> Balanced: 4 x $25 = $100 | Conservative: 5 x $15 = $75 | Aggressive: 2 x $50 = $100
+    maxOpenPositions =
+      preset === 'conservative'
+        ? Math.max(2, Math.min(5, Math.floor(cap / 20)))
+        : preset === 'balanced'
+          ? Math.max(2, Math.min(4, Math.floor(cap / 25) || 2))
+          : 2;
+    totalDeployPct = preset === 'conservative' ? 75 : preset === 'balanced' ? 100 : 100;
+    maxLeverage = preset === 'conservative' ? 3 : preset === 'balanced' ? 5 : 8;
+  } else if (cap <= 600) {
+    maxOpenPositions = preset === 'conservative' ? 5 : preset === 'balanced' ? 5 : 4;
+    totalDeployPct = preset === 'conservative' ? 70 : preset === 'balanced' ? 90 : 100;
+    maxLeverage = preset === 'conservative' ? 4 : preset === 'balanced' ? 6 : 10;
+  } else if (cap <= 3000) {
+    maxOpenPositions = preset === 'conservative' ? 6 : preset === 'balanced' ? 6 : 5;
+    totalDeployPct = preset === 'conservative' ? 60 : preset === 'balanced' ? 90 : 100;
+    maxLeverage = preset === 'conservative' ? 4 : preset === 'balanced' ? 8 : 12;
+  } else {
+    maxOpenPositions = preset === 'conservative' ? 8 : preset === 'balanced' ? 8 : 6;
+    totalDeployPct = preset === 'conservative' ? 64 : preset === 'balanced' ? 80 : 90;
+    maxLeverage = preset === 'conservative' ? 5 : preset === 'balanced' ? 10 : 15;
+  }
+
+  dailyMaxLossPct = preset === 'conservative' ? 3 : preset === 'balanced' ? 5 : 8;
+  trailingStopPct = preset === 'conservative' ? 1.2 : preset === 'balanced' ? 1.8 : 2.5;
+
+  const rawMarginPct = totalDeployPct / Math.max(1, maxOpenPositions);
+  const marginPct = Math.max(2, Math.min(100, Math.round(rawMarginPct * 10) / 10));
+  const perTradeUsd = Math.round(cap * (marginPct / 100) * 100) / 100;
+
+  return {
+    effectiveCapitalUsd: Math.round(cap * 100) / 100,
+    preset,
+    marginPct,
+    perTradeUsd,
+    maxOpenPositions,
+    maxLeverage,
+    dailyMaxLossPct,
+    trailingStopPct,
+    tp1ClosePct: 50,
+    tp2ClosePct: 25,
+    tp3ClosePct: 25,
+    summaryFa: `متناسب با سرمایه $${Math.round(cap).toLocaleString('en-US')}: حداکثر ${maxOpenPositions} معامله همزمان × $${perTradeUsd.toFixed(perTradeUsd < 10 ? 1 : 0)} (${marginPct}%) · اهرم ${maxLeverage}×`,
+    summaryEn: `Tailored for $${Math.round(cap).toLocaleString('en-US')}: max ${maxOpenPositions} concurrent trades × $${perTradeUsd.toFixed(perTradeUsd < 10 ? 1 : 0)} (${marginPct}%) · ${maxLeverage}x max lev`,
+  };
+}
+
 export interface RiskGateInput {
   botState: 'STOPPED' | 'RUNNING_PAPER' | 'RUNNING_LIVE' | 'PAUSED_DAILY_LOSS';
   config: BotConfig;
@@ -10,6 +146,8 @@ export interface RiskGateInput {
   todayRealizedPnl: string;
   openPositionsCount: number;
   instrument: InstrumentSpec;
+  effectiveCapitalUsd?: string | number;
+  usedBotMarginUsd?: string | number;
   nowUtc?: Date;
 }
 
@@ -128,12 +266,29 @@ export function evaluateRiskGates(input: RiskGateInput): RiskGateDecision {
         Math.min(requestedLev, input.config.maxLeverage, input.instrument.maxLeverage)
       );
 
-  // Margin allocation: configurable % of available futures margin (default 10%)
+  // Margin allocation: enforce aggregate Bot Capital Cap across all open positions (1 or 10 trades never exceed effectiveCapitalUsd)
+  const walletAvailNum = Math.max(0, Number(input.availableBalance) || 0);
+  const effectiveCapNum = Number(input.effectiveCapitalUsd ?? 0);
+  const usedBotMarginNum = Math.max(0, Number(input.usedBotMarginUsd ?? 0) || 0);
+  const hasExplicitBudgetCap = Number.isFinite(effectiveCapNum) && effectiveCapNum > 0;
+
+  let sizingBaseNum = walletAvailNum;
+  let remainingBudgetNum = walletAvailNum;
+  if (hasExplicitBudgetCap) {
+    sizingBaseNum = effectiveCapNum;
+    remainingBudgetNum = Math.max(0, effectiveCapNum - usedBotMarginNum);
+    if (remainingBudgetNum < 1) {
+      return emptyReject(
+        'BOT_BUDGET_CAP_REACHED',
+        `Bot allocated budget ($${effectiveCapNum.toFixed(2)}) is fully utilized by open trades ($${usedBotMarginNum.toFixed(2)} used)`
+      );
+    }
+  }
+
   const marginPctDecimal = Math.max(0.5, Math.min(100, input.config.marginPct)) / 100;
-  const marginUsed = quantizeDown(
-    decimalMul(input.availableBalance, marginPctDecimal.toFixed(4), 6),
-    input.instrument.quotePrecision
-  );
+  const desiredMarginNum = sizingBaseNum * marginPctDecimal;
+  const cappedMarginNum = Math.min(desiredMarginNum, remainingBudgetNum, walletAvailNum);
+  const marginUsed = quantizeDown(cappedMarginNum.toFixed(6), input.instrument.quotePrecision);
 
   if (decimalCmp(marginUsed, '1') < 0) {
     return emptyReject('INSUFFICIENT_MARGIN', `Allocated margin (${marginUsed} USDT) is below minimum 1 USDT`);

@@ -3,6 +3,7 @@ import {
   alma,
   computeAlmaRibbon,
   computeDemaAtr,
+  computeDynamicRecommendedSettings,
   computeKbosV11Detailed,
   computeStrategySignals,
   DEFAULT_KBOS_PARAMS,
@@ -16,6 +17,7 @@ import {
   mergeKbosParams,
   parseDollarinoSignal,
   quantizeDown,
+  resolveEffectiveBotCapital,
   runBacktest,
   SAMPLE_CUSTOM_STRATEGIES,
   superSmoother,
@@ -736,6 +738,123 @@ describe('@dollarino/core Pine Script, Python & Visual Strategy Engine', () => {
     expect(vis.valid).toBe(true);
     expect(vis.plots.length).toBeGreaterThanOrEqual(2);
     expect(vis.signals.some((s) => s.signal !== 'NONE')).toBe(true);
+  });
+
+  it('enforces $100 bot budget cap inside a $1000 wallet across 1..10 trades and computes capital-aware recommendations', () => {
+    const capInfo = resolveEffectiveBotCapital({
+      walletBalanceUsd: 1000,
+      budgetMode: 'FIXED_USD',
+      budgetUsd: 100,
+      budgetPct: 100,
+    });
+    expect(capInfo.effectiveCapitalUsd).toBe(100);
+    expect(capInfo.isCapped).toBe(true);
+
+    // Dynamic recommended settings scale cleanly with effective capital ($100 vs $10,000)
+    const rec100 = computeDynamicRecommendedSettings(100, 'balanced');
+    expect(rec100.maxOpenPositions).toBe(4);
+    expect(rec100.perTradeUsd).toBe(25);
+    expect(rec100.maxLeverage).toBe(5);
+
+    const rec10k = computeDynamicRecommendedSettings(10_000, 'balanced');
+    expect(rec10k.maxOpenPositions).toBe(8);
+    expect(rec10k.marginPct).toBe(10);
+    expect(rec10k.perTradeUsd).toBe(1000);
+
+    const cfg10Trades: BotConfig = {
+      tradingMode: 'PAPER',
+      executionMode: 'AUTO',
+      symbol: 'BTCUSDT',
+      strategyKey: 'dollarino_v01',
+      entryTimeframe: '15m',
+      higherTimeframe: '1h',
+      marginPct: 10, // 10% of $100 budget = $10 per trade -> max 10 trades = $100 total
+      useSignalLeverage: false,
+      maxLeverage: 5,
+      tp1ClosePct: 50,
+      tp2ClosePct: 25,
+      tp3ClosePct: 25,
+      autoBreakevenOnTp1: true,
+      moveSlToTp1OnTp2: true,
+      dailyMaxLossPct: 5,
+      maxOpenPositions: 12,
+      blockWeekends: false,
+      macroBlackout: false,
+      aiGateEnabled: false,
+      aiMinConfidence: 65,
+      signalChannelHandle: '@Dollarino_official',
+    };
+    const solSpec: InstrumentSpec = {
+      symbol: 'SOLUSDT',
+      basePrecision: 2,
+      quotePrecision: 2,
+      minTradeVolume: '0.01',
+      maxMarketVolume: '5000',
+      minNotional: '5',
+      minLeverage: 1,
+      maxLeverage: 50,
+      status: 'OPEN',
+    };
+    const sig = {
+      symbol: 'SOLUSDT',
+      direction: 'LONG' as const,
+      price: '150',
+      stopLoss: '145',
+      tp1: '155',
+      tp2: '160',
+      tp3: '165',
+      leverage: 5,
+      timeframe: '15m' as const,
+      source: 'test',
+    };
+
+    // Trade #1 with $0 used -> gets $10 (10% of $100 cap, NOT $100 of $1000 wallet!)
+    const d1 = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: cfg10Trades,
+      signal: sig,
+      availableBalance: '1000',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 0,
+      instrument: solSpec,
+      effectiveCapitalUsd: 100,
+      usedBotMarginUsd: 0,
+    });
+    expect(d1.approved).toBe(true);
+    expect(Number(d1.marginUsed)).toBe(10);
+
+    // Trade #10 when $95 is already used -> capped to remaining $5 so aggregate <= $100!
+    const dCap = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: cfg10Trades,
+      signal: sig,
+      availableBalance: '905',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 9,
+      instrument: solSpec,
+      effectiveCapitalUsd: 100,
+      usedBotMarginUsd: 95,
+    });
+    expect(dCap.approved).toBe(true);
+    expect(Number(dCap.marginUsed)).toBe(5);
+
+    // Trade #11 when $100 budget is 100% used -> strictly rejected even though $900 remains in wallet!
+    const dFull = evaluateRiskGates({
+      botState: 'RUNNING_PAPER',
+      config: cfg10Trades,
+      signal: sig,
+      availableBalance: '900',
+      equity: '1000',
+      todayRealizedPnl: '0',
+      openPositionsCount: 10,
+      instrument: solSpec,
+      effectiveCapitalUsd: 100,
+      usedBotMarginUsd: 100,
+    });
+    expect(dFull.approved).toBe(false);
+    expect(dFull.reasonCode).toBe('BOT_BUDGET_CAP_REACHED');
   });
 });
 

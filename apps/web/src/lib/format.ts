@@ -25,6 +25,26 @@ export const COIN_FA_NAMES: Record<string, string> = {
   PAXG: 'پکس گلد',
 };
 
+let cachedUsdtIrt = 290_000;
+let cachedIranSource = 'alanchand';
+
+export function setLiveUsdtIrt(rate?: number | null, source?: string | null): void {
+  if (typeof rate === 'number' && Number.isFinite(rate) && rate >= 30_000) {
+    cachedUsdtIrt = Math.round(rate);
+  }
+  if (source && typeof source === 'string' && source.trim()) {
+    cachedIranSource = source.trim();
+  }
+}
+
+export function getLiveUsdtIrt(): number {
+  return cachedUsdtIrt;
+}
+
+export function getLiveIranSource(): string {
+  return cachedIranSource;
+}
+
 export function coinDisplayName(symbolOrBase: string, isFa: boolean): string {
   const base = symbolOrBase.toUpperCase().replace(/USDT$/, '').replace(/USD$/, '');
   if (!isFa) return base;
@@ -38,14 +58,16 @@ export function formatUsdPrice(px: number): string {
   return px.toFixed(4);
 }
 
-export function formatTomanEq(usd: number, rate = 74500): string {
+export function formatTomanEq(usd: number, rate?: number): string {
   if (!Number.isFinite(usd)) return '0';
-  return Math.round(usd * rate).toLocaleString('fa-IR');
+  const effectiveRate = typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : cachedUsdtIrt;
+  return Math.round(usd * effectiveRate).toLocaleString('fa-IR');
 }
 
-export function formatRialEq(usd: number, rate = 74500): string {
+export function formatRialEq(usd: number, rate?: number): string {
   if (!Number.isFinite(usd)) return '0';
-  return Math.round(usd * rate * 10).toLocaleString('fa-IR');
+  const effectiveRate = typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : cachedUsdtIrt;
+  return Math.round(usd * effectiveRate * 10).toLocaleString('fa-IR');
 }
 
 export function getPersianToday(): string {

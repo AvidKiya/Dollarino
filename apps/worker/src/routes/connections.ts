@@ -399,10 +399,13 @@ connectionRoutes.post('/telegram-bots', async (c) => {
   const webhookSecret = randomId('wh');
   const encrypted = await encryptVaultJson({ botToken: token }, c.env.MASTER_ENCRYPTION_KEY);
 
+  const isPrivileged = user.role === 'owner' || user.role === 'admin';
+  const allowedChannelId = isPrivileged ? body.signalChannelId?.trim() || null : null;
+
   await c.env.DB.prepare(
     `INSERT INTO telegram_bots (id, user_id, bot_username, bot_token_masked, encrypted_bot_token, webhook_secret, signal_channel_id, is_active)
      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
-  ).bind(botId, user.id, me.username, maskSecret(token), encrypted, webhookSecret, body.signalChannelId?.trim() || null).run();
+  ).bind(botId, user.id, me.username, maskSecret(token), encrypted, webhookSecret, allowedChannelId).run();
 
   let webhookConfigured = false;
   const baseUrl = body.publicBaseUrl?.trim() || new URL(c.req.url).origin;

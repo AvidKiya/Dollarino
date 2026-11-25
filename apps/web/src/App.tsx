@@ -2,15 +2,26 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { DollarinoBrandMark } from './components/BrandGraphics';
 import { FloatingAiChat } from './components/FloatingAiChat';
+import { FloatingToastHost } from './components/FloatingToastHost';
 import { Layout, type UiMode } from './components/Layout';
 import { OnboardingAcademyModal } from './components/OnboardingAcademyModal';
 import { PwaInstallModal } from './components/PwaInstallModal';
 import { QuickLauncherModal } from './components/QuickWidgetsBar';
 import { SupportModal } from './components/SupportModal';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
+import { TrustWalletDirectModal } from './components/TrustWalletDirectModal';
 import { apiFetch, ApiError, setStoredToken } from './lib/api';
+import { setLiveUsdtIrt } from './lib/format';
 import type { Lang } from './lib/i18n';
+import { pushFloatingToast } from './lib/toast';
 import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
+import {
+  connectAndPersistAllTrustWallets,
+  isMobileWalletPlatform,
+  launchTrustWalletUrl,
+  requestTrustWalletDappHandoff,
+  type TrustWalletDappHandoff,
+} from './lib/trustwallet';
 import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
 import { AuthPage } from './pages/AuthPage';
 import { LandingPage } from './pages/LandingPage';
@@ -67,7 +78,11 @@ export function App() {
     const qp = new URLSearchParams(window.location.search);
     return qp.get('install') === '1' || qp.get('install') === 'true';
   });
-  const [globalNotice, setGlobalNotice] = useState<string | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+  const [twModalOpen, setTwModalOpen] = useState(false);
+  const [twHandoff, setTwHandoff] = useState<TrustWalletDappHandoff | null>(null);
+  const [twMobileLaunched, setTwMobileLaunched] = useState(false);
+  const [twModalError, setTwModalError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     const qp = new URLSearchParams(window.location.search);
@@ -88,6 +103,10 @@ export function App() {
   const [terminalSymbol, setTerminalSymbol] = useState('BTCUSDT');
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [activeTab]);
   const [verifyCardId, setVerifyCardId] = useState<string | null>(() => {
     const m = window.location.pathname.match(/^\/verify-card\/([A-Za-z0-9_-]+)/);
     return m?.[1] ?? null;
@@ -103,6 +122,8 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get('tw_autoconnect') === '1') return;
     const hasTw = Boolean(
       user.trust_wallet_address || user.trust_wallet_tron || user.trust_wallet_solana || user.trust_wallet_ton
     );
@@ -198,6 +219,15 @@ export function App() {
         localStorage.setItem('dollarino_ui_mode', me.user.ui_mode);
       }
       const dash = await apiFetch<DashboardPayload>('/api/trading/dashboard');
+      if (dash.iranRate?.usdtIrt) {
+        setLiveUsdtIrt(dash.iranRate.usdtIrt, dash.iranRate.source);
+      } else {
+        apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate')
+          .then((r) => {
+            if (r?.usdtIrt) setLiveUsdtIrt(r.usdtIrt, r.source);
+          })
+          .catch(() => {});
+      }
       const activeMkt: 'SPOT' | 'FUTURES' = dash.config?.market_type === 'SPOT' ? 'SPOT' : 'FUTURES';
       setMarketType(activeMkt);
       const mkts = await apiFetch<{ markets: ExchangeMarket[] }>(`/api/trading/markets?marketType=${activeMkt}`).catch(() => ({ markets: [] }));
@@ -222,7 +252,10 @@ export function App() {
     if (!user) return;
     const iv = setInterval(() => {
       void apiFetch<DashboardPayload>('/api/trading/dashboard')
-        .then((d) => setDashboard(d))
+        .then((d) => {
+          if (d.iranRate?.usdtIrt) setLiveUsdtIrt(d.iranRate.usdtIrt, d.iranRate.source);
+          setDashboard(d);
+        })
         .catch(() => {});
     }, 30_000);
     return () => clearInterval(iv);
@@ -240,24 +273,41 @@ export function App() {
     if (!dashboard) return;
     const prevState = dashboard.config.bot_state;
     const running = prevState.startsWith('RUNNING');
+    if (!running && !dashboard.riskTermsAcceptedAt && !user?.risk_terms_accepted_at) {
+      setActiveTab('overview');
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('dollarino:require-risk-terms'));
+      }, 60);
+      return;
+    }
     const optimisticState = running ? 'STOPPED' : dashboard.config.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
     setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: optimisticState } } : cur));
     try {
       if (running) {
         await apiFetch('/api/trading/bot/stop', { method: 'POST', body: JSON.stringify({ settleOpen: false }) });
+        pushFloatingToast(
+          lang === 'fa' ? '⏸ ربات معاملاتی متوقف شد' : '⏸ Trading bot stopped',
+          'warn'
+        );
       } else {
         await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
+        pushFloatingToast(
+          lang === 'fa' ? '✅ ربات معاملاتی با موفقیت روشن شد' : '✅ Trading bot is now active',
+          'success'
+        );
       }
       await loadSessionAndDashboard();
     } catch (err) {
       setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: prevState } } : cur));
       if (err instanceof ApiError && err.status === 402) {
-        setGlobalNotice(lang === 'fa' ? 'برای روشن کردن ربات، ابتدا اشتراک خود را فعال کنید.' : 'Please activate a subscription to start the bot.');
+        pushFloatingToast(
+          lang === 'fa' ? 'برای روشن کردن ربات، ابتدا اشتراک خود را فعال کنید.' : 'Please activate a subscription to start the bot.',
+          'warn'
+        );
         setActiveTab('pricing');
       } else {
-        setGlobalNotice(err instanceof Error ? err.message : 'Action failed');
+        pushFloatingToast(err instanceof Error ? err.message : 'Action failed', 'error');
       }
-      setTimeout(() => setGlobalNotice(null), 5000);
     }
   };
 
@@ -265,6 +315,100 @@ export function App() {
     await apiFetch('/api/trading/bot/kill-switch', { method: 'POST' });
     await loadSessionAndDashboard();
   };
+
+  const handleDirectConnectWallet = useCallback(async () => {
+    setWalletConnecting(true);
+    setTwModalError(null);
+    try {
+      const res = await connectAndPersistAllTrustWallets();
+      await loadSessionAndDashboard();
+      setTwModalOpen(false);
+      setAcademyOpen(false);
+      pushFloatingToast(
+        lang === 'fa'
+          ? `کیف‌پول Trust Wallet به تمام شبکه‌ها متصل شد: ${res.connectedFamilies.join(' + ')}`
+          : `Trust Wallet connected across all chains: ${res.connectedFamilies.join(' + ')}`,
+        'success',
+        5500
+      );
+      setActiveTab('dex');
+    } catch (e) {
+      const code = e instanceof Error ? e.message : '';
+      if (code === 'USER_REJECTED') {
+        pushFloatingToast(
+          lang === 'fa'
+            ? 'درخواست اتصال در کیف‌پول تایید نشد؛ برای اتصال دوباره دکمه ولت را بزنید.'
+            : 'Wallet connection request was rejected. Tap Wallet to retry.',
+          'warn',
+          5000,
+          { label: lang === 'fa' ? 'مدیریت Trust Wallet' : 'Trust Wallet', onClick: () => setActiveTab('dex') }
+        );
+        setTwModalError(
+          lang === 'fa'
+            ? 'اتصال توسط کاربر لغو شد — دکمه «اتصال افزونه مرورگر» یا «باز کردن Trust Wallet» را بزنید.'
+            : 'Connection was canceled — retry browser wallet or open Trust Wallet App.'
+        );
+      } else {
+        try {
+          const handoff = await requestTrustWalletDappHandoff();
+          setTwHandoff(handoff);
+          const mobile = isMobileWalletPlatform();
+          setTwMobileLaunched(mobile);
+          setTwModalOpen(true);
+          if (mobile) {
+            launchTrustWalletUrl(handoff.universalLink, handoff.deepLink);
+          }
+        } catch (handoffErr) {
+          setTwHandoff(null);
+          setTwMobileLaunched(false);
+          setTwModalError(handoffErr instanceof Error ? handoffErr.message : 'Unable to start Trust Wallet link');
+          setTwModalOpen(true);
+        }
+      }
+    } finally {
+      setWalletConnecting(false);
+    }
+  }, [lang, loadSessionAndDashboard]);
+
+  // Auto-connect ALL chains when opened via Trust Wallet DApp handoff (`?tw_autoconnect=1`)
+  useEffect(() => {
+    if (!user) return;
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get('tw_autoconnect') !== '1') return;
+
+    qp.delete('tw_autoconnect');
+    const qs = qp.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+    setAcademyOpen(false);
+
+    let cancelled = false;
+    void (async () => {
+      setWalletConnecting(true);
+      await new Promise((r) => setTimeout(r, 260));
+      if (cancelled) return;
+      try {
+        const res = await connectAndPersistAllTrustWallets();
+        if (cancelled) return;
+        await loadSessionAndDashboard();
+        pushFloatingToast(
+          lang === 'fa'
+            ? `تمامی آدرس‌های کیف‌پول Trust Wallet متصل شد: ${res.connectedFamilies.join(' + ')}`
+            : `Trust Wallet connected across all chains: ${res.connectedFamilies.join(' + ')}`,
+          'success',
+          5500
+        );
+        setActiveTab('dex');
+      } catch {
+        if (!cancelled) setActiveTab('dex');
+      } finally {
+        if (!cancelled) setWalletConnecting(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, lang, loadSessionAndDashboard]);
 
   const handleChangeMarketType = useCallback(async (nextMkt: 'SPOT' | 'FUTURES') => {
     setMarketType(nextMkt);
@@ -356,6 +500,7 @@ export function App() {
             setPublicScreen('auth');
           }}
         />
+        <FloatingToastHost />
       </>
     );
   }
@@ -420,17 +565,10 @@ export function App() {
       onRefresh={loadSessionAndDashboard}
       onOpenSupport={() => setSupportOpen(true)}
       onOpenAcademy={() => setAcademyOpen(true)}
+      onDirectConnectWallet={handleDirectConnectWallet}
+      walletConnecting={walletConnecting}
       onLogout={handleLogout}
     >
-      {globalNotice && (
-        <div className="mb-4 p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-xs font-bold text-main flex items-center justify-between gap-2">
-          <span>{globalNotice}</span>
-          <button type="button" onClick={() => setActiveTab('dex')} className="px-3 py-1 rounded-xl bg-[#0D47A1] text-white text-[11px] font-black shrink-0">
-            {lang === 'fa' ? 'مدیریت Trust Wallet' : 'Trust Wallet'}
-          </button>
-        </div>
-      )}
-
       <Suspense
         fallback={
           <div className="py-16 flex flex-col items-center justify-center gap-3">
@@ -495,6 +633,7 @@ export function App() {
           lang={lang}
           uiMode={uiMode}
           markets={markets}
+          iranRate={dashboard.iranRate?.usdtIrt}
           marketType={marketType}
           onChangeMarketType={handleChangeMarketType}
           onTradeSymbol={(sym) => openTerminalWithSymbol(sym, marketType)}
@@ -513,6 +652,7 @@ export function App() {
         <CopyConnectPage
           lang={lang}
           uiMode={uiMode}
+          isAdmin={user.role === 'owner' || user.role === 'admin'}
           data={dashboard}
           entitlement={dashboard.entitlement}
           onNavigate={setActiveTab}
@@ -522,6 +662,7 @@ export function App() {
       {activeTab === 'portfolio' && (
         <PortfolioPage
           lang={lang}
+          iranRate={dashboard.iranRate?.usdtIrt}
           data={dashboard}
           onOpenTerminal={openTerminalWithSymbol}
           onRefresh={loadSessionAndDashboard}
@@ -609,6 +750,34 @@ export function App() {
         }
       }}
     />
+    <TrustWalletDirectModal
+      open={twModalOpen}
+      lang={lang}
+      handoff={twHandoff}
+      mobileLaunched={twMobileLaunched}
+      busyRetry={walletConnecting}
+      errorText={twModalError}
+      onRetryInjected={handleDirectConnectWallet}
+      onConnected={async () => {
+        await loadSessionAndDashboard();
+        setTwModalOpen(false);
+        setAcademyOpen(false);
+        pushFloatingToast(
+          lang === 'fa'
+            ? 'کیف‌پول Trust Wallet همگام‌سازی و متصل شد!'
+            : 'Trust Wallet synced and connected!',
+          'success',
+          5500
+        );
+        setActiveTab('dex');
+      }}
+      onGoToWalletPage={() => {
+        setTwModalOpen(false);
+        setActiveTab('dex');
+      }}
+      onClose={() => setTwModalOpen(false)}
+    />
+    <FloatingToastHost dir={lang === 'fa' ? 'rtl' : 'ltr'} />
     </>
   );
 }

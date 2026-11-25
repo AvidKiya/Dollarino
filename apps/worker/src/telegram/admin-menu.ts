@@ -645,7 +645,7 @@ export async function handleAdminCallback(
     await render('🎁 نوع کد هدیه جدید را انتخاب کنید:', [
       [
         { text: '🎁 اعتبار ۱۰۰٪ تخفیف کارمزد (۳۰ روز)', callback_data: 'adm:gift_tpl:SUB:pro_monthly:30' },
-        { text: '👑 اعتبار ویژه ۵٪ (۹۰ روز)', callback_data: 'adm:gift_tpl:SUB:vip_quarterly:90' },
+        { text: '👑 اعتبار ویژه ۳٪ (۹۰ روز)', callback_data: 'adm:gift_tpl:SUB:vip_quarterly:90' },
       ],
       [
         { text: '🌟 اعتبار ۱ ساله (۳۶۵ روز)', callback_data: 'adm:gift_tpl:SUB:pro_annual:365' },

@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import {
   Activity,
   BellRing,
-  CheckCircle2,
-  Copy,
   Play,
   Plus,
   Sparkles,
@@ -12,6 +10,7 @@ import {
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic } from '../lib/telegram';
+import { pushFloatingToast } from '../lib/toast';
 
 interface TvAlertRow {
   id: string;
@@ -54,21 +53,17 @@ export function TradingViewAlertsHub({
   const [alerts, setAlerts] = useState<TvAlertRow[]>([]);
   const [templates, setTemplates] = useState<TvTemplate[]>([]);
   const [indicators, setIndicators] = useState<TvIndicatorMeta[]>([]);
-  const [webhookUrl, setWebhookUrl] = useState<string>('');
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [timeframe, setTimeframe] = useState('15m');
   const [indicatorId, setIndicatorId] = useState('RSI_OVERSOLD');
   const [autoTrade, setAutoTrade] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState('');
-  const [copied, setCopied] = useState(false);
   const [catFilter, setCatFilter] = useState<string>('ALL');
 
   const load = async () => {
     try {
       const res = await apiFetch<{
         ok: boolean;
-        webhookUrl: string | null;
         alerts: TvAlertRow[];
         templates: TvTemplate[];
         indicators: TvIndicatorMeta[];
@@ -76,7 +71,6 @@ export function TradingViewAlertsHub({
       setAlerts(res.alerts || []);
       setTemplates(res.templates || []);
       setIndicators(res.indicators || []);
-      setWebhookUrl(res.webhookUrl || '');
     } catch {
       /* ignore */
     }
@@ -88,7 +82,6 @@ export function TradingViewAlertsHub({
 
   const createAlert = async () => {
     setBusy(true);
-    setNotice('');
     try {
       await apiFetch('/api/webhook/alerts', {
         method: 'POST',
@@ -101,11 +94,14 @@ export function TradingViewAlertsHub({
         }),
       });
       tgHaptic('medium');
-      setNotice(isFa ? 'آلرت رایگان با موفقیت ساخته شد و به ربات متصل است ✅' : 'Free TradingView Alert created and wired to your bot ✅');
+      pushFloatingToast(
+        isFa ? 'آلرت رایگان با موفقیت ساخته شد و به ربات متصل است ✅' : 'Free TradingView Alert created and wired to your bot ✅',
+        'success'
+      );
       await load();
       await onRefresh?.();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'Failed');
+      pushFloatingToast(e instanceof Error ? e.message : 'Failed', 'error');
     } finally {
       setBusy(false);
     }
@@ -113,15 +109,15 @@ export function TradingViewAlertsHub({
 
   const evaluateNow = async () => {
     setBusy(true);
-    setNotice('');
     try {
       const res = await apiFetch<{ checked: number; triggered: number }>('/api/webhook/alerts/evaluate-now', {
         method: 'POST',
       });
-      setNotice(
+      pushFloatingToast(
         isFa
           ? `${res.checked} آلرت روی دیتای زنده بازار بررسی شد — ${res.triggered} سیگنال فعال گردید.`
-          : `Evaluated ${res.checked} live rules — ${res.triggered} triggered.`
+          : `Evaluated ${res.checked} live rules — ${res.triggered} triggered.`,
+        'info'
       );
       await load();
     } finally {
@@ -177,32 +173,6 @@ export function TradingViewAlertsHub({
           <span>{isFa ? 'بررسی زنده الان' : 'Scan Live Alerts'}</span>
         </button>
       </div>
-
-      {/* Free Webhook URL Box */}
-      {webhookUrl && (
-        <div className="panel rounded-3xl p-4 border hairline space-y-2">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-xs font-black text-main">
-              {isFa ? '🔗 لینک وب‌هوک رایگان TradingView شخصی شما (متصل به اتوترید و تایید دستی):' : '🔗 Your Free Personal TradingView Webhook URL:'}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(webhookUrl);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1800);
-              }}
-              className="px-3 py-1.5 rounded-xl bg-[#059669] text-white text-[11px] font-black inline-flex items-center gap-1"
-            >
-              {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی لینک' : 'Copy URL'}</span>
-            </button>
-          </div>
-          <code dir="ltr" className="block w-full rounded-xl px-3 py-2 surface-soft text-[11px] font-mono text-main break-all">
-            {webhookUrl}
-          </code>
-        </div>
-      )}
 
       {/* Create Free Indicator Alert */}
       <div className="panel rounded-3xl p-5 border hairline space-y-4">
@@ -274,12 +244,6 @@ export function TradingViewAlertsHub({
             <span>{isFa ? 'افزودن آلرت رایگان' : 'Add Free Alert'}</span>
           </button>
         </div>
-
-        {notice && (
-          <div className="rounded-2xl px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/30 text-xs font-bold text-main">
-            {notice}
-          </div>
-        )}
 
         {/* Active Alerts List */}
         {alerts.length > 0 && (

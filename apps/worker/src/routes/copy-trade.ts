@@ -158,14 +158,16 @@ copyTradeRoutes.post('/follow', async (c) => {
       return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
     }
 
-    // Strict Single-Engine Mutual Exclusion: enabling Copy Trade automatically stops AI / Strategy bot & Personal AI
-    const excl = await activateExclusiveTradingEngine(c.env.DB, user.id, 'COPY_TRADE', {
-      auditSource: 'copy_trade_follow',
-    });
+    // Point #1 Rule: Following a trader MUST NOT start the bot or override user's selected engines!
+    // Auto-mirror activates ONLY when user turns ON Copy-Trade engine and clicks Start on main dashboard.
+    const activeState = await getActiveEngineState(c.env.DB, user.id);
+    const shouldAutoMirror =
+      body.autoMirror === true ||
+      (activeState.isBotRunning && activeState.activeEngines.includes('COPY_TRADE'));
 
     const alloc = Math.max(trader.min_allocation_usd || 20, Number(body.allocationUsd || 100));
     const mult = Math.max(0.2, Math.min(5, Number(body.riskMultiplier || 1)));
-    const autoMirror = body.autoMirror !== false ? 1 : 0;
+    const autoMirror = shouldAutoMirror ? 1 : 0;
 
     const existing = await c.env.DB.prepare(
       `SELECT id, is_active FROM copy_subscriptions WHERE user_id = ? AND trader_id = ? LIMIT 1`
@@ -186,12 +188,12 @@ copyTradeRoutes.post('/follow', async (c) => {
       await c.env.DB.prepare(`UPDATE copy_traders SET followers_count = followers_count + 1 WHERE id = ?`).bind(traderId).run();
     }
 
-    await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Subscribed to verified copy trader ${trader.display_name} ($${alloc})`);
+    await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Followed copy trader ${trader.display_name} ($${alloc}) — bot not auto-started`);
     const activeEngine = await getActiveEngineState(c.env.DB, user.id);
     return c.json({
       ok: true,
       following: true,
-      stoppedOtherEngines: excl.stoppedBot || excl.disabledMyAi,
+      botStarted: activeEngine.isBotRunning,
       activeEngine,
     });
   } else {
@@ -201,17 +203,9 @@ copyTradeRoutes.post('/follow', async (c) => {
 
     if (existing && existing.is_active) {
       await c.env.DB.prepare(
-        `UPDATE copy_subscriptions SET is_active = 0, updated_at = datetime('now') WHERE id = ?`
+        `UPDATE copy_subscriptions SET is_active = 0, auto_mirror = 0, updated_at = datetime('now') WHERE id = ?`
       ).bind(existing.id).run();
       await c.env.DB.prepare(`UPDATE copy_traders SET followers_count = MAX(0, followers_count - 1) WHERE id = ?`).bind(traderId).run();
-    }
-    const remRow = await c.env.DB.prepare(
-      `SELECT COUNT(*) as cnt FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`
-    ).bind(user.id).first<{ cnt: number }>().catch(() => ({ cnt: 0 }));
-    if (Number(remRow?.cnt ?? 0) === 0) {
-      await c.env.DB.prepare(
-        `UPDATE bot_configs SET strategy_key = CASE WHEN strategy_key = 'copy_trade' THEN 'dollarino_v01' ELSE strategy_key END, updated_at = datetime('now') WHERE user_id = ?`
-      ).bind(user.id).run().catch(() => {});
     }
     const activeEngine = await getActiveEngineState(c.env.DB, user.id);
     return c.json({ ok: true, following: false, activeEngine });
@@ -617,11 +611,7 @@ copyTradeRoutes.post('/rules', async (c) => {
     )
     .run();
 
-  if (isActive && traderKind === 'SITE_TRADER') {
-    await activateExclusiveTradingEngine(c.env.DB, user.id, 'COPY_TRADE', {
-      auditSource: 'copy_follow_rule_v2',
-    }).catch(() => {});
-  } else if (isActive && traderKind === 'SMART_WALLET') {
+  if (isActive && traderKind === 'SMART_WALLET') {
     await baselineWalletTxIfEmpty(c.env, traderId).catch(() => {});
   }
 

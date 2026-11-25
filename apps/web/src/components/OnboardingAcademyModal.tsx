@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ExternalLink,
   Hand,
-  Rocket,
   ShieldCheck,
   Sparkles,
   Wallet,
@@ -36,7 +35,9 @@ export function OnboardingAcademyModal({
   const [twAddress, setTwAddress] = useState(user.trust_wallet_address || '');
   const [twSolana, setTwSolana] = useState(user.trust_wallet_solana || '');
   const [execMode, setExecMode] = useState<'AUTO' | 'MANUAL_CONFIRM'>('AUTO');
-  const [tradingMode, setTradingMode] = useState<'PAPER' | 'LIVE'>('PAPER');
+  const [tradingMode, setTradingMode] = useState<'PAPER' | 'LIVE'>(
+    user.trust_wallet_address || user.trust_wallet_solana ? 'LIVE' : 'LIVE'
+  );
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -62,10 +63,10 @@ export function OnboardingAcademyModal({
       img: '/images/transparent/piggy-wallet-3d.png',
     },
     {
-      titleFa: 'قدم دوم: اتصال Trust Wallet (یا تست رایگان ۱۰,۰۰۰ دلاری)',
-      titleEn: 'Step 2: Connect Trust Wallet (or Free $10,000 Demo)',
-      subtitleFa: 'برای ترید واقعی حداقل ۱۰ دلار داخل تراست‌ولت لازم است؛ اگر هنوز نداری یا می‌خواهی تمرین کنی، شبیه‌ساز ۱۰,۰۰۰ دلاری کاملاً رایگان است!',
-      subtitleEn: 'Real trading requires at least $10 in Trust Wallet; want to practice first? Our $10,000 Simulator is 100% free!',
+      titleFa: 'قدم دوم: اتصال حساب واقعی Trust Wallet (اولویت اول) یا دمو',
+      titleEn: 'Step 2: Real Trust Wallet (Priority) or Free Custom Demo',
+      subtitleFa: 'برای ترید واقعی با کارمزد ۰٪ روی ۳ معامله سودده اول، آدرس Trust Wallet خود را متصل کنید (حداقل $10). اگر مایل به تمرین رایگان بودید، شبیه‌ساز دمو ($50 تا $10M) هم در دسترس است.',
+      subtitleEn: 'Connect your real Trust Wallet ($10+ min) to enjoy your first 3 profitable LIVE trades at 0% fee—or test strategies anytime in Custom Demo ($50–$10M).',
       img: '/images/transparent/trust-shield-3d.png',
     },
     {
@@ -78,15 +79,15 @@ export function OnboardingAcademyModal({
     {
       titleFa: 'قدم چهارم: اشتراک صفر تومان · مدیریت ریسک و اعتبار رفرال',
       titleEn: 'Step 4: $0 Sub · Risk Management & Fee-Credit Referrals',
-      subtitleFa: 'در هر معامله فقط ۱٪ تا ۳٪ سرمایه ریسک کنید، همیشه استاپ‌لاس بگذارید و با دعوت دوستان واقعی (دارای ≥$۱۰ و ترید واقعی) اعتبار کارمزد ۵٪ رایگان بگیرید!',
-      subtitleEn: 'Risk only 1–3% per trade with Stop-Loss, keep 95% of real profits (5% fee), and earn non-withdrawable fee credits by inviting active traders ($10+ live trade).',
-      img: '/images/referral-invite-banner.png?v=105',
+      subtitleFa: 'در هر معامله فقط ۱٪ تا ۳٪ سرمایه ریسک کنید، همیشه استاپ‌لاس بگذارید و پس از ۳ معامله سودده اول رایگان، با دعوت دوستان واقعی اعتبار کارمزد ۳٪ رایگان بگیرید!',
+      subtitleEn: 'Risk only 1–3% per trade with Stop-Loss; enjoy your first 3 profitable live trades at 0% fee (then 3% only on profit), plus invite credits!',
+      img: '/images/transparent/risk-referral-3d.png',
     },
     {
-      titleFa: 'قدم پنجم: آماده شروع؟ بریم سراغ سود هوشمند!',
-      titleEn: 'Step 5: Ready to Launch Smart Trading!',
-      subtitleFa: 'همه‌چیز برای شروع آماده است! همیشه می‌توانید از صفحه «راهنما و آموزش»، «چت AI» یا «پشتیبانی آنلاین» کمک بگیرید.',
-      subtitleEn: 'You are all set! You can always open the Training Guide, Floating AI Chat, or Online Support anytime.',
+      titleFa: 'قدم پنجم: ذخیره تنظیمات و آماده شروع دستی!',
+      titleEn: 'Step 5: Save Your Preferences & Start When Ready!',
+      subtitleFa: 'تنظیمات شما ذخیره می‌شود و ربات فعلاً خاموش می‌ماند تا خودتان پس از بررسی و تایید قوانین، با دکمه صفحه اصلی آن را روشن کنید.',
+      subtitleEn: 'Your setup will be saved while the bot stays paused until you manually review rules and tap Start on the dashboard.',
       img: '/images/transparent/rocket-profit-3d.png',
     },
   ][step]!;
@@ -95,7 +96,7 @@ export function OnboardingAcademyModal({
     setErr('');
     setMsg('');
     if (!twAddress.trim() && !twSolana.trim()) {
-      setErr(isFa ? 'آدرس EVM (مثلاً 0x...) یا Solana تراست‌ولت را وارد کن یا از گزینه شبیه‌ساز ۱۰,۰۰۰ دلاری استفاده کن.' : 'Enter an EVM (0x...) or Solana Trust Wallet address, or pick the free Demo Simulator.');
+      setErr(isFa ? 'آدرس EVM (مثلاً 0x...) یا Solana تراست‌ولت را وارد کن یا از گزینه شبیه‌ساز دمو قابل تنظیم استفاده کن.' : 'Enter an EVM (0x...) or Solana Trust Wallet address, or pick the free Custom Demo Simulator.');
       return;
     }
     setBusy(true);
@@ -117,28 +118,38 @@ export function OnboardingAcademyModal({
     }
   };
 
-  const handleSavePreferencesAndFinish = async (startBotNow: boolean) => {
+  const handleSavePreferencesAndFinish = async () => {
     setBusy(true);
     setErr('');
     setMsg('');
     try {
+      let targetTradingMode = tradingMode;
+      if (targetTradingMode === 'LIVE' && !twAddress.trim() && !twSolana.trim() && !user.trust_wallet_address && !user.trust_wallet_solana) {
+        // Fallback to PAPER until user connects a real Trust Wallet address, preventing 400 validation errors
+        targetTradingMode = 'PAPER';
+      }
       await apiFetch('/api/trustwallet/execution-mode', {
         method: 'POST',
         body: JSON.stringify({
           executionMode: execMode,
-          tradingMode,
+          tradingMode: targetTradingMode,
           syncCopyRules: true,
         }),
+      }).catch(async (errMode) => {
+        const text = errMode instanceof Error ? errMode.message : '';
+        if (targetTradingMode === 'LIVE' && (/10/i.test(text) || /wallet|trust/i.test(text))) {
+          await apiFetch('/api/trustwallet/execution-mode', {
+            method: 'POST',
+            body: JSON.stringify({
+              executionMode: execMode,
+              tradingMode: 'PAPER',
+              syncCopyRules: true,
+            }),
+          });
+        } else {
+          throw errMode;
+        }
       });
-      if (startBotNow) {
-        await apiFetch('/api/trading/bot/start', {
-          method: 'POST',
-          body: JSON.stringify({
-            tradeExecutionMode: execMode,
-            strategyKey: 'dollarino_v01',
-          }),
-        });
-      }
       localStorage.setItem(`dollarino_academy_done_${user.id}`, '1');
       tgNotifyHaptic('success');
       await onDone();
@@ -146,9 +157,6 @@ export function OnboardingAcademyModal({
     } catch (e) {
       const text = e instanceof Error ? e.message : 'Failed to save';
       setErr(text);
-      if (tradingMode === 'LIVE' && /10/i.test(text)) {
-        setTradingMode('PAPER');
-      }
     } finally {
       setBusy(false);
     }
@@ -187,6 +195,8 @@ export function OnboardingAcademyModal({
           </div>
           <button
             type="button"
+            data-testid="academy-close-btn"
+            aria-label={isFa ? 'بستن آموزش' : 'Close Academy'}
             onClick={() => {
               localStorage.setItem(`dollarino_academy_done_${user.id}`, '1');
               onClose();
@@ -234,8 +244,8 @@ export function OnboardingAcademyModal({
                 <p className="text-dim leading-relaxed">دیگر نیازی به صرافی‌های پیچیده و تحریمی نیست؛ همه‌چیز با یک تراست‌ولت ساده کار می‌کند.</p>
               </div>
               <div className="rounded-2xl p-3.5 surface-soft border hairline space-y-1">
-                <p className="font-black text-main">۳. تست ۱۰,۰۰۰ دلاری مجانی</p>
-                <p className="text-dim leading-relaxed">اول با پول آزمایشی ۱۰٬۰۰۰ دلاری تمرین کن تا کامل یاد بگیری، بعد هر وقت آماده بودی واقعی ترید کن.</p>
+                <p className="font-black text-main">۳. تست دمو رایگان (۵۰$ تا ۱۰M$)</p>
+                <p className="text-dim leading-relaxed">اول با پول آزمایشی دلخواهت تمرین کن تا کامل یاد بگیری، بعد هر وقت آماده بودی واقعی ترید کن.</p>
               </div>
             </div>
           )}
@@ -273,27 +283,6 @@ export function OnboardingAcademyModal({
                   type="button"
                   onClick={() => {
                     tgHaptic('light');
-                    setTradingMode('PAPER');
-                  }}
-                  className={`rounded-2xl p-3.5 text-start border transition ${
-                    tradingMode === 'PAPER'
-                      ? 'bg-[#059669] text-white border-[#059669]'
-                      : 'surface-soft text-main hairline'
-                  }`}
-                >
-                  <p className="font-black text-xs flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4" />
-                    <span>{isFa ? 'شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری (رایگان)' : 'Free $10,000 Demo Simulator'}</span>
-                  </p>
-                  <p className={`text-[11px] mt-1 ${tradingMode === 'PAPER' ? 'text-white/90' : 'text-dim'}`}>
-                    {isFa ? 'بدون نیاز به پول واقعی؛ با قیمت واقعی بازار یاد بگیر!' : 'Zero real risk, live market prices.'}
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    tgHaptic('light');
                     setTradingMode('LIVE');
                   }}
                   className={`rounded-2xl p-3.5 text-start border transition ${
@@ -307,7 +296,28 @@ export function OnboardingAcademyModal({
                     <span>{isFa ? 'حساب واقعی Trust Wallet (حداقل ۱۰ دلار)' : 'Real Trust Wallet ($10+ Min)'}</span>
                   </p>
                   <p className={`text-[11px] mt-1 ${tradingMode === 'LIVE' ? 'text-white/90' : 'text-dim'}`}>
-                    {isFa ? 'نیازمند اتصال آدرس و حداقل $10 موجودی واقعی.' : 'Requires connected wallet with >= $10 USD.'}
+                    {isFa ? 'اولویت پیشنهادی: غیرامانی، کارمزد ۰٪ برای ۳ معامله سودده اول، حداقل $10.' : 'Recommended: non-custodial, 0% fee for first 3 wins, $10+ min.'}
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    tgHaptic('light');
+                    setTradingMode('PAPER');
+                  }}
+                  className={`rounded-2xl p-3.5 text-start border transition ${
+                    tradingMode === 'PAPER'
+                      ? 'bg-[#059669] text-white border-[#059669]'
+                      : 'surface-soft text-main hairline'
+                  }`}
+                >
+                  <p className="font-black text-xs flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4" />
+                    <span>{isFa ? 'شبیه‌ساز دمو قابل تنظیم (رایگان)' : 'Free Custom Demo ($50–$10M)'}</span>
+                  </p>
+                  <p className={`text-[11px] mt-1 ${tradingMode === 'PAPER' ? 'text-white/90' : 'text-dim'}`}>
+                    {isFa ? 'بدون نیاز به پول واقعی؛ با قیمت واقعی بازار یاد بگیر!' : 'Zero real risk, live market prices.'}
                   </p>
                 </button>
               </div>
@@ -426,8 +436,8 @@ export function OnboardingAcademyModal({
                   <span>{isFa ? 'سیستم رفرال کارمزد رایگان' : 'Anti-Fraud Fee Credit Referrals'}</span>
                 </p>
                 <ul className="space-y-1 text-sub list-disc ps-4">
-                  <li>{isFa ? 'با دعوت دوستان واقعی، +۲ دلار اعتبار کارمزد ۵٪ برای شما و +۱ دلار برای دوستتان ثبت می‌شود.' : 'Earn +$2 fee credit (+$1 for your friend) when they start live trading.'}</li>
-                  <li>{isFa ? 'پاداش رفرال نقدی و قابل برداشت نیست؛ فقط برای پرداخت کارمزد ۵٪ سود استفاده می‌شود.' : 'Strictly non-withdrawable—usable solely for your 5% profit fees.'}</li>
+                  <li>{isFa ? 'با دعوت دوستان واقعی، +۲ دلار اعتبار کارمزد ۳٪ برای شما و +۱ دلار برای دوستتان ثبت می‌شود.' : 'Earn +$2 fee credit (+$1 for your friend) when they start live trading.'}</li>
+                  <li>{isFa ? 'پاداش رفرال نقدی و قابل برداشت نیست؛ فقط برای پرداخت کارمزد ۳٪ سود استفاده می‌شود.' : 'Strictly non-withdrawable—usable solely for your 3% profit fees.'}</li>
                   <li>{isFa ? 'آزادسازی مشروط به ≥۱۰$ موجودی واقعی و ترید واقعی است.' : 'Unlocks only after >= $10 real balance + real trade.'}</li>
                 </ul>
               </div>
@@ -442,7 +452,7 @@ export function OnboardingAcademyModal({
               </div>
               <p className="text-sub">
                 • {isFa ? 'حالت حساب:' : 'Account:'}{' '}
-                <strong className="text-main">{tradingMode === 'LIVE' ? (isFa ? 'کیف‌پول واقعی Trust Wallet (حداقل ۱۰ دلار)' : 'Real Trust Wallet ($10+ min)') : (isFa ? 'شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری رایگان' : 'Free $10,000 Demo Simulator')}</strong>
+                <strong className="text-main">{tradingMode === 'LIVE' ? (isFa ? 'کیف‌پول واقعی Trust Wallet (حداقل ۱۰ دلار)' : 'Real Trust Wallet ($10+ min)') : (isFa ? 'شبیه‌ساز دمو رایگان قابل تنظیم ($50–$10M)' : 'Free Custom Demo ($50–$10M)')}</strong>
               </p>
               <p className="text-sub">
                 • {isFa ? 'روش اجرا:' : 'Execution:'}{' '}
@@ -450,7 +460,7 @@ export function OnboardingAcademyModal({
               </p>
               <p className="text-sub">
                 • {isFa ? 'هزینه اشتراک:' : 'Subscription Fee:'}{' '}
-                <strong className="text-[#10B981]">{isFa ? 'صفر تومان (رایگان) — ۹۵٪ سود برای شما (کارمزد ۵٪ فقط از سود واقعی)' : '$0 (Free) — Keep 95% of Real Profits (5% Fee)'}</strong>
+                <strong className="text-[#10B981]">{isFa ? '۳ معامله سودده اول ۰٪ · سپس ۹۷٪ سود برای شما (فقط ۳٪ از سود واقعی)' : 'First 3 Live Wins 0% · Keep 97% Profit (3% Fee)'}</strong>
               </p>
             </div>
           )}
@@ -498,25 +508,15 @@ export function OnboardingAcademyModal({
               {isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
             </button>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleSavePreferencesAndFinish(false)}
-                className="px-4 py-2.5 rounded-xl surface-soft border hairline text-xs font-bold text-main"
-              >
-                {isFa ? 'ذخیره تنظیمات' : 'Save Setup'}
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleSavePreferencesAndFinish(true)}
-                className="px-5 py-2.5 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-black inline-flex items-center gap-1.5"
-              >
-                <Rocket className="w-3.5 h-3.5" />
-                <span>{busy ? '...' : isFa ? 'ذخیره و شروع ربات!' : 'Save & Launch Bot!'}</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleSavePreferencesAndFinish()}
+              className="px-6 py-2.5 rounded-xl bg-[#0D47A1] hover:bg-[#1565C0] text-white text-xs font-black inline-flex items-center gap-1.5 shadow-lg transition disabled:opacity-50"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{busy ? '...' : isFa ? 'ذخیره تنظیمات' : 'Save Settings'}</span>
+            </button>
           )}
         </div>
       </div>

@@ -439,7 +439,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const kbText = JSON.stringify(welcomeCall!.body.reply_markup);
     expect(kbText).toContain('🛡 اتصال Trust Wallet');
     expect(kbText).toContain('⚡ رفتن به حالت حرفه‌ای');
-    expect(kbText).toContain('💰 کارمزد ۵٪ سود (رایگان)');
+    expect(kbText).toContain('💰 کارمزد ۳٪ سود (رایگان)');
     expect(kbText).toContain('راهنما 📚');
 
     // Help text must never emit literal backslash-n or giant 10-row inline menu
@@ -1799,7 +1799,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(cfgRow?.bot_state).toBe('RUNNING_PAPER');
     expect(cfgRow?.strategy_key).toBe('ai_autonomous_agent');
 
-    // 2. Follow Copy Trader -> MUST automatically stop autonomous AI bot
+    // 2. Follow Copy Trader -> V11.0 isolates follow from bot start (keeps Central AI running & does NOT auto-stop engines!)
     const followRes = await worker.fetch(
       new Request('https://dollarino.local/api/copy-trade/follow', {
         method: 'POST',
@@ -1812,21 +1812,20 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const followJson = (await followRes.json()) as {
       ok: boolean;
       following: boolean;
-      stoppedOtherEngines: boolean;
-      activeEngine: { activeEngine: string; activeCopyTradersCount: number };
+      botStarted?: boolean;
+      activeEngine: { activeEngine: string; activeEngines: string[]; activeCopyTradersCount: number };
     };
     expect(followJson.following).toBe(true);
-    expect(followJson.stoppedOtherEngines).toBe(true);
-    expect(followJson.activeEngine.activeEngine).toBe('COPY_TRADE');
+    expect(followJson.botStarted).toBe(true); // Central AI was already running; Follow keeps running bots untouched!
 
     cfgRow = await db
       .prepare(`SELECT bot_state, strategy_key FROM bot_configs WHERE user_id = ?`)
       .bind(uRow!.id)
       .first<{ bot_state: string; strategy_key: string }>();
-    expect(cfgRow?.bot_state).toBe('STOPPED');
-    expect(cfgRow?.strategy_key).toBe('copy_trade');
+    expect(cfgRow?.bot_state).toBe('RUNNING_PAPER');
+    expect(cfgRow?.strategy_key).toBe('ai_autonomous_agent');
 
-    // 3. Activate My Custom AI -> MUST automatically cancel Copy Trade subscriptions
+    // 3. Activate My Custom AI -> V11.0 Multi-Engine runs concurrently WITHOUT cancelling Copy Trade subscriptions
     const myAiRes = await worker.fetch(
       new Request('https://dollarino.local/api/my-ai/activate', {
         method: 'POST',
@@ -1841,16 +1840,9 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       .prepare(`SELECT is_active FROM copy_subscriptions WHERE user_id = ? AND trader_id = 'ct_excl_1'`)
       .bind(uRow!.id)
       .first<{ is_active: number }>();
-    expect(copySubAfterMyAi?.is_active).toBe(0);
+    expect(copySubAfterMyAi?.is_active).toBe(1);
 
-    cfgRow = await db
-      .prepare(`SELECT bot_state, strategy_key FROM bot_configs WHERE user_id = ?`)
-      .bind(uRow!.id)
-      .first<{ bot_state: string; strategy_key: string }>();
-    expect(cfgRow?.bot_state).toBe('RUNNING_PAPER');
-    expect(cfgRow?.strategy_key).toBe('my_custom_ai');
-
-    // 4. Switch to Preset Strategy (Dorna V1) -> MUST deactivate Personal AI
+    // 4. Switch / Start Preset Strategy (Dorna V1) -> ALSO leaves My Custom AI active concurrently!
     const stratStartRes = await worker.fetch(
       new Request('https://dollarino.local/api/trading/bot/start', {
         method: 'POST',
@@ -1864,7 +1856,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       .prepare(`SELECT is_active_for_trading FROM user_ai_agents WHERE user_id = ?`)
       .bind(uRow!.id)
       .first<{ is_active_for_trading: number }>();
-    expect(agAfterStrat?.is_active_for_trading).toBe(0);
+    expect(agAfterStrat?.is_active_for_trading).toBe(1);
 
     // 5. Verify 15m Signal Scan Cooldown & 30m Crypto News Cadence
     const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();

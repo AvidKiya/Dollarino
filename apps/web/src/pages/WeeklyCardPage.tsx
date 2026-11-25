@@ -11,7 +11,6 @@ import {
   Monitor,
   QrCode,
   Send,
-  ShieldAlert,
   ShieldCheck,
   Smartphone,
   Target,
@@ -20,6 +19,7 @@ import {
 import { DollarinoBrandMark } from '../components/BrandGraphics';
 import { apiFetch, getStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import type { DashboardPayload, VerifiedProfitCard } from '../lib/types';
 
 const THEMES = [
@@ -81,6 +81,20 @@ export function WeeklyCardPage({
   const [sendingTg, setSendingTg] = useState(false);
   const [notice, setNotice] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (errorMsg) {
+      pushFloatingToast(errorMsg, 'error');
+      setErrorMsg('');
+    }
+  }, [errorMsg]);
+
+  useEffect(() => {
+    if (notice) {
+      pushFloatingToast(notice, 'success');
+      setNotice('');
+    }
+  }, [notice]);
 
   const theme = THEMES.find((x) => x.id === cardStyle) ?? THEMES[0]!;
   const closedList = data.closedTrades ?? [];
@@ -508,19 +522,6 @@ export function WeeklyCardPage({
               </div>
             </div>
           </div>
-
-          {errorMsg && (
-            <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-loss flex items-start gap-2">
-              <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-          {notice && (
-            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs font-bold text-jade flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{notice}</span>
-            </div>
-          )}
 
           <div className="space-y-2.5">
             <button

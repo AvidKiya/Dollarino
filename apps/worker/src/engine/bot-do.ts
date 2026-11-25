@@ -24,6 +24,8 @@ import { getExchangeMarkets, MAJOR_LIQUID_COINS } from '../exchanges/markets.js'
 import { compileTrainedRulesToVisualDef, DEFAULT_TRAINED_RULES, type TrainedAIRules } from '../routes/my-ai.js';
 import { publishSignalBroadcast, publishSignalClosedCard } from '../telegram/publisher.js';
 import { checkLiveFeeEnforcement } from '../services/server-fee.js';
+import { parseActiveEnginesFromConfig, type TradingEngineChoice } from './exclusive-engine.js';
+import { runNewListingAndMemeSniperForUser } from './listing-sniper.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -247,27 +249,69 @@ export class TradingBotCoordinator implements DurableObject {
       const feeCheck = await checkLiveFeeEnforcement(this.env.DB, userId).catch(() => ({ allowed: true, totalDueUsd: 0 }));
       if (!feeCheck.allowed) {
         const due = `$${Number(feeCheck.totalDueUsd || 0).toFixed(2)}`;
-        await this.env.DB.prepare(
-          `UPDATE bot_configs SET bot_state = 'STOPPED', last_ai_reason = ? WHERE user_id = ?`
-        ).bind(`قفل کارمزد ۵٪ سود واقعی (${due}) — پس از تسویه ربات لایو مجدد آزاد می‌شود.`, userId).run().catch(() => {});
-        await logAudit(this.env.DB, userId, 'RISK', 'WARN', `LIVE bot paused automatically due to overdue 5% fee settlement (${due}).`);
-        await pushNotification(this.env.DB, userId, 'SUBSCRIPTION', 'قفل موقت ربات لایو (تسویه کارمزد ۵٪)', `مبلغ معوق ${due} است؛ شبیه‌ساز دمو همچنان رایگان و باز است.`).catch(() => {});
-        await notifyUserTelegram(this.env, userId, `🔒 ربات لایو شما به دلیل عبور از سقف و مهلت تسویه کارمزد ۵٪ (${due}) متوقف شد.\nاز منوی کارمزد ۵٪ تسویه را ثبت کنید تا فوری باز شود.`).catch(() => {});
+        // SAFE GRACE GUARANTEE: Never stop or abandon existing OPEN positions;
+        // reconcileOpenPositionsForUser above keeps TP/SL/Trailing active so open trades close in profit.
+        // Only NEW trade openings (including Sniper/AI/Strategy) are blocked here!
+        const feeWarnKey = `fee_block_notice_${userId}`;
+        const lastWarnMs = (await this.state.storage.get<number>(feeWarnKey)) ?? 0;
+        if (Date.now() - lastWarnMs > 1800_000) {
+          await this.state.storage.put(feeWarnKey, Date.now());
+          await this.env.DB.prepare(
+            `UPDATE bot_configs SET last_ai_reason = ? WHERE user_id = ?`
+          )
+            .bind(`فقط باز کردن معامله جدید تا تسویه کارمزد ۳٪ (${due}) محدود شد؛ پوزیشن‌های باز همچنان در مسیر سود مدیریت می‌شوند.`, userId)
+            .run()
+            .catch(() => {});
+          await logAudit(this.env.DB, userId, 'RISK', 'WARN', `New LIVE entries paused due to overdue 3% fee (${due}); open positions remain managed.`);
+          await pushNotification(
+            this.env.DB,
+            userId,
+            'SUBSCRIPTION',
+            'توقف موقت ورود جدید (کارمزد ۳٪)',
+            `بدهی تسویه‌نشده ${due} است. پوزیشن‌های باز شما همچنان مدیریت می‌شوند تا در سود بسته شوند؛ پس از تسویه در خزانه ورود جدید آزاد می‌شود.`
+          ).catch(() => {});
+          await notifyUserTelegram(
+            this.env,
+            userId,
+            `⏳ **باز کردن معامله جدید لایو تا تسویه کارمزد ۳٪ (${due}) متوقف شد**\n🛡 پوزیشن‌های باز فعلی شما همچنان مدیریت می‌شوند تا در سود بسته شوند.\nاز بخش «خزانه و تسویه ۳٪» تسویه کنید تا ورود جدید باز شود.`
+          ).catch(() => {});
+        }
         return;
       }
     }
 
-    // Strict Single-Engine Mutual Exclusion: if Copy Trade is active, autonomous strategies/AI do not trade
-    if (cfg.strategy_key === 'copy_trade') {
-      return;
+    const [agentRow, activeCopyRow] = await Promise.all([
+      this.env.DB.prepare(`SELECT is_active_for_trading FROM user_ai_agents WHERE user_id = ? LIMIT 1`)
+        .bind(userId)
+        .first<{ is_active_for_trading: number }>()
+        .catch(() => null),
+      this.env.DB.prepare(`SELECT COUNT(*) as cnt FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`)
+        .bind(userId)
+        .first<{ cnt: number }>()
+        .catch(() => ({ cnt: 0 })),
+    ]);
+
+    const activeEngines: TradingEngineChoice[] = parseActiveEnginesFromConfig(
+      cfg.active_engines_json,
+      cfg.strategy_key,
+      Boolean(agentRow?.is_active_for_trading),
+      Number(activeCopyRow?.cnt ?? 0),
+      Boolean(cfg.sniper_enabled),
+      cfg.bot_state
+    );
+
+    // Run New Exchange Listings & Hot Meme Coin Sniper independently if toggled ON
+    if (activeEngines.includes('LISTING_SNIPER')) {
+      await runNewListingAndMemeSniperForUser(this.env, userId, cfg).catch(() => {});
     }
-    const activeCopyRow = await this.env.DB.prepare(
-      `SELECT COUNT(*) as cnt FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`
-    )
-      .bind(userId)
-      .first<{ cnt: number }>()
-      .catch(() => ({ cnt: 0 }));
-    if ((activeCopyRow?.cnt ?? 0) > 0) {
+
+    const runCentralAi = activeEngines.includes('CENTRAL_AI');
+    const runMyAi = activeEngines.includes('MY_AI');
+    const runStrategy = activeEngines.includes('STRATEGY');
+
+    // Strict Multi-Engine Isolation:
+    // If user enabled ONLY Copy-Trade (or Copy-Trade + Sniper) without AI/Strategy, NEVER fire AI or Strategy trades!
+    if (!runCentralAi && !runMyAi && !runStrategy) {
       return;
     }
 
@@ -325,7 +369,8 @@ export class TradingBotCoordinator implements DurableObject {
             adapter,
             scanSymbol,
             { long: openLong, short: openShort, hedgeMode },
-            liveOpenCount
+            liveOpenCount,
+            { centralAi: runCentralAi, myAi: runMyAi, strategy: runStrategy }
           ).catch(async (err) => {
             const msg = err instanceof Error ? err.message : 'Scan error';
             await logAudit(this.env.DB, userId, 'SIGNAL', 'WARN', `خطا در بررسی ${scanSymbol}: ${msg}`, scanSymbol).catch(() => {});
@@ -471,7 +516,8 @@ export class TradingBotCoordinator implements DurableObject {
       } | null;
       hedgeMode: boolean;
     },
-    openCount: number
+    openCount: number,
+    activeScanModes: { centralAi: boolean; myAi: boolean; strategy: boolean }
   ): Promise<boolean> {
     const marketType: MarketType = cfg.market_type ?? 'FUTURES';
     const directionMode: DirectionMode = cfg.direction_mode ?? 'BOTH';
@@ -546,7 +592,8 @@ export class TradingBotCoordinator implements DurableObject {
     } catch { /* fallback */ }
 
     // 2A. Dollarino AI (Token-Guarded Quant Pre-Filter + Single-Model Consensus + Quant Fallback)
-    if (cfg.strategy_key === 'ai_autonomous_agent') {
+    let openedAnyOnSymbol = false;
+    if (activeScanModes.centralAi) {
       const latestBarTs = ltfClosed[ltfClosed.length - 1]!.timestamp;
       const aiBarKey = `last_ai_bar_ts_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
       const aiCheckKey = `last_ai_check_ms_${userId}_${scanSymbol}_${cfg.entry_timeframe}`;
@@ -557,53 +604,50 @@ export class TradingBotCoordinator implements DurableObject {
         this.state.storage.get<number>(userAiThrottleKey),
       ]);
       // Re-evaluate each symbol at most once every 15 minutes (or on new candle close)
-      if (lastAiTs === latestBarTs && lastCheckMs && now - lastCheckMs < 900_000) return false;
+      const aiTimeEligible = !(lastAiTs === latestBarTs && lastCheckMs && now - lastCheckMs < 900_000);
 
-      // Zero-Token Quant Pre-Filter: only consult external LLM when genuine confluence/momentum exists (or open position needs check)
-      let htfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-      if (htfClosed.length >= 25) {
-        const hc = htfClosed.map((c) => c.close);
-        const h20 = ema(hc, 20);
-        const h50 = ema(hc, 50);
-        const f = h20[htfClosed.length - 1];
-        const s = h50[htfClosed.length - 1];
-        if (Number.isFinite(f) && Number.isFinite(s)) {
-          htfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
+      let hasStrongQuantCandidate = false;
+      if (aiTimeEligible) {
+        let htfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+        if (htfClosed.length >= 25) {
+          const hc = htfClosed.map((c) => c.close);
+          const h20 = ema(hc, 20);
+          const h50 = ema(hc, 50);
+          const f = h20[htfClosed.length - 1];
+          const s = h50[htfClosed.length - 1];
+          if (Number.isFinite(f) && Number.isFinite(s)) {
+            htfTrend = f! > s! ? 'BULLISH' : f! < s! ? 'BEARISH' : 'NEUTRAL';
+          }
+        }
+        const preMixer = evaluateSignalMixerAtBar(
+          ltfClosed,
+          ltfClosed.length - 1,
+          htfTrend,
+          mixerWeights,
+          cfg.mixer_threshold ?? 65
+        );
+        const preKbos = computeKbosV11Detailed(ltfClosed, cfg.entry_timeframe, kbosParams);
+        const preKbosSig = preKbos.outputs[preKbos.outputs.length - 1]?.signal ?? 'NONE';
+        hasStrongQuantCandidate =
+          Boolean(openAny) ||
+          preKbosSig !== 'NONE' ||
+          Math.abs(preMixer.compositeScore || 0) >= 26 ||
+          preMixer.direction !== 'NONE';
+
+        if (!hasStrongQuantCandidate) {
+          await Promise.all([
+            this.state.storage.put(aiBarKey, latestBarTs),
+            this.state.storage.put(aiCheckKey, now),
+          ]);
         }
       }
-      const preMixer = evaluateSignalMixerAtBar(
-        ltfClosed,
-        ltfClosed.length - 1,
-        htfTrend,
-        mixerWeights,
-        cfg.mixer_threshold ?? 65
-      );
-      const preKbos = computeKbosV11Detailed(ltfClosed, cfg.entry_timeframe, kbosParams);
-      const preKbosSig = preKbos.outputs[preKbos.outputs.length - 1]?.signal ?? 'NONE';
-      const hasStrongQuantCandidate =
-        Boolean(openAny) ||
-        preKbosSig !== 'NONE' ||
-        Math.abs(preMixer.compositeScore || 0) >= 26 ||
-        preMixer.direction !== 'NONE';
 
-      if (!hasStrongQuantCandidate) {
+      if (aiTimeEligible && hasStrongQuantCandidate && (!(!openAny && lastUserAiMs && now - lastUserAiMs < 120_000))) {
         await Promise.all([
           this.state.storage.put(aiBarKey, latestBarTs),
           this.state.storage.put(aiCheckKey, now),
+          this.state.storage.put(userAiThrottleKey, now),
         ]);
-        return false;
-      }
-
-      // Per-user API token guard: at most 1 fresh LLM scan per 2 minutes when scanning multiple coins
-      if (!openAny && lastUserAiMs && now - lastUserAiMs < 120_000) {
-        return false;
-      }
-
-      await Promise.all([
-        this.state.storage.put(aiBarKey, latestBarTs),
-        this.state.storage.put(aiCheckKey, now),
-        this.state.storage.put(userAiThrottleKey, now),
-      ]);
 
       const [orderBook, market24h, recentClosedRows] = await Promise.all([
         adapter.getOrderBook(scanSymbol, 15).catch(() => ({ bids: [], asks: [] })),
@@ -659,272 +703,295 @@ export class TradingBotCoordinator implements DurableObject {
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'AI Trader error';
         await logAudit(this.env.DB, userId, 'AI_AGENT', 'ERROR', `Dollarino AI error on ${scanSymbol}: ${msg}`, scanSymbol);
-        return false;
+        decision = null;
       }
 
-      const reasonSummary = `${scanSymbol} (${decision.action} · ${decision.confidence}%): ${decision.thesis}`;
-      await this.env.DB.prepare(
-        `UPDATE bot_configs SET last_ai_reason = ?, last_ai_decision_at = datetime('now') WHERE user_id = ?`
-      )
-        .bind(reasonSummary.slice(0, 480), userId)
-        .run()
-        .catch(() => {});
+      if (decision) {
+        const reasonSummary = `${scanSymbol} (${decision.action} · ${decision.confidence}%): ${decision.thesis}`;
+        await this.env.DB.prepare(
+          `UPDATE bot_configs SET last_ai_reason = ?, last_ai_decision_at = datetime('now') WHERE user_id = ?`
+        )
+          .bind(reasonSummary.slice(0, 480), userId)
+          .run()
+          .catch(() => {});
 
-      await logAudit(
-        this.env.DB,
-        userId,
-        'AI_AGENT',
-        decision.ok ? 'INFO' : 'WARN',
-        `[هوش مصنوعی دلارینو · ${decision.modelCount || 1}x] ${decision.action} ${scanSymbol} (${decision.confidence}% conf) — ${decision.thesis}`,
+        await logAudit(
+          this.env.DB,
+          userId,
+          'AI_AGENT',
+          decision.ok ? 'INFO' : 'WARN',
+          `[هوش مصنوعی دلارینو · ${decision.modelCount || 1}x] ${decision.action} ${scanSymbol} (${decision.confidence}% conf) — ${decision.thesis}`,
+          scanSymbol,
+          decision
+        );
+
+        if (decision.ok && decision.action === 'CLOSE' && openAny) {
+          await this.closeOpenPositionEarly(userId, cfg, adapter, openAny, 'AI_EXIT');
+          return false;
+        }
+
+        if (
+          decision.ok &&
+          (decision.action === 'LONG' || decision.action === 'SHORT') &&
+          decision.confidence >= (cfg.ai_min_confidence ?? 62)
+        ) {
+          const sameSideOpen = decision.action === 'LONG' ? openState.long : openState.short;
+          const oppositeSideOpen = decision.action === 'LONG' ? openState.short : openState.long;
+
+          let aiEligible = true;
+          if (marketType === 'SPOT' && decision.action === 'SHORT') {
+            if (openState.long && (cfg.allow_auto_flip ?? 1)) {
+              await this.closeOpenPositionEarly(userId, cfg, adapter, openState.long, 'AI_EXIT');
+            }
+            aiEligible = false;
+          }
+          if (!isDirectionAllowed(decision.action)) aiEligible = false;
+          if (sameSideOpen && !(cfg.allow_pyramiding ?? 0)) aiEligible = false;
+          if (aiEligible && oppositeSideOpen && !openState.hedgeMode) {
+            if (cfg.allow_auto_flip ?? 1) {
+              await this.closeOpenPositionEarly(userId, cfg, adapter, oppositeSideOpen, 'AI_EXIT');
+            } else {
+              aiEligible = false;
+            }
+          }
+          if (openCount >= cfg.max_open_positions) aiEligible = false;
+
+          if (aiEligible && cooldownMinutes > 0 && !sameSideOpen) {
+            const lastClosed = await this.env.DB.prepare(
+              `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
+            ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
+            if (lastClosed?.closed_at) {
+              const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
+              const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
+              if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) aiEligible = false;
+            }
+          }
+
+          if (aiEligible) {
+            const sig = {
+              symbol: scanSymbol,
+              direction: decision.action,
+              timeframe: cfg.entry_timeframe,
+              price: String(decision.entry),
+              stopLoss: String(decision.stopLoss),
+              leverage: marketType === 'SPOT' ? 1 : decision.leverage,
+              tp1: String(decision.tp1),
+              tp2: String(decision.tp2),
+              tp3: String(decision.tp3),
+              channelHandle: cfg.signal_channel_handle || '@Dollarino_official',
+              engineKey: 'ai_autonomous_agent',
+              engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
+              reason: decision.thesis,
+            };
+            const recentChan = await this.env.DB.prepare(
+              `SELECT id FROM signals
+               WHERE symbol = ? AND direction = ? AND engine_source = 'ai_autonomous_agent'
+                 AND channel_message_id IS NOT NULL AND created_at >= datetime('now', '-20 minutes')
+               ORDER BY created_at DESC LIMIT 1`
+            ).bind(sig.symbol, sig.direction).first<{ id: string }>().catch(() => null);
+
+            let sigId = recentChan?.id;
+            if (!sigId) {
+              sigId = randomId('sig');
+              await publishSignalBroadcast(this.env, {
+                signalId: sigId,
+                signal: sig,
+                source: 'ai_agent',
+                engineKey: 'ai_autonomous_agent',
+                publishToChannel: true,
+                notifySubscribers: false,
+              }).catch(() => {});
+            }
+
+            const execRes = await executeSignalForUser(this.env, userId, sig, {
+              signalId: sigId,
+              strategyKey: 'ai_autonomous_agent',
+              aiConfidence: decision.confidence,
+              aiReasoning: decision.thesis,
+              marketType,
+            });
+            if (execRes.ok) {
+              await this.env.DB.prepare(`UPDATE signals SET status = 'EXECUTED' WHERE id = ?`).bind(sigId).run();
+              openedAnyOnSymbol = true;
+              if (!(cfg.allow_pyramiding ?? 0)) return true;
+            }
+          }
+        }
+      }
+      }
+    }
+
+    // 2B. Independent / Simultaneous Quant Strategy & Personal AI Execution
+    const subModes: Array<'MY_AI' | 'STRATEGY'> = [];
+    if (activeScanModes.myAi) subModes.push('MY_AI');
+    if (activeScanModes.strategy) subModes.push('STRATEGY');
+
+    for (const modeKind of subModes) {
+      if (openedAnyOnSymbol && !(cfg.allow_pyramiding ?? 0)) break;
+
+      const effectiveStratKey =
+        modeKind === 'MY_AI'
+          ? 'my_custom_ai'
+          : cfg.strategy_key &&
+              cfg.strategy_key !== 'ai_autonomous_agent' &&
+              cfg.strategy_key !== 'my_custom_ai' &&
+              cfg.strategy_key !== 'copy_trade'
+            ? cfg.strategy_key
+            : 'dollarino_v01';
+
+      let outputs: StrategySignalOutput[] = [];
+      if (modeKind === 'MY_AI') {
+        const agentRow = await this.env.DB.prepare(
+          `SELECT name, system_rules_json FROM user_ai_agents WHERE user_id = ? LIMIT 1`
+        ).bind(userId).first<{ name: string; system_rules_json: string }>().catch(() => null);
+        if (agentRow) {
+          let rules: TrainedAIRules = DEFAULT_TRAINED_RULES;
+          try {
+            rules = { ...DEFAULT_TRAINED_RULES, ...(JSON.parse(agentRow.system_rules_json || '{}') as Partial<TrainedAIRules>) };
+          } catch {
+            rules = DEFAULT_TRAINED_RULES;
+          }
+          const visualDef = compileTrainedRulesToVisualDef(rules, agentRow.name);
+          const evalRes = evaluateCustomStrategy('visual', JSON.stringify(visualDef), ltfClosed, cfg.entry_timeframe);
+          if (evalRes.valid) outputs = evalRes.signals;
+        }
+      } else if (
+        (effectiveStratKey === 'custom_pine' ||
+          effectiveStratKey === 'custom_python' ||
+          effectiveStratKey === 'custom_visual') &&
+        cfg.active_custom_strategy_id
+      ) {
+        const customRow = await this.env.DB.prepare(
+          `SELECT language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
+        )
+          .bind(cfg.active_custom_strategy_id, userId)
+          .first<{ language: CustomStrategyLanguage; code: string }>();
+
+        if (customRow?.code) {
+          const evalRes = evaluateCustomStrategy(customRow.language, customRow.code, ltfClosed, cfg.entry_timeframe);
+          if (evalRes.valid) outputs = evalRes.signals;
+        }
+      }
+
+      if (outputs.length === 0) {
+        outputs = computeStrategySignals(
+          effectiveStratKey,
+          ltfClosed,
+          htfClosed,
+          cfg.entry_timeframe,
+          cfg.higher_timeframe,
+          {
+            kbosParams,
+            mixerWeights,
+            mixerThreshold: cfg.mixer_threshold ?? 65,
+          }
+        );
+      }
+
+      const lastBarKey = `last_signal_ts_${userId}_${modeKind}_${scanSymbol}`;
+      const lastProcessed = await this.state.storage.get<number>(lastBarKey);
+      const currentClose = ltfClosed[ltfClosed.length - 1]!.close;
+
+      let latest = outputs[outputs.length - 1];
+      if ((!latest || latest.signal === 'NONE') && !lastProcessed && outputs.length >= 6) {
+        for (let lookback = 2; lookback <= 6; lookback++) {
+          const cand = outputs[outputs.length - lookback];
+          if (cand && cand.signal !== 'NONE' && cand.price > 0 && cand.stopLoss && cand.tp1) {
+            const driftPct = Math.abs(currentClose - cand.price) / cand.price;
+            const slValid = cand.signal === 'LONG' ? currentClose > cand.stopLoss : currentClose < cand.stopLoss;
+            const tp1NotHit = cand.signal === 'LONG' ? currentClose < cand.tp1 : currentClose > cand.tp1;
+            if (driftPct <= 0.015 && slValid && tp1NotHit) {
+              latest = cand;
+              break;
+            }
+          }
+        }
+      }
+      if (!latest || latest.signal === 'NONE') continue;
+      if (lastProcessed === latest.timestamp) continue;
+
+      const sigDir: Direction = latest.signal;
+      const sameSideOpen = sigDir === 'LONG' ? openState.long : openState.short;
+      const oppositeSideOpen = sigDir === 'LONG' ? openState.short : openState.long;
+
+      if (marketType === 'SPOT' && sigDir === 'SHORT') {
+        if (openState.long && (cfg.allow_auto_flip ?? 1)) {
+          await this.state.storage.put(lastBarKey, latest.timestamp);
+          await this.closeOpenPositionEarly(userId, cfg, adapter, openState.long, 'STRATEGY_FLIP');
+        }
+        continue;
+      }
+      if (!isDirectionAllowed(sigDir)) continue;
+      if (sameSideOpen && !(cfg.allow_pyramiding ?? 0)) continue;
+      if (oppositeSideOpen && !openState.hedgeMode) {
+        if (cfg.allow_auto_flip ?? 1) {
+          await this.closeOpenPositionEarly(userId, cfg, adapter, oppositeSideOpen, 'STRATEGY_FLIP');
+        } else {
+          continue;
+        }
+      }
+      if (openCount >= cfg.max_open_positions) continue;
+
+      if (cooldownMinutes > 0 && !sameSideOpen) {
+        const lastClosed = await this.env.DB.prepare(
+          `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
+        ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
+        if (lastClosed?.closed_at) {
+          const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
+          const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
+          if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) {
+            continue;
+          }
+        }
+      }
+
+      await this.state.storage.put(lastBarKey, latest.timestamp);
+      const sig = strategyOutputToDollarinoSignal(
         scanSymbol,
-        decision
+        cfg.entry_timeframe,
+        marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
+        latest,
+        cfg.signal_channel_handle || '@Dollarino_official',
+        effectiveStratKey
       );
+      if (!sig) continue;
 
-      if (!decision.ok) return false;
+      const isPersonalCustom =
+        effectiveStratKey === 'my_custom_ai' ||
+        effectiveStratKey === 'custom_pine' ||
+        effectiveStratKey === 'custom_python' ||
+        effectiveStratKey === 'custom_visual';
 
-      if (decision.action === 'CLOSE' && openAny) {
-        await this.closeOpenPositionEarly(userId, cfg, adapter, openAny, 'AI_EXIT');
-        return false;
-      }
-
-      if ((decision.action === 'LONG' || decision.action === 'SHORT') && decision.confidence >= (cfg.ai_min_confidence ?? 62)) {
-        const sameSideOpen = decision.action === 'LONG' ? openState.long : openState.short;
-        const oppositeSideOpen = decision.action === 'LONG' ? openState.short : openState.long;
-
-        // Spot Sell Signal can close existing Spot LONG cleanly even though Spot cannot open margin SHORT
-        if (marketType === 'SPOT' && decision.action === 'SHORT') {
-          if (openState.long && (cfg.allow_auto_flip ?? 1)) {
-            await this.closeOpenPositionEarly(userId, cfg, adapter, openState.long, 'AI_EXIT');
-          }
-          return false;
-        }
-        if (!isDirectionAllowed(decision.action)) return false;
-
-        if (sameSideOpen && !(cfg.allow_pyramiding ?? 0)) {
-          return false;
-        }
-        if (oppositeSideOpen && !openState.hedgeMode) {
-          if (cfg.allow_auto_flip ?? 1) {
-            await this.closeOpenPositionEarly(userId, cfg, adapter, oppositeSideOpen, 'AI_EXIT');
-          } else {
-            return false;
-          }
-        }
-        if (openCount >= cfg.max_open_positions) return false;
-
-        if (cooldownMinutes > 0 && !sameSideOpen) {
-          const lastClosed = await this.env.DB.prepare(
-            `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
-          ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
-          if (lastClosed?.closed_at) {
-            const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
-            const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
-            if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) return false;
-          }
-        }
-
-        const sig = {
-          symbol: scanSymbol,
-          direction: decision.action,
-          timeframe: cfg.entry_timeframe,
-          price: String(decision.entry),
-          stopLoss: String(decision.stopLoss),
-          leverage: marketType === 'SPOT' ? 1 : decision.leverage,
-          tp1: String(decision.tp1),
-          tp2: String(decision.tp2),
-          tp3: String(decision.tp3),
-          channelHandle: cfg.signal_channel_handle || '@Dollarino_official',
-          engineKey: 'ai_autonomous_agent',
-          engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
-          reason: decision.thesis,
-        };
+      let sigId: string | undefined;
+      if (!isPersonalCustom) {
         const recentChan = await this.env.DB.prepare(
           `SELECT id FROM signals
-           WHERE symbol = ? AND direction = ? AND engine_source = 'ai_autonomous_agent'
+           WHERE symbol = ? AND direction = ? AND engine_source = ?
              AND channel_message_id IS NOT NULL AND created_at >= datetime('now', '-20 minutes')
            ORDER BY created_at DESC LIMIT 1`
-        ).bind(sig.symbol, sig.direction).first<{ id: string }>().catch(() => null);
+        ).bind(sig.symbol, sig.direction, effectiveStratKey).first<{ id: string }>().catch(() => null);
 
-        let sigId = recentChan?.id;
+        sigId = recentChan?.id;
         if (!sigId) {
           sigId = randomId('sig');
           await publishSignalBroadcast(this.env, {
             signalId: sigId,
             signal: sig,
-            source: 'ai_agent',
-            engineKey: 'ai_autonomous_agent',
+            source: effectiveStratKey,
+            engineKey: effectiveStratKey,
             publishToChannel: true,
             notifySubscribers: false,
           }).catch(() => {});
         }
-
-        const execRes = await executeSignalForUser(this.env, userId, sig, {
-          signalId: sigId,
-          strategyKey: 'ai_autonomous_agent',
-          aiConfidence: decision.confidence,
-          aiReasoning: decision.thesis,
-          marketType,
-        });
-        if (execRes.ok) {
-          await this.env.DB.prepare(`UPDATE signals SET status = 'EXECUTED' WHERE id = ?`).bind(sigId).run();
-          return true;
-        }
       }
-      return false;
-    }
 
-    // 2B. User-Trained Personal AI ('my_custom_ai'), Custom Pine/Python/Visual Strategy, OR Dollarino Quant Strategies
-    let outputs: StrategySignalOutput[] = [];
-    if (cfg.strategy_key === 'my_custom_ai') {
-      const agentRow = await this.env.DB.prepare(
-        `SELECT name, system_rules_json FROM user_ai_agents WHERE user_id = ? LIMIT 1`
-      ).bind(userId).first<{ name: string; system_rules_json: string }>().catch(() => null);
-      if (agentRow) {
-        let rules: TrainedAIRules = DEFAULT_TRAINED_RULES;
-        try {
-          rules = { ...DEFAULT_TRAINED_RULES, ...(JSON.parse(agentRow.system_rules_json || '{}') as Partial<TrainedAIRules>) };
-        } catch {
-          rules = DEFAULT_TRAINED_RULES;
-        }
-        const visualDef = compileTrainedRulesToVisualDef(rules, agentRow.name);
-        const evalRes = evaluateCustomStrategy('visual', JSON.stringify(visualDef), ltfClosed, cfg.entry_timeframe);
-        if (evalRes.valid) outputs = evalRes.signals;
-      }
-    } else if (
-      (cfg.strategy_key === 'custom_pine' ||
-        cfg.strategy_key === 'custom_python' ||
-        cfg.strategy_key === 'custom_visual') &&
-      cfg.active_custom_strategy_id
-    ) {
-      const customRow = await this.env.DB.prepare(
-        `SELECT language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
-      )
-        .bind(cfg.active_custom_strategy_id, userId)
-        .first<{ language: CustomStrategyLanguage; code: string }>();
-
-      if (customRow?.code) {
-        const evalRes = evaluateCustomStrategy(customRow.language, customRow.code, ltfClosed, cfg.entry_timeframe);
-        if (evalRes.valid) outputs = evalRes.signals;
+      await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `سیگنال ${sig.direction} روی ${sig.symbol} شناسایی شد (${effectiveStratKey} · ${marketType})`, sig.symbol);
+      const exec = await executeSignalForUser(this.env, userId, sig, { signalId: sigId, strategyKey: effectiveStratKey, marketType });
+      if (exec.ok) {
+        openedAnyOnSymbol = true;
       }
     }
 
-    if (outputs.length === 0) {
-      outputs = computeStrategySignals(
-        cfg.strategy_key,
-        ltfClosed,
-        htfClosed,
-        cfg.entry_timeframe,
-        cfg.higher_timeframe,
-        {
-          kbosParams,
-          mixerWeights,
-          mixerThreshold: cfg.mixer_threshold ?? 65,
-        }
-      );
-    }
-    const lastBarKey = `last_signal_ts_${userId}_${scanSymbol}`;
-    const lastProcessed = await this.state.storage.get<number>(lastBarKey);
-    const currentClose = ltfClosed[ltfClosed.length - 1]!.close;
-
-    let latest = outputs[outputs.length - 1];
-    if ((!latest || latest.signal === 'NONE') && !lastProcessed && outputs.length >= 6) {
-      for (let lookback = 2; lookback <= 6; lookback++) {
-        const cand = outputs[outputs.length - lookback];
-        if (cand && cand.signal !== 'NONE' && cand.price > 0 && cand.stopLoss && cand.tp1) {
-          const driftPct = Math.abs(currentClose - cand.price) / cand.price;
-          const slValid = cand.signal === 'LONG' ? currentClose > cand.stopLoss : currentClose < cand.stopLoss;
-          const tp1NotHit = cand.signal === 'LONG' ? currentClose < cand.tp1 : currentClose > cand.tp1;
-          if (driftPct <= 0.015 && slValid && tp1NotHit) {
-            latest = cand;
-            break;
-          }
-        }
-      }
-    }
-    if (!latest || latest.signal === 'NONE') return false;
-
-    if (lastProcessed === latest.timestamp) return false;
-
-    const sigDir: Direction = latest.signal;
-    const sameSideOpen = sigDir === 'LONG' ? openState.long : openState.short;
-    const oppositeSideOpen = sigDir === 'LONG' ? openState.short : openState.long;
-
-    if (marketType === 'SPOT' && sigDir === 'SHORT') {
-      if (openState.long && (cfg.allow_auto_flip ?? 1)) {
-        await this.state.storage.put(lastBarKey, latest.timestamp);
-        await this.closeOpenPositionEarly(userId, cfg, adapter, openState.long, 'STRATEGY_FLIP');
-      }
-      return false;
-    }
-    if (!isDirectionAllowed(sigDir)) return false;
-
-    if (sameSideOpen && !(cfg.allow_pyramiding ?? 0)) {
-      return false;
-    }
-    if (oppositeSideOpen && !openState.hedgeMode) {
-      if (cfg.allow_auto_flip ?? 1) {
-        await this.closeOpenPositionEarly(userId, cfg, adapter, oppositeSideOpen, 'STRATEGY_FLIP');
-      } else {
-        return false;
-      }
-    }
-    if (openCount >= cfg.max_open_positions) return false;
-
-    if (cooldownMinutes > 0 && !sameSideOpen) {
-      const lastClosed = await this.env.DB.prepare(
-        `SELECT closed_at, exit_reason FROM trades WHERE user_id = ? AND symbol = ? AND status = 'CLOSED' AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`
-      ).bind(userId, scanSymbol).first<{ closed_at: string; exit_reason: string | null }>();
-      if (lastClosed?.closed_at) {
-        const closedMs = Date.parse(lastClosed.closed_at.includes('T') ? lastClosed.closed_at : `${lastClosed.closed_at.replace(' ', 'T')}Z`);
-        const effectiveCooldownMs = (lastClosed.exit_reason === 'SL' ? Math.max(cooldownMinutes, 15) : cooldownMinutes) * 60_000;
-        if (Number.isFinite(closedMs) && now - closedMs < effectiveCooldownMs) {
-          return false;
-        }
-      }
-    }
-
-    await this.state.storage.put(lastBarKey, latest.timestamp);
-    const sig = strategyOutputToDollarinoSignal(
-      scanSymbol,
-      cfg.entry_timeframe,
-      marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
-      latest,
-      cfg.signal_channel_handle || '@Dollarino_official',
-      cfg.strategy_key
-    );
-    if (!sig) return false;
-
-    const isPersonalCustom =
-      cfg.strategy_key === 'my_custom_ai' ||
-      cfg.strategy_key === 'custom_pine' ||
-      cfg.strategy_key === 'custom_python' ||
-      cfg.strategy_key === 'custom_visual';
-
-    let sigId: string | undefined;
-    if (!isPersonalCustom) {
-      const recentChan = await this.env.DB.prepare(
-        `SELECT id FROM signals
-         WHERE symbol = ? AND direction = ? AND engine_source = ?
-           AND channel_message_id IS NOT NULL AND created_at >= datetime('now', '-20 minutes')
-         ORDER BY created_at DESC LIMIT 1`
-      ).bind(sig.symbol, sig.direction, cfg.strategy_key).first<{ id: string }>().catch(() => null);
-
-      sigId = recentChan?.id;
-      if (!sigId) {
-        sigId = randomId('sig');
-        await publishSignalBroadcast(this.env, {
-          signalId: sigId,
-          signal: sig,
-          source: cfg.strategy_key,
-          engineKey: cfg.strategy_key,
-          publishToChannel: true,
-          notifySubscribers: false,
-        }).catch(() => {});
-      }
-    }
-
-    await logAudit(this.env.DB, userId, 'SIGNAL', 'INFO', `سیگنال ${sig.direction} روی ${sig.symbol} شناسایی شد (${cfg.strategy_key} · ${marketType})`, sig.symbol);
-    const exec = await executeSignalForUser(this.env, userId, sig, { signalId: sigId, strategyKey: cfg.strategy_key, marketType });
-    return exec.ok;
+    return openedAnyOnSymbol;
   }
 }

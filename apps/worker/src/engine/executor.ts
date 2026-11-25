@@ -1,6 +1,8 @@
 import {
+  computeDynamicRecommendedSettings,
   evaluateRiskGates,
   quantizeDown,
+  resolveEffectiveBotCapital,
   type BotConfig,
   type Direction,
   type DirectionMode,
@@ -65,6 +67,15 @@ export interface UserBotConfigRow {
   watchlist_json?: string;
   started_at?: string | null;
   active_custom_strategy_id?: string | null;
+  active_engines_json?: string | null;
+  custom_paper_balance?: number | null;
+  sniper_enabled?: number;
+  sniper_budget_usd?: number;
+  sniper_min_safety_score?: number;
+  sniper_networks_json?: string | null;
+  bot_budget_mode?: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
+  bot_budget_usd?: number;
+  bot_budget_pct?: number;
 }
 
 export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
@@ -233,7 +244,11 @@ export async function executeSignalForUser(
   if (cfgRow.trading_mode === 'LIVE') {
     const feeCheck = await checkLiveFeeEnforcement(env.DB, userId);
     if (!feeCheck.allowed) {
-      return { ok: false, error: 'FEE_SETTLEMENT_REQUIRED: Live trade blocked until 5% server profit fees are settled.' };
+      return {
+        ok: false,
+        error:
+          'FEE_SETTLEMENT_REQUIRED: باز کردن معامله جدید واقعی تا تسویه کارمزد ۳٪ سود متوقف است (پوزیشن‌های باز فعلی همچنان برای سود مدیریت می‌شوند).',
+      };
     }
     // Never silently fall back to Paper simulation when user specifically launched LIVE mode without an active Agent/Exchange adapter
     if (provider === 'paper' && !options?.forceBypassState) {
@@ -269,16 +284,29 @@ export async function executeSignalForUser(
     }
   }
 
-  const [bal, spec, openCountRow, todayPnlRow, livePrice] = await Promise.all([
+  const [bal, spec, openStatsRow, todayPnlRow, livePrice] = await Promise.all([
     adapter.getBalance(marketType),
     adapter.getInstrumentSpec(signal.symbol, marketType),
-    env.DB.prepare(`SELECT COUNT(*) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ?`)
-      .bind(userId, effectiveMode).first<{ cnt: number }>(),
+    env.DB.prepare(
+      `SELECT COUNT(*) as cnt,
+              COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) as used_margin
+       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ?`
+    ).bind(userId, effectiveMode).first<{ cnt: number; used_margin: number }>(),
     env.DB.prepare(
       `SELECT COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as pnl FROM trades WHERE user_id = ? AND mode = ? AND date(opened_at) = date('now')`
     ).bind(userId, effectiveMode).first<{ pnl: number }>(),
     adapter.getTickerPrice(signal.symbol),
   ]);
+
+  const usedBotMarginUsd = Math.max(0, Number(openStatsRow?.used_margin ?? 0));
+  const walletFreeUsd = Math.max(0, Number(bal.free) || 0);
+  const walletTotalUsd = Math.max(walletFreeUsd + usedBotMarginUsd, Number(bal.total) || 0);
+  const capRes = resolveEffectiveBotCapital({
+    walletBalanceUsd: walletTotalUsd,
+    budgetMode: cfgRow.bot_budget_mode,
+    budgetUsd: cfgRow.bot_budget_usd,
+    budgetPct: cfgRow.bot_budget_pct,
+  });
 
   const sigPxNum = Number(signal.price);
   const livePxNum = Number(livePrice);
@@ -304,8 +332,10 @@ export async function executeSignalForUser(
     availableBalance: bal.free,
     equity: bal.total,
     todayRealizedPnl: String(todayPnlRow?.pnl ?? 0),
-    openPositionsCount: openCountRow?.cnt ?? 0,
+    openPositionsCount: openStatsRow?.cnt ?? 0,
     instrument: spec,
+    effectiveCapitalUsd: capRes.effectiveCapitalUsd,
+    usedBotMarginUsd,
   });
 
   if (!decision.approved) {
@@ -779,4 +809,82 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
   }
 
   return processed;
+}
+
+export interface UserCapitalSummary {
+  walletTotalUsd: number;
+  walletFreeUsd: number;
+  budgetMode: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
+  budgetUsd: number;
+  budgetPct: number;
+  effectiveCapitalUsd: number;
+  usedMarginUsd: number;
+  remainingBudgetUsd: number;
+  isCapped: boolean;
+  recommended: ReturnType<typeof computeDynamicRecommendedSettings>;
+}
+
+export async function resolveUserCapitalSummary(
+  db: D1Database,
+  userId: string,
+  cfg: Pick<UserBotConfigRow, 'trading_mode' | 'bot_budget_mode' | 'bot_budget_usd' | 'bot_budget_pct' | 'paper_balance' | 'risk_profile_json'> | null,
+  balance?: { free?: string | number; total?: string | number } | null
+): Promise<UserCapitalSummary> {
+  const mode = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+  const openMarginRow = await db
+    .prepare(
+      `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used_margin
+       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ?`
+    )
+    .bind(userId, mode)
+    .first<{ used_margin: number }>()
+    .catch(() => ({ used_margin: 0 }));
+
+  const openSniperRow = await db
+    .prepare(
+      `SELECT COALESCE(SUM(CAST(amount_usd AS REAL)), 0) AS sniper_used
+       FROM dex_trades WHERE user_id = ? AND status = 'OPEN' AND note LIKE '%شکارچی دمو%'`
+    )
+    .bind(userId)
+    .first<{ sniper_used: number }>()
+    .catch(() => ({ sniper_used: 0 }));
+
+  const usedTrades = Math.max(0, Number(openMarginRow?.used_margin ?? 0));
+  const usedSniper = mode === 'PAPER' ? Math.max(0, Number(openSniperRow?.sniper_used ?? 0)) : 0;
+  const usedMarginUsd = Math.round((usedTrades + usedSniper) * 100) / 100;
+
+  const fallbackFree = mode === 'LIVE' ? 0 : (Number(cfg?.paper_balance ?? 10000) || 10000);
+  const hasExplicitFree = balance?.free !== undefined && balance?.free !== null;
+  const walletFreeUsd = Math.max(0, Number(hasExplicitFree ? balance!.free : fallbackFree) || 0);
+  const walletTotalUsd = Math.round(Math.max(walletFreeUsd + usedMarginUsd, Number(balance?.total ?? walletFreeUsd + usedMarginUsd) || 0) * 100) / 100;
+
+  const cap = resolveEffectiveBotCapital({
+    walletBalanceUsd: walletTotalUsd,
+    budgetMode: cfg?.bot_budget_mode,
+    budgetUsd: cfg?.bot_budget_usd,
+    budgetPct: cfg?.bot_budget_pct,
+  });
+
+  let preset: 'conservative' | 'balanced' | 'aggressive' = 'balanced';
+  try {
+    if (cfg?.risk_profile_json) {
+      const rp = JSON.parse(cfg.risk_profile_json) as { preset?: string };
+      if (rp.preset === 'conservative' || rp.preset === 'aggressive') preset = rp.preset;
+    }
+  } catch { /* balanced */ }
+
+  const remainingBudgetUsd = Math.max(0, Math.round((cap.effectiveCapitalUsd - usedMarginUsd) * 100) / 100);
+
+  return {
+    walletTotalUsd,
+    walletFreeUsd: Math.round(walletFreeUsd * 100) / 100,
+    budgetMode: cap.budgetMode,
+    budgetUsd: Math.max(0, Number(cfg?.bot_budget_usd ?? 0)),
+    budgetPct: Math.max(5, Math.min(100, Number(cfg?.bot_budget_pct ?? 100))),
+    effectiveCapitalUsd: cap.effectiveCapitalUsd,
+    usedMarginUsd,
+    remainingBudgetUsd,
+    isCapped: cap.isCapped,
+    recommended: computeDynamicRecommendedSettings(cap.effectiveCapitalUsd, preset),
+  };
 }

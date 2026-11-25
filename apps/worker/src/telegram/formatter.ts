@@ -32,11 +32,11 @@ export function formatIranDateTime(isoInput?: string | null): string {
   }
 }
 
-export function formatToman(usdt: number, rate = 74500): string {
+export function formatToman(usdt: number, rate = 290000): string {
   return Math.round(usdt * rate).toLocaleString('en-US');
 }
 
-export function formatRial(usdt: number, rateIrr = 745000): string {
+export function formatRial(usdt: number, rateIrr = 2900000): string {
   return Math.round(usdt * rateIrr).toLocaleString('en-US');
 }
 
@@ -72,15 +72,15 @@ export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'si
   const cleanWeb = webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
   const modeSummary =
     uiMode === 'simple'
-      ? `🌱 **حالت ساده فعال است:** همه‌چیز در ۳ دکمه! شبیه‌ساز ۱۰٬۰۰۰ دلاری رایگان، کارمزد ۵٪ فقط از سود واقعی (اشتراک ۰) و ربات تمام‌اتومات هوش مصنوعی.`
-      : `⚡ **حالت حرفه‌ای (Quant Pro) فعال است:** دسترسی کامل به شکار فوری AI، ۲۵+ آلرت رایگان TradingView، اسکنر DEX، کپی‌ترید V2 و استراتژی دُرنا V1.`;
+      ? `🌱 **حالت ساده فعال است:** همه‌چیز در ۳ دکمه! کیف‌پول دمو قابل تنظیم رایگان ($50 تا $10M)، ۳ معامله سودده اول واقعی ۰٪ و سپس فقط ۳٪ کارمزد سود، به‌همراه ربات چندموتوره AI.`
+      : `⚡ **حالت حرفه‌ای (Quant Pro) فعال است:** دسترسی همزمان به هوش مصنوعی، دُرنا V1، کپی‌ترید، هوش مصنوعی من، اسنایپ لیست/میم، ۲۵+ آلرت رایگان TradingView و اسکنر DEX.`;
   return (
     `🚀 به **دلارینو** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
     `${modeSummary}\n\n` +
     `✨ **امکانات کلیدی حساب شما:**\n` +
     `🧠 **هوش مصنوعی اختصاصی + تحلیل عکس چارت** (همین‌جا سوال بپرس یا عکس چارت بفرست!)\n` +
-    `🛡 **۱۰۰٪ غیرامانی با Trust Wallet** (حداقل ۱۰ دلار واقعی · یا تمرین رایگان با دمو $۱۰,۰۰۰)\n` +
-    `💎 **اشتراک ماهانه صفر:** ۹۵٪ سود واقعی مال شماست و فقط ۵٪ کارمزد سرور از سود محاسبه می‌شود.\n\n` +
+    `🛡 **۱۰۰٪ غیرامانی با Trust Wallet** (حداقل ۱۰ دلار واقعی · یا تمرین رایگان با کیف‌پول دمو قابل تنظیم)\n` +
+    `💎 **اشتراک ماهانه صفر:** ۳ معامله سودده اول واقعی ۱۰۰٪ رایگان (۰٪ کارمزد) و پس از آن ۹۷٪ سود برای شما (فقط ۳٪ کارمزد سرور از سود خالص).\n\n` +
     `━━━━━━━━━━━━━━\n` +
     `🌐 وب‌سایت رسمی دلارینو: ${cleanWeb}\n` +
     `${CREATOR_ATTRIBUTION_FA}\n\n` +
@@ -94,19 +94,19 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
   const rows: ReplyKeyboardButton[][] =
     uiMode === 'simple'
       ? [
-          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '🤖 شروع ربات هوشمند AI' }],
-          [{ text: '📊 وضعیت سود و معاملات' }, { text: '🛡 اتصال Trust Wallet و دمو' }],
-          [{ text: '💰 کارمزد ۵٪ سود (رایگان)' }, { text: '🏆 کپی‌ترید' }],
-          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '👨‍💻 درباره سازنده' }],
-          [{ text: '⚡ رفتن به حالت حرفه‌ای' }],
+          [{ text: '🤖 شروع ربات هوشمند AI' }, { text: '🎛 انتخاب ۵ موتور ترید' }],
+          [{ text: '💰 بودجه مجاز و پیشنهاد پویا' }, { text: '🛡 اتصال Trust Wallet و دمو' }],
+          [{ text: '📊 وضعیت سود و معاملات' }, { text: '🏆 کپی‌ترید' }],
+          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '💰 کارمزد ۳٪ سود (رایگان)' }],
+          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '⚡ رفتن به حالت حرفه‌ای' }],
         ]
       : [
-          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '⚡️ شکار فوری AI' }],
-          [{ text: '🟢 شروع خودکار ربات' }, { text: '📈 معاملات باز' }],
-          [{ text: 'حساب کاربری 👤' }, { text: '🛡 اتصال Trust Wallet' }],
-          [{ text: '📡 آلرت رایگان TradingView' }, { text: '🔍 اسکنر DEX' }, { text: '🏆 کپی‌ترید' }],
-          [{ text: 'تنظیمات ⚙️' }, { text: '💰 کارمزد ۵٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }],
-          [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '👨‍💻 درباره سازنده' }],
+          [{ text: '🟢 شروع خودکار ربات' }, { text: '⚡️ شکار فوری AI' }],
+          [{ text: '🎛 انتخاب ۵ موتور ترید' }, { text: '💰 بودجه مجاز و اهرم' }],
+          [{ text: '📈 معاملات باز' }, { text: 'حساب کاربری 👤' }, { text: '🛡 اتصال Trust Wallet' }],
+          [{ text: '🔍 اسکنر DEX' }, { text: '🏆 کپی‌ترید' }, { text: '📡 آلرت رایگان TradingView' }],
+          [{ text: 'تنظیمات ⚙️' }, { text: '💰 کارمزد ۳٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }],
+          [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }],
           [{ text: '🌱 رفتن به حالت ساده' }],
         ];
   if (isAdmin && safeUrl) {
@@ -166,6 +166,10 @@ export function miniAppInlineKeyboard(
       { text: '📊 استراتژی دُرنا V1', callback_data: 'tg_hunt_ready', style: 'primary' },
     ]);
     rows.push([
+      { text: '🎛 روشن/خاموش ۵ موتور همزمان', callback_data: 'tg_engines_menu', style: 'primary' },
+      { text: '💰 بودجه ربات و اهرم', callback_data: 'tg_trade_quantities' },
+    ]);
+    rows.push([
       { text: '🔄 کپی‌ترید', callback_data: 'tg_copy_list' },
       { text: '🧠 آموزش به هوش مصنوعی من', callback_data: 'tg_myai' },
     ]);
@@ -203,7 +207,7 @@ export function miniAppInlineKeyboard(
     ]);
     rows.push([
       { text: '🔎 جستجوی توکن', callback_data: 'tg_dex_search' },
-      { text: '💰 کارمزد ۵٪ سود (رایگان)', callback_data: 'tg_open_sub' },
+      { text: '💰 کارمزد ۳٪ سود (رایگان)', callback_data: 'tg_open_sub' },
     ]);
   }
 
@@ -378,7 +382,7 @@ export function exchangeSelectionKeyboard() {
   ];
 }
 
-export function formatBalanceCard(provider: string, bal: FuturesBalance, irtRate = 74500): string {
+export function formatBalanceCard(provider: string, bal: FuturesBalance, irtRate = 290000): string {
   const totalNum = Number(bal.total || 0);
   const toman = Math.round(totalNum * irtRate).toLocaleString('en-US');
   const rial = Math.round(totalNum * irtRate * 10).toLocaleString('en-US');
@@ -523,8 +527,8 @@ export function formatAccountCard(params: {
     `💰 موجودی کل: $${params.walletUsdt.toFixed(2)} | ${walletToman} تومان (${walletRial} ریال)\n` +
     `🌐 نرخ لحظه‌ای تتر ایران: ${Math.round(params.tomanRate).toLocaleString('en-US')} تومان\n\n` +
     `✅ دسترسی پلتفرم: **۱۰۰٪ رایگان بدون اشتراک ماهانه**\n` +
-    `💎 مدل هزینه سرور: **شبیه‌ساز دمو $۰ رایگان · کارمزد ۵٪ فقط از سود معاملات واقعی**\n` +
-    `📌 حداقل موجودی حساب واقعی: **$10 USD** (دمو $10,000 همیشه رایگان)\n\n` +
+    `💎 مدل هزینه سرور: **کیف‌پول دمو رایگان · ۳ معامله سودده اول ۰٪ · سپس ۳٪ کارمزد فقط از سود واقعی**\n` +
+    `📌 حداقل موجودی حساب واقعی: **$10 USD** (دمو قابل تنظیم از $50 تا $10M رایگان)\n\n` +
     `⚙️ حالت معامله: ${params.tradingMode} | ${params.execMode === 'AUTO' ? 'اتوترید 🤖' : 'دستی ترید 💪'}\n` +
     `📊 معاملات بسته: ${params.totalTrades} (برد: ${params.wins})\n` +
     `📈 نتیجه خالص: ${params.totalPnl >= 0 ? '+' : '-'}$${Math.abs(params.totalPnl).toFixed(2)}\n\n` +

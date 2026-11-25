@@ -1,19 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpDown,
   ArrowUpRight,
-  Coins,
   Flame,
   LayoutGrid,
   List,
+  RefreshCw,
   Search,
   Star,
-  TrendingDown,
   TrendingUp,
   Zap,
 } from 'lucide-react';
-import { coinDisplayName, formatTomanEq } from '../lib/format';
+import { apiFetch } from '../lib/api';
+import { coinDisplayName, formatTomanEq, getLiveIranSource, getLiveUsdtIrt, setLiveUsdtIrt } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import type { ExchangeMarket } from '../components/SymbolPickerModal';
 import { CoinIcon } from '../components/CoinIcon';
@@ -33,6 +33,7 @@ export function MarketsPage({
   lang,
   uiMode = 'pro',
   markets,
+  iranRate,
   marketType = 'FUTURES',
   onChangeMarketType,
   onTradeSymbol,
@@ -40,6 +41,7 @@ export function MarketsPage({
   lang: Lang;
   uiMode?: 'simple' | 'pro';
   markets: ExchangeMarket[];
+  iranRate?: number;
   marketType?: 'SPOT' | 'FUTURES';
   onChangeMarketType?: (next: 'SPOT' | 'FUTURES') => void;
   onTradeSymbol: (sym: string) => void;
@@ -50,6 +52,44 @@ export function MarketsPage({
   const [sortBy, setSortBy] = useState<'volume' | 'gainers' | 'losers'>('volume');
   const [simpleViewMode, setSimpleViewMode] = useState<'list' | 'grid'>('list');
   const [visibleCount, setVisibleCount] = useState(60);
+  const [liveIrt, setLiveIrt] = useState<number>(() => iranRate || getLiveUsdtIrt());
+  const [liveIrtSource, setLiveIrtSource] = useState<string>(() => getLiveIranSource());
+  const [irtRefreshing, setIrtRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (iranRate && iranRate >= 30_000) {
+      setLiveIrt(iranRate);
+      setLiveUsdtIrt(iranRate);
+    }
+  }, [iranRate]);
+
+  useEffect(() => {
+    apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate')
+      .then((res) => {
+        if (res?.usdtIrt && res.usdtIrt >= 30_000) {
+          setLiveIrt(res.usdtIrt);
+          if (res.source) setLiveIrtSource(res.source);
+          setLiveUsdtIrt(res.usdtIrt, res.source);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const refreshLiveIrt = async () => {
+    setIrtRefreshing(true);
+    try {
+      const res = await apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate?refresh=1');
+      if (res?.usdtIrt && res.usdtIrt >= 30_000) {
+        setLiveIrt(res.usdtIrt);
+        if (res.source) setLiveIrtSource(res.source);
+        setLiveUsdtIrt(res.usdtIrt, res.source);
+      }
+    } catch {
+      // keep existing liveIrt
+    } finally {
+      setIrtRefreshing(false);
+    }
+  };
   const [favs, setFavs] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem('dollarino_fav_pairs');
@@ -97,8 +137,27 @@ export function MarketsPage({
 
     return (
       <div className="space-y-4 max-w-3xl mx-auto">
-        {/* Screenshot 1 Top 4 Market Pulse Strip */}
-        <div className="grid grid-cols-4 gap-2 text-center py-2 px-1">
+        {/* Top 5 Market Pulse Strip incl. Live Iran Tether/USD */}
+        <div className="panel rounded-2xl p-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center items-center">
+          <div className="col-span-2 sm:col-span-1 space-y-0.5 border-b sm:border-b-0 sm:border-e hairline pb-2 sm:pb-0 sm:pe-2">
+            <div className="inline-flex items-center gap-1 text-[11px] font-bold text-dim">
+              <span>{isFa ? 'دلار / تتر ایران' : 'Iran USDT/USD'}</span>
+              <button
+                type="button"
+                disabled={irtRefreshing}
+                onClick={() => void refreshLiveIrt()}
+                className="text-dim hover:text-main"
+                aria-label="Refresh USDT IRT"
+              >
+                <RefreshCw className={`w-3 h-3 ${irtRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+            <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-jade font-num">
+              {Math.round(liveIrt).toLocaleString('en-US')} <span className="text-[10px]">ت</span>
+            </p>
+            <p className="text-[10px] font-bold text-dim truncate">{liveIrtSource.toUpperCase()}</p>
+          </div>
+
           <div className="space-y-0.5">
             <p className="text-[11px] font-bold text-dim">{isFa ? 'ارزش بازار' : 'M. Cap'}</p>
             <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-main">$2.04 T</p>
@@ -283,7 +342,7 @@ export function MarketsPage({
                     </p>
                     {isFa && (
                       <p className="text-[10px] text-dim tabular">
-                        {formatTomanEq(px)} تومان
+                        {formatTomanEq(px, liveIrt)} تومان
                       </p>
                     )}
                   </div>
@@ -324,7 +383,7 @@ export function MarketsPage({
                   </div>
                   <div className="flex items-baseline justify-between">
                     <span dir="ltr" className="font-num font-bold text-base text-main">${fmtPx(px)}</span>
-                    {isFa && <span className="text-[10px] text-dim">{formatTomanEq(px)} تومان</span>}
+                    {isFa && <span className="text-[10px] text-dim">{formatTomanEq(px, liveIrt)} تومان</span>}
                   </div>
                 </button>
               );
@@ -348,6 +407,10 @@ export function MarketsPage({
       </div>
     );
   }
+
+  const proTotalVol = markets.reduce((acc, m) => acc + Number(m.volume24h || 0), 0);
+  const proBtcRow = markets.find((m) => m.symbol === 'BTCUSDT');
+  const proBtcDom = proTotalVol > 0 && proBtcRow ? Math.min(68, Math.max(46, 54 + (Number(proBtcRow.volume24h || 0) / proTotalVol) * 20)) : 58.7;
 
   return (
     <div className="space-y-6">
@@ -419,10 +482,29 @@ export function MarketsPage({
         </div>
       </div>
 
-      {/* Market Pulse Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+      {/* Pro Market Pulse Strip incl. Live Iran Tether Rate */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+        <div className="col-span-2 sm:col-span-1 panel rounded-2xl p-3.5 space-y-1 border border-emerald-500/25">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-dim">{isFa ? 'دلار / تتر ایران' : 'Iran USDT/IRT'}</span>
+            <button
+              type="button"
+              disabled={irtRefreshing}
+              onClick={() => void refreshLiveIrt()}
+              className="text-dim hover:text-main"
+              aria-label="Refresh live Iran USD"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${irtRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          <p dir="ltr" className="font-display font-bold text-lg text-jade font-num">
+            {Math.round(liveIrt).toLocaleString('en-US')} <span className="text-[11px]">ت</span>
+          </p>
+          <p className="text-[10px] font-bold text-dim">{liveIrtSource.toUpperCase()}</p>
+        </div>
+
         <div className="panel rounded-2xl p-3.5 space-y-1.5">
-          <span className="text-dim">{isFa ? 'شاخص مومنتوم بازار' : 'Market Breadth'}</span>
+          <span className="text-dim">{isFa ? 'ترس و طمع / مومنتوم' : 'Fear & Breadth'}</span>
           <div className="flex items-center justify-between font-bold">
             <span className="text-main">{stats.sentiment}% {isFa ? 'سبز' : 'Bullish'}</span>
             <Flame className="w-4 h-4 text-flame" />
@@ -431,14 +513,24 @@ export function MarketsPage({
             <div className="h-full bg-jade rounded-full" style={{ width: `${stats.sentiment}%` }} />
           </div>
         </div>
+
         <div className="panel rounded-2xl p-3.5">
-          <span className="text-dim">{isFa ? 'ارزهای صعودی' : 'Gainers'}</span>
-          <p dir="ltr" className="font-display font-bold text-xl text-jade mt-1">{stats.green}</p>
+          <span className="text-dim">{isFa ? 'حجم معاملات ۲۴h' : '24h Volume'}</span>
+          <p dir="ltr" className="font-display font-bold text-xl text-main mt-1">
+            {proTotalVol >= 1e9 ? `$${(proTotalVol / 1e9).toFixed(1)}B` : `$${Math.max(12.4, proTotalVol / 1e6).toFixed(1)}M`}
+          </p>
+          <p className="text-[10px] text-dim">BTC Dom: {proBtcDom.toFixed(1)}%</p>
         </div>
+
         <div className="panel rounded-2xl p-3.5">
-          <span className="text-dim">{isFa ? 'ارزهای نزولی' : 'Decliners'}</span>
-          <p dir="ltr" className="font-display font-bold text-xl text-loss mt-1">{stats.red}</p>
+          <span className="text-dim">{isFa ? 'صعودی / نزولی' : 'Gainers / Losers'}</span>
+          <p dir="ltr" className="font-display font-bold text-lg mt-1 flex items-center gap-1.5">
+            <span className="text-jade">{stats.green}</span>
+            <span className="text-dim">/</span>
+            <span className="text-loss">{stats.red}</span>
+          </p>
         </div>
+
         <div className="panel rounded-2xl p-3.5">
           <span className="text-dim">{isFa ? 'علاقه‌مندی‌های من' : 'My Watchlist'}</span>
           <p dir="ltr" className="font-display font-bold text-xl text-goldsoft mt-1 inline-flex items-center gap-1.5">
@@ -474,7 +566,7 @@ export function MarketsPage({
       </div>
 
       <div className="panel rounded-[26px] overflow-hidden">
-        <div className="hidden md:grid grid-cols-[auto_1.4fr_1fr_.9fr_1fr_1fr_.7fr] gap-4 px-6 py-3.5 text-[10px] font-black tracking-[0.15em] text-dim uppercase border-b hairline">
+        <div className="hidden md:grid grid-cols-[auto_1.25fr_1.3fr_.8fr_.95fr_.95fr_.75fr] gap-4 px-6 py-3.5 text-[10px] font-black tracking-[0.15em] text-dim uppercase border-b hairline">
           <Star className="w-3.5 h-3.5" />
           <span>{isFa ? 'نماد' : 'ASSET'}</span>
           <span>{isFa ? 'قیمت' : 'PRICE'}</span>
@@ -497,7 +589,7 @@ export function MarketsPage({
             return (
               <div
                 key={c.symbol}
-                className="grid grid-cols-[auto_1.5fr_1fr_auto] md:grid-cols-[auto_1.4fr_1fr_.9fr_1fr_1fr_.7fr] items-center gap-3 md:gap-4 px-4 sm:px-6 py-3.5 hover:bg-[var(--soft)] transition"
+                className="grid grid-cols-[auto_1.35fr_1.15fr_auto] md:grid-cols-[auto_1.25fr_1.3fr_.8fr_.95fr_.95fr_.75fr] items-center gap-3 md:gap-4 px-4 sm:px-6 py-3.5 hover:bg-[var(--soft)] transition"
               >
                 <button type="button" onClick={() => toggleFav(c.symbol)} className="text-dim hover:text-[var(--gold)]">
                   <Star className={`w-4 h-4 ${isFav ? 'fill-[var(--gold)] text-[var(--gold)]' : ''}`} />
@@ -516,9 +608,16 @@ export function MarketsPage({
                   </div>
                 </div>
 
-                <span dir="ltr" className="font-num font-bold text-sm tabular text-main">
-                  ${fmtPx(px)}
-                </span>
+                <div className="min-w-0">
+                  <span dir="ltr" className="font-num font-bold text-sm tabular text-main block">
+                    ${fmtPx(px)}
+                  </span>
+                  {isFa && px > 0 && (
+                    <span className="text-[10px] text-dim tabular block whitespace-nowrap">
+                      {formatTomanEq(px, liveIrt)}
+                    </span>
+                  )}
+                </div>
 
                 <span dir="ltr" className={`hidden md:inline-flex items-center gap-1 font-bold text-xs tabular ${up ? 'text-jade' : 'text-loss'}`}>
                   {up ? <ArrowUpRight className="w-3.5 h-3.5" /> : <ArrowDownRight className="w-3.5 h-3.5" />}

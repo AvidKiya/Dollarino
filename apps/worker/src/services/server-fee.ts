@@ -1,9 +1,11 @@
 import { randomId } from '../crypto.js';
 
-export const SERVER_PROFIT_FEE_PCT = 5.0;
+export const SERVER_PROFIT_FEE_PCT = 3.0;
+export const FREE_PROFITABLE_LIVE_TRADES = 3;
 
 export interface FeePolicyConfig {
   feePct: number;
+  freeProfitableTrades: number;
   graceLimitUsd: number;
   graceHours: number;
   latePenaltyPct: number;
@@ -12,6 +14,7 @@ export interface FeePolicyConfig {
 
 export interface FeeEnforcementStatus {
   allowed: boolean;
+  canManageOpenPositions: boolean;
   lockStatus: 'ACTIVE' | 'WARNING' | 'PENDING_REVIEW' | 'LOCKED';
   reasonCode?: 'FEE_SETTLEMENT_REQUIRED';
   reasonFa?: string;
@@ -26,13 +29,18 @@ export interface FeeEnforcementStatus {
   hoursRemaining: number | null;
   latePenaltyPct: number;
   autoLockEnabled: boolean;
+  freeTradesUsed: number;
+  freeTradesLimit: number;
+  freeTradesRemaining: number;
 }
+
+const LIVE_TRADE_SOURCES = `'PERP_LIVE', 'COPY_V2_LIVE', 'DEX_LIVE', 'SNIPER_LIVE'`;
 
 export async function getFeePolicyConfig(db: D1Database): Promise<FeePolicyConfig> {
   const rows = await db
     .prepare(
       `SELECT key, value FROM system_settings
-       WHERE key IN ('profit_share_pct', 'fee_grace_limit_usd', 'fee_grace_hours', 'fee_late_penalty_pct', 'fee_auto_lock_enabled')`
+       WHERE key IN ('profit_share_pct', 'free_profitable_live_trades', 'fee_grace_limit_usd', 'fee_grace_hours', 'fee_late_penalty_pct', 'fee_auto_lock_enabled')`
     )
     .all<{ key: string; value: string }>()
     .catch(() => ({ results: [] }));
@@ -41,7 +49,8 @@ export async function getFeePolicyConfig(db: D1Database): Promise<FeePolicyConfi
   for (const r of rows.results) map[r.key] = r.value;
 
   return {
-    feePct: Math.max(0, Math.min(20, Number(map.profit_share_pct || SERVER_PROFIT_FEE_PCT) || SERVER_PROFIT_FEE_PCT)),
+    feePct: Math.max(0, Math.min(20, Number(map.profit_share_pct ?? SERVER_PROFIT_FEE_PCT) || SERVER_PROFIT_FEE_PCT)),
+    freeProfitableTrades: Math.max(0, Math.min(20, Number(map.free_profitable_live_trades ?? FREE_PROFITABLE_LIVE_TRADES))),
     graceLimitUsd: Math.max(0.5, Math.min(100, Number(map.fee_grace_limit_usd || 2.0) || 2.0)),
     graceHours: Math.max(1, Math.min(720, Number(map.fee_grace_hours || 72) || 72)),
     latePenaltyPct: Math.max(0, Math.min(100, Number(map.fee_late_penalty_pct ?? 25) || 25)),
@@ -85,6 +94,21 @@ export async function tryVerifyEvmReceiptOnchain(txHash: string): Promise<'CONFI
   return 'UNAVAILABLE';
 }
 
+export async function getUserFreeTrialProgress(db: D1Database, userId: string, freeLimit = FREE_PROFITABLE_LIVE_TRADES) {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM server_fee_ledger
+       WHERE user_id = ? AND source IN (${LIVE_TRADE_SOURCES})`
+    )
+    .bind(userId)
+    .first<{ cnt: number }>()
+    .catch(() => ({ cnt: 0 }));
+  const totalProfitableLiveTrades = Number(row?.cnt ?? 0);
+  const freeTradesUsed = Math.min(freeLimit, totalProfitableLiveTrades);
+  const freeTradesRemaining = Math.max(0, freeLimit - totalProfitableLiveTrades);
+  return { totalProfitableLiveTrades, freeTradesUsed, freeTradesLimit: freeLimit, freeTradesRemaining };
+}
+
 export async function evaluateUserFeeStanding(db: D1Database, userId: string): Promise<FeeEnforcementStatus> {
   const [policy, agg, uRow] = await Promise.all([
     getFeePolicyConfig(db),
@@ -92,12 +116,13 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
       .prepare(
         `SELECT
            COALESCE(SUM(CASE WHEN status = 'ACCRUED' THEN fee_usd ELSE 0 END), 0) AS accrued_usd,
-           COALESCE(SUM(CASE WHEN status = 'PENDING_VERIFY' THEN fee_usd ELSE 0 END), 0) AS pending_verify_usd
+           COALESCE(SUM(CASE WHEN status = 'PENDING_VERIFY' THEN fee_usd ELSE 0 END), 0) AS pending_verify_usd,
+           COALESCE(SUM(CASE WHEN source IN (${LIVE_TRADE_SOURCES}) THEN 1 ELSE 0 END), 0) AS live_prof_count
          FROM server_fee_ledger
          WHERE user_id = ?`
       )
       .bind(userId)
-      .first<{ accrued_usd: number; pending_verify_usd: number }>()
+      .first<{ accrued_usd: number; pending_verify_usd: number; live_prof_count: number }>()
       .catch(() => null),
     db
       .prepare(
@@ -120,12 +145,14 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
 
   const accruedUsd = Number((agg?.accrued_usd || 0).toFixed(4));
   const pendingVerifyUsd = Number((agg?.pending_verify_usd || 0).toFixed(4));
+  const liveProfCount = Number(agg?.live_prof_count || 0);
+  const freeTradesUsed = Math.min(policy.freeProfitableTrades, liveProfCount);
+  const freeTradesRemaining = Math.max(0, policy.freeProfitableTrades - liveProfCount);
+
   let penaltyUsd = Number((uRow?.penalty_usd || 0).toFixed(4));
   const prepaidCreditUsd = Number((uRow?.prepaid_credit || 0).toFixed(4));
   let lockStatus = (uRow?.lock_status as FeeEnforcementStatus['lockStatus']) || 'ACTIVE';
   let graceDeadline = uRow?.fee_grace_deadline || null;
-
-  const totalDueUsd = Number((accruedUsd + penaltyUsd).toFixed(4));
 
   // If zero accrued and zero penalty, ensure clean ACTIVE state (or PENDING_REVIEW if pending verification exists)
   if (accruedUsd <= 0.0001 && penaltyUsd <= 0.0001) {
@@ -139,6 +166,7 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
     }
     return {
       allowed: true,
+      canManageOpenPositions: true,
       lockStatus: nextStatus,
       accruedUsd: 0,
       pendingVerifyUsd,
@@ -150,6 +178,9 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
       hoursRemaining: null,
       latePenaltyPct: policy.latePenaltyPct,
       autoLockEnabled: policy.autoLockEnabled,
+      freeTradesUsed,
+      freeTradesLimit: policy.freeProfitableTrades,
+      freeTradesRemaining,
     };
   }
 
@@ -182,12 +213,9 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
           .bind(penaltyUsd, userId)
           .run()
           .catch(() => {});
-        // Automatically pause live bot engines on fee delinquency
-        await db
-          .prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ? AND trading_mode = 'LIVE'`)
-          .bind(userId)
-          .run()
-          .catch(() => {});
+        // IMPORTANT SAFETY GUARANTEE: NEVER stop bot or freeze open trades!
+        // Open positions stay actively managed (TP/SL/Trailing) so they close in profit;
+        // only NEW trade entries are blocked until overdue fees are settled.
       }
     } else if (lockStatus === 'ACTIVE') {
       lockStatus = 'WARNING';
@@ -204,12 +232,13 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
 
   return {
     allowed: !blocked,
+    canManageOpenPositions: true,
     lockStatus,
     ...(blocked
       ? {
           reasonCode: 'FEE_SETTLEMENT_REQUIRED' as const,
-          reasonFa: `حساب معاملات واقعی به دلیل عدم تسویه کارمزد ۵٪ سرور ($${finalDue.toFixed(2)} شامل بدهی و جریمه دیرکرد) قفل شده است. با واریز و ثبت TX Hash در بخش «کارمزد ۵٪ سود» بلافاصله باز می‌شود. شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری همچنان رایگان فعال است.`,
-          reasonEn: `Live trading is paused due to overdue 5% profit-share fees ($${finalDue.toFixed(2)}). Submit your Trust Wallet settlement TX hash in the 5% Fee Ledger to unlock immediately. Free $10K Demo remains active.`,
+          reasonFa: `باز کردن معامله جدید واقعی تا زمان تسویه کارمزد ۳٪ سرور ($${finalDue.toFixed(2)}) موقتاً متوقف است. پوزیشن‌های باز فعلی شما همچنان مدیریت می‌شوند تا در سود بسته شوند. پس از واریز و ثبت TX Hash بلافاصله باز می‌شود.`,
+          reasonEn: `New LIVE entries are paused due to overdue 3% profit-share fees ($${finalDue.toFixed(2)}). Existing open trades remain actively managed for TP/SL profit exit. Settle in Treasury to unlock new entries.`,
         }
       : {}),
     accruedUsd,
@@ -222,6 +251,9 @@ export async function evaluateUserFeeStanding(db: D1Database, userId: string): P
     hoursRemaining,
     latePenaltyPct: policy.latePenaltyPct,
     autoLockEnabled: policy.autoLockEnabled,
+    freeTradesUsed,
+    freeTradesLimit: policy.freeProfitableTrades,
+    freeTradesRemaining,
   };
 }
 
@@ -230,12 +262,9 @@ export async function checkLiveFeeEnforcement(db: D1Database, userId: string): P
 }
 
 /**
- * Anti-Abuse Referral Qualification Engine (V10.2):
- * - Rewards strictly credit NON-WITHDRAWABLE `fee_prepaid_credit_usd` (never cash withdrawal).
- * - Blocks fake/self-referral accounts by verifying:
- *   1) Distinct IP+UA, distinct Telegram/Phone, and ZERO shared Trust Wallet addresses (EVM/Solana/TRON/TON)
- *   2) Friend holds real verified balance >= $10 (never counts $0 accounts or $10K free Paper Simulator)
- *   3) Friend executed >= 1 real LIVE trade
+ * Anti-Abuse Referral Qualification Engine:
+ * - Credits NON-WITHDRAWABLE `fee_prepaid_credit_usd` toward 3% profit fees.
+ * - Requires distinct wallet/device/TG/phone, real balance >= $10, and >= 1 real LIVE trade.
  */
 export async function unlockTradingReferralFeeCredit(
   db: D1Database,
@@ -343,7 +372,6 @@ export async function unlockTradingReferralFeeCredit(
     return { granted: false, referrerCreditUsd: 0, friendBonusUsd: 0, reason: fraudReason };
   }
 
-  // Real balance >= $10 check (uses live wallet balance, live Perp equity, or actual >=$10 live trade amount)
   const verifiedBalanceUsd = Math.max(
     Number(friendRow.wallet_bal || 0),
     Number(perpRow?.perp_equity || 0),
@@ -361,7 +389,6 @@ export async function unlockTradingReferralFeeCredit(
   let referrerCreditUsd = 0;
   let friendBonusUsd = 0;
 
-  // 1) One-time activation fee-credit bonus on first qualified LIVE trade with >= $10 balance
   if (ref.status !== 'REWARDED') {
     const actTradeId = `ref_act:${ref.id}`;
     const alreadyAct = await db
@@ -401,7 +428,7 @@ export async function unlockTradingReferralFeeCredit(
             randomId('fee_ref'),
             ref.referrer_user_id,
             actTradeId,
-            'پاداش غیرقابل‌برداشت اعتبار کارمزد ۵٪ بابت فعال‌سازی دوست (حداقل ۱۰$ موجودی + ترید واقعی)'
+            'پاداش غیرقابل‌برداشت اعتبار کارمزد ۳٪ بابت فعال‌سازی دوست (حداقل ۱۰$ موجودی + ترید واقعی)'
           ),
         db
           .prepare(
@@ -412,13 +439,12 @@ export async function unlockTradingReferralFeeCredit(
             randomId('fee_refw'),
             referredUserId,
             `ref_welcome:${ref.id}`,
-            'هدیه خوش‌آمدگویی غیرقابل‌برداشت اعتبار کارمزد ۵٪ با کد معرف'
+            'هدیه خوش‌آمدگویی غیرقابل‌برداشت اعتبار کارمزد ۳٪ با کد معرف'
           ),
       ]);
     }
   }
 
-  // 2) Ongoing 20% fee-credit share from friend's profitable 5% server fees (non-withdrawable, capped $250/friend)
   if (params.feeUsd > 0 && Number(ref.commission_usd || 0) < 250) {
     const shareTradeId = `ref_share:${params.tradeId}`;
     const alreadyShare = await db
@@ -451,7 +477,7 @@ export async function unlockTradingReferralFeeCredit(
             shareTradeId,
             Number(params.realizedPnlUsd.toFixed(4)),
             shareUsd,
-            '۲۰٪ سهم اعتبار غیرقابل‌برداشت از کارمزد ۵٪ معامله سودده دوست'
+            '۲۰٪ سهم اعتبار غیرقابل‌برداشت از کارمزد ۳٪ معامله سودده دوست'
           ),
       ]);
     }
@@ -466,35 +492,39 @@ export async function unlockTradingReferralFeeCredit(
 }
 
 /**
- * Records a transparent 5% server-cost fee ONLY when a real (LIVE) trade closes with positive profit.
- * Auto-deducts from user's Prepaid Fee Credit if available; otherwise accrues and updates standing.
- * Also evaluates & unlocks anti-abuse referral Fee Credits when qualifying LIVE trades settle.
- * Losses and Demo Simulator (PAPER) trades NEVER incur any fee ($0).
+ * Records transparent Profit-Share Server Fee ONLY when a real (LIVE) trade closes with positive profit:
+ * - First 3 profitable LIVE trades per user: 0% fee ($0, recorded as FREE_TRIAL).
+ * - From 4th profitable LIVE trade onward: 3% of net profit (auto-deducted from Prepaid Credit if available).
+ * - Losses and Demo Simulator (PAPER) trades NEVER incur any fee ($0).
  */
 export async function recordProfitShareServerFee(
   db: D1Database,
   params: {
     userId: string;
     tradeId: string;
-    source: 'PERP_LIVE' | 'COPY_V2_LIVE' | 'DEX_LIVE';
+    source: 'PERP_LIVE' | 'COPY_V2_LIVE' | 'DEX_LIVE' | 'SNIPER_LIVE';
     symbol: string;
     mode: string;
     realizedPnlUsd: number;
     tradeAmountUsd?: number;
     note?: string;
   }
-): Promise<{ recorded: boolean; feeUsd: number; feePct: number; paidFromCredit?: boolean }> {
+): Promise<{
+  recorded: boolean;
+  feeUsd: number;
+  feePct: number;
+  paidFromCredit?: boolean;
+  freeTrialUsed?: boolean;
+  freeTradesRemaining?: number;
+}> {
   if (params.mode !== 'LIVE') {
     return { recorded: false, feeUsd: 0, feePct: SERVER_PROFIT_FEE_PCT };
   }
 
   const policy = await getFeePolicyConfig(db);
-  const feePct = policy.feePct;
   const positivePnl = Number.isFinite(params.realizedPnlUsd) && params.realizedPnlUsd > 0 ? params.realizedPnlUsd : 0;
-  const feeUsd = positivePnl > 0 ? Number((positivePnl * (feePct / 100)).toFixed(4)) : 0;
 
-  if (feeUsd <= 0) {
-    // Even if trade closed break-even/small loss, evaluate qualification if balance >= $10
+  if (positivePnl <= 0) {
     await unlockTradingReferralFeeCredit(db, params.userId, {
       tradeId: params.tradeId,
       mode: params.mode,
@@ -502,7 +532,7 @@ export async function recordProfitShareServerFee(
       realizedPnlUsd: Number(params.realizedPnlUsd || 0),
       tradeAmountUsd: params.tradeAmountUsd,
     }).catch(() => {});
-    return { recorded: false, feeUsd: 0, feePct };
+    return { recorded: false, feeUsd: 0, feePct: policy.feePct };
   }
 
   // Avoid duplicate ledger entry for the same closed trade
@@ -512,6 +542,50 @@ export async function recordProfitShareServerFee(
     .first<{ id: string }>()
     .catch(() => null);
   if (existing) {
+    return { recorded: false, feeUsd: 0, feePct: policy.feePct };
+  }
+
+  const trial = await getUserFreeTrialProgress(db, params.userId, policy.freeProfitableTrades);
+  if (trial.totalProfitableLiveTrades < policy.freeProfitableTrades) {
+    const tradeNumber = trial.totalProfitableLiveTrades + 1;
+    const freeRemaining = Math.max(0, policy.freeProfitableTrades - tradeNumber);
+    await db
+      .prepare(
+        `INSERT INTO server_fee_ledger (id, user_id, trade_id, source, symbol, realized_pnl_usd, fee_pct, fee_usd, status, note)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'FREE_TRIAL', ?)`
+      )
+      .bind(
+        randomId('fee'),
+        params.userId,
+        params.tradeId,
+        params.source,
+        params.symbol,
+        Number(positivePnl.toFixed(4)),
+        `هدیه معامله سودده رایگان (${tradeNumber} از ${policy.freeProfitableTrades}) · ۰٪ کارمزد روی ${params.symbol}`
+      )
+      .run()
+      .catch(() => {});
+
+    await evaluateUserFeeStanding(db, params.userId);
+    await unlockTradingReferralFeeCredit(db, params.userId, {
+      tradeId: params.tradeId,
+      mode: params.mode,
+      feeUsd: 0,
+      realizedPnlUsd: Number(params.realizedPnlUsd || 0),
+      tradeAmountUsd: params.tradeAmountUsd,
+    }).catch(() => {});
+    return {
+      recorded: true,
+      feeUsd: 0,
+      feePct: 0,
+      freeTrialUsed: true,
+      freeTradesRemaining: freeRemaining,
+    };
+  }
+
+  const feePct = policy.feePct;
+  const feeUsd = Number((positivePnl * (feePct / 100)).toFixed(4));
+  if (feeUsd <= 0) {
     return { recorded: false, feeUsd: 0, feePct };
   }
 
@@ -548,7 +622,7 @@ export async function recordProfitShareServerFee(
       params.tradeId,
       params.source,
       params.symbol,
-      Number(params.realizedPnlUsd.toFixed(4)),
+      Number(positivePnl.toFixed(4)),
       feePct,
       feeUsd,
       ledgerStatus,
@@ -565,7 +639,7 @@ export async function recordProfitShareServerFee(
     realizedPnlUsd: Number(params.realizedPnlUsd || 0),
     tradeAmountUsd: params.tradeAmountUsd,
   }).catch(() => {});
-  return { recorded: true, feeUsd, feePct, paidFromCredit };
+  return { recorded: true, feeUsd, feePct, paidFromCredit, freeTrialUsed: false, freeTradesRemaining: 0 };
 }
 
 export async function getUserServerFeeSummary(db: D1Database, userId: string) {
@@ -574,12 +648,12 @@ export async function getUserServerFeeSummary(db: D1Database, userId: string) {
     db
       .prepare(
         `SELECT
-           COALESCE(SUM(realized_pnl_usd), 0) AS total_profitable_pnl_usd,
+           COALESCE(SUM(CASE WHEN source IN (${LIVE_TRADE_SOURCES}) THEN realized_pnl_usd ELSE 0 END), 0) AS total_profitable_pnl_usd,
            COALESCE(SUM(fee_usd), 0) AS total_fee_usd,
            COALESCE(SUM(CASE WHEN status = 'ACCRUED' THEN fee_usd ELSE 0 END), 0) AS accrued_fee_usd,
            COALESCE(SUM(CASE WHEN status = 'PENDING_VERIFY' THEN fee_usd ELSE 0 END), 0) AS pending_verify_fee_usd,
            COALESCE(SUM(CASE WHEN status IN ('SETTLED_ONCHAIN', 'SETTLED_PREPAID') THEN fee_usd ELSE 0 END), 0) AS settled_fee_usd,
-           COUNT(*) AS profitable_trades_count
+           COALESCE(SUM(CASE WHEN source IN (${LIVE_TRADE_SOURCES}) THEN 1 ELSE 0 END), 0) AS profitable_trades_count
          FROM server_fee_ledger
          WHERE user_id = ?`
       )
@@ -608,6 +682,9 @@ export async function getUserServerFeeSummary(db: D1Database, userId: string) {
 
   return {
     feePct: SERVER_PROFIT_FEE_PCT,
+    freeTradesUsed: enforcement.freeTradesUsed,
+    freeTradesLimit: enforcement.freeTradesLimit,
+    freeTradesRemaining: enforcement.freeTradesRemaining,
     totalProfitablePnlUsd: Number(agg?.total_profitable_pnl_usd || 0),
     totalFeeUsd: Number(agg?.total_fee_usd || 0),
     accruedFeeUsd: Number(agg?.accrued_fee_usd || 0),

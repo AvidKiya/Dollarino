@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, ApiError } from '../lib/api';
 import type { Lang } from '../lib/i18n';
+import { pushFloatingToast } from '../lib/toast';
 import type { NavTab } from '../lib/types';
 import { AreaChart } from '../components/DollarinoViz';
 import { compressChartImageFile } from '../components/FloatingAiChat';
@@ -62,6 +63,22 @@ export function MyAiPage({
   const [busy, setBusy] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    pushFloatingToast(
+      notice.text,
+      notice.ok ? 'success' : 'warn',
+      undefined,
+      !notice.ok
+        ? {
+            label: isFa ? 'مشاهده پلن‌ها' : 'View Plans',
+            onClick: () => onNavigate('dex'),
+          }
+        : undefined
+    );
+    setNotice(null);
+  }, [notice, isFa, onNavigate]);
   const [testResult, setTestResult] = useState<{
     symbol: string;
     timeframe: string;
@@ -273,25 +290,6 @@ export function MyAiPage({
           </button>
         </div>
       </div>
-
-      {notice && (
-        <div
-          className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between gap-3 ${
-            notice.ok ? 'badge-signal' : 'bg-rose-500/15 text-loss border border-rose-500/30'
-          }`}
-        >
-          <span>{notice.text}</span>
-          {!notice.ok && (
-            <button
-              type="button"
-              onClick={() => onNavigate('dex')}
-              className="btn-gold px-3.5 py-1.5 rounded-xl text-[11px] shrink-0"
-            >
-              {isFa ? 'مشاهده پلن‌ها' : 'View Plans'}
-            </button>
-          )}
-        </div>
-      )}
 
       <div className="grid lg:grid-cols-[1.25fr_0.95fr] gap-5 items-start">
         {/* Conversational Training Chat */}

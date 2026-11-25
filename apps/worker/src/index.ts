@@ -27,7 +27,9 @@ import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/tradi
 import { trustWalletRoutes } from './routes/trustwallet.js';
 import { evaluateTradingViewFreeAlerts, syncTelegramBotAutoOnVersion, webhookRoutes } from './routes/webhooks.js';
 import { getFounderProfile } from './services/founder-profile.js';
-import { SERVER_PROFIT_FEE_PCT } from './services/server-fee.js';
+import { SERVER_PROFIT_FEE_PCT, FREE_PROFITABLE_LIVE_TRADES } from './services/server-fee.js';
+import type { UserBotConfigRow } from './engine/executor.js';
+import { runNewListingAndMemeSniperForUser } from './engine/listing-sniper.js';
 import { syncAutoTopSiteTraders } from './services/site-traders.js';
 import { getSystemSettingValue } from './telegram/publisher.js';
 import { fetchIranUsdtRate } from './exchanges/iran-rate.js';
@@ -111,10 +113,13 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '10.0.0',
+    version: '11.0.0',
     openSource: false,
     paidSubscriptions: false,
     profitShareFeePct: SERVER_PROFIT_FEE_PCT,
+    freeProfitableLiveTrades: FREE_PROFITABLE_LIVE_TRADES,
+    multiEngineSimultaneous: true,
+    listingAndMemeSniper: true,
     trustWalletOnly: true,
     minLiveBalanceUsd: 10,
     demoSimulatorUsd: 10000,
@@ -151,6 +156,11 @@ app.get('/api/health', (c) => {
       telegramLoginWidget: true,
       alwaysOnSignalsAndAiIntel: true,
       dedicatedFloatingVisionAI: true,
+      simultaneousMultiEngine: true,
+      customizablePaperBalance: true,
+      centralTreasury: true,
+      listingAndMemeSniper: true,
+      riskTermsGate: true,
     },
     timestamp: new Date().toISOString(),
   });
@@ -509,7 +519,8 @@ app.route('/api/webhook', webhookRoutes);
 app.route('/api/admin', adminRoutes);
 
 app.get('/api/public/usdt-irt-rate', async (c) => {
-  const rate = await fetchIranUsdtRate();
+  const forceRefresh = c.req.query('refresh') === '1';
+  const rate = await fetchIranUsdtRate(forceRefresh);
   return c.json({ ok: true, ...rate });
 });
 
@@ -602,6 +613,19 @@ export default {
       }
       if (!activity || activity.has_copy_pos) {
         await reconcileCopyPositionsV2(env).catch(() => {});
+      }
+
+      // Run CEX New Listing & DEX Booming Meme Sniper for users with LISTING_SNIPER engine active
+      const sniperUsers = await env.DB.prepare(
+        `SELECT * FROM bot_configs
+         WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')
+           AND (COALESCE(sniper_enabled, 0) = 1 OR COALESCE(active_engines_json, '') LIKE '%LISTING_SNIPER%')
+         LIMIT 25`
+      )
+        .all<UserBotConfigRow>()
+        .catch(() => ({ results: [] }));
+      for (const su of sniperUsers.results) {
+        await runNewListingAndMemeSniperForUser(env, su.user_id, su).catch(() => {});
       }
     })());
   },

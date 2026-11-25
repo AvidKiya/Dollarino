@@ -10,7 +10,7 @@ import { callMultimodalChatAI } from '../ai/assistant.js';
 import { callBYOAI, resolveAIEnsemble } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
-import { activateExclusiveTradingEngine } from '../engine/exclusive-engine.js';
+import { toggleTradingEngine } from '../engine/exclusive-engine.js';
 import { logAudit } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
@@ -475,8 +475,8 @@ myAiRoutes.post('/activate', async (c) => {
   const rules = parseRulesJson(agent.system_rules_json);
 
   if (active) {
-    // Enforce strict single-engine rule: disables any Copy Trade subscriptions and switches bot_configs to my_custom_ai
-    await activateExclusiveTradingEngine(c.env.DB, user.id, 'MY_AI', {
+    // V11.0 Multi-Engine: enable MY_AI concurrently without disabling Copy-Trade, Central AI, Strategy, or Sniper
+    await toggleTradingEngine(c.env.DB, user.id, 'MY_AI', true, {
       auditSource: 'my_ai_activate',
     });
 
@@ -485,8 +485,7 @@ myAiRoutes.post('/activate', async (c) => {
     const nextState = body.startBot ? (cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER') : undefined;
     await c.env.DB.prepare(
       `UPDATE bot_configs
-       SET strategy_key = 'my_custom_ai',
-           entry_timeframe = ?,
+       SET entry_timeframe = ?,
            max_leverage = ?,
            direction_mode = ?,
            watchlist_json = ?,
@@ -507,16 +506,9 @@ myAiRoutes.post('/activate', async (c) => {
     }
     await logAudit(c.env.DB, user.id, 'AI_AGENT', 'INFO', `Personal trained AI "${agent.name}" activated (${rules.timeframe}, ${rules.symbols.join(', ')})`);
   } else {
-    await c.env.DB.prepare(
-      `UPDATE user_ai_agents SET is_active_for_trading = 0, updated_at = datetime('now') WHERE user_id = ?`
-    ).bind(user.id).run();
-    await c.env.DB.prepare(
-      `UPDATE bot_configs
-       SET bot_state = CASE WHEN strategy_key = 'my_custom_ai' THEN 'STOPPED' ELSE bot_state END,
-           strategy_key = CASE WHEN strategy_key = 'my_custom_ai' THEN 'dollarino_v01' ELSE strategy_key END,
-           updated_at = datetime('now')
-       WHERE user_id = ?`
-    ).bind(user.id).run().catch(() => {});
+    await toggleTradingEngine(c.env.DB, user.id, 'MY_AI', false, {
+      auditSource: 'my_ai_deactivate',
+    });
   }
 
   return c.json({ ok: true, isActiveForTrading: active });

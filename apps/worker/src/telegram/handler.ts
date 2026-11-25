@@ -1,4 +1,4 @@
-import { formatDollarinoSignal, FREE_TV_ALERT_TEMPLATES, parseDollarinoSignal, resolveEngineDisplayLabel, selectClosedCandles, type Direction, type MarketType, type Timeframe } from '@dollarino/core';
+import { computeDynamicRecommendedSettings, formatDollarinoSignal, FREE_TV_ALERT_TEMPLATES, parseDollarinoSignal, resolveEngineDisplayLabel, selectClosedCandles, type Direction, type MarketType, type Timeframe } from '@dollarino/core';
 import {
   DOLLARINO_CREATOR_INFO,
   listSelectableAIModels,
@@ -11,8 +11,12 @@ import { encryptVaultJson, generateReferralCode, hashPassword, hmacSha256Hex, ma
 import { fetchDexTrendingOverview, searchDexPairs, type DexTokenEnriched } from '../dex/screener.js';
 import { closeCopyPositionV2, discoverTop10SmartTraders, type CopyPositionV2Row } from '../dex/smart-copy.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
-import { activateExclusiveTradingEngine, type TradingEngineChoice } from '../engine/exclusive-engine.js';
-import { executeSignalForUser, type UserBotConfigRow } from '../engine/executor.js';
+import {
+  getActiveEngineState,
+  toggleTradingEngine,
+  type TradingEngineChoice,
+} from '../engine/exclusive-engine.js';
+import { executeSignalForUser, resolveUserCapitalSummary, type UserBotConfigRow } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
@@ -31,7 +35,11 @@ import {
   isValidTon,
   isValidTron,
 } from '../routes/trustwallet.js';
-import { getUserServerFeeSummary } from '../services/server-fee.js';
+import {
+  FREE_PROFITABLE_LIVE_TRADES,
+  getUserServerFeeSummary,
+  SERVER_PROFIT_FEE_PCT,
+} from '../services/server-fee.js';
 import { getFounderProfile } from '../services/founder-profile.js';
 import { syncAutoTopSiteTraders } from '../services/site-traders.js';
 import {
@@ -145,7 +153,7 @@ async function sendFounderAboutCard(
     ``,
     `✅ **بیانیه استقلال ۱۰۰٪ و ضدپانزی:**`,
     fp?.independenceFa || 'پلتفرم دلارینو از صفر تا صد به‌صورت کاملاً مستقل طراحی شده و هیچ وابستگی ثالث ندارد.',
-    fp?.antiPonziFa || 'سرمایه ۱۰۰٪ در کیف‌پول شخصی Trust Wallet شما می‌ماند؛ اشتراک ماهانه صفر است و فقط ۵٪ کارمزد سرور از سود واقعی محاسبه می‌شود.',
+    fp?.antiPonziFa || 'سرمایه ۱۰۰٪ در کیف‌پول شخصی Trust Wallet شما می‌ماند؛ اشتراک ماهانه صفر است، ۳ معامله سودده اول رایگان (۰٪) و پس از آن فقط ۳٪ کارمزد سرور از سود واقعی محاسبه می‌شود.',
     ``,
     `🌐 وب‌سایت: ${cleanWeb}`,
   ].filter(Boolean);
@@ -411,10 +419,24 @@ async function startBotOneClickForTelegram(params: {
         : targetStrategy === 'copy_trade'
           ? 'COPY_TRADE'
           : 'STRATEGY';
-  const excl = await activateExclusiveTradingEngine(env.DB, user.id, engineChoice, {
+  // Multi-Engine V11: enable chosen engine without stopping/wiping any other engine already toggled ON!
+  const excl = await toggleTradingEngine(env.DB, user.id, engineChoice, true, {
     strategyKey: targetStrategy,
     auditSource: 'telegram_start',
   });
+  const enginesLabel = excl.activeEngines
+    .map((e) =>
+      e === 'CENTRAL_AI'
+        ? '🤖 هوش مصنوعی مرکزی'
+        : e === 'STRATEGY'
+          ? '📊 استراتژی دُرنا V1'
+          : e === 'MY_AI'
+            ? '🧠 هوش مصنوعی من'
+            : e === 'COPY_TRADE'
+              ? '🏆 کپی‌ترید'
+              : '🔥 اسنایپ لیست/میم'
+    )
+    .join(' + ');
 
   await env.DB.prepare(
     `UPDATE bot_configs
@@ -424,6 +446,15 @@ async function startBotOneClickForTelegram(params: {
   )
     .bind(targetStrategy, nextState, user.id)
     .run();
+
+  if (excl.activeEngines.includes('COPY_TRADE')) {
+    await env.DB.prepare(
+      `UPDATE copy_subscriptions SET auto_mirror = 1, updated_at = datetime('now') WHERE user_id = ? AND is_active = 1`
+    )
+      .bind(user.id)
+      .run()
+      .catch(() => {});
+  }
 
   const doStub = env.TRADING_BOT_DO.get(env.TRADING_BOT_DO.idFromName('global-coordinator'));
   const runTick = Promise.all([
@@ -442,18 +473,18 @@ async function startBotOneClickForTelegram(params: {
 
   const liveFallbackNote =
     cfg?.trading_mode === 'LIVE' && provider === 'paper'
-      ? '\n⚠️ توجه: کیف‌پول Trust Wallet هنوز برای اجرای زنده متصل نیست؛ بنابراین ربات فعلاً روی **شبیه‌ساز دمو مشابه تراست‌ولت** ترید خودکار انجام می‌دهد.'
+      ? '\n⚠️ توجه: کیف‌پول Trust Wallet هنوز برای اجرای زنده متصل نیست؛ بنابراین ربات فعلاً روی **کیف‌پول دمو (قابل تنظیم)** ترید خودکار انجام می‌دهد.'
       : '';
   const exclNote =
-    excl.cancelledCopyCount > 0 || excl.disabledMyAi
-      ? '\n🔒 **حالت تک‌موتوره:** برای جلوگیری از تداخل معاملات، کپی‌ترید و موتورهای قبلی به‌صورت خودکار متوقف شدند.'
+    excl.activeEngines.length > 1
+      ? `\n🎛 **حالت چندموتوره همزمان:** ${enginesLabel} بدون تداخل با یکدیگر در حال اجرا هستند.`
       : '';
 
   const text =
     `🟢 **ربات ترید خودکار دلارینو روشن شد و فعال است!**\n\n` +
     `• حالت اجرا: ⚡️ **۱۰۰٪ خودکار (بدون نیاز به تایید دستی)**\n` +
-    `• موتور فعال: ${resolveEngineDisplayLabel(targetStrategy)}\n` +
-    `• بستر متصل: ${provider === 'paper' ? 'شبیه‌ساز دمو تراست‌ولت ($10K)' : 'Trust Wallet Live'} (${effectiveTradingMode})\n` +
+    `• موتورهای فعال: ${enginesLabel || resolveEngineDisplayLabel(targetStrategy)}\n` +
+    `• بستر متصل: ${provider === 'paper' ? 'کیف‌پول دمو تراست‌ولت' : 'Trust Wallet Live'} (${effectiveTradingMode})\n` +
     `• موجودی آزاد: $${Number(bal.free || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}\n` +
     `• معاملات باز فعلی: ${openCountRow?.cnt ?? 0}\n\n` +
     `🔍 اسکن خودکار کل بازار هر ۱۵ ثانیه در حال اجراست و به‌محض یافتن نقطه ورود مطمئن، معامله با حد ضرر و ۳ تارگت خودکار باز می‌شود.` +
@@ -468,17 +499,7 @@ async function runInstantAiAutoTradeForTelegram(params: {
   user: ProvisionedUserRow;
   tgId: string;
 }): Promise<{ ok: boolean; needSubscription?: boolean; text: string }> {
-  const { env, user, tgId } = params;
-  const ent = await resolveUserEntitlement(env.DB, {
-    id: user.id,
-    email: user.email,
-    username: user.username,
-    role: (user.role as AuthUser['role']) || 'user',
-    telegramId: tgId,
-  });
-  if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-    return { ok: false, needSubscription: true, text: 'NEED_SUBSCRIPTION' };
-  }
+  const { env, user, tgId: _tgId } = params;
 
   const cfg = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
     .bind(user.id)
@@ -492,8 +513,8 @@ async function runInstantAiAutoTradeForTelegram(params: {
     cfg?.trading_mode === 'PAPER' ? 'paper' : undefined
   );
 
-  // Enforce single-engine mutual exclusion and keep auto-trading enabled on the coordinator
-  await activateExclusiveTradingEngine(env.DB, user.id, 'CENTRAL_AI', {
+  // V11.0 Multi-Engine: enable CENTRAL_AI concurrently without turning off other active engines
+  await toggleTradingEngine(env.DB, user.id, 'CENTRAL_AI', true, {
     strategyKey: 'ai_autonomous_agent',
     auditSource: 'telegram_instant_ai',
   });
@@ -795,7 +816,7 @@ async function showAccountCard(env: Env, bot: TelegramBotClient, chatId: string 
 
   const kb: InlineKeyboardButton[][] = [
     [
-      { text: '💰 کارمزد ۵٪ سود (رایگان)', callback_data: 'sub_menu', style: 'success' },
+      { text: '💰 کارمزد ۳٪ سود (رایگان)', callback_data: 'sub_menu', style: 'success' },
       { text: '📡 آلرت رایگان TradingView', callback_data: 'tg_tv_alerts', style: 'primary' },
     ],
     [
@@ -1091,14 +1112,15 @@ async function showSimpleWizardStep(
     ];
   } else if (stepNum === 3) {
     msg =
-      `🚀 **مرحله ۳ از ۴ — انتخاب مغز متفکر (۴ موتور دلارینو)**\n` +
+      `🚀 **مرحله ۳ از ۴ — انتخاب موتورهای معاملاتی دلارینو (امکان اجرای همزمان ۵ موتور)**\n` +
       `• مارجین: ${state?.wizMarginPct ?? 10}% | اهرم: ${state?.wizLev ?? 10}x\n\n` +
-      `کدام موتور سیگنال‌ها را برای شما پیدا و مدیریت کند؟`;
+      `موتور پایه را انتخاب کنید (سایر موتورها را می‌توانید همزمان فعال نگه دارید):`;
     kb = [
       [{ text: '🧠 موتور ۱: هوش مصنوعی خودکار دلارینو', callback_data: 'tg_wiz_e:ai_autonomous_agent', style: 'success' }],
       [{ text: '🤖 موتور ۲: هوش مصنوعی شخصی من', callback_data: 'tg_wiz_e:my_custom_ai', style: 'primary' }],
       [{ text: '🎯 موتور ۳: استراتژی شکار دُرنا V1', callback_data: 'tg_wiz_e:dollarino_v01', style: 'primary' }],
       [{ text: '🏆 موتور ۴: کپی‌ترید تاییدشده', callback_data: 'tg_wiz_e:copy_trade', style: 'success' }],
+      [{ text: '🔥 موتور ۵: اسنایپر لیستینگ و میم‌کوین', callback_data: 'tg_wiz_e:listing_sniper', style: 'primary' }],
       [{ text: '⬅️ بازگشت به مرحله ۲', callback_data: 'tg_simple_wizard:2' }],
     ];
   } else {
@@ -1173,16 +1195,18 @@ async function showSubscriptionMenu(env: Env, bot: TelegramBotClient, chatId: st
   const feeToman = Math.round(feeSummary.accruedFeeUsd * iranRate.usdtIrt).toLocaleString('en-US');
 
   const text =
-    `💰 **مدل شفاف دلارینو: اشتراک ۱۰۰٪ رایگان · ۹۵٪ سود برای شما (فقط ۵٪ کارمزد سرور)**\n\n` +
+    `💰 **مدل شفاف دلارینو: اشتراک ۱۰۰٪ رایگان · ${FREE_PROFITABLE_LIVE_TRADES} معامله اول ۰٪ · سپس ${SERVER_PROFIT_FEE_PCT}% کارمزد سرور**\n\n` +
     `✅ در دلارینو **هیچ هزینه اشتراک ماهانه یا سالانه** وجود ندارد!\n` +
-    `• تمام امکانات (هوش مصنوعی، دُرنا V1، کپی‌ترید، رادار DEX و آلرت TradingView) برای شما رایگان است.\n` +
-    `• 🧪 شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری و تمام ابزارهای تحلیل: **کاملاً رایگان ($۰)!**\n` +
-    `• 💎 فقط وقتی معامله واقعی (Trust Wallet Live) با **سود** بسته شود، **۵٪ از سود همان معامله** برای هزینه سرور محاسبه می‌شود (۹۵٪ سود متعلق به شماست).\n` +
+    `• تمام امکانات (هوش مصنوعی، دُرنا V1، کپی‌ترید، اسنایپ لیست/میم و رادار DEX) برای شما رایگان است.\n` +
+    `• 🧪 کیف‌پول دمو (قابل تنظیم ۵۰ تا ۱۰M دلار) و ابزارهای تحلیل: **کاملاً رایگان ($۰)!**\n` +
+    `• 🎁 **${FREE_PROFITABLE_LIVE_TRADES} معامله سودده اول واقعی (LIVE) کاملاً رایگان است (۰٪ کارمزد)!**\n` +
+    `• 💎 از معامله سودده چهارم به بعد، فقط **${SERVER_PROFIT_FEE_PCT}% از سود خالص** برای هزینه سرور محاسبه می‌شود (۹۷٪ سود متعلق به شماست).\n` +
     `• 🛡 دارایی Trust Wallet شما ۱۰۰٪ غیرامانی است و دلارینو هیچ حق برداشتی از ولت شما ندارد.\n\n` +
-    `📊 **دفتر حساب ۵٪ شما:**\n` +
+    `📊 **دفتر حساب ${SERVER_PROFIT_FEE_PCT}% شما:**\n` +
+    `• معاملات رایگان باقی‌مانده: ${feeSummary.freeTradesRemaining} از ${feeSummary.freeTradesLimit}\n` +
     `• معاملات سودده واقعی: ${feeSummary.profitableTradesCount}\n` +
     `• مجموع سود خالص معاملات سودده: +$${feeSummary.totalProfitablePnlUsd.toFixed(2)}\n` +
-    `• کارمزد ۵٪ معوق (هزینه سرور): $${feeSummary.accruedFeeUsd.toFixed(2)} (${feeToman} تومان)\n` +
+    `• کارمزد ${SERVER_PROFIT_FEE_PCT}% معوق (هزینه سرور): $${feeSummary.accruedFeeUsd.toFixed(2)} (${feeToman} تومان)\n` +
     `• تسویه‌شده: $${feeSummary.settledFeeUsd.toFixed(2)}`;
 
   const kb: InlineKeyboardButton[][] = [
@@ -1208,21 +1232,28 @@ async function showFreeTradingViewAlertsMenu(
   webAppUrl: string,
   editMsgId?: number
 ) {
-  const [alerts, cfg] = await Promise.all([
+  const [alerts, cfg, uRow] = await Promise.all([
     env.DB.prepare(`SELECT id, name, symbol, timeframe, trigger_count, is_active FROM tradingview_free_alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 8`).bind(userId).all<{
       id: string; name: string; symbol: string; timeframe: string; trigger_count: number; is_active: number;
     }>().catch(() => ({ results: [] })),
     env.DB.prepare(`SELECT webhook_secret FROM bot_configs WHERE user_id = ?`).bind(userId).first<{ webhook_secret: string }>(),
+    env.DB.prepare(`SELECT role, telegram_id FROM users WHERE id = ?`).bind(userId).first<{ role: string; telegram_id: string | null }>().catch(() => null),
   ]);
+  const isAdminUser =
+    uRow?.role === 'owner' || uRow?.role === 'admin' || uRow?.telegram_id === (env.OWNER_TELEGRAM_ID || '944021185');
   const hookUrl = cfg?.webhook_secret ? `${webAppUrl}/api/webhook/tv/${cfg.webhook_secret}` : `${webAppUrl}/api/webhook/tv/...`;
   const lines = alerts.results.length
     ? alerts.results.map((a, i) => `${i + 1}. ${a.is_active ? '🟢' : '⏸'} ${a.name} (${a.symbol} · ${a.timeframe}) — اجرا: ${a.trigger_count}`).join('\n')
     : 'هنوز آلرت داخلی نساخته‌اید؛ با دکمه‌های زیر ۱۰۰٪ رایگان بسازید!';
 
+  const webhookBlock = isAdminUser
+    ? `🔗 **لینک وب‌هوک مدیریت (ادمین):**\n\`${hookUrl}\`\n\n`
+    : `🛡 **وب‌هوک و چنل رسمی سیگنال فقط در اختیار مدیریت دلارینو است** تا سیگنال‌های تاییدشده از کانال و ربات رسمی مستقیماً برای شما ارسال شوند.\n\n`;
+
   const text =
     `📡 **آلرت و اندیکاتورهای رایگان TradingView (بدون نیاز به اشتراک Pro تریدینگ‌ویو!)**\n\n` +
     `🔥 ۲۵+ اندیکاتور استاندارد (RSI, MACD, SuperTrend, Ichimoku, EMA, Bollinger, Keltner, ADX, VWAP, StochRSI) رایگان و متصل به ربات!\n\n` +
-    `🔗 **لینک وب‌هوک رایگان شخصی شما:**\n\`${hookUrl}\`\n\n` +
+    webhookBlock +
     `📋 **آلرت‌های فعال شما:**\n${lines}`;
 
   const kb: InlineKeyboardButton[][] = [
@@ -1242,13 +1273,74 @@ async function showFreeTradingViewAlertsMenu(
   }
 }
 
+async function showEnginesToggleMenu(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  userId: string,
+  editMsgId?: number
+) {
+  const [st, cfg] = await Promise.all([
+    getActiveEngineState(env.DB, userId),
+    env.DB.prepare('SELECT sniper_enabled, sniper_budget_usd, bot_state FROM bot_configs WHERE user_id = ?')
+      .bind(userId)
+      .first<{ sniper_enabled?: number; sniper_budget_usd?: number; bot_state?: string }>()
+      .catch(() => null),
+  ]);
+  const active = new Set(st.activeEngines);
+  const labelFor = (eng: TradingEngineChoice, title: string) =>
+    `${active.has(eng) ? '🟢 [روشن]' : '⚪️ [خاموش]'} ${title}`;
+  const isRunning = cfg?.bot_state?.startsWith('RUNNING');
+  const text =
+    `🎛 **انتخاب همزمان ۵ موتور معاملاتی دلارینو**\n\n` +
+    `هر چند موتور که بخواهید را با هم روشن کنید (روشن کردن یکی، بقیه را خاموش نمی‌کند):\n` +
+    `• وضعیت ربات: ${isRunning ? '🟢 روشن' : '🔴 متوقف (روشن‌کردن موتورها به معنای استارت خودکار نیست)'}\n` +
+    `• بودجه اسنایپر لیست/میم: $${Number(cfg?.sniper_budget_usd ?? 25).toFixed(0)}`;
+  const kb: InlineKeyboardButton[][] = [
+    [
+      { text: labelFor('CENTRAL_AI', 'هوش مصنوعی دلارینو'), callback_data: 'tg_eng_toggle:CENTRAL_AI', style: active.has('CENTRAL_AI') ? 'success' : undefined },
+      { text: labelFor('STRATEGY', 'استراتژی دُرنا V1'), callback_data: 'tg_eng_toggle:STRATEGY', style: active.has('STRATEGY') ? 'success' : undefined },
+    ],
+    [
+      { text: labelFor('MY_AI', 'هوش مصنوعی من'), callback_data: 'tg_eng_toggle:MY_AI', style: active.has('MY_AI') ? 'success' : undefined },
+      { text: labelFor('COPY_TRADE', 'کپی‌ترید'), callback_data: 'tg_eng_toggle:COPY_TRADE', style: active.has('COPY_TRADE') ? 'success' : undefined },
+    ],
+    [
+      {
+        text: labelFor('LISTING_SNIPER', 'اسنایپ ارز جدید و میم‌کوین'),
+        callback_data: 'tg_eng_toggle:LISTING_SNIPER',
+        style: active.has('LISTING_SNIPER') ? 'success' : undefined,
+      },
+    ],
+    [
+      { text: isRunning ? '🔴 توقف ربات' : '🟢 روشن کردن ربات با موتورهای بالا', callback_data: isRunning ? 'toggle_auto_off' : 'toggle_auto_on', style: isRunning ? 'danger' : 'success' },
+      { text: '💰 بودجه مجاز و اهرم', callback_data: 'tg_trade_quantities', style: 'primary' },
+    ],
+  ];
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
 async function showTradeQuantitiesMenu(env: Env, bot: TelegramBotClient, chatId: string | number, userId: string, editMsgId?: number) {
   const cfg = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(userId).first<UserBotConfigRow>();
+  const cap = await resolveUserCapitalSummary(env.DB, userId, cfg ?? null).catch(() => null);
+  const budgetLabel =
+    cfg?.bot_budget_mode === 'FIXED_USD' && (cfg?.bot_budget_usd ?? 0) > 0
+      ? `سقف ثابت $${Number(cfg.bot_budget_usd).toLocaleString()} (مؤثر: $${cap?.effectiveCapitalUsd ?? cfg.bot_budget_usd})`
+      : cfg?.bot_budget_mode === 'PERCENT_OF_BALANCE'
+        ? `${cfg?.bot_budget_pct ?? 100}% از کیف‌پول ($${cap?.effectiveCapitalUsd ?? 0})`
+        : `کل موجودی کیف‌پول ($${cap?.effectiveCapitalUsd ?? 0})`;
+  const rec = computeDynamicRecommendedSettings(cap?.effectiveCapitalUsd ?? 100, 'balanced');
   const text =
-    `🪛 تنظیم مقادیر معاملات و مدیریت سرمایه\n\n` +
-    `• 💰 درصد مارجین هر معامله: ${cfg?.margin_pct ?? 10}%\n` +
-    `• ⚡ نوع ورود پیش‌فرض: Market (اجرای لحظه‌ای)\n` +
-    `• 🔘 حداکثر لوریج مجاز: ${cfg?.max_leverage ?? 20}x (${cfg?.use_signal_leverage ? 'طبق لوریج سیگنال' : 'سقف ثابت'})\n` +
+    `🪛 تنظیم بودجه ربات، مارجین و اهرم (پیشنهادی یا دستی)\n\n` +
+    `• 💼 بودجه مجاز ربات: ${budgetLabel}\n` +
+    `• 📊 مارجین درگیر فعلی: $${cap?.usedMarginUsd ?? 0} | باقی‌مانده: $${cap?.remainingBudgetUsd ?? 0}\n` +
+    `• 💰 درصد مارجین هر معامله (از بودجه ربات): ${cfg?.margin_pct ?? 10}%\n` +
+    `• 🔘 حداکثر اهرم دستی: ${cfg?.max_leverage ?? 20}x (${cfg?.use_signal_leverage ? 'پیشنهادی AI/سیگنال با این سقف' : 'اهرم ثابت دستی'})\n` +
+    `• 💡 اهرم پیشنهادی متناسب با بودجه فعلی: ${rec.maxLeverage}x (مارجین ${rec.marginPct}%)\n` +
     `• 🎯 تقسیم تارگت‌ها: TP1=${cfg?.tp1_close_pct ?? 50}% | TP2=${cfg?.tp2_close_pct ?? 25}% | TP3=${cfg?.tp3_close_pct ?? 25}%\n` +
     `• 🛡 ریسک‌فری خودکار TP1 (SL→Entry): ${cfg?.auto_breakeven_on_tp1 ? '✅ فعال' : '❌ غیرفعال'}\n` +
     `• 🛡 انتقال SL به TP1 روی TP2: ${cfg?.move_sl_to_tp1_on_tp2 ? '✅ فعال' : '❌ غیرفعال'}\n` +
@@ -1256,11 +1348,17 @@ async function showTradeQuantitiesMenu(env: Env, bot: TelegramBotClient, chatId:
 
   const kb: InlineKeyboardButton[][] = [
     [
-      { text: `💰 تغییر مارجین (${cfg?.margin_pct ?? 10}%)`, callback_data: 'cfg_edit:margin_pct' },
-      { text: `🔘 حداکثر لوریج (${cfg?.max_leverage ?? 20}x)`, callback_data: 'cfg_edit:max_leverage' },
+      { text: `💼 سقف بودجه ربات`, callback_data: 'cfg_edit:bot_budget_usd', style: 'primary' },
+      { text: `⚡ پیش‌فرض بر اساس بودجه`, callback_data: 'cfg_apply_dynamic', style: 'success' },
     ],
-    [{ text: `🎯 تنظیم درصد TP1 / TP2 / TP3`, callback_data: 'cfg_tp_menu' }],
-    [{ text: `📡 کانال سیگنال (${cfg?.signal_channel_handle ?? '@Dollarino_official'})`, callback_data: 'cfg_edit:signal_channel_handle' }],
+    [
+      { text: `💰 تغییر مارجین (${cfg?.margin_pct ?? 10}%)`, callback_data: 'cfg_edit:margin_pct' },
+      { text: `🔘 اهرم دستی (${cfg?.max_leverage ?? 20}x)`, callback_data: 'cfg_edit:max_leverage' },
+    ],
+    [
+      { text: `🧠 حالت اهرم: ${cfg?.use_signal_leverage ? 'پیشنهادی AI/سیگنال' : 'فقط دستی'}`, callback_data: 'cfg_toggle:use_sig_lev' },
+      { text: `🎯 تنظیم درصد TP`, callback_data: 'cfg_tp_menu' },
+    ],
     [
       { text: `🛡 ریسک‌فری TP1 (${cfg?.auto_breakeven_on_tp1 ? '✅' : '❌'})`, callback_data: 'cfg_toggle:be_tp1' },
       { text: `🛡 SL→TP1 در TP2 (${cfg?.move_sl_to_tp1_on_tp2 ? '✅' : '❌'})`, callback_data: 'cfg_toggle:sl_tp2' },
@@ -1715,14 +1813,53 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data === 'tg_engines_menu') {
+      await bot.answerCallbackQuery(cq.id);
+      await showEnginesToggleMenu(env, bot, chatId, user.id, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_eng_toggle:')) {
+      const eng = data.slice('tg_eng_toggle:'.length) as TradingEngineChoice;
+      const valid: TradingEngineChoice[] = ['CENTRAL_AI', 'STRATEGY', 'MY_AI', 'COPY_TRADE', 'LISTING_SNIPER'];
+      if (valid.includes(eng)) {
+        const cur = await getActiveEngineState(env.DB, user.id);
+        const currentlyOn = cur.activeEngines.includes(eng);
+        await toggleTradingEngine(env.DB, user.id, eng, !currentlyOn, { auditSource: 'telegram_menu' });
+        if (eng === 'LISTING_SNIPER') {
+          await env.DB.prepare(`UPDATE bot_configs SET sniper_enabled = ?, updated_at = datetime('now') WHERE user_id = ?`)
+            .bind(currentlyOn ? 0 : 1, user.id)
+            .run()
+            .catch(() => {});
+        }
+        await bot.answerCallbackQuery(cq.id, currentlyOn ? 'موتور خاموش شد ⚪️' : 'موتور روشن شد 🟢');
+        await showEnginesToggleMenu(env, bot, chatId, user.id, msgId);
+      }
+      return { ok: true };
+    }
+
     if (data.startsWith('cfg_toggle:')) {
       const which = data.split(':')[1];
       if (which === 'be_tp1') {
         await env.DB.prepare(`UPDATE bot_configs SET auto_breakeven_on_tp1 = CASE WHEN auto_breakeven_on_tp1 = 1 THEN 0 ELSE 1 END WHERE user_id = ?`).bind(user.id).run();
       } else if (which === 'sl_tp2') {
         await env.DB.prepare(`UPDATE bot_configs SET move_sl_to_tp1_on_tp2 = CASE WHEN move_sl_to_tp1_on_tp2 = 1 THEN 0 ELSE 1 END WHERE user_id = ?`).bind(user.id).run();
+      } else if (which === 'use_sig_lev') {
+        await env.DB.prepare(`UPDATE bot_configs SET use_signal_leverage = CASE WHEN use_signal_leverage = 1 THEN 0 ELSE 1 END WHERE user_id = ?`).bind(user.id).run();
       }
       await bot.answerCallbackQuery(cq.id, 'بروزرسانی شد ✅');
+      await showTradeQuantitiesMenu(env, bot, chatId, user.id, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'cfg_apply_dynamic') {
+      const cfg = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first<UserBotConfigRow>();
+      const cap = await resolveUserCapitalSummary(env.DB, user.id, cfg ?? null);
+      const rec = computeDynamicRecommendedSettings(cap.effectiveCapitalUsd, 'balanced');
+      await env.DB.prepare(
+        `UPDATE bot_configs SET margin_pct = ?, max_leverage = ?, max_open_positions = ?, daily_max_loss_pct = ?, trailing_stop_pct = ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(rec.marginPct, rec.maxLeverage, rec.maxOpenPositions, rec.dailyMaxLossPct, rec.trailingStopPct, user.id).run();
+      await bot.answerCallbackQuery(cq.id, `پیش‌فرض بر اساس بودجه $${rec.effectiveCapitalUsd} اعمال شد ✅`);
       await showTradeQuantitiesMenu(env, bot, chatId, user.id, msgId);
       return { ok: true };
     }
@@ -1730,6 +1867,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     if (data.startsWith('cfg_edit:')) {
       const field = data.slice('cfg_edit:'.length);
       const stepMap: Record<string, { step: string; prompt: string }> = {
+        bot_budget_usd: {
+          step: 'AWAIT_BOT_BUDGET',
+          prompt:
+            '💼 سقف بودجه کل ربات به دلار را بفرستید (مثلاً 100 یعنی ربات جمع کل معاملاتش از $100 بیشتر نشود، حتی اگر موجودی کیف‌پول $1,000 باشد).\nبرای استفاده از کل موجودی کیف‌پول عدد 0 را بفرستید:',
+        },
         margin_pct: { step: 'AWAIT_MARGIN_PCT', prompt: '💰 درصد مارجین هر معامله (بین 1 تا 100، پیش‌فرض 10) را بفرستید:' },
         max_leverage: { step: 'AWAIT_MAX_LEV', prompt: '🔘 حداکثر اهرم مجاز (بین 1 تا 125، پیش‌فرض 20) را بفرستید:' },
         signal_channel_handle: { step: 'AWAIT_SIGNAL_CHANNEL', prompt: '📡 آیدی یا لینک کانال سیگنال جدید را بفرستید (پیش‌فرض: @Dollarino_official):' },
@@ -1745,18 +1887,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data.startsWith('manual_trade:')) {
-      const ent = await resolveUserEntitlement(env.DB, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: (user.role as AuthUser['role']) || 'user',
-        telegramId: tgId,
-      });
-      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-        await bot.answerCallbackQuery(cq.id, '💎 برای اجرای معامله، اشتراک فعال لازم است.', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       const sigId = data.split(':')[1]!;
       if (msgId) {
         await bot.editMessageText(
@@ -1785,17 +1915,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     if (data.startsWith('confirm_trade:')) {
       const sigId = data.split(':')[1]!;
-      const ent = await resolveUserEntitlement(env.DB, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: (user.role as AuthUser['role']) || 'user',
-        telegramId: tgId,
-      });
-      if (!ent.allowCopyTrade) {
-        await bot.answerCallbackQuery(cq.id, 'برای کپی‌ترید تلگرام اشتراک Pro یا VIP لازم است.', true);
-        return { ok: true };
-      }
       const sigRow = await env.DB.prepare('SELECT * FROM signals WHERE id = ?').bind(sigId).first<{
         symbol: string;
         direction: 'LONG' | 'SHORT';
@@ -1854,11 +1973,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           tgId,
           webAppUrl,
         });
-        if (!res.ok && res.text === 'NEED_SUBSCRIPTION') {
-          await bot.answerCallbackQuery(cq.id, 'برای روشن کردن اتوترید، اشتراک فعال لازم است.', true);
-          await showSubscriptionMenu(env, bot, chatId, user, tgId);
-          return { ok: true };
-        }
         await bot.answerCallbackQuery(cq.id, res.ok ? 'اتوترید خودکار روشن شد 🤖' : res.text, !res.ok);
         if (msgId) {
           await bot.editMessageText(chatId, msgId, res.text, miniAppInlineKeyboard(webAppUrl, '', 'none', true, getUserUiMode(user))).catch(() => {});
@@ -1965,32 +2079,21 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const maxLev = st.wizLev ?? 10;
       const stratKey = st.wizEngine || 'ai_autonomous_agent';
 
-      const ent = await resolveUserEntitlement(env.DB, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: (user.role as AuthUser['role']) || 'user',
-        telegramId: tgId,
-      });
-      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-        await bot.answerCallbackQuery(cq.id, '💎 برای روشن کردن خودکار ربات اشتراک فعال لازم است.', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
-
       const cfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
       const nextTradingMode = modeChoice === 'paper' ? 'PAPER' : (cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER');
       const nextBotState = nextTradingMode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
       const wizChoice: TradingEngineChoice =
-        stratKey === 'ai_autonomous_agent'
-          ? 'CENTRAL_AI'
-          : stratKey === 'my_custom_ai'
-            ? 'MY_AI'
-            : stratKey === 'copy_trade'
-              ? 'COPY_TRADE'
-              : 'STRATEGY';
-      await activateExclusiveTradingEngine(env.DB, user.id, wizChoice, {
-        strategyKey: stratKey,
+        stratKey === 'listing_sniper'
+          ? 'LISTING_SNIPER'
+          : stratKey === 'ai_autonomous_agent'
+            ? 'CENTRAL_AI'
+            : stratKey === 'my_custom_ai'
+              ? 'MY_AI'
+              : stratKey === 'copy_trade'
+                ? 'COPY_TRADE'
+                : 'STRATEGY';
+      await toggleTradingEngine(env.DB, user.id, wizChoice, true, {
+        strategyKey: stratKey === 'listing_sniper' ? undefined : stratKey,
         auditSource: 'telegram_wizard',
       });
 
@@ -2084,11 +2187,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         webAppUrl,
         overrideStrategyKey: 'ai_autonomous_agent',
       });
-      if (!res.ok && res.text === 'NEED_SUBSCRIPTION') {
-        await bot.answerCallbackQuery(cq.id, 'برای ترید هوشمند اتومات، اشتراک لازم است 💎', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       await bot.answerCallbackQuery(cq.id, res.ok ? 'ترید هوشمند اتومات روشن شد ✅' : res.text, !res.ok);
       await bot.sendMessage(chatId, res.text, {
         inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', res.ok, getUserUiMode(user)),
@@ -2147,7 +2245,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await showSubscriptionMenu(env, bot, chatId, user, tgId);
         return { ok: true };
       }
-      await activateExclusiveTradingEngine(env.DB, user.id, 'MY_AI', {
+      await toggleTradingEngine(env.DB, user.id, 'MY_AI', true, {
         auditSource: 'telegram_myai_activate',
       });
       const cfg = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ trading_mode: string }>();
@@ -2158,7 +2256,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await doStub.fetch('https://do/start').catch(() => {});
       await doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
       await bot.answerCallbackQuery(cq.id, 'هوش مصنوعی شخصی شما فعال شد ✅');
-      await bot.sendMessage(chatId, '🚀 هوش مصنوعی شخصی شما با قوانین آموزش‌داده‌شده روی ربات فعال شد و ۲۴ ساعته معامله می‌کند!');
+      await bot.sendMessage(chatId, '🚀 هوش مصنوعی شخصی شما به لیست موتورهای فعال اضافه شد و همزمان با سایر موتورهای روشن ۲۴ ساعته معامله می‌کند!');
       return { ok: true };
     }
 
@@ -2223,44 +2321,31 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     if (data.startsWith('tg_copy_follow:')) {
       const traderId = data.slice('tg_copy_follow:'.length);
-      const ent = await resolveUserEntitlement(env.DB, {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: (user.role as AuthUser['role']) || 'user',
-        telegramId: tgId,
-      });
-      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-        await bot.answerCallbackQuery(cq.id, 'برای کپی‌ترید اشتراک فعال لازم است 💎', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       const trader = await env.DB.prepare(`SELECT display_name FROM copy_traders WHERE id = ?`).bind(traderId).first<{ display_name: string }>();
-      const excl = await activateExclusiveTradingEngine(env.DB, user.id, 'COPY_TRADE', {
-        auditSource: 'telegram_copy_follow',
-      });
+      const curState = await getActiveEngineState(env.DB, user.id);
+      const shouldMirrorNow = curState.isBotRunning && curState.activeEngines.includes('COPY_TRADE') ? 1 : 0;
       const existingSub = await env.DB.prepare(
         `SELECT id, is_active FROM copy_subscriptions WHERE user_id = ? AND trader_id = ? LIMIT 1`
       ).bind(user.id, traderId).first<{ id: string; is_active: number }>();
       if (existingSub) {
-        await env.DB.prepare(`UPDATE copy_subscriptions SET is_active = 1, updated_at = datetime('now') WHERE id = ?`).bind(existingSub.id).run();
+        await env.DB.prepare(`UPDATE copy_subscriptions SET is_active = 1, auto_mirror = ?, updated_at = datetime('now') WHERE id = ?`)
+          .bind(shouldMirrorNow, existingSub.id).run();
         if (!existingSub.is_active) {
           await env.DB.prepare(`UPDATE copy_traders SET followers_count = followers_count + 1 WHERE id = ?`).bind(traderId).run();
         }
       } else {
         await env.DB.prepare(
-          `INSERT INTO copy_subscriptions (id, user_id, trader_id, allocation_usd, risk_multiplier, auto_mirror, is_active) VALUES (?, ?, ?, 100, 1, 1, 1)`
-        ).bind(randomId('csub'), user.id, traderId).run();
+          `INSERT INTO copy_subscriptions (id, user_id, trader_id, allocation_usd, risk_multiplier, auto_mirror, is_active) VALUES (?, ?, ?, 100, 1, ?, 1)`
+        ).bind(randomId('csub'), user.id, traderId, shouldMirrorNow).run();
         await env.DB.prepare(`UPDATE copy_traders SET followers_count = followers_count + 1 WHERE id = ?`).bind(traderId).run();
       }
-      await bot.answerCallbackQuery(cq.id, `کپی‌ترید ${trader?.display_name || ''} فعال شد ✅`);
+      await bot.answerCallbackQuery(cq.id, `تریدر ${trader?.display_name || ''} فالو شد ✅`);
       await bot.sendMessage(
         chatId,
-        `✅ کپی‌ترید خودکار برای «${trader?.display_name || traderId}» فعال شد!` +
-          (excl.stoppedBot || excl.disabledMyAi
-            ? '\n\n🔒 توجه: برای اجرای تک‌موتوره، ربات AI / استراتژی قبلی شما به‌صورت خودکار متوقف شد تا تداخلی ایجاد نشود.'
-            : '') +
-          ' از مینی‌اپ نیز می‌توانید معاملات لحظه‌ای ایشان را ببینید و مدیریت کنید.'
+        `✅ تریدر «${trader?.display_name || traderId}» با موفقیت به لیست دنبال‌شده‌های شما اضافه شد!\n\n` +
+          (shouldMirrorNow
+            ? '🟢 ربات شما در حال حاضر با موتور کپی‌ترید روشن است و معاملات ایشان آینه‌سازی می‌شود.'
+            : 'ℹ️ توجه: صرفاً فالو کردن تریدر باعث روشن‌شدن خودکار ربات نمی‌شود. هر زمان خواستید معاملات آینه شود، در منوی اصلی موتور کپی‌ترید را روشن کرده و ربات را استارت کنید.')
       );
       return { ok: true };
     }
@@ -2370,13 +2455,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         webAppUrl,
         overrideStrategyKey: stratKey,
       });
-      if (!res.ok && res.text === 'NEED_SUBSCRIPTION') {
-        await env.DB.prepare(`UPDATE bot_configs SET strategy_key = ?, updated_at = datetime('now') WHERE user_id = ?`)
-          .bind(stratKey, user.id).run();
-        await bot.answerCallbackQuery(cq.id, `استراتژی ${resolveEngineDisplayLabel(stratKey)} انتخاب شد (برای اجرای خودکار اشتراک لازم است 💎)`, true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       await bot.answerCallbackQuery(cq.id, res.ok ? `استراتژی ${resolveEngineDisplayLabel(stratKey)} روشن شد ✅` : res.text, !res.ok);
       await bot.sendMessage(chatId, res.text, {
         inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'hunt', res.ok, getUserUiMode(user)),
@@ -2653,11 +2731,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         tgId,
         webAppUrl,
       });
-      if (!res.ok && res.text === 'NEED_SUBSCRIPTION') {
-        await bot.answerCallbackQuery(cq.id, 'برای روشن کردن ربات، اشتراک لازم است 💎', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       await bot.answerCallbackQuery(cq.id, res.ok ? 'ربات خودکار روشن شد 🟢' : res.text, !res.ok);
       if (msgId) {
         await bot.editMessageText(chatId, msgId, res.text, miniAppInlineKeyboard(webAppUrl, '', 'ai', res.ok, getUserUiMode(user))).catch(() => bot.sendMessage(chatId, res.text));
@@ -3231,6 +3304,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   const MAIN_MENU_PREFIXES = [
     '🧠 چت هوش مصنوعی',
     '🤖 شروع ربات هوشمند AI',
+    '🎛 انتخاب ۵ موتور ترید',
+    '💰 بودجه مجاز و',
     '📊 وضعیت سود و معاملات',
     '🟢 شروع خودکار ربات',
     '⚡️ شکار فوری AI',
@@ -3238,6 +3313,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     '🛡 اتصال Trust Wallet',
     '🛡 مدیریت Trust Wallet',
     '📡 آلرت رایگان TradingView',
+    '💰 کارمزد ۳٪ سود (رایگان)',
     '💰 کارمزد ۵٪ سود (رایگان)',
     'ربات و هوش مصنوعی من',
     '🏆 کپی‌ترید',
@@ -3300,6 +3376,26 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         });
         return { ok: true };
       }
+    }
+
+    if (state.step === 'AWAIT_BOT_BUDGET') {
+      const amt = Number(text.replace(/[,$\s]/g, ''));
+      if (!Number.isFinite(amt) || amt < 0) {
+        await bot.sendMessage(chatId, '❌ لطفاً مبلغ معتبر به دلار بفرستید (مثلاً 100 یا عدد 0 برای کل موجودی):');
+        return { ok: true };
+      }
+      if (amt === 0) {
+        await env.DB.prepare(`UPDATE bot_configs SET bot_budget_mode = 'FULL_BALANCE', bot_budget_usd = 0 WHERE user_id = ?`).bind(user.id).run();
+        await clearState();
+        await bot.sendMessage(chatId, '✅ بودجه مجاز ربات روی کل موجودی کیف‌پول تنظیم شد.');
+      } else {
+        const clamped = Math.max(10, Math.min(10_000_000, amt));
+        await env.DB.prepare(`UPDATE bot_configs SET bot_budget_mode = 'FIXED_USD', bot_budget_usd = ? WHERE user_id = ?`).bind(clamped, user.id).run();
+        await clearState();
+        await bot.sendMessage(chatId, `✅ سقف کل سرمایه مجاز ربات روی $${clamped.toLocaleString('en-US')} قفل شد.`);
+      }
+      await showTradeQuantitiesMenu(env, bot, chatId, user.id);
+      return { ok: true };
     }
 
     if (state.step === 'AWAIT_MARGIN_PCT') {
@@ -3743,6 +3839,18 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  if (text === '🎛 انتخاب ۵ موتور ترید' || text === '/engines') {
+    await clearState();
+    await showEnginesToggleMenu(env, bot, chatId, user.id);
+    return { ok: true };
+  }
+
+  if (text === '💰 بودجه مجاز و پیشنهاد پویا' || text === '💰 بودجه مجاز و اهرم' || text === '/budget') {
+    await clearState();
+    await showTradeQuantitiesMenu(env, bot, chatId, user.id);
+    return { ok: true };
+  }
+
   if (text === '🤖 شروع ربات هوشمند AI') {
     await clearState();
     const res = await startBotOneClickForTelegram({
@@ -3754,10 +3862,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       webAppUrl,
       overrideStrategyKey: 'ai_autonomous_agent',
     });
-    if (!res.ok && res.text === 'NEED_SUBSCRIPTION') {
-      await showSubscriptionMenu(env, bot, chatId, user, tgId);
-      return { ok: true };
-    }
     await bot.sendMessage(chatId, res.text, {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, uiMode),
     });
@@ -3774,7 +3878,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '💰 کارمزد ۵٪ سود (رایگان)' || text === '💰 کارمزد ۱٪ سود (رایگان)') {
+  if (text === '💰 کارمزد ۳٪ سود (رایگان)' || text === '💰 کارمزد ۵٪ سود (رایگان)' || text === '💰 کارمزد ۱٪ سود (رایگان)') {
     await showSubscriptionMenu(env, bot, chatId, user, tgId);
     return { ok: true };
   }
@@ -3839,7 +3943,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       ? traders.results.map((t, i) => `${i + 1}. ✅ ${t.display_name} (${t.specialty})\n   نرخ برد: ${t.win_rate}% | بازده ۳۰روزه: +${t.roi_30d_pct}%`).join('\n\n')
       : 'در حال حاضر تریدری ثبت نشده است.';
     const kb: InlineKeyboardButton[][] = traders.results.map((t) => [
-      { text: `📌 کپی از ${t.display_name}`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
+      { text: `➕ فالو (${t.display_name})`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
     ]);
     kb.push([{ text: '🐋 ۱۰ تریدر برتر هوشمند & ولت‌ها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' }]);
     await bot.sendMessage(chatId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, { inlineKeyboard: kb });
@@ -3999,10 +4103,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       tgId,
       webAppUrl,
     });
-    if (!res.ok && res.text === 'NEED_SUBSCRIPTION') {
-      await showSubscriptionMenu(env, bot, chatId, user, tgId);
-      return { ok: true };
-    }
     await bot.sendMessage(chatId, res.text, {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, uiMode),
     });
@@ -4105,7 +4205,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === 'خرید اشتراک 💎' || text === '💰 کارمزد ۵٪ سود (رایگان)' || text === '💰 کارمزد ۱٪ سود (رایگان)') {
+  if (text === 'خرید اشتراک 💎' || text === '💰 کارمزد ۳٪ سود (رایگان)' || text === '💰 کارمزد ۵٪ سود (رایگان)' || text === '💰 کارمزد ۱٪ سود (رایگان)') {
     await showSubscriptionMenu(env, bot, chatId, user, tgId);
     return { ok: true };
   }
@@ -4158,10 +4258,10 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     ]);
     const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
     const defaultHelpGuide = [
-      '📚 **راهنمای سریع دلارینو (نسخه ۱۰)**',
-      '• **۴ موتور معامله:** ۱) هوش مصنوعی دلارینو (کاملاً خودکار)، ۲) هوش مصنوعی من (قابل آموزش با چت و عکس)، ۳) استراتژی شکار دُرنا V1 + IDE، ۴) کپی‌ترید هوشمند ولت‌ها V2.',
+      '📚 **راهنمای سریع دلارینو (نسخه V11.2)**',
+      '• **۵ موتور معامله هم‌زمان:** ۱) هوش مصنوعی دلارینو (کاملاً خودکار)، ۲) هوش مصنوعی من (قابل آموزش با چت و عکس)، ۳) استراتژی شکار دُرنا V1 + IDE، ۴) کپی‌ترید هوشمند ولت‌ها V2، ۵) اسنایپ لیستینگ و میم‌کوین.',
       '• **تفاوت تایید دستی و تمام‌اتوترید ۲۴/۷ در Trust Wallet:** در حالت تایید دستی، سرمایه کاملاً دست‌نخورده در کیف‌پول شماست و هر معامله با ۱ کلیک تایید می‌شود. در حالت تمام‌اتوترید ۲۴/۷، با اتصال یک‌باره Perp Agent Key (بدون حق برداشت) و Copy-Vault دارای سقف بودجه، تمام معاملات اسپات، میم‌کوین، کپی‌ترید و فیوچرز ۱۰۰x شبانه‌روزی خودکار اجرا می‌شوند.',
-      '• **شبیه‌ساز دمو ۱۰ هزار دلاری:** کاملاً مشابه ساختار Trust Wallet برای تست رایگان استراتژی‌ها و کپی‌ترید بدون ریسک.',
+      '• **شبیه‌ساز دمو قابل تنظیم ($50 تا $10M):** کاملاً مشابه ساختار Trust Wallet برای تست رایگان استراتژی‌ها و کپی‌ترید بدون ریسک.',
       '• **تحلیل چارت:** در چت ربات بنویسید `/ai` یا مستقیماً عکس چارت را بفرستید تا ورود، استاپ و ۳ تارگت تحویل بگیرید.',
     ].join('\n');
     const rawHelp = (helpText || (await getSystemSetting(env.DB, 'help_text', defaultHelpGuide))).replace(/\\n/g, '\n');

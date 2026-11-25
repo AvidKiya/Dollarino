@@ -262,7 +262,7 @@ dexRoutes.post('/perp-order', requireAuth, async (c) => {
   const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
   if (!feeCheck.allowed) {
     return c.json({
-      error: feeCheck.reasonFa || 'سفارش واقعی Perp DEX به دلیل عدم تسویه کارمزد ۵٪ معوق قفل است.',
+      error: feeCheck.reasonFa || 'سفارش جدید Perp DEX تا تسویه کارمزد ۳٪ معوق متوقف است (پوزیشن‌های باز همچنان مدیریت می‌شوند).',
       code: 'FEE_SETTLEMENT_REQUIRED',
       enforcement: feeCheck,
     }, 402);
