@@ -560,6 +560,14 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       update_id: 24,
       callback_query: { id: 'cq_w4', from: { id: 1002009 }, message: { chat: { id: 1002009 }, message_id: 27 }, data: 'tg_wiz_e:ai_autonomous_agent' },
     });
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 241,
+      callback_query: { id: 'cq_w_ob1', from: { id: 1002009 }, message: { chat: { id: 1002009 }, message_id: 27 }, data: 'tg_onboard_mode:PAPER' },
+    });
+    await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+      update_id: 242,
+      callback_query: { id: 'cq_w_ob2', from: { id: 1002009 }, message: { chat: { id: 1002009 }, message_id: 27 }, data: 'tg_onboard_accept' },
+    });
     tgCalls = [];
     await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
       update_id: 25,
@@ -1066,7 +1074,8 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(JSON.stringify(tgCalls[0]?.body.reply_markup)).toContain('tg_profit_issue:1Y:horizontal');
 
     const followerRow = await db.prepare(`SELECT id FROM users WHERE telegram_id = '2002002'`).first<{ id: string }>();
-    await db.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', strategy_key = 'copy_trade' WHERE user_id = ?`).bind(followerRow!.id).run();
+    await db.prepare(`UPDATE users SET risk_terms_accepted_at = datetime('now') WHERE id = ?`).bind(followerRow!.id).run();
+    await db.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', strategy_key = 'copy_trade', trading_mode_selected = 1 WHERE user_id = ?`).bind(followerRow!.id).run();
     await db.prepare(
       `INSERT INTO user_subscriptions (id, user_id, plan_code, status, expires_at) VALUES ('sub_f1', ?, 'pro_monthly', 'ACTIVE', datetime('now', '+30 days'))`
     ).bind(followerRow!.id).run();
@@ -1787,7 +1796,12 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       new Request('https://dollarino.local/api/trading/bot/start', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ strategyKey: 'ai_autonomous_agent', scanScope: 'ALL_MARKET' }),
+        body: JSON.stringify({
+          strategyKey: 'ai_autonomous_agent',
+          scanScope: 'ALL_MARKET',
+          tradingMode: 'PAPER',
+          acceptRiskTerms: true,
+        }),
       }),
       env
     );

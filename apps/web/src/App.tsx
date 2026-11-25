@@ -261,6 +261,37 @@ export function App() {
     return () => clearInterval(iv);
   }, [user]);
 
+  // V11.4: Real-time automatic ArzDigital Tether/Toman rate polling (12s while tab is visible, zero manual refresh button)
+  useEffect(() => {
+    const pollRate = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void apiFetch<{ usdtIrt?: number; usdtIrr?: number; source?: string; updatedAt?: string }>(
+        '/api/public/usdt-irt-rate?refresh=1'
+      )
+        .then((r) => {
+          if (r?.usdtIrt && r.usdtIrt >= 30_000) {
+            setLiveUsdtIrt(r.usdtIrt, r.source);
+            setDashboard((cur) =>
+              cur
+                ? {
+                    ...cur,
+                    iranRate: {
+                      usdtIrt: r.usdtIrt!,
+                      usdtIrr: r.usdtIrr || r.usdtIrt! * 10,
+                      source: r.source || 'arzdigital',
+                      updatedAt: r.updatedAt || new Date().toISOString(),
+                    },
+                  }
+                : cur
+            );
+          }
+        })
+        .catch(() => {});
+    };
+    const rateIv = setInterval(pollRate, 12_000);
+    return () => clearInterval(rateIv);
+  }, []);
+
   const handleLogout = async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     setStoredToken(null);
@@ -273,7 +304,10 @@ export function App() {
     if (!dashboard) return;
     const prevState = dashboard.config.bot_state;
     const running = prevState.startsWith('RUNNING');
-    if (!running && !dashboard.riskTermsAcceptedAt && !user?.risk_terms_accepted_at) {
+    const modeSelected =
+      dashboard.tradingModeSelected === true || Number(dashboard.config.trading_mode_selected ?? 0) === 1;
+    const riskAccepted = Boolean(dashboard.riskTermsAcceptedAt || user?.risk_terms_accepted_at);
+    if (!running && (!modeSelected || !riskAccepted)) {
       setActiveTab('overview');
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('dollarino:require-risk-terms'));
@@ -299,7 +333,13 @@ export function App() {
       await loadSessionAndDashboard();
     } catch (err) {
       setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: prevState } } : cur));
-      if (err instanceof ApiError && err.status === 402) {
+      if (err instanceof ApiError && err.status === 403) {
+        setActiveTab('overview');
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('dollarino:require-risk-terms'));
+        }, 60);
+        pushFloatingToast(err.message, 'warn');
+      } else if (err instanceof ApiError && err.status === 402) {
         pushFloatingToast(
           lang === 'fa' ? 'برای روشن کردن ربات، ابتدا اشتراک خود را فعال کنید.' : 'Please activate a subscription to start the bot.',
           'warn'

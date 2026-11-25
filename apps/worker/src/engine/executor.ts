@@ -22,11 +22,13 @@ import { resolveTelegramBotToken } from '../telegram/token.js';
 import { formatTradeOpenedCard } from '../telegram/formatter.js';
 import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard } from '../telegram/publisher.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
+import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 
 export interface UserBotConfigRow {
   user_id: string;
   bot_state: 'STOPPED' | 'RUNNING_PAPER' | 'RUNNING_LIVE' | 'PAUSED_DAILY_LOSS';
   trading_mode: TradingMode;
+  trading_mode_selected?: number;
   market_type?: MarketType;
   direction_mode?: DirectionMode;
   hedge_mode?: number;
@@ -73,6 +75,17 @@ export interface UserBotConfigRow {
   sniper_budget_usd?: number;
   sniper_min_safety_score?: number;
   sniper_networks_json?: string | null;
+  sniper_target_type?: 'BOTH' | 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME';
+  sniper_min_liquidity_usd?: number;
+  sniper_max_pair_age_hours?: number;
+  sniper_max_tax_pct?: number;
+  sniper_tp_pct?: number;
+  sniper_sl_pct?: number;
+  sniper_trailing_enabled?: number;
+  sniper_trailing_pct?: number;
+  sniper_max_open_positions?: number;
+  sniper_auto_execute?: number;
+  sniper_slippage_pct?: number;
   bot_budget_mode?: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
   bot_budget_usd?: number;
   bot_budget_pct?: number;
@@ -228,6 +241,14 @@ export async function executeSignalForUser(
   const cfgRow = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
     .bind(userId).first<UserBotConfigRow>();
   if (!cfgRow) return { ok: false, error: 'Bot config not found for user' };
+
+  const onboardingGate = await checkPreTradeOnboardingGate(env.DB, userId);
+  if (!onboardingGate.ok) {
+    return {
+      ok: false,
+      error: `${onboardingGate.code}: ${onboardingGate.error}`,
+    };
+  }
 
   const marketType: MarketType = options?.marketType ?? cfgRow.market_type ?? 'FUTURES';
   const forceProvider = cfgRow.trading_mode === 'PAPER' ? 'paper' : undefined;

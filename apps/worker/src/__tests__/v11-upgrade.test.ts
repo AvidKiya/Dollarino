@@ -661,7 +661,11 @@ describe('Dollarino V11.0 Upgrade Suite', () => {
       new Request('https://dollarino.pages.dev/api/trading/bot/start', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ activeEngines: ['LISTING_SNIPER'] }),
+        body: JSON.stringify({
+          activeEngines: ['LISTING_SNIPER'],
+          tradingMode: 'PAPER',
+          acceptRiskTerms: true,
+        }),
       }),
       env
     );
@@ -856,12 +860,215 @@ describe('Dollarino V11.0 Upgrade Suite', () => {
       new Request('https://dollarino.pages.dev/api/trading/bot/start', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+        body: JSON.stringify({ strategyKey: 'dollarino_ai', acceptRiskTerms: true }),
       }),
       env
     );
     expect(startLive.status).toBe(400);
     const startErr = (await startLive.json()) as { code: string };
     expect(startErr.code).toBe('NO_TRUST_WALLET');
+  });
+
+  it('V11.4 enforces strict pre-trade onboarding gate (mode + risk terms), full sniper workbench settings, and ArzDigital Tether rate priority', async () => {
+    const env = makeEnv();
+    const userId = 'usr_v114_gate_1';
+    const token = await issueUserToken(env, userId, '77114001');
+
+    // Fresh user starts with riskTermsAccepted=false and tradingModeSelected=false
+    const dash1 = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/dashboard', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      env
+    );
+    expect(dash1.status).toBe(200);
+    const dashJson1 = (await dash1.json()) as {
+      riskTermsAcceptedAt: string | null;
+      tradingModeSelected: boolean;
+      config: { trading_mode_selected: number };
+    };
+    expect(dashJson1.riskTermsAcceptedAt).toBeNull();
+    expect(dashJson1.tradingModeSelected).toBe(false);
+    expect(dashJson1.config.trading_mode_selected).toBe(0);
+
+    // 1. Blocked before BOTH mode selection AND risk acceptance (even PAPER demo!)
+    const blockedStart = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/bot/start', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+      }),
+      env
+    );
+    expect(blockedStart.status).toBe(403);
+    const blockedStartJson = (await blockedStart.json()) as { code: string };
+    expect(blockedStartJson.code).toBe('ONBOARDING_GATE_REQUIRED');
+
+    const blockedManual = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/orders/manual', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'BTCUSDT', direction: 'LONG', marketType: 'SPOT', marginUsd: 25 }),
+      }),
+      env
+    );
+    expect(blockedManual.status).toBe(403);
+
+    const blockedSniperBuy = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/sniper/buy-candidate', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidate: { symbol: 'MEMETEST', tokenAddress: 'So11111111111111111111111111111111111111112', chainId: 'solana', priceUsd: '0.01' },
+        }),
+      }),
+      env
+    );
+    expect(blockedSniperBuy.status).toBe(403);
+
+    // 2. Accepting risk terms WITHOUT choosing trading mode still blocks trading!
+    const acceptOnlyRisk = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/accept-risk-terms', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      env
+    );
+    expect(acceptOnlyRisk.status).toBe(200);
+    const acceptOnlyJson = (await acceptOnlyRisk.json()) as {
+      onboardingReady: boolean;
+      tradingModeSelected: boolean;
+    };
+    expect(acceptOnlyJson.onboardingReady).toBe(false);
+    expect(acceptOnlyJson.tradingModeSelected).toBe(false);
+
+    const stillBlockedStart = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/bot/start', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+      }),
+      env
+    );
+    expect(stillBlockedStart.status).toBe(403);
+    const stillBlockedJson = (await stillBlockedStart.json()) as { code: string };
+    expect(stillBlockedJson.code).toBe('TRADING_MODE_SELECTION_REQUIRED');
+
+    // 3. Complete onboarding by selecting PAPER mode via /api/trading/accept-risk-terms
+    const completeGate = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/accept-risk-terms', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradingMode: 'PAPER' }),
+      }),
+      env
+    );
+    expect(completeGate.status).toBe(200);
+    const completeGateJson = (await completeGate.json()) as {
+      onboardingReady: boolean;
+      tradingModeSelected: boolean;
+      tradingMode: string;
+    };
+    expect(completeGateJson.onboardingReady).toBe(true);
+    expect(completeGateJson.tradingModeSelected).toBe(true);
+    expect(completeGateJson.tradingMode).toBe('PAPER');
+
+    // Now /bot/start succeeds
+    const unblockedStart = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/bot/start', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+      }),
+      env
+    );
+    expect(unblockedStart.status).toBe(200);
+
+    // 4. Full Sniper Workbench config persistence + alert-only scan
+    const saveSniper = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trading/sniper', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: true,
+          targetType: 'BOTH',
+          budgetUsd: 55,
+          minSafetyScore: 68,
+          minLiquidityUsd: 35000,
+          maxPairAgeHours: 12,
+          maxTaxPct: 4,
+          tpPct: 45,
+          slPct: 14,
+          trailingEnabled: true,
+          trailingPct: 6,
+          maxOpenPositions: 4,
+          autoExecute: false,
+          slippagePct: 2.5,
+          networks: ['solana', 'base'],
+        }),
+      }),
+      env
+    );
+    expect(saveSniper.status).toBe(200);
+    const saveSniperJson = (await saveSniper.json()) as {
+      ok: boolean;
+      settings: {
+        budgetUsd: number;
+        minSafetyScore: number;
+        networks: string[];
+        autoExecute: boolean;
+        tpPct: number;
+        slPct: number;
+        slippagePct: number;
+        targetType: string;
+        maxPairAgeHours: number;
+        maxOpenPositions: number;
+      };
+    };
+    expect(saveSniperJson.ok).toBe(true);
+    expect(saveSniperJson.settings.budgetUsd).toBe(55);
+    expect(saveSniperJson.settings.minSafetyScore).toBe(68);
+    expect(saveSniperJson.settings.networks).toEqual(['solana', 'base']);
+    expect(saveSniperJson.settings.autoExecute).toBe(false);
+    expect(saveSniperJson.settings.tpPct).toBe(45);
+    expect(saveSniperJson.settings.slPct).toBe(14);
+    expect(saveSniperJson.settings.slippagePct).toBe(2.5);
+    expect(saveSniperJson.settings.targetType).toBe('BOTH');
+    expect(saveSniperJson.settings.maxPairAgeHours).toBe(12);
+    expect(saveSniperJson.settings.maxOpenPositions).toBe(4);
+
+    // 5. Verify ArzDigital parser and rate prioritizer
+    const { extractTomanFromHtml, fetchIranUsdtRate } = await import('../exchanges/iran-rate.js');
+    expect(
+      extractTomanFromHtml(
+        '<div class="arz-coin-page-data__coin-toman-price-value"><span>161,724</span> تومان</div>',
+        'arzdigital'
+      )
+    ).toBe(161724);
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('arzdigital.com/coins/tether')) {
+        return new Response(
+          '<div class="arz-coin-page-data__coin-toman-price-value">161,850 تومان</div>',
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        );
+      }
+      return new Response('{}', { status: 500 });
+    }) as typeof fetch;
+
+    try {
+      const rateRes = await fetchIranUsdtRate(true);
+      expect(rateRes.source).toBe('arzdigital');
+      expect(rateRes.usdtIrt).toBe(161850);
+      expect(rateRes.usdtIrr).toBe(1618500);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+
+    // Silence unused userId lint
+    expect(userId).toBeTruthy();
   });
 });

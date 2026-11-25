@@ -165,8 +165,8 @@ export async function ensureUserDefaults(db: D1Database, userId: string) {
   const rec = computeDynamicRecommendedSettings(10_000, 'balanced');
   await db.prepare(
     `INSERT OR IGNORE INTO bot_configs
-     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_pct, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, bot_budget_mode, bot_budget_usd, bot_budget_pct, webhook_secret)
-     VALUES (?, 'dollarino_v01', ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 'ALL_MARKET', 1, 'FULL_BALANCE', 0, 100, ?)`
+     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_pct, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, bot_budget_mode, bot_budget_usd, bot_budget_pct, trading_mode_selected, webhook_secret)
+     VALUES (?, 'dollarino_v01', ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 'ALL_MARKET', 1, 'FULL_BALANCE', 0, 100, 0, ?)`
   ).bind(
     userId,
     rec.marginPct,

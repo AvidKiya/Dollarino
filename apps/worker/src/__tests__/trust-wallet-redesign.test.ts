@@ -219,7 +219,7 @@ describe('Trust Wallet Exclusive Redesign & 24/7 Controls', () => {
       new Request('https://dollarino.pages.dev/api/trading/bot/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+        body: JSON.stringify({ strategyKey: 'dollarino_ai', acceptRiskTerms: true }),
       }),
       env
     );

@@ -43,8 +43,12 @@ import {
 } from '../engine/exclusive-engine.js';
 import {
   discoverListingAndBoomCandidates,
+  executeSniperBuyForCandidate,
   runNewListingAndMemeSniperForUser,
+  type SniperCandidate,
+  type SniperTargetType,
 } from '../engine/listing-sniper.js';
+import { checkPreTradeOnboardingGate } from '../engine/onboarding-gate.js';
 import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
@@ -541,6 +545,7 @@ tradingRoutes.get('/dashboard', async (c) => {
     config: cfg,
     activeEngine,
     riskTermsAcceptedAt: uRiskRow?.risk_terms_accepted_at ?? null,
+    tradingModeSelected: Number(cfg?.trading_mode_selected ?? 0) === 1,
     sniperEvents: sniperEventsRows.results,
     kbosParams,
     riskProfile,
@@ -618,12 +623,34 @@ tradingRoutes.post('/wallet/topup', async (c) => {
 
 tradingRoutes.post('/accept-risk-terms', async (c) => {
   const user = c.get('user');
+  const body = await c.req.json<{ tradingMode?: 'PAPER' | 'LIVE' }>().catch(() => ({} as { tradingMode?: 'PAPER' | 'LIVE' }));
   const nowIso = new Date().toISOString();
   await c.env.DB.prepare(`UPDATE users SET risk_terms_accepted_at = COALESCE(risk_terms_accepted_at, ?) WHERE id = ?`)
     .bind(nowIso, user.id)
     .run();
+
+  if (body.tradingMode === 'PAPER' || body.tradingMode === 'LIVE') {
+    await c.env.DB.prepare(
+      `UPDATE bot_configs SET trading_mode = ?, trading_mode_selected = 1, updated_at = datetime('now') WHERE user_id = ?`
+    )
+      .bind(body.tradingMode, user.id)
+      .run()
+      .catch(() => {});
+  }
+
+  const cfgRow = await c.env.DB.prepare(`SELECT COALESCE(trading_mode_selected, 0) AS sel, trading_mode FROM bot_configs WHERE user_id = ?`)
+    .bind(user.id)
+    .first<{ sel: number; trading_mode: string }>()
+    .catch(() => null);
+
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'کاربر متن پذیرش ریسک و قوانین معاملات را تایید کرد.');
-  return c.json({ ok: true, riskTermsAcceptedAt: nowIso });
+  return c.json({
+    ok: true,
+    riskTermsAcceptedAt: nowIso,
+    tradingModeSelected: Number(cfgRow?.sel ?? 0) === 1,
+    onboardingReady: Number(cfgRow?.sel ?? 0) === 1,
+    tradingMode: cfgRow?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER',
+  });
 });
 
 tradingRoutes.post('/engines', async (c) => {
@@ -650,66 +677,283 @@ tradingRoutes.post('/engines/toggle', async (c) => {
   return c.json({ ok: true, activeEngine: state });
 });
 
+const ALLOWED_SNIPER_CHAINS = new Set(['solana', 'bsc', 'base', 'ethereum', 'ton', 'arbitrum']);
+
+function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
+  let networks: string[] = ['solana', 'bsc', 'base'];
+  try {
+    const parsed = JSON.parse(cfg?.sniper_networks_json || '["solana","bsc","base"]');
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      networks = parsed.map((x) => String(x).toLowerCase()).filter((x) => ALLOWED_SNIPER_CHAINS.has(x));
+    }
+  } catch { /* ignore */ }
+  if (networks.length === 0) networks = ['solana', 'bsc', 'base'];
+  return {
+    enabled: Boolean(cfg?.sniper_enabled),
+    targetType: (cfg?.sniper_target_type === 'CEX_NEW_LISTING' || cfg?.sniper_target_type === 'DEX_BOOM_MEME'
+      ? cfg.sniper_target_type
+      : 'BOTH') as SniperTargetType,
+    budgetUsd: Number(cfg?.sniper_budget_usd ?? 25),
+    minSafetyScore: Number(cfg?.sniper_min_safety_score ?? 75),
+    minLiquidityUsd: Number(cfg?.sniper_min_liquidity_usd ?? 25000),
+    maxPairAgeHours: Number(cfg?.sniper_max_pair_age_hours ?? 24),
+    maxTaxPct: Number(cfg?.sniper_max_tax_pct ?? 5),
+    tpPct: Number(cfg?.sniper_tp_pct ?? 35),
+    slPct: Number(cfg?.sniper_sl_pct ?? 15),
+    trailingEnabled: cfg?.sniper_trailing_enabled === undefined ? true : Boolean(cfg.sniper_trailing_enabled),
+    trailingPct: Number(cfg?.sniper_trailing_pct ?? 8),
+    maxOpenPositions: Number(cfg?.sniper_max_open_positions ?? 3),
+    autoExecute: cfg?.sniper_auto_execute === undefined ? true : Boolean(cfg.sniper_auto_execute),
+    slippagePct: Number(cfg?.sniper_slippage_pct ?? 3),
+    networks,
+  };
+}
+
 tradingRoutes.get('/sniper', async (c) => {
   const user = c.get('user');
-  const [cfg, events, candidates] = await Promise.all([
+  const [cfg, events, dexTrades] = await Promise.all([
     c.env.DB.prepare(
       `SELECT COALESCE(sniper_enabled, 0) AS sniper_enabled,
               COALESCE(sniper_budget_usd, 25) AS sniper_budget_usd,
               COALESCE(sniper_min_safety_score, 75) AS sniper_min_safety_score,
-              COALESCE(sniper_networks_json, '["solana","bsc","base"]') AS sniper_networks_json
+              COALESCE(sniper_networks_json, '["solana","bsc","base"]') AS sniper_networks_json,
+              COALESCE(sniper_target_type, 'BOTH') AS sniper_target_type,
+              COALESCE(sniper_min_liquidity_usd, 25000) AS sniper_min_liquidity_usd,
+              COALESCE(sniper_max_pair_age_hours, 24) AS sniper_max_pair_age_hours,
+              COALESCE(sniper_max_tax_pct, 5) AS sniper_max_tax_pct,
+              COALESCE(sniper_tp_pct, 35) AS sniper_tp_pct,
+              COALESCE(sniper_sl_pct, 15) AS sniper_sl_pct,
+              COALESCE(sniper_trailing_enabled, 1) AS sniper_trailing_enabled,
+              COALESCE(sniper_trailing_pct, 8) AS sniper_trailing_pct,
+              COALESCE(sniper_max_open_positions, 3) AS sniper_max_open_positions,
+              COALESCE(sniper_auto_execute, 1) AS sniper_auto_execute,
+              COALESCE(sniper_slippage_pct, 3) AS sniper_slippage_pct
        FROM bot_configs WHERE user_id = ?`
     )
       .bind(user.id)
-      .first<{
-        sniper_enabled: number;
-        sniper_budget_usd: number;
-        sniper_min_safety_score: number;
-        sniper_networks_json: string;
-      }>()
+      .first<Partial<UserBotConfigRow>>()
       .catch(() => null),
     c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 20`).all().catch(() => ({ results: [] })),
-    discoverListingAndBoomCandidates({
-      minSafetyScore: 70,
-      minLiquidityUsd: 20_000,
-    }).catch(() => []),
+    c.env.DB.prepare(`SELECT * FROM dex_trades WHERE user_id = ? ORDER BY opened_at DESC LIMIT 15`).bind(user.id).all().catch(() => ({ results: [] })),
   ]);
+  const settings = parseSniperRow(cfg);
+  const candidates = await discoverListingAndBoomCandidates({
+    allowedChains: settings.networks,
+    minSafetyScore: Math.min(85, settings.minSafetyScore),
+    minLiquidityUsd: Math.min(50_000, settings.minLiquidityUsd),
+    maxPairAgeHours: Math.max(24, settings.maxPairAgeHours),
+    targetType: settings.targetType,
+  }).catch(() => []);
+  return c.json({
+    ok: true,
+    settings,
+    events: events.results,
+    recentSnipes: dexTrades.results,
+    candidates,
+  });
+});
+
+tradingRoutes.post('/sniper', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{
+    enabled?: boolean;
+    targetType?: SniperTargetType;
+    budgetUsd?: number;
+    minSafety?: number;
+    minSafetyScore?: number;
+    minLiquidityUsd?: number;
+    maxPairAgeHours?: number;
+    maxTaxPct?: number;
+    tpPct?: number;
+    slPct?: number;
+    trailingEnabled?: boolean;
+    trailingPct?: number;
+    maxOpenPositions?: number;
+    autoExecute?: boolean;
+    slippagePct?: number;
+    networks?: string[];
+  }>().catch(() => ({} as Record<string, unknown>));
+
+  const cur = await c.env.DB.prepare(`SELECT * FROM bot_configs WHERE user_id = ?`).bind(user.id).first<Partial<UserBotConfigRow>>().catch(() => null);
+  const prev = parseSniperRow(cur);
+
+  const nextEnabled = body.enabled !== undefined ? Boolean(body.enabled) : prev.enabled;
+  const nextTarget: SniperTargetType =
+    body.targetType === 'CEX_NEW_LISTING' || body.targetType === 'DEX_BOOM_MEME' || body.targetType === 'BOTH'
+      ? body.targetType
+      : prev.targetType;
+  const nextBudget = Math.max(5, Math.min(5000, Number(body.budgetUsd ?? prev.budgetUsd) || 25));
+  const rawSafety = body.minSafetyScore ?? body.minSafety ?? prev.minSafetyScore;
+  const nextSafety = Math.max(40, Math.min(98, Math.round(Number(rawSafety) || 75)));
+  const nextLiq = Math.max(5000, Math.min(10_000_000, Math.round(Number(body.minLiquidityUsd ?? prev.minLiquidityUsd) || 25000)));
+  const nextAge = Math.max(1, Math.min(720, Number(body.maxPairAgeHours ?? prev.maxPairAgeHours) || 24));
+  const nextTax = Math.max(0, Math.min(25, Number(body.maxTaxPct ?? prev.maxTaxPct) ?? 5));
+  const nextTp = Math.max(5, Math.min(500, Number(body.tpPct ?? prev.tpPct) || 35));
+  const nextSl = Math.max(3, Math.min(80, Number(body.slPct ?? prev.slPct) || 15));
+  const nextTrailEn = body.trailingEnabled !== undefined ? Boolean(body.trailingEnabled) : prev.trailingEnabled;
+  const nextTrailPct = Math.max(2, Math.min(50, Number(body.trailingPct ?? prev.trailingPct) || 8));
+  const nextMaxPos = Math.max(1, Math.min(12, Math.round(Number(body.maxOpenPositions ?? prev.maxOpenPositions) || 3)));
+  const nextAutoExec = body.autoExecute !== undefined ? Boolean(body.autoExecute) : prev.autoExecute;
+  const nextSlip = Math.max(0.5, Math.min(25, Number(body.slippagePct ?? prev.slippagePct) || 3));
+  const nextNets = Array.isArray(body.networks)
+    ? body.networks.map((x) => String(x).toLowerCase()).filter((x) => ALLOWED_SNIPER_CHAINS.has(x))
+    : prev.networks;
+  const safeNets = nextNets.length > 0 ? nextNets : ['solana', 'bsc', 'base'];
+
+  await c.env.DB.prepare(
+    `UPDATE bot_configs
+     SET sniper_enabled = ?,
+         sniper_target_type = ?,
+         sniper_budget_usd = ?,
+         sniper_min_safety_score = ?,
+         sniper_min_liquidity_usd = ?,
+         sniper_max_pair_age_hours = ?,
+         sniper_max_tax_pct = ?,
+         sniper_tp_pct = ?,
+         sniper_sl_pct = ?,
+         sniper_trailing_enabled = ?,
+         sniper_trailing_pct = ?,
+         sniper_max_open_positions = ?,
+         sniper_auto_execute = ?,
+         sniper_slippage_pct = ?,
+         sniper_networks_json = ?,
+         updated_at = datetime('now')
+     WHERE user_id = ?`
+  )
+    .bind(
+      nextEnabled ? 1 : 0,
+      nextTarget,
+      nextBudget,
+      nextSafety,
+      nextLiq,
+      nextAge,
+      nextTax,
+      nextTp,
+      nextSl,
+      nextTrailEn ? 1 : 0,
+      nextTrailPct,
+      nextMaxPos,
+      nextAutoExec ? 1 : 0,
+      nextSlip,
+      JSON.stringify(safeNets),
+      user.id
+    )
+    .run();
+
+  if (body.enabled !== undefined) {
+    await toggleTradingEngine(c.env.DB, user.id, 'LISTING_SNIPER', nextEnabled, { auditSource: 'sniper_settings' }).catch(() => {});
+  }
+
   return c.json({
     ok: true,
     settings: {
-      enabled: Boolean(cfg?.sniper_enabled),
-      budgetUsd: Number(cfg?.sniper_budget_usd ?? 25),
-      minSafetyScore: Number(cfg?.sniper_min_safety_score ?? 75),
-      networks: (() => {
-        try {
-          return JSON.parse(cfg?.sniper_networks_json || '["solana","bsc","base"]');
-        } catch {
-          return ['solana', 'bsc', 'base'];
-        }
-      })(),
+      enabled: nextEnabled,
+      targetType: nextTarget,
+      budgetUsd: nextBudget,
+      minSafetyScore: nextSafety,
+      minLiquidityUsd: nextLiq,
+      maxPairAgeHours: nextAge,
+      maxTaxPct: nextTax,
+      tpPct: nextTp,
+      slPct: nextSl,
+      trailingEnabled: nextTrailEn,
+      trailingPct: nextTrailPct,
+      maxOpenPositions: nextMaxPos,
+      autoExecute: nextAutoExec,
+      slippagePct: nextSlip,
+      networks: safeNets,
     },
-    events: events.results,
-    candidates,
   });
 });
 
 tradingRoutes.post('/sniper/scan-now', async (c) => {
   const user = c.get('user');
+  const body = await c.req.json<{ execute?: boolean }>().catch(() => ({ execute: true }));
+  const shouldExecute = body.execute !== false;
+
   const cfg = await c.env.DB.prepare(`SELECT * FROM bot_configs WHERE user_id = ?`).bind(user.id).first<UserBotConfigRow>();
   if (!cfg) return c.json({ error: 'Bot config not found' }, 404);
-  if (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE') {
-    const candidates = await discoverListingAndBoomCandidates({
-      minSafetyScore: Math.max(50, Number(cfg.sniper_min_safety_score ?? 75)),
-    }).catch(() => []);
-    return c.json({
-      ok: true,
-      boughtCount: 0,
-      scannedCount: candidates.length,
-      candidates,
-      note: 'ربات خاموش است؛ فقط لیست ارزهای تازه لیست‌شده و میم‌کوین‌های امن نمایش داده شد. برای خرید خودکار، ربات را از صفحه اصلی روشن کنید.',
-    });
+
+  const settings = parseSniperRow(cfg);
+
+  if (shouldExecute && (cfg.bot_state === 'RUNNING_PAPER' || cfg.bot_state === 'RUNNING_LIVE')) {
+    const gate = await checkPreTradeOnboardingGate(c.env.DB, user.id);
+    if (!gate.ok) {
+      return c.json({ error: gate.error, code: gate.code, boughtCount: 0, scannedCount: 0, candidates: [] }, 403);
+    }
+    const res = await runNewListingAndMemeSniperForUser(c.env, user.id, cfg);
+    return c.json(res);
   }
-  const res = await runNewListingAndMemeSniperForUser(c.env, user.id, cfg);
+
+  const candidates = await discoverListingAndBoomCandidates({
+    allowedChains: settings.networks,
+    minSafetyScore: Math.max(40, settings.minSafetyScore),
+    minLiquidityUsd: settings.minLiquidityUsd,
+    maxPairAgeHours: settings.maxPairAgeHours,
+    targetType: settings.targetType,
+  }).catch(() => []);
+
+  for (const cand of candidates.slice(0, 5)) {
+    await c.env.DB.prepare(
+      `INSERT INTO new_listing_events (id, symbol, token_address, chain_id, source, safety_score, liquidity_usd, price_usd, change_1h_pct, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        randomId('nle'),
+        cand.symbol,
+        cand.tokenAddress,
+        cand.chainId,
+        cand.source,
+        cand.safetyScore,
+        cand.liquidityUsd,
+        cand.priceUsd,
+        cand.change1hPct,
+        `${cand.name} (${cand.dexId})`
+      )
+      .run()
+      .catch(() => {});
+  }
+
+  return c.json({
+    ok: true,
+    boughtCount: 0,
+    scannedCount: candidates.length,
+    candidates,
+    note:
+      shouldExecute
+        ? 'ربات خاموش است؛ فقط لیست ارزهای تازه لیست‌شده و میم‌کوین‌های امن نمایش داده شد. برای خرید خودکار، ربات را روشن کنید یا روی خرید مستقیم بزنید.'
+        : 'اسکن زنده لیستینگ‌های جدید و میم‌کوین‌های امن با موفقیت انجام شد.',
+  });
+});
+
+tradingRoutes.post('/sniper/buy-candidate', async (c) => {
+  const user = c.get('user');
+  const gate = await checkPreTradeOnboardingGate(c.env.DB, user.id);
+  if (!gate.ok) {
+    return c.json({ error: gate.error, code: gate.code }, 403);
+  }
+  const entGate = await requirePaidEntitlement(c.env.DB, user);
+  if (!entGate.ok) {
+    return c.json({ error: entGate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
+  }
+
+  const body = await c.req.json<{ candidate?: SniperCandidate }>().catch(() => ({} as { candidate?: SniperCandidate }));
+  if (!body.candidate || !body.candidate.tokenAddress || !body.candidate.symbol || !(Number(body.candidate.priceUsd) > 0)) {
+    return c.json({ error: 'اطلاعات توکن نامعتبر است.' }, 400);
+  }
+  const cfg = await c.env.DB.prepare(`SELECT * FROM bot_configs WHERE user_id = ?`).bind(user.id).first<UserBotConfigRow>();
+  if (!cfg) return c.json({ error: 'Bot config not found' }, 404);
+
+  const res = await executeSniperBuyForCandidate({
+    env: c.env,
+    userId: user.id,
+    cfg,
+    pick: body.candidate,
+    bypassDedupe: true,
+  });
+  if (!res.ok) {
+    return c.json({ error: res.reason || 'Snipe failed' }, 400);
+  }
   return c.json(res);
 });
 
@@ -793,6 +1037,17 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     sniper_budget_usd: 'sniper_budget_usd',
     sniper_min_safety_score: 'sniper_min_safety_score',
     sniper_networks_json: 'sniper_networks_json',
+    sniper_target_type: 'sniper_target_type',
+    sniper_min_liquidity_usd: 'sniper_min_liquidity_usd',
+    sniper_max_pair_age_hours: 'sniper_max_pair_age_hours',
+    sniper_max_tax_pct: 'sniper_max_tax_pct',
+    sniper_tp_pct: 'sniper_tp_pct',
+    sniper_sl_pct: 'sniper_sl_pct',
+    sniper_trailing_enabled: 'sniper_trailing_enabled',
+    sniper_trailing_pct: 'sniper_trailing_pct',
+    sniper_max_open_positions: 'sniper_max_open_positions',
+    sniper_auto_execute: 'sniper_auto_execute',
+    sniper_slippage_pct: 'sniper_slippage_pct',
     bot_budget_mode: 'bot_budget_mode',
     bot_budget_usd: 'bot_budget_usd',
     bot_budget_pct: 'bot_budget_pct',
@@ -800,6 +1055,9 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
 
   const sets: string[] = [];
   const vals: unknown[] = [];
+  if (body.trading_mode === 'PAPER' || body.trading_mode === 'LIVE') {
+    sets.push(`trading_mode_selected = 1`);
+  }
   if (body.trading_mode === 'LIVE') {
     const ent = await resolveUserEntitlement(c.env.DB, user);
     if (!ent.allowLiveTrading) {
@@ -840,7 +1098,7 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
         continue;
       }
       let val = typeof body[k] === 'object' && body[k] !== null ? JSON.stringify(body[k]) : body[k];
-      if (k === 'hedge_mode' || k === 'sniper_enabled') val = body[k] ? 1 : 0;
+      if (k === 'hedge_mode' || k === 'sniper_enabled' || k === 'sniper_trailing_enabled' || k === 'sniper_auto_execute') val = body[k] ? 1 : 0;
       if (k === 'market_type') val = String(body[k]).toUpperCase() === 'SPOT' ? 'SPOT' : 'FUTURES';
       if (k === 'direction_mode') {
         const d = String(body[k]).toUpperCase();
@@ -850,7 +1108,35 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
         val = Math.max(5, Math.min(5000, Number(body[k]) || 25));
       }
       if (k === 'sniper_min_safety_score') {
-        val = Math.max(50, Math.min(98, Math.round(Number(body[k]) || 75)));
+        val = Math.max(40, Math.min(98, Math.round(Number(body[k]) || 75)));
+      }
+      if (k === 'sniper_target_type') {
+        const t = String(body[k]).toUpperCase();
+        val = t === 'CEX_NEW_LISTING' || t === 'DEX_BOOM_MEME' ? t : 'BOTH';
+      }
+      if (k === 'sniper_min_liquidity_usd') {
+        val = Math.max(5000, Math.min(10_000_000, Math.round(Number(body[k]) || 25000)));
+      }
+      if (k === 'sniper_max_pair_age_hours') {
+        val = Math.max(1, Math.min(720, Number(body[k]) || 24));
+      }
+      if (k === 'sniper_max_tax_pct') {
+        val = Math.max(0, Math.min(25, Number(body[k]) ?? 5));
+      }
+      if (k === 'sniper_tp_pct') {
+        val = Math.max(5, Math.min(500, Number(body[k]) || 35));
+      }
+      if (k === 'sniper_sl_pct') {
+        val = Math.max(3, Math.min(80, Number(body[k]) || 15));
+      }
+      if (k === 'sniper_trailing_pct') {
+        val = Math.max(2, Math.min(50, Number(body[k]) || 8));
+      }
+      if (k === 'sniper_max_open_positions') {
+        val = Math.max(1, Math.min(12, Math.round(Number(body[k]) || 3)));
+      }
+      if (k === 'sniper_slippage_pct') {
+        val = Math.max(0.5, Math.min(25, Number(body[k]) || 3));
       }
       if (k === 'custom_paper_balance') {
         val = Math.max(50, Math.min(10_000_000, Number(body[k]) || 10000));
@@ -933,7 +1219,37 @@ tradingRoutes.post('/bot/start', async (c) => {
     allocatedAmount?: number;
     customStrategyId?: string;
     tradeExecutionMode?: 'AUTO' | 'MANUAL_CONFIRM';
+    tradingMode?: 'PAPER' | 'LIVE';
+    acceptRiskTerms?: boolean;
   }>().catch(() => ({} as Record<string, unknown>));
+
+  if (body.tradingMode === 'PAPER' || body.tradingMode === 'LIVE') {
+    await c.env.DB.prepare(
+      `UPDATE bot_configs SET trading_mode = ?, trading_mode_selected = 1, updated_at = datetime('now') WHERE user_id = ?`
+    )
+      .bind(body.tradingMode, user.id)
+      .run()
+      .catch(() => {});
+  }
+  if (body.acceptRiskTerms === true) {
+    await c.env.DB.prepare(`UPDATE users SET risk_terms_accepted_at = COALESCE(risk_terms_accepted_at, ?) WHERE id = ?`)
+      .bind(new Date().toISOString(), user.id)
+      .run()
+      .catch(() => {});
+  }
+
+  const onboardingGate = await checkPreTradeOnboardingGate(c.env.DB, user.id);
+  if (!onboardingGate.ok) {
+    return c.json(
+      {
+        error: onboardingGate.error,
+        code: onboardingGate.code,
+        hasSelectedMode: onboardingGate.hasSelectedMode,
+        hasAcceptedRisk: onboardingGate.hasAcceptedRisk,
+      },
+      403
+    );
+  }
 
   const [cfg, ensemble, entitlement, twUser] = await Promise.all([
     c.env.DB.prepare('SELECT trading_mode, trade_execution_mode, market_type, strategy_key, active_engines_json, risk_profile_json FROM bot_configs WHERE user_id = ?')
@@ -1319,7 +1635,7 @@ tradingRoutes.post('/config/reset-defaults', async (c) => {
     )
     .run();
 
-  await logAudit(c.env.DB, user.id, 'BOT', 'INFO', `تنظیمات پیش‌فرض بر اساس بودجه اعمال شد: ${rec.summaryFa}`);
+  await logAudit(c.env.DB, user.id, 'BOT', 'INFO', `تنظیمات پیش‌فرض مدیریت سرمایه اعمال شد: ${rec.summaryFa}`);
   const updated = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first<UserBotConfigRow>();
   const nextCapitalSummary = await resolveUserCapitalSummary(c.env.DB, user.id, updated ?? null, liveBalance).catch(() => capitalSummary);
   return c.json({
@@ -1327,7 +1643,7 @@ tradingRoutes.post('/config/reset-defaults', async (c) => {
     config: updated,
     recommended: rec,
     capitalSummary: nextCapitalSummary,
-    message: `تنظیمات پیشنهادی هوشمند برای $${Math.round(rec.effectiveCapitalUsd).toLocaleString('en-US')} اعمال شد: ${rec.summaryFa} ✅`,
+    message: `تنظیمات خودکار مدیریت سرمایه برای $${Math.round(rec.effectiveCapitalUsd).toLocaleString('en-US')} اعمال شد: ${rec.summaryFa} ✅`,
   });
 });
 
@@ -1657,6 +1973,10 @@ tradingRoutes.post('/orders/manual', async (c) => {
   if (!rl.allowed) {
     return c.json({ ok: false, error: `تعداد سفارش‌ها زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   }
+  const onboardingGate = await checkPreTradeOnboardingGate(c.env.DB, user.id);
+  if (!onboardingGate.ok) {
+    return c.json({ ok: false, error: onboardingGate.error, code: onboardingGate.code }, 403);
+  }
   const gate = await requirePaidEntitlement(c.env.DB, user);
   if (!gate.ok) {
     return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
@@ -1752,6 +2072,10 @@ tradingRoutes.delete('/pending/:id', async (c) => {
 
 tradingRoutes.post('/signals/execute', async (c) => {
   const user = c.get('user');
+  const onboardingGate = await checkPreTradeOnboardingGate(c.env.DB, user.id);
+  if (!onboardingGate.ok) {
+    return c.json({ error: onboardingGate.error, code: onboardingGate.code }, 403);
+  }
   const gate = await requirePaidEntitlement(c.env.DB, user);
   if (!gate.ok) {
     return c.json(
@@ -2899,6 +3223,10 @@ tradingRoutes.post('/ai-scan-now', async (c) => {
 
   let canExecute = false;
   if (body.autoExecute) {
+    const onboardingGate = await checkPreTradeOnboardingGate(c.env.DB, user.id);
+    if (!onboardingGate.ok) {
+      return c.json({ ok: false, error: onboardingGate.error, code: onboardingGate.code }, 403);
+    }
     const gate = await requirePaidEntitlement(c.env.DB, user);
     canExecute = gate.ok;
   }
