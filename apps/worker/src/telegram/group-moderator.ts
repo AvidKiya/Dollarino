@@ -2,6 +2,7 @@ import { generateSupportAIReply } from '../ai/providers.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { getFounderProfile } from '../services/founder-profile.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE, OFFICIAL_CHANNEL_HANDLE } from './formatter.js';
 import { getSystemSettingValue, resolveChannelAndBotConfig } from './publisher.js';
@@ -310,6 +311,7 @@ export async function handleGroupModCallback(
     )
       .bind(key, next)
       .run();
+    invalidateSettingsCache(env.DB);
 
     const fresh = await getGroupModSettings(env.DB);
     await bot.answerCallbackQuery(cqId, next === 'true' ? 'فعال شد ✅' : 'غیرفعال شد ❌');

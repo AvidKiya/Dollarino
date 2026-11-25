@@ -77,10 +77,10 @@ export function OnboardingAcademyModal({
       img: '/images/transparent/ai-brain-3d.png',
     },
     {
-      titleFa: 'قدم چهارم: اشتراک صفر تومان · مدیریت ریسک و اعتبار رفرال',
-      titleEn: 'Step 4: $0 Sub · Risk Management & Fee-Credit Referrals',
-      subtitleFa: 'در هر معامله فقط ۱٪ تا ۳٪ سرمایه ریسک کنید، همیشه استاپ‌لاس بگذارید و پس از ۳ معامله سودده اول رایگان، با دعوت دوستان واقعی اعتبار کارمزد ۳٪ رایگان بگیرید!',
-      subtitleEn: 'Risk only 1–3% per trade with Stop-Loss; enjoy your first 3 profitable live trades at 0% fee (then 3% only on profit), plus invite credits!',
+      titleFa: 'قدم چهارم: اشتراک صفر تومان · منافع هم‌راستا با سود شما',
+      titleEn: 'Step 4: $0 Sub · Aligned With Your Real Profit',
+      subtitleFa: 'برخلاف رقبایی که پول اشتراک می‌گیرند و سود یا ضرر شما برایشان مهم نیست، دلارینو اشتراک نمی‌گیرد و فقط ۳٪ از سود واقعی (پس از ۳ معامله سودده اول رایگان) درآمد دارد؛ پس تمام تلاشش را برای سود بیشتر شما می‌کند!',
+      subtitleEn: 'Unlike subscription platforms that profit upfront even if you lose, Dollarino charges $0 subscription and earns 3% only on net live profit (after 3 free wins) — so we fight hardest for your success!',
       img: '/images/transparent/risk-referral-3d.png',
     },
     {
@@ -459,8 +459,8 @@ export function OnboardingAcademyModal({
                 <strong className="text-main">{execMode === 'AUTO' ? (isFa ? 'تمام‌اتوترید خودکار ۲۴/۷' : 'Full 24/7 Auto-Pilot') : (isFa ? 'تایید دستی ۱-کلیکی' : 'Manual 1-Click Confirm')}</strong>
               </p>
               <p className="text-sub">
-                • {isFa ? 'هزینه اشتراک:' : 'Subscription Fee:'}{' '}
-                <strong className="text-[#10B981]">{isFa ? '۳ معامله سودده اول ۰٪ · سپس ۹۷٪ سود برای شما (فقط ۳٪ از سود واقعی)' : 'First 3 Live Wins 0% · Keep 97% Profit (3% Fee)'}</strong>
+                • {isFa ? 'مدل شفاف کارمزد:' : 'Profit Fee Model:'}{' '}
+                <strong className="text-[#10B981]">{isFa ? 'اشتراک صفر · ۳ معامله سودده اول ۰٪ · سپس ۹۷٪ سود برای شما (فقط ۳٪ از سود واقعی)' : '$0 Sub · First 3 Live Wins 0% · Keep 97% Profit (3% Fee)'}</strong>
               </p>
             </div>
           )}

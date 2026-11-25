@@ -1265,8 +1265,8 @@ export function OverviewPage({
                   </p>
                   <p>
                     {isFa
-                      ? `۳. ${freeTradesLim} معامله سودده اول واقعی ۰٪ کارمزد است و پس از آن فقط ۳٪ از سود خالص معاملات موفق (در حالت لایو) به‌عنوان هزینه سرور محاسبه می‌شود.`
-                      : `3. Your first ${freeTradesLim} profitable LIVE trades are 0% fee; afterwards only 3% of net live profits apply.`}
+                      ? `۳. ${freeTradesLim} معامله سودده اول واقعی ۰٪ کارمزد است و پس از آن فقط ۳٪ از سود خالص معاملات موفق (در حالت لایو) به‌عنوان هزینه سرور محاسبه می‌شود. برخلاف پلتفرم‌های اشتراکی که پول را از اول می‌گیرند و سود یا ضرر شما برایشان مهم نیست، دلارینو تمام تلاشش را می‌کند که شما بیشترین سود را ببرید چون درآمد ما هم تنها از موفقیت واقعی شماست.`
+                      : `3. Your first ${freeTradesLim} profitable LIVE trades are 0% fee; afterwards only 3% of net live profits apply. Unlike subscription platforms that charge upfront regardless of losses, Dollarino earns $0 subscription and fights hardest for your profits.`}
                   </p>
                 </div>
                 <label className="flex items-start gap-2.5 text-xs font-bold text-main cursor-pointer select-none">

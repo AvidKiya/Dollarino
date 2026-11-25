@@ -23,6 +23,7 @@ import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
 import { DEFAULT_TRAINED_RULES, extractRulesFromConversation, type TrainedAIRules } from '../routes/my-ai.js';
 import { buildVerifiedCardCanonicalPayload } from '../routes/trading.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import {
   fetchBscUsdtBalance,
@@ -1040,9 +1041,9 @@ async function showTrustWalletMenu(
     `• شبکه TRON (TRC20): \`${user.trust_wallet_tron || 'ثبت‌نشده'}\`\n` +
     balLines +
     `\n📡 **ترید مستقیم روی همه شبکه‌ها (بدون نیاز به صرافی متمرکز):**\n` +
-    `با دکمه‌های زیر می‌توانید توکن‌های **DexScreener** را روی هر شبکه از طریق مرورگر DApp در Trust Wallet (${dexPref}) سوآپ کنید یا اشتراک خود را بپردازید.\n` +
-    `\n🏦 آدرس دریافت پلتفرم BEP20: \`${bep20Recv}\`\n` +
-    `🏦 آدرس دریافت پلتفرم TRC20: \`${trc20Recv}\``;
+    `با دکمه‌های زیر می‌توانید توکن‌های **DexScreener** را روی هر شبکه از طریق مرورگر DApp در Trust Wallet (${dexPref}) سوآپ کنید و جزئیات مدل رایگان ۳٪ سود را ببینید.\n` +
+    `\n🏦 آدرس دریافت کارمزد پلتفرم BEP20: \`${bep20Recv}\`\n` +
+    `🏦 آدرس دریافت کارمزد پلتفرم TRC20: \`${trc20Recv}\``;
 
   const kb: InlineKeyboardButton[][] = [
     [{ text: '🌐 باز کردن دلارینو در مرورگر Trust Wallet', url: twDappDeepLink, style: 'success' }],
@@ -1058,7 +1059,7 @@ async function showTrustWalletMenu(
       { text: '💰 استعلام موجودی همه شبکه‌ها', callback_data: 'tg_tw_bal', style: 'success' },
       { text: '🔍 اسکن توکن داغ DexScreener', callback_data: 'tg_dex_trending', style: 'primary' },
     ],
-    [{ text: '💳 پرداخت اشتراک با تراست‌ولت', callback_data: 'tg_open_sub' }],
+    [{ text: '💰 مدل ۳٪ سود (بدون اشتراک)', callback_data: 'tg_open_sub' }],
     [{ text: '🔙 بازگشت به منوی سریع', callback_data: 'tg_acc:trust' }],
   ];
 
@@ -1267,6 +1268,8 @@ async function showSubscriptionMenu(env: Env, bot: TelegramBotClient, chatId: st
     `• 🎁 **${FREE_PROFITABLE_LIVE_TRADES} معامله سودده اول واقعی (LIVE) کاملاً رایگان است (۰٪ کارمزد)!**\n` +
     `• 💎 از معامله سودده چهارم به بعد، فقط **${SERVER_PROFIT_FEE_PCT}% از سود خالص** برای هزینه سرور محاسبه می‌شود (۹۷٪ سود متعلق به شماست).\n` +
     `• 🛡 دارایی Trust Wallet شما ۱۰۰٪ غیرامانی است و دلارینو هیچ حق برداشتی از ولت شما ندارد.\n\n` +
+    `🤝 **تفاوت ما با بقیه پلتفرم‌ها:**\n` +
+    `پلتفرم‌های دیگر از همان ابتدا پول اشتراک را می‌گیرند و سود یا ضرر شما برایشان فرقی ندارد؛ اما دلارینو پولی از قبل نمی‌گیرد و تمام تلاشش را می‌کند تا **بیشترین سود** را بگیرید، چون درآمد ۳٪ سرور ما هم فقط زمانی بیشتر می‌شود که شما سود بیشتری ببرید!\n\n` +
     `📊 **دفتر حساب ${SERVER_PROFIT_FEE_PCT}% شما:**\n` +
     `• معاملات رایگان باقی‌مانده: ${feeSummary.freeTradesRemaining} از ${feeSummary.freeTradesLimit}\n` +
     `• معاملات سودده واقعی: ${feeSummary.profitableTradesCount}\n` +
@@ -1682,6 +1685,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
       ).bind(settingKey, targetChatId).run();
+      invalidateSettingsCache(env.DB);
 
       const readiness = await bot.checkChannelAdminReadiness(targetChatId);
       await bot.answerCallbackQuery(cq.id, `${roleTitle} ثبت شد ✅`);
@@ -1846,15 +1850,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         return { ok: true };
       }
       const days = sub.duration_days ?? 30;
-      await env.DB.prepare(`UPDATE users SET wallet_balance_usdt = wallet_balance_usdt - ? WHERE id = ?`)
-        .bind(sub.amount_usd, user.id).run();
+      await env.DB.prepare(`UPDATE users SET wallet_balance_usdt = wallet_balance_usdt - ?, fee_prepaid_credit_usd = COALESCE(fee_prepaid_credit_usd, 0) + ? WHERE id = ?`)
+        .bind(sub.amount_usd, sub.amount_usd, user.id).run();
       await env.DB.prepare(
-        `UPDATE user_subscriptions SET status = 'ACTIVE', payment_method = 'WALLET_USDT', started_at = datetime('now'), expires_at = datetime('now', '+' || ? || ' days'), admin_note = 'Paid via wallet balance' WHERE id = ?`
+        `UPDATE user_subscriptions SET status = 'ACTIVE', payment_method = 'WALLET_USDT', started_at = datetime('now'), expires_at = datetime('now', '+' || ? || ' days'), admin_note = 'Paid via wallet balance (3% fee credit)' WHERE id = ?`
       ).bind(days, sub.id).run();
 
-      await bot.answerCallbackQuery(cq.id, 'اشتراک فعال شد ✅');
+      await bot.answerCallbackQuery(cq.id, 'اعتبار کارمزد ۳٪ شارژ شد ✅');
       if (msgId) {
-        await bot.editMessageText(chatId, msgId, `🎉 پرداخت با موجودی کیف پول انجام شد!\n\n✅ اشتراک ${sub.name_fa || sub.plan_code} به مدت ${days} روز فعال گردید.`);
+        await bot.editMessageText(chatId, msgId, `🎉 پرداخت با موجودی کیف پول انجام شد!\n\n✅ مبلغ ${sub.amount_usd} USDT به اعتبار کارمزد ۳٪ حساب شما اضافه شد (در دلارینو اشتراک ماهانه ۰٪ است!).`);
       }
       return { ok: true };
     }
@@ -1868,8 +1872,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         return { ok: true };
       }
       if (sub.status === 'ACTIVE') {
-        await bot.answerCallbackQuery(cq.id, 'این اشتراک هم‌اکنون فعال شده است ✅', true);
-        if (msgId) await bot.editMessageText(chatId, msgId, '🎉 اشتراک شما هم‌اکنون فعال است!').catch(() => {});
+        await bot.answerCallbackQuery(cq.id, 'این پرداخت هم‌اکنون تایید شده است ✅', true);
+        if (msgId) await bot.editMessageText(chatId, msgId, '🎉 تراکنش شما هم‌اکنون تایید و اعتبار کارمزد ۳٪ شما فعال است!').catch(() => {});
         return { ok: true };
       }
       await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`)
@@ -2375,18 +2379,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
         return { ok: true };
       }
-      const ent = await resolveUserEntitlement(env.DB, {
+      await resolveUserEntitlement(env.DB, {
         id: user.id,
         email: user.email,
         username: user.username,
         role: (user.role as AuthUser['role']) || 'user',
         telegramId: tgId,
       });
-      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-        await bot.answerCallbackQuery(cq.id, 'برای فعال‌سازی ترید خودکار اشتراک لازم است 💎', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       await toggleTradingEngine(env.DB, user.id, 'MY_AI', true, {
         auditSource: 'telegram_myai_activate',
       });
@@ -2520,18 +2519,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     if (data.startsWith('manual_confirm:')) {
       const sigId = data.split(':')[1]!;
-      const ent = await resolveUserEntitlement(env.DB, {
+      await resolveUserEntitlement(env.DB, {
         id: user.id,
         email: user.email,
         username: user.username,
         role: (user.role as AuthUser['role']) || 'user',
         telegramId: tgId,
       });
-      if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-        await bot.answerCallbackQuery(cq.id, '💎 برای اجرای معامله، اشتراک فعال لازم است.', true);
-        await showSubscriptionMenu(env, bot, chatId, user, tgId);
-        return { ok: true };
-      }
       if (msgId) {
         await bot.editMessageText(
           chatId,
@@ -3895,15 +3889,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await env.DB.prepare(`UPDATE gift_codes SET uses_count = uses_count + 1 WHERE code = ?`).bind(code).run();
 
       if (gift.code_type === 'WALLET' && (gift.credit_usdt ?? 0) > 0) {
-        await env.DB.prepare(`UPDATE users SET wallet_balance_usdt = COALESCE(wallet_balance_usdt, 0) + ? WHERE id = ?`)
-          .bind(gift.credit_usdt, user.id).run();
-        await bot.sendMessage(chatId, `🎉 کد هدیه ${code} اعمال شد و مبلغ ${gift.credit_usdt} USDT به کیف پول شما اضافه گردید!`);
-      } else {
         await env.DB.prepare(
-          `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
-           VALUES (?, ?, ?, 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'Telegram Gift Code')`
-        ).bind(randomId('sub'), user.id, gift.plan_code, `GIFT:${code}`, gift.duration_days).run();
-        await bot.sendMessage(chatId, `🎉 کد هدیه ${code} اعمال شد! اشتراک ${gift.plan_code} به مدت ${gift.duration_days} روز برای شما فعال گردید.`);
+          `UPDATE users SET fee_prepaid_credit_usd = COALESCE(fee_prepaid_credit_usd, 0) + ?, wallet_balance_usdt = COALESCE(wallet_balance_usdt, 0) + ? WHERE id = ?`
+        ).bind(gift.credit_usdt, gift.credit_usdt, user.id).run();
+        await bot.sendMessage(chatId, `🎉 کد هدیه ${code} اعمال شد و مبلغ $${gift.credit_usdt} به اعتبار کارمزد ۳٪ سود شما اضافه گردید!`);
+      } else {
+        await env.DB.prepare(`UPDATE users SET fee_prepaid_credit_usd = COALESCE(fee_prepaid_credit_usd, 0) + 2 WHERE id = ?`).bind(user.id).run().catch(() => {});
+        await bot.sendMessage(chatId, `🎉 کد هدیه ${code} اعمال شد و $۲.۰۰ اعتبار کارمزد رایگان به حساب شما اضافه گردید!`);
       }
       return { ok: true };
     }

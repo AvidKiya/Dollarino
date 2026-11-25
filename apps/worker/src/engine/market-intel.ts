@@ -9,8 +9,12 @@ import {
   type Candle,
   type DollarinoSignal,
 } from '@dollarino/core';
-import { callBYOAI, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
+import { resolveAIEnsemble, callBYOAI, runAutonomousAITrader } from '../ai/providers.js';
 import type { Env } from '../env.js';
+import {
+  getAllCachedSystemSettings,
+  setCachedSystemSetting,
+} from '../services/settings-cache.js';
 import { fetchPublicKlines, fetchPublicMarket24h } from '../exchanges/paper.js';
 import { buildToobitRequest, type ToobitProxyConfig } from '../exchanges/proxy.js';
 import {
@@ -44,27 +48,31 @@ function getProxyCfg(env: Env): ToobitProxyConfig | undefined {
 }
 
 async function setSetting(db: D1Database, key: string, value: string): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
-    )
-    .bind(key, value)
-    .run()
-    .catch(() => {});
+  await setCachedSystemSetting(db, key, value);
 }
 
 async function getSettingsMap(db: D1Database, keys: string[]): Promise<Record<string, string>> {
-  if (!keys.length) return {};
-  const placeholders = keys.map(() => '?').join(', ');
-  const rows = await db
-    .prepare(`SELECT key, value FROM system_settings WHERE key IN (${placeholders})`)
-    .bind(...keys)
-    .all<{ key: string; value: string }>()
-    .catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
+  const cached = await getAllCachedSystemSettings(db);
   const map: Record<string, string> = {};
-  for (const r of rows.results ?? []) {
-    map[r.key] = r.value;
+  const freshKeys: string[] = [];
+  for (const k of keys) {
+    if (k.startsWith('intel_last_') || k.startsWith('intel_sig_last_') || k.endsWith('_cursor')) {
+      freshKeys.push(k);
+    } else {
+      const val = cached.get(k);
+      if (val !== undefined) map[k] = val;
+    }
+  }
+  if (freshKeys.length > 0) {
+    const placeholders = freshKeys.map(() => '?').join(', ');
+    const rows = await db
+      .prepare(`SELECT key, value FROM system_settings WHERE key IN (${placeholders})`)
+      .bind(...freshKeys)
+      .all<{ key: string; value: string }>()
+      .catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
+    for (const r of rows.results ?? []) {
+      map[r.key] = r.value;
+    }
   }
   return map;
 }
@@ -324,8 +332,8 @@ export async function runAlwaysOnSignalRadar(
     source: 'always_on_ai_radar',
     engineKey: chosenEngineKey,
     engineLabel: resolveEngineDisplayLabel(chosenEngineKey),
-    publishToChannel: true,
-    notifySubscribers: true,
+    publishToChannel: cfg.signalsToChannelsEnabled,
+    notifySubscribers: cfg.signalsToBotEnabled,
   });
 
   const nowIso = new Date().toISOString();

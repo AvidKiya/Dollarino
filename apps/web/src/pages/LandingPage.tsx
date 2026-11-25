@@ -466,9 +466,17 @@ export function LandingPage({
             </h1>
 
             <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
-              {isFa
-                ? 'با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ۵ موتور همزمان (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine/Python، کپی‌ترید و اسنایپر لیستینگ و میم‌کوین) — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷)، شبیه‌ساز دمو قابل تنظیم (۵۰$ تا ۱۰M$)، رادار DexScreener و ربات رسمی تلگرام @Dollarino_bot.'
-                : 'Trade with 5 simultaneous engines (Central AI, Personal AI, Pine/Python Strategy, Copy Trade, and Listing & Meme Sniper) — powered by multi-chain Trust Wallet (Manual Approval or 24/7 Full Auto), Custom Demo Simulator ($50–$10M), DexScreener Radar, and Telegram Bot @Dollarino_bot.'}
+              {isFa ? (
+                <>
+                  با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ۵ موتور همزمان (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine/Python، کپی‌ترید و اسنایپر لیستینگ و میم‌کوین) — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷)، شبیه‌ساز دمو قابل تنظیم (۵۰$ تا ۱۰M$)، رادار DexScreener و ربات رسمی تلگرام{' '}
+                  <span dir="ltr" className="inline-block font-bold text-main">
+                    @Dollarino_bot
+                  </span>
+                  .
+                </>
+              ) : (
+                'Trade with 5 simultaneous engines (Central AI, Personal AI, Pine/Python Strategy, Copy Trade, and Listing & Meme Sniper) — powered by multi-chain Trust Wallet (Manual Approval or 24/7 Full Auto), Custom Demo Simulator ($50–$10M), DexScreener Radar, and Telegram Bot @Dollarino_bot.'
+              )}
             </p>
 
             {/* Brand Ecosystem Strip (Trust Wallet, Perps & Blockchains) */}
@@ -1070,6 +1078,16 @@ export function LandingPage({
                   <p className="text-[11px] text-dim mt-0.5">{isFa ? 'کیف‌پول Trust Wallet شخصی' : 'Non-custodial Trust Wallet'}</p>
                 </div>
               </div>
+              <div className="rounded-2xl p-3.5 bg-emerald-500/10 border border-emerald-500/30 text-xs leading-relaxed">
+                <p className="font-black text-[#059669] dark:text-[#34D399] mb-1">
+                  {isFa ? '🤝 تفاوت بزرگ دلارینو با پلتفرم‌های اشتراکی:' : '🤝 Why Dollarino Fights Harder for Your Profit:'}
+                </p>
+                <p className="text-main">
+                  {isFa
+                    ? 'سایر ربات‌ها و سایت‌ها از همان ابتدا هزینه اشتراک را از شما می‌گیرند و سود یا ضرر شما در بازار برایشان فرقی ندارد؛ اما دلارینو اشتراک پولی ندارد و تمام تلاشش را می‌کند تا بیشترین سود را ببرید، چون درآمد ۳٪ سرور ما هم فقط زمانی بیشتر می‌شود که شما سود بیشتری بگیرید!'
+                    : 'Competitors take upfront subscription fees and profit whether you win or lose. Dollarino charges $0 subscription and fights its hardest to maximize your net profit — because we only earn our 3% server share when YOU win more!'}
+                </p>
+              </div>
               <div className="pt-1 flex flex-wrap gap-2.5">
                 <button
                   type="button"
@@ -1404,7 +1422,7 @@ export function LandingPage({
                   ['تفاوت حالت تایید دستی با تمام‌اتوترید ۲۴/۷ در Trust Wallet چیست؟', 'در حالت تایید دستی، معاملات با امضای خود شما در اپلیکیشن Trust Wallet تایید می‌شوند؛ اما در حالت تمام‌اتوترید ۲۴/۷، ربات از طریق Agent Key و خزانه رمزنگاری‌شده بدون نیاز به تایید لحظه‌ای، ۲۴ ساعته پوزیشن‌ها را با ۳ تارگت و حد ضرر مدیریت می‌کند.'],
                   ['چطور با هوش مصنوعی من (My AI) کار کنم؟', 'بعد از ورود به میز کار وارد تب «هوش مصنوعی من» شوید و مثل چت کردن عادی استراتژیتان را بنویسید (مثلاً تایم ۱۵ دقیقه، RSI زیر ۳۵، حد ضرر ۲٪). سیستم فوراً قوانین را می‌فهمد، تست زنده می‌گیرد و با یک کلیک ۲۴ ساعته برایتان معامله می‌کند.'],
                   ['تفاوت حالت ساده با حالت حرفه‌ای چیست؟', 'در حالت ساده فقط ترید هوشمند کاملاً اتومات با هوش مصنوعی وجود دارد تا هیچ پیچیدگی نبیند. در حالت حرفه‌ای به ترمینال چارت، هوش مصنوعی من، کپی‌ترید تاییدشده + ولت‌های هوشمند V2، رادار DEX و IDE استراتژی شخصی دسترسی دارید.'],
-                  ['آیا دلارینو رایگان است و کارمزد ۳٪ چطور حساب می‌شود؟', 'بله! اشتراک ماهانه وجود ندارد و همه بخش‌ها رایگان است (از جمله کیف‌پول دمو قابل تنظیم رایگان و ۲۵+ اندیکاتور). حتی ۳ معامله سودده اول واقعی شما کاملاً رایگان (۰٪) است و از معامله چهارم به بعد ۹۷٪ سود برای شما و فقط ۳٪ کارمزد سرور محاسبه می‌شود.'],
+                  ['چرا دلارینو اشتراک نمی‌گیرد و فقط ۳٪ از سود واقعی محاسبه می‌کند؟', 'پلتفرم‌های اشتراکی پولشان را از پیش می‌گیرند و فرقی به حالشان ندارد که شما ضرر کنید یا سود؛ اما در دلارینو هیچ اشتراک ماهانه‌ای نیست (دمو قابل تنظیم و ۲۵+ اندیکاتور هم ۱۰۰٪ رایگانند). علاوه بر ۳ معامله سودده اول رایگان (۰٪)، بعد از آن ۹۷٪ سود برای شما و فقط ۳٪ از سود خالص هزینه سرور است — یعنی ما فقط وقتی بیشتر درآمد داریم که شما سود بیشتری بگیرید!'],
                 ]
               : [
                   ['How does Smart-Wallet Copy Trading V2 & Isolated Margin Boxes work?', 'Track Top-10 smart-money wallets or add any custom wallet across Solana, Base, ETH, BSC, Arbitrum, TON & TRON. Only fresh trades opened after follow-time are mirrored, each inside an isolated margin box with its own daily max loss, 3-step TP, Moonbag, Trailing SL, and 7-day backtest.'],

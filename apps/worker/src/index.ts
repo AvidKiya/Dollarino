@@ -31,6 +31,12 @@ import { SERVER_PROFIT_FEE_PCT, FREE_PROFITABLE_LIVE_TRADES } from './services/s
 import type { UserBotConfigRow } from './engine/executor.js';
 import { runNewListingAndMemeSniperForUser } from './engine/listing-sniper.js';
 import { syncAutoTopSiteTraders } from './services/site-traders.js';
+import {
+  getCachedPublicCopyTraders,
+  getCachedSystemSetting,
+  setCachedPublicCopyTraders,
+  setCachedSystemSetting,
+} from './services/settings-cache.js';
 import { getSystemSettingValue } from './telegram/publisher.js';
 import { fetchIranUsdtRate } from './exchanges/iran-rate.js';
 
@@ -105,15 +111,10 @@ app.get('/', (c) => {
 });
 
 app.get('/api/health', (c) => {
-  try {
-    c.executionCtx.waitUntil(syncTelegramBotAutoOnVersion(c.env, '9.9.3').catch(() => {}));
-  } catch {
-    // ignore outside worker executionCtx
-  }
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '11.0.0',
+    version: '11.5.0',
     openSource: false,
     paidSubscriptions: false,
     profitShareFeePct: SERVER_PROFIT_FEE_PCT,
@@ -459,12 +460,17 @@ const FALLBACK_COPY_TRADERS = [
 
 app.get('/api/public/copy-traders', async (c) => {
   try {
-    await syncAutoTopSiteTraders(c.env.DB).catch(() => {});
+    const cached = getCachedPublicCopyTraders(c.env.DB);
+    if (cached) {
+      return c.json({ traders: cached.length > 0 ? cached : FALLBACK_COPY_TRADERS, cached: true });
+    }
     const rows = await c.env.DB.prepare(
       `SELECT id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level
        FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 12`
     ).all();
-    return c.json({ traders: rows.results.length > 0 ? rows.results : FALLBACK_COPY_TRADERS });
+    const list = rows.results.length > 0 ? rows.results : FALLBACK_COPY_TRADERS;
+    setCachedPublicCopyTraders(c.env.DB, rows.results);
+    return c.json({ traders: list });
   } catch {
     return c.json({ traders: FALLBACK_COPY_TRADERS });
   }
@@ -576,9 +582,9 @@ app.all('*', async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    // Runs every 5 minutes (*/5): check lightweight indexed flags first so idle nights consume minimal D1 Rows Read
+    // Runs every 5 minutes (*/5): check lightweight indexed flags first so idle periods consume minimal D1 Rows Read
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '9.9.3').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '11.5.0').catch(() => {});
 
       const activity = await env.DB.prepare(
         `SELECT
@@ -586,7 +592,10 @@ export default {
            EXISTS(SELECT 1 FROM trades WHERE status = 'OPEN') AS has_open,
            EXISTS(SELECT 1 FROM price_alerts WHERE is_active = 1) AS has_alert,
            EXISTS(SELECT 1 FROM copy_follow_rules WHERE is_active = 1 AND trader_kind = 'SMART_WALLET') AS has_copy_watch,
-           EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos`
+           EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos,
+           EXISTS(SELECT 1 FROM tradingview_free_alerts WHERE is_active = 1) AS has_tv_alert,
+           EXISTS(SELECT 1 FROM scheduled_broadcasts WHERE status = 'SCHEDULED') AS has_sched_bc,
+           EXISTS(SELECT 1 FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') AND COALESCE(sniper_enabled, 0) = 1) AS has_sniper`
       )
         .first<{
           has_bot: number;
@@ -594,6 +603,9 @@ export default {
           has_alert: number;
           has_copy_watch: number;
           has_copy_pos: number;
+          has_tv_alert: number;
+          has_sched_bc: number;
+          has_sniper: number;
         }>()
         .catch(() => null);
 
@@ -605,9 +617,21 @@ export default {
 
       await runAlwaysOnSignalRadar(env, { fromCron: true }).catch(() => {});
       await runAlwaysOnAiIntel(env, { fromCron: true }).catch(() => {});
-      await evaluateTradingViewFreeAlerts(env).catch(() => {});
-      await syncAutoTopSiteTraders(env.DB).catch(() => {});
-      await dispatchDueScheduledBroadcasts(env).catch(() => {});
+
+      if (!activity || activity.has_tv_alert) {
+        await evaluateTradingViewFreeAlerts(env).catch(() => {});
+      }
+      if (!activity || activity.has_sched_bc) {
+        await dispatchDueScheduledBroadcasts(env).catch(() => {});
+      }
+
+      // Auto top-traders aggregation is heavy; throttle to once every 30 minutes
+      const lastTopSyncMs = Number(await getCachedSystemSetting(env.DB, 'intel_last_top_traders_sync', '0')) || 0;
+      if (Date.now() - lastTopSyncMs >= 30 * 60_000) {
+        await setCachedSystemSetting(env.DB, 'intel_last_top_traders_sync', String(Date.now())).catch(() => {});
+        await syncAutoTopSiteTraders(env.DB).catch(() => {});
+      }
+
       if (!activity || activity.has_copy_watch) {
         await pollWatchedWalletsForNewTrades(env).catch(() => {});
       }
@@ -615,17 +639,19 @@ export default {
         await reconcileCopyPositionsV2(env).catch(() => {});
       }
 
-      // Run CEX New Listing & DEX Booming Meme Sniper for users with LISTING_SNIPER engine active
-      const sniperUsers = await env.DB.prepare(
-        `SELECT * FROM bot_configs
-         WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')
-           AND (COALESCE(sniper_enabled, 0) = 1 OR COALESCE(active_engines_json, '') LIKE '%LISTING_SNIPER%')
-         LIMIT 25`
-      )
-        .all<UserBotConfigRow>()
-        .catch(() => ({ results: [] }));
-      for (const su of sniperUsers.results) {
-        await runNewListingAndMemeSniperForUser(env, su.user_id, su).catch(() => {});
+      // Run CEX New Listing & DEX Booming Meme Sniper only if at least one user enabled sniper or LISTING_SNIPER
+      if (!activity || activity.has_sniper || activity.has_bot) {
+        const sniperUsers = await env.DB.prepare(
+          `SELECT * FROM bot_configs
+           WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')
+             AND (COALESCE(sniper_enabled, 0) = 1 OR COALESCE(active_engines_json, '') LIKE '%LISTING_SNIPER%')
+           LIMIT 25`
+        )
+          .all<UserBotConfigRow>()
+          .catch(() => ({ results: [] }));
+        for (const su of sniperUsers.results) {
+          await runNewListingAndMemeSniperForUser(env, su.user_id, su).catch(() => {});
+        }
       }
     })());
   },

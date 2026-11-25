@@ -1,5 +1,6 @@
 import { decryptVaultJson, encryptVaultJson, maskSecret, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { TelegramBotClient } from './client.js';
 
 export const DEFAULT_TG_COMMANDS = [
@@ -189,6 +190,7 @@ export async function saveAndConfigureTelegramBot(
       .run()
       .catch(() => {});
   }
+  invalidateSettingsCache(env.DB);
 
   let webhookSecret = await resolveTelegramWebhookSecret(env);
   if (!webhookSecret) {

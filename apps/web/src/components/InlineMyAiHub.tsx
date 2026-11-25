@@ -156,11 +156,7 @@ export function InlineMyAiHub({
           : 'Your Personal AI is now live and trading 24/7!'
       );
     } catch (e) {
-      if (e instanceof ApiError && e.status === 402 && onNeedSubscription) {
-        onNeedSubscription();
-      } else {
-        onMsg(e instanceof Error ? e.message : 'Activation error', true);
-      }
+      onMsg(e instanceof Error ? e.message : 'Activation error', true);
     } finally {
       setBusy(false);
     }

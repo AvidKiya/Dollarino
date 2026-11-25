@@ -50,8 +50,16 @@ const PALETTE: Record<string, string> = {
 };
 
 const STOCK_AND_COMMODITY_SET = new Set([
-  'XAU', 'PAXG', 'GOLD', 'XAG', 'NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'GOOG', 'GOOGL', 'META', 'NFLX', 'AMD', 'SOXL', 'SOXS', 'SPY', 'QQQ', 'TQQQ', 'SQQQ', 'COIN', 'MSTR',
+  'XAU', 'XAUT', 'PAXG', 'GOLD', 'XAG', 'SILVER', 'WTI', 'USOIL', 'CL',
+  'NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'GOOG', 'GOOGL', 'META', 'NFLX', 'AMD',
+  'SOXL', 'SOXS', 'SPY', 'QQQ', 'TQQQ', 'SQQQ', 'COIN', 'MSTR',
+  'SPCX', 'ANTHROPIC', 'KORU', 'INTC', 'MU', 'MUU', 'MU2', 'SKHY', 'SKHYNIX', 'SNDK',
+  'STRC', 'SAMSUNG', 'SMH', 'LRCX', 'CRCL', 'NBIS', 'PLTR', 'HOOD', 'ARM', 'AVGO', 'ORCL',
+  'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF',
 ]);
+
+const KNOWN_GOOD_ICONS = new Map<string, string>();
+const KNOWN_FAILED_BASES = new Set<string>();
 
 function extractParts(raw: string): { base: string; quote: string } {
   let clean = (raw || '').trim().toUpperCase().replace(/[^A-Z0-9/_-]/g, '');
@@ -226,6 +234,7 @@ function renderInlineBrandSvg(base: string, size: number) {
         </svg>
       );
     case 'XAU':
+    case 'XAUT':
     case 'PAXG':
     case 'GOLD':
       return (
@@ -257,8 +266,24 @@ function renderInlineBrandSvg(base: string, size: number) {
     case 'QQQ':
     case 'AMD':
     case 'COIN':
-    case 'MSTR': {
-      const bg = PALETTE[base] || '#2563EB';
+    case 'MSTR':
+    case 'SPCX':
+    case 'ANTHROPIC':
+    case 'KORU':
+    case 'INTC':
+    case 'MU':
+    case 'MUU':
+    case 'SKHY':
+    case 'SKHYNIX':
+    case 'SNDK':
+    case 'STRC':
+    case 'SAMSUNG':
+    case 'SMH':
+    case 'LRCX':
+    case 'CRCL':
+    case 'NBIS':
+    case 'CL': {
+      const bg = PALETTE[base] || '#1D4ED8';
       return (
         <svg viewBox="0 0 32 32" width={size} height={size} className="shrink-0">
           <circle cx="16" cy="16" r="16" fill={bg} />
@@ -287,51 +312,81 @@ export function CoinIcon({ symbol, size = 28, className = '', imageUrl, showPair
     );
   }
 
-  const [srcIdx, setSrcIdx] = useState(0);
-  const [imgLoaded, setImgLoaded] = useState(false);
+  const cacheKey = imageUrl ? `${base}:${imageUrl}` : base;
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(() => KNOWN_GOOD_ICONS.get(cacheKey) ?? null);
+
   useEffect(() => {
-    setSrcIdx(0);
-    setImgLoaded(false);
-  }, [base, imageUrl]);
+    if (inlineSvg || STOCK_AND_COMMODITY_SET.has(base)) {
+      setResolvedUrl(null);
+      return;
+    }
+    const cached = KNOWN_GOOD_ICONS.get(cacheKey);
+    if (cached) {
+      setResolvedUrl(cached);
+      return;
+    }
+    if (KNOWN_FAILED_BASES.has(cacheKey) || sources.length === 0) {
+      setResolvedUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setResolvedUrl(null);
+    const tryLoad = (idx: number) => {
+      if (cancelled) return;
+      if (idx >= sources.length) {
+        KNOWN_FAILED_BASES.add(cacheKey);
+        return;
+      }
+      const url = sources[idx]!;
+      const img = new Image();
+      img.referrerPolicy = 'no-referrer';
+      img.onload = () => {
+        if (cancelled) return;
+        if (img.naturalWidth > 0) {
+          KNOWN_GOOD_ICONS.set(cacheKey, url);
+          setResolvedUrl(url);
+        } else {
+          tryLoad(idx + 1);
+        }
+      };
+      img.onerror = () => {
+        if (!cancelled) tryLoad(idx + 1);
+      };
+      img.src = url;
+    };
+    tryLoad(0);
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey, base, inlineSvg]);
 
   const bg = PALETTE[base] ?? '#3B82F6';
-  const showImg = !inlineSvg && srcIdx < sources.length;
 
   const primaryBadge = (
     <div
       className={`relative rounded-full shrink-0 inline-flex items-center justify-center overflow-hidden shadow-sm ring-1 ring-white/15 ${className}`}
-      style={{ width: size, height: size, background: inlineSvg ? 'transparent' : imgLoaded ? 'rgba(255,255,255,0.06)' : bg }}
+      style={{ width: size, height: size, background: inlineSvg ? 'transparent' : resolvedUrl ? 'rgba(255,255,255,0.06)' : bg }}
       aria-label={base}
       title={base}
     >
       {inlineSvg ? (
         inlineSvg
+      ) : resolvedUrl ? (
+        <img
+          src={resolvedUrl}
+          alt={base}
+          width={size}
+          height={size}
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover rounded-full"
+        />
       ) : (
-        <>
-          <span
-            className="font-display font-black text-white select-none leading-none tracking-tight"
-            style={{ fontSize: Math.max(8, Math.round(size * (base.length >= 4 ? 0.28 : 0.34))) }}
-          >
-            {base.slice(0, 4)}
-          </span>
-          {showImg && (
-            <img
-              src={sources[srcIdx]}
-              alt={base}
-              width={size}
-              height={size}
-              referrerPolicy="no-referrer"
-              onLoad={() => setImgLoaded(true)}
-              onError={() => {
-                setImgLoaded(false);
-                setSrcIdx((i) => i + 1);
-              }}
-              className={`absolute inset-0 w-full h-full object-cover rounded-full transition-opacity duration-150 ${
-                imgLoaded ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
-          )}
-        </>
+        <span
+          className="font-display font-black text-white select-none leading-none tracking-tight"
+          style={{ fontSize: Math.max(8, Math.round(size * (base.length >= 4 ? 0.28 : 0.34))) }}
+        >
+          {base.slice(0, 4)}
+        </span>
       )}
     </div>
   );

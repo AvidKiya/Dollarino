@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
@@ -13,10 +14,14 @@ import {
   Copy,
   CreditCard,
   Crown,
+  Database,
+  DollarSign,
+  Download,
   Eye,
   Flame,
   Gift,
   Globe,
+  HardDrive,
   Headphones,
   History,
   Image,
@@ -30,6 +35,7 @@ import {
   Phone,
   Play,
   Plus,
+  Power,
   Radio,
   RefreshCw,
   Send,
@@ -107,6 +113,10 @@ interface AdminOverview {
     trust_wallet_verified?: number;
     ui_mode?: string | null;
     activePlan?: string | null;
+    fee_credit_usd?: number;
+    accruedFeeUsd?: number;
+    totalFeeUsd?: number;
+    profitableLiveCount?: number;
     created_at: string;
   }>;
   stats: {
@@ -266,7 +276,35 @@ export function AdminPage({
     telegramSupport: '@Dollarino_bot',
   });
 
-  const [adminSection, setAdminSection] = useState<'menu' | 'overview' | 'banners' | 'founder' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'all'>('menu');
+  const [adminSection, setAdminSection] = useState<'menu' | 'overview' | 'banners' | 'founder' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'database' | 'all'>('menu');
+  const [publishSignalsToChannels, setPublishSignalsToChannels] = useState(true);
+  const [publishSignalsToBotUsers, setPublishSignalsToBotUsers] = useState(true);
+  const [signalCtrlBusy, setSignalCtrlBusy] = useState(false);
+
+  const [dbStats, setDbStats] = useState<{
+    isOwner: boolean;
+    tableCount: number;
+    indexCount: number;
+    totalRows: number;
+    sizeBytes: number;
+    sizeKb: number;
+    tables: Array<{ table: string; rows: number }>;
+  } | null>(null);
+  const [dbBusy, setDbBusy] = useState(false);
+  const [dbExcludeSecrets, setDbExcludeSecrets] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<{
+    format?: string;
+    version?: string;
+    exportedAt?: string;
+    totalRows?: number;
+    tableCount?: number;
+    raw: Record<string, unknown>;
+  } | null>(null);
+  const [restoreMode, setRestoreMode] = useState<'MERGE' | 'REPLACE'>('MERGE');
+  const [restoreConfirmText, setRestoreConfirmText] = useState('');
+  const [wipeMode, setWipeMode] = useState<'OPERATIONAL_RESET' | 'FULL_FACTORY_WIPE'>('OPERATIONAL_RESET');
+  const [wipePreserveOwner, setWipePreserveOwner] = useState(true);
+  const [wipeConfirmText, setWipeConfirmText] = useState('');
   const [founderProfile, setFounderProfile] = useState<FounderProfile>({
     fullNameFa: 'آوید کیا',
     fullNameEn: 'Avid Kiya',
@@ -728,6 +766,8 @@ export function AdminPage({
       alwaysOnAiBroadcast: (ov.settings.always_on_ai_broadcast_enabled ?? 'true') !== 'false',
       autoPublishSignalsToChannel: (ov.settings.auto_publish_signals_to_channel ?? 'true') !== 'false',
     });
+    setPublishSignalsToChannels((ov.settings.publish_signals_to_channels ?? ov.settings.auto_publish_signals_to_channel ?? 'true') !== 'false');
+    setPublishSignalsToBotUsers((ov.settings.publish_signals_to_bot_users ?? 'true') !== 'false');
     setCommunityGroupCfg({
       id: ov.settings.community_group_id || '',
       invite: ov.settings.community_group_invite || '',
@@ -786,6 +826,56 @@ export function AdminPage({
   useEffect(() => {
     load().catch(() => {});
   }, [isOwnerOrAdmin]);
+
+  const loadDbStats = async () => {
+    try {
+      const res = await apiFetch<NonNullable<typeof dbStats>>('/api/admin/database/stats');
+      setDbStats(res);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    if (isOwnerOrAdmin && (adminSection === 'database' || adminSection === 'all')) {
+      void loadDbStats();
+    }
+  }, [isOwnerOrAdmin, adminSection]);
+
+  const updateSignalControls = async (patch: {
+    publishSignalsToChannels?: boolean;
+    publishSignalsToBotUsers?: boolean;
+    alwaysOnSignals?: boolean;
+    alwaysOnAiBroadcast?: boolean;
+  }) => {
+    setSignalCtrlBusy(true);
+    try {
+      const nextChan = patch.publishSignalsToChannels ?? publishSignalsToChannels;
+      const nextBot = patch.publishSignalsToBotUsers ?? publishSignalsToBotUsers;
+      await apiFetch('/api/admin/signal-controls', {
+        method: 'POST',
+        body: JSON.stringify({
+          publishSignalsToChannels: nextChan,
+          publishSignalsToBotUsers: nextBot,
+          alwaysOnSignals: patch.alwaysOnSignals,
+          alwaysOnAiBroadcast: patch.alwaysOnAiBroadcast,
+        }),
+      });
+      if (patch.publishSignalsToChannels !== undefined) setPublishSignalsToChannels(nextChan);
+      if (patch.publishSignalsToBotUsers !== undefined) setPublishSignalsToBotUsers(nextBot);
+      setAutoPublishingCfg((p) => ({
+        ...p,
+        autoPublishSignalsToChannel: nextChan,
+        alwaysOnSignals: patch.alwaysOnSignals ?? p.alwaysOnSignals,
+        alwaysOnAiBroadcast: patch.alwaysOnAiBroadcast ?? p.alwaysOnAiBroadcast,
+      }));
+      setMsg(isFa ? 'تنظیمات انتشار سیگنال با موفقیت اعمال شد ✅' : 'Signal delivery controls updated ✅');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to update signal controls');
+    } finally {
+      setSignalCtrlBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!msg) return;
@@ -937,51 +1027,108 @@ export function AdminPage({
 
   return (
     <div className="space-y-5 tab-enter">
-      {/* Compact Top Account & Security Toggle Bar */}
-      <div className="panel rounded-3xl p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <UserCheck className="w-4 h-4 text-jade" />
-            <span className="font-black text-main">{currentUser.username}</span>
-            <span className="text-dim font-mono-num" dir="ltr">{currentUser.email}</span>
-            <span className="px-2 py-0.5 rounded-full badge-signal text-[10px] font-black uppercase">{currentUser.role}</span>
+      {/* Modern Glass Command Center Hero Header */}
+      <div
+        className="relative overflow-hidden rounded-[30px] p-4 sm:p-5 border border-[#1E3A8A]/45 text-white shadow-xl"
+        style={{ background: 'linear-gradient(135deg, #09142F 0%, #10204A 55%, #0C2A3B 100%)', color: '#FFFFFF' }}
+      >
+        <div className="absolute -top-14 -end-10 w-44 h-44 rounded-full bg-emerald-400/20 blur-2xl pointer-events-none" />
+        <div className="absolute -bottom-16 -start-10 w-48 h-48 rounded-full bg-[#1652F0]/25 blur-2xl pointer-events-none" />
+
+        <div className="relative z-10 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#F59E0B] to-[#D97706] grid place-items-center shadow-lg shadow-amber-500/25 shrink-0">
+                <Crown className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-black text-sm sm:text-base text-white">{currentUser.username}</span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-300/45 text-emerald-100 text-[10px] font-black uppercase">
+                    {currentUser.role === 'owner' ? (isFa ? 'مالک سیستم · OWNER' : 'OWNER') : currentUser.role.toUpperCase()}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-white/15 border border-white/20 text-white text-[10px] font-bold">
+                    V11.5 Command
+                  </span>
+                </div>
+                <div className="text-[11px] text-white/80 font-mono-num mt-0.5" dir="ltr">
+                  {currentUser.email}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/25 font-bold text-white inline-flex items-center gap-1.5 transition"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>{isFa ? 'بروزرسانی پنل' : 'Refresh'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdminSecurityBox((s) => !s)}
+                className="px-3 py-1.5 rounded-xl bg-amber-400/20 hover:bg-amber-400/30 border border-amber-300/45 font-bold text-amber-100 inline-flex items-center gap-1.5 transition"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>{showAdminSecurityBox ? (isFa ? 'بستن امنیت ادمین ▲' : 'Hide Security ▲') : isFa ? 'پروفایل و رمز ادمین ▼' : 'Profile & Password ▼'}</span>
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="btn-ghost px-3 py-1.5 rounded-xl font-bold inline-flex items-center gap-1"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>{isFa ? 'بروزرسانی پنل' : 'Refresh'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowAdminSecurityBox((s) => !s)}
-              className="btn-ghost px-3 py-1.5 rounded-xl font-bold inline-flex items-center gap-1"
-            >
-              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-              <span>{showAdminSecurityBox ? (isFa ? 'بستن امنیت ادمین ▲' : 'Hide Security ▲') : isFa ? 'پروفایل و رمز ادمین ▼' : 'Profile & Password ▼'}</span>
-            </button>
-          </div>
+
+          {/* Sticky Quick Command Navigation Pills */}
+          {isOwnerOrAdmin && data && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px]">
+              {[
+                { id: 'menu' as const, label: isFa ? 'منوی اصلی' : 'Menu', icon: Shield },
+                { id: 'overview' as const, label: isFa ? 'سلامت و AI' : 'Health & AI', icon: BrainCircuit },
+                { id: 'ops' as const, label: isFa ? 'سیگنال و تلگرام' : 'Signals & TG', icon: Radio },
+                { id: 'database' as const, label: isFa ? 'دیتابیس (بکاپ/پاکسازی)' : 'D1 Backup/Wipe', icon: Database },
+                { id: 'users' as const, label: isFa ? 'کاربران و ۳٪' : 'Users & 3%', icon: Users },
+                { id: 'payments' as const, label: isFa ? 'خزانه و مالی' : 'Treasury', icon: Wallet },
+                { id: 'banners' as const, label: isFa ? 'بنرها' : 'Banners', icon: Image },
+                { id: 'founder' as const, label: isFa ? 'بنیان‌گذار' : 'Founder', icon: BadgeCheck },
+                { id: 'dex_logs' as const, label: isFa ? 'آن‌چین و لاگ' : 'On-Chain', icon: Flame },
+                { id: 'all' as const, label: isFa ? 'نمایش یکجا' : 'Show All', icon: Layers },
+              ].map((tab) => {
+                const TabIcon = tab.icon;
+                const active = adminSection === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setAdminSection(tab.id)}
+                    className={`px-3 py-1.5 rounded-xl font-black inline-flex items-center gap-1.5 shrink-0 transition border ${
+                      active
+                        ? 'bg-emerald-500 text-white border-emerald-300 shadow-md shadow-emerald-500/25'
+                        : 'bg-white/15 hover:bg-white/25 text-white border-white/20'
+                    }`}
+                  >
+                    <TabIcon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {showAdminSecurityBox && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t hairline text-xs tab-enter">
-            <form onSubmit={updateProfile} className="surface-soft rounded-2xl p-4 space-y-2.5">
-              <h3 className="font-black text-main">{isFa ? 'نام نمایشی ادمین' : 'Admin Display Name'}</h3>
+          <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 mt-3 border-t border-white/15 text-xs tab-enter">
+            <form onSubmit={updateProfile} className="rounded-2xl bg-white/10 p-4 space-y-2.5">
+              <h3 className="font-black text-white">{isFa ? 'نام نمایشی ادمین' : 'Admin Display Name'}</h3>
               <div className="flex gap-2">
-                <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 surface-input rounded-xl px-3 py-2" />
+                <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 surface-input text-main rounded-xl px-3 py-2" />
                 <button type="submit" className="px-4 py-2 rounded-xl btn-emerald font-extrabold">
                   {isFa ? 'ذخیره' : 'Save'}
                 </button>
               </div>
             </form>
-            <form onSubmit={updatePassword} className="surface-soft rounded-2xl p-4 space-y-2.5">
-              <h3 className="font-black text-main">{isFa ? 'تغییر رمز عبور' : 'Update Password'}</h3>
+            <form onSubmit={updatePassword} className="rounded-2xl bg-white/10 p-4 space-y-2.5">
+              <h3 className="font-black text-white">{isFa ? 'تغییر رمز عبور' : 'Update Password'}</h3>
               <div className="grid grid-cols-2 gap-2">
-                <input required type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Current Password" className="surface-input rounded-xl px-3 py-2" />
-                <input required type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Password (min 6)" className="surface-input rounded-xl px-3 py-2" />
+                <input required type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Current Password" className="surface-input text-main rounded-xl px-3 py-2" />
+                <input required type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Password (min 6)" className="surface-input text-main rounded-xl px-3 py-2" />
               </div>
               <button type="submit" className="px-4 py-2 rounded-xl btn-cobalt font-extrabold">
                 {isFa ? 'به‌روزرسانی رمز عبور' : 'Update Password'}
@@ -1007,12 +1154,13 @@ export function AdminPage({
                 </button>
                 <div className="min-w-0">
                   <h2 className="text-sm sm:text-base font-black text-main truncate">
-                    {adminSection === 'overview' && (isFa ? 'سلامت سیستم، موتورهای AI و D1' : 'System Health, AI Engines & D1')}
+                    {adminSection === 'overview' && (isFa ? 'سلامت سیستم، موتورهای AI و بهینه‌سازی D1' : 'System Health, AI Engines & D1')}
+                    {adminSection === 'database' && (isFa ? 'بانک اطلاعاتی D1: بکاپ، بازیابی و پاکسازی کامل (Owner)' : 'D1 Database Backup, Restore & Wipe (Owner)')}
                     {adminSection === 'banners' && (isFa ? 'بنرهای متحرک و کمپین تبلیغاتی' : 'Promo Banners & Campaigns')}
                     {adminSection === 'founder' && (isFa ? 'هویت بنیان‌گذار، عکس و شفافیت ضدپانزی' : 'Founder Identity, Photo & Anti-Scam Proof')}
-                    {adminSection === 'users' && (isFa ? 'مدیریت کاربران، KYC و رفرال' : 'Users, Phone KYC & Referrals')}
+                    {adminSection === 'users' && (isFa ? 'مدیریت کاربران، KYC و کارمزد ۳٪' : 'Users, Phone KYC & 3% Fees')}
                     {adminSection === 'payments' && (isFa ? 'مالی، خزانه، فیش‌ها و کارمزد ۳٪' : 'Finance, Treasury, 3% Fees & Wallets')}
-                    {adminSection === 'ops' && (isFa ? 'کانال تلگرام، کپی‌ترید و پشتیبانی' : 'Channel, Copy-Trade & Tickets')}
+                    {adminSection === 'ops' && (isFa ? 'کانال تلگرام، کنترل انتشار سیگنال، کپی‌ترید و پشتیبانی' : 'Signal Controls, Channel, Copy-Trade & Tickets')}
                     {adminSection === 'dex_logs' && (isFa ? 'APIهای آن‌چین، DEX و لاگ سیستم' : 'On-Chain APIs, DEX & Audit Logs')}
                     {adminSection === 'all' && (isFa ? 'نمایش کامل تمام بخش‌های ادمین' : 'All Admin Sections')}
                   </h2>
@@ -1097,6 +1245,56 @@ export function AdminPage({
                       {data.stats.signalsCount} <span className="text-xs text-loss">/ {data.stats.openSupportTickets ?? 0}</span>
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Master Signal Broadcast Quick Switches (Channel vs Bot Users) */}
+              <div className="panel rounded-3xl p-4 border hairline space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-black text-main inline-flex items-center gap-2">
+                    <Power className="w-4 h-4 text-jade" />
+                    <span>{isFa ? 'کنترل آنی انتشار سیگنال (کانال تلگرام و ربات کاربران)' : 'Live Signal Broadcast Controls (Channels vs Bot Users)'}</span>
+                  </span>
+                  <span className="text-[10px] text-dim">{isFa ? 'تغییرات بلافاصله اعمال می‌شوند' : 'Applies instantaneously'}</span>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-2.5 text-xs">
+                  <button
+                    type="button"
+                    disabled={signalCtrlBusy}
+                    onClick={() => void updateSignalControls({ publishSignalsToChannels: !publishSignalsToChannels })}
+                    className={`rounded-2xl p-3 border text-start flex items-center justify-between gap-2 transition ${
+                      publishSignalsToChannels
+                        ? 'bg-emerald-500/12 border-emerald-500/35 text-main'
+                        : 'bg-rose-500/10 border-rose-500/30 text-sub'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-black text-xs">{isFa ? '📡 ارسال سیگنال در کانال‌های تلگرام' : '📡 Signals to Telegram Channels'}</div>
+                      <div className="text-[10px] text-dim mt-0.5">{isFa ? 'کانال رسمی سیگنال و کارت نتایج بسته شدن' : 'Main signals channel & closed cards'}</div>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black ${publishSignalsToChannels ? 'bg-emerald-500 text-white' : 'bg-rose-500/20 text-loss'}`}>
+                      {publishSignalsToChannels ? (isFa ? 'روشن ON' : 'ON') : (isFa ? 'خاموش OFF' : 'OFF')}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={signalCtrlBusy}
+                    onClick={() => void updateSignalControls({ publishSignalsToBotUsers: !publishSignalsToBotUsers })}
+                    className={`rounded-2xl p-3 border text-start flex items-center justify-between gap-2 transition ${
+                      publishSignalsToBotUsers
+                        ? 'bg-emerald-500/12 border-emerald-500/35 text-main'
+                        : 'bg-rose-500/10 border-rose-500/30 text-sub'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-black text-xs">{isFa ? '🤖 ارسال سیگنال به پی‌وی ربات کاربران' : '🤖 Signals to Bot Users (DM)'}</div>
+                      <div className="text-[10px] text-dim mt-0.5">{isFa ? 'ارسال مستقیم سیگنال رادار و خبرنامه به کاربران ربات' : 'Send radar signals & alerts to bot users'}</div>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black ${publishSignalsToBotUsers ? 'bg-emerald-500 text-white' : 'bg-rose-500/20 text-loss'}`}>
+                      {publishSignalsToBotUsers ? (isFa ? 'روشن ON' : 'ON') : (isFa ? 'خاموش OFF' : 'OFF')}
+                    </span>
+                  </button>
                 </div>
               </div>
 
@@ -1250,6 +1448,16 @@ export function AdminPage({
                         ? `کلیدهای بلاکچین، آمار تریدهای DEX (${data.stats.dexTradesTotal ?? dexTrades.length}) و رویدادهای امنیتی`
                         : `On-chain API keys, DEX history (${data.stats.dexTradesTotal ?? dexTrades.length}) & security logs`,
                       pill: `${auditLogs.length} Logs`,
+                    },
+                    {
+                      id: 'database' as const,
+                      icon: Database,
+                      badgeBg: 'bg-[#DC2626]',
+                      title: isFa ? 'بانک اطلاعاتی D1: بکاپ کامل، بازیابی، پاکسازی و ریست سیستم (Owner)' : 'D1 Database: Backup, Restore, Prune & Full Wipe (Owner)',
+                      subtitle: isFa
+                        ? 'خروجی کامل JSON (۵۱ جدول)، بازگردانی ایمن بکاپ، کاهش Rows Read و پاکسازی/ریست داده‌ها'
+                        : 'Download full JSON backup, restore snapshots, inspect table rows & reset/wipe D1 safely',
+                      pill: dbStats ? `${dbStats.totalRows} Rows` : 'Owner',
                     },
                   ].map((item) => {
                     const ItemIcon = item.icon;
@@ -2462,7 +2670,7 @@ export function AdminPage({
                       required
                       value={bannerForm.title_fa}
                       onChange={(e) => setBannerForm((f) => ({ ...f, title_fa: e.target.value }))}
-                      placeholder={isFa ? 'مثلاً: تخفیف ویژه اشتراک فصلی یا رادار نهنگ‌ها' : 'Banner title...'}
+                      placeholder={isFa ? 'مثلاً: ۳ معامله اول رایگان + رادار نهنگ‌ها' : 'Banner title...'}
                       className="surface-input w-full rounded-xl px-3 py-2"
                     />
                   </div>
@@ -2522,7 +2730,7 @@ export function AdminPage({
                       <option value="copy">{isFa ? 'کپی‌ترید و ولت‌های V2 (copy)' : 'Copy Trade V2 (copy)'}</option>
                       <option value="dex">{isFa ? 'DEX، ضدراگ و فیوچرز کیف‌پول (dex)' : 'DEX & Perps (dex)'}</option>
                       <option value="myai">{isFa ? 'هوش مصنوعی شخصی من (myai)' : 'My AI (myai)'}</option>
-                      <option value="pricing">{isFa ? 'صفحه اشتراک‌ها (pricing)' : 'Subscriptions (pricing)'}</option>
+                      <option value="pricing">{isFa ? 'کارمزد ۳٪، درآمد و رفرال (pricing)' : '3% Fees & Referral (pricing)'}</option>
                       <option value="radar">{isFa ? 'رادار و استراتژی شکار (radar)' : 'Radar & IDE (radar)'}</option>
                       <option value="aichat">{isFa ? 'چت هوش مصنوعی و تحلیل عکس چارت (aichat)' : 'AI Vision Chat (aichat)'}</option>
                       <option value="https://t.me/Dollarino_official">{isFa ? 'کانال رسمی تلگرام' : 'Telegram Channel'}</option>
@@ -2944,11 +3152,11 @@ export function AdminPage({
                       <div className="text-[11px] text-dim">{u.email}</div>
                     </td>
                     <td className="py-2.5 px-2 font-mono-num text-sub">
-                      <div>{u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '-'}</div>
+                      <div dir="ltr" className="inline-block text-start">{u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '-'}</div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
                           {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
-                          <span>{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
+                          <span dir="ltr">{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
                         </span>
                       </div>
                     </td>
@@ -2965,7 +3173,14 @@ export function AdminPage({
                     <td className="py-2.5 px-2">
                       <div className="flex flex-wrap items-center gap-1">
                         <span className="px-2 py-0.5 rounded surface-soft text-main font-bold">{u.role}</span>
-                        {u.activePlan && <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-jade font-bold">{u.activePlan}</span>}
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-jade font-bold" dir="ltr">
+                          {isFa ? `اعتبار کارمزد: $${Number(u.fee_credit_usd || 0).toFixed(2)}` : `Credit: $${Number(u.fee_credit_usd || 0).toFixed(2)}`}
+                        </span>
+                        {Number(u.accruedFeeUsd || 0) > 0 && (
+                          <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-500 font-bold" dir="ltr">
+                            {isFa ? `معوق ۳٪: $${Number(u.accruedFeeUsd).toFixed(2)}` : `3% Due: $${Number(u.accruedFeeUsd).toFixed(2)}`}
+                          </span>
+                        )}
                         <span className="px-2 py-0.5 rounded bg-[var(--soft)] border hairline text-dim">{u.ui_mode || 'simple'}</span>
                       </div>
                     </td>
@@ -2984,6 +3199,38 @@ export function AdminPage({
                       >
                         {u.phone_verified === 1 ? (isFa ? 'لغو KYC' : 'Revoke KYC') : (isFa ? 'تایید KYC' : 'Approve KYC')}
                       </button>
+                      {roleLower === 'owner' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await apiFetch(`/api/admin/users/${u.id}/fee-credit`, {
+                                method: 'POST',
+                                body: JSON.stringify({ amountUsd: 5, note: 'Owner grant' }),
+                              });
+                              setMsg(isFa ? `$5 اعتبار کارمزد ۳٪ به ${u.username} اعطا شد ✅` : `Granted $5 fee credit to ${u.username}`);
+                              void load();
+                            }}
+                            className="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400 font-bold inline-flex items-center gap-0.5"
+                          >
+                            <DollarSign className="w-3 h-3" />
+                            <span>+$5</span>
+                          </button>
+                          {Number(u.accruedFeeUsd || 0) > 0 && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await apiFetch(`/api/admin/users/${u.id}/reset-fee-debt`, { method: 'POST' });
+                                setMsg(isFa ? `بدهی کارمزد ۳٪ کاربر ${u.username} تسویه/بخشیده شد ✅` : '3% fee debt waived');
+                                void load();
+                              }}
+                              className="px-2 py-1 rounded-lg bg-sky-500/15 text-sky-400 font-bold"
+                            >
+                              {isFa ? 'بخشش ۳٪' : 'Waive 3%'}
+                            </button>
+                          )}
+                        </>
+                      )}
                       {u.role.toLowerCase() !== 'owner' && (
                         <>
                           {roleLower === 'owner' && (
@@ -3012,6 +3259,21 @@ export function AdminPage({
                           >
                             {u.is_blocked ? 'Unblock' : 'Block'}
                           </button>
+                          {roleLower === 'owner' && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!window.confirm(isFa ? `آیا از حذف کامل کاربر ${u.username} و تمام تاریخچه‌اش مطمئنید؟` : `Permanently delete ${u.username}?`)) return;
+                                await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+                                setMsg(isFa ? `کاربر ${u.username} حذف شد.` : `Deleted ${u.username}`);
+                                void load();
+                              }}
+                              className="px-2 py-1 rounded-lg bg-rose-600/20 text-rose-400 font-bold inline-flex items-center"
+                              title={isFa ? 'حذف کامل کاربر' : 'Delete User'}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
                         </>
                       )}
                     </td>
@@ -3629,23 +3891,21 @@ export function AdminPage({
                 </div>
                 <button
                   type="button"
-                  onClick={async () => {
-                    await apiFetch('/api/admin/settings', {
-                      method: 'PUT',
-                      body: JSON.stringify({
-                        always_on_signals_enabled: autoPublishingCfg.alwaysOnSignals ? 'true' : 'false',
-                        always_on_ai_broadcast_enabled: autoPublishingCfg.alwaysOnAiBroadcast ? 'true' : 'false',
-                        auto_publish_signals_to_channel: autoPublishingCfg.autoPublishSignalsToChannel ? 'true' : 'false',
-                      }),
-                    });
-                    setMsg(isFa ? 'تنظیمات ارسال خودکار ۲۴/۷ ذخیره شد ✅' : '24/7 Auto-publishing settings saved ✅');
-                  }}
+                  disabled={signalCtrlBusy}
+                  onClick={() =>
+                    void updateSignalControls({
+                      publishSignalsToChannels,
+                      publishSignalsToBotUsers,
+                      alwaysOnSignals: autoPublishingCfg.alwaysOnSignals,
+                      alwaysOnAiBroadcast: autoPublishingCfg.alwaysOnAiBroadcast,
+                    })
+                  }
                   className="px-3.5 py-1.5 rounded-xl btn-emerald font-black"
                 >
-                  {isFa ? 'ذخیره تنظیمات خودکار' : 'Save Auto Settings'}
+                  {signalCtrlBusy ? '...' : isFa ? 'ذخیره تنظیمات خودکار و انتشار' : 'Save Auto & Signal Controls'}
                 </button>
               </div>
-              <div className="grid sm:grid-cols-3 gap-2">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
                 <label className="surface-card rounded-xl p-2.5 flex items-center gap-2 border hairline cursor-pointer font-bold text-[11px]">
                   <input
                     type="checkbox"
@@ -3662,13 +3922,21 @@ export function AdminPage({
                   />
                   <span>{isFa ? 'اخبار و تحلیل خودکار AI (هر ۳۰د)' : 'Auto News & AI Analysis (30m)'}</span>
                 </label>
-                <label className="surface-card rounded-xl p-2.5 flex items-center gap-2 border hairline cursor-pointer font-bold text-[11px]">
+                <label className={`surface-card rounded-xl p-2.5 flex items-center gap-2 border cursor-pointer font-bold text-[11px] ${publishSignalsToChannels ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-rose-500/30 bg-rose-500/5'}`}>
                   <input
                     type="checkbox"
-                    checked={autoPublishingCfg.autoPublishSignalsToChannel}
-                    onChange={(e) => setAutoPublishingCfg((p) => ({ ...p, autoPublishSignalsToChannel: e.target.checked }))}
+                    checked={publishSignalsToChannels}
+                    onChange={(e) => setPublishSignalsToChannels(e.target.checked)}
                   />
-                  <span>{isFa ? 'انتشار خودکار سیگنال‌ها در کانال' : 'Auto-Post Signals to Channel'}</span>
+                  <span>{isFa ? '📡 انتشار سیگنال در کانال‌ها' : '📡 Signals to Channels'}</span>
+                </label>
+                <label className={`surface-card rounded-xl p-2.5 flex items-center gap-2 border cursor-pointer font-bold text-[11px] ${publishSignalsToBotUsers ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-rose-500/30 bg-rose-500/5'}`}>
+                  <input
+                    type="checkbox"
+                    checked={publishSignalsToBotUsers}
+                    onChange={(e) => setPublishSignalsToBotUsers(e.target.checked)}
+                  />
+                  <span>{isFa ? '🤖 ارسال سیگنال به ربات کاربران' : '🤖 Signals to Bot Users'}</span>
                 </label>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -4359,7 +4627,7 @@ help - راهنمای کامل و امنیت حساب`}
                   </li>
                   <li>
                     <strong className="text-main">• Payments &amp; Affiliate Program:</strong>{' '}
-                    {isFa ? 'پرداخت‌های ریالی/ارزی اشتراک از طریق Trust Wallet BEP20/TRC20 داخل ربات فعال است؛ در صورت تمایل به دریافت Telegram Stars، بخش Payments را در BotFather وصل کنید.' : 'Trust Wallet BEP20/TRC20 checkout is built-in; optionally link Payments for Telegram Stars.'}
+                    {isFa ? 'شارژ اعتبار کارمزد ۳٪ از طریق Trust Wallet BEP20/TRC20 داخل ربات فعال است؛ در صورت تمایل به دریافت Telegram Stars، بخش Payments را در BotFather وصل کنید.' : 'Trust Wallet BEP20/TRC20 3% fee-credit top-up is built-in; optionally link Payments for Telegram Stars.'}
                   </li>
                   <li>
                     <strong className="text-main">• About / Description / Botpic:</strong>{' '}
@@ -4621,6 +4889,463 @@ help - راهنمای کامل و امنیت حساب`}
                 </div>
               </div>
             </div>
+            </div>
+          )}
+
+          {(adminSection === 'all' || adminSection === 'database') && (
+            <div className="space-y-5 tab-enter">
+              {/* Owner Database Control Header & Live D1 Telemetry */}
+              <div className="panel rounded-3xl p-5 sm:p-6 border border-[#1652F0]/30 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#1652F0] to-[#0EA5E9] text-white grid place-items-center shadow-lg shrink-0">
+                      <Database className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm sm:text-base font-black text-main">
+                        {isFa ? 'مدیریت جامع بانک اطلاعاتی کلادفلر D1 (مختص مالک سیستم)' : 'Cloudflare D1 Database Control Center (Owner Only)'}
+                      </h3>
+                      <p className="text-[11px] text-dim mt-0.5">
+                        {isFa
+                          ? 'گرفتن بکاپ کامل JSON، بازگردانی بکاپ، پاکسازی رکوردهای قدیمی برای کاهش مصرف D1 Rows Read و ریست ایمن کل سیستم.'
+                          : 'Full JSON backup export, schema-safe restore, stale-data pruning to cut D1 Rows Read, and safeguarded reset/wipe.'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={dbBusy}
+                    onClick={() => void loadDbStats()}
+                    className="btn-ghost px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${dbBusy ? 'animate-spin' : ''}`} />
+                    <span>{isFa ? 'اسکن آمار دیتابیس' : 'Refresh D1 Stats'}</span>
+                  </button>
+                </div>
+
+                {roleLower !== 'owner' && (
+                  <div className="rounded-2xl p-3.5 bg-amber-500/15 border border-amber-500/35 text-xs font-bold text-amber-500 flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isFa
+                        ? 'هشدار دسترسی: گرفتن بکاپ کامل، بازگردانی و حذف/ریست دیتابیس فقط برای مالک اصلی سیستم (Owner) فعال است.'
+                        : 'Owner restriction: Full Backup, Restore & Wipe operations require the primary Owner role.'}
+                    </span>
+                  </div>
+                )}
+
+                {dbStats && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div className="surface-soft rounded-2xl p-3.5 border hairline">
+                      <span className="text-[10px] text-dim font-bold">{isFa ? 'تعداد کل جداول' : 'Total Tables'}</span>
+                      <div className="text-lg font-black font-mono-num text-main mt-0.5">{dbStats.tableCount}</div>
+                    </div>
+                    <div className="surface-soft rounded-2xl p-3.5 border hairline">
+                      <span className="text-[10px] text-dim font-bold">{isFa ? 'ایندکس‌های بهینه‌سازی' : 'Active Indexes'}</span>
+                      <div className="text-lg font-black font-mono-num text-jade mt-0.5">{dbStats.indexCount}</div>
+                    </div>
+                    <div className="surface-soft rounded-2xl p-3.5 border hairline">
+                      <span className="text-[10px] text-dim font-bold">{isFa ? 'مجموع کل رکوردها' : 'Total D1 Rows'}</span>
+                      <div className="text-lg font-black font-mono-num text-brand mt-0.5">{dbStats.totalRows.toLocaleString('en-US')}</div>
+                    </div>
+                    <div className="surface-soft rounded-2xl p-3.5 border hairline">
+                      <span className="text-[10px] text-dim font-bold">{isFa ? 'حجم تقریبی دیتابیس' : 'Database Size'}</span>
+                      <div className="text-lg font-black font-mono-num text-goldsoft mt-0.5" dir="ltr">
+                        {dbStats.sizeKb.toLocaleString('en-US')} KB
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Smart D1 Housekeeping / Prune Controls */}
+                <div className="surface-soft rounded-2xl p-4 border hairline space-y-2.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-black text-main flex items-center gap-1.5">
+                      <HardDrive className="w-4 h-4 text-emerald-400" />
+                      <span>{isFa ? 'پاکسازی هوشمند رکوردهای زائد (کاهش فوری D1 Rows Read و حجم)' : 'Smart Housekeeping (Instant D1 Footprint Reduction)'}</span>
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { scope: 'AUDIT_ONLY', label: isFa ? 'پاکسازی لاگ‌های قدیمی (>۵ روز)' : 'Prune Logs (>5d)' },
+                      { scope: 'SIGNALS_30D', label: isFa ? 'پاکسازی سیگنال‌های قدیمی (>۱۴ روز)' : 'Prune Signals (>14d)' },
+                      { scope: 'NEWS_30D', label: isFa ? 'پاکسازی اخبار قدیمی (>۱۴ روز)' : 'Prune News (>14d)' },
+                      { scope: 'ALL_STALE', label: isFa ? '🧹 پاکسازی کامل همه موارد زائد' : '🧹 Prune All Stale Rows' },
+                    ].map((btn) => (
+                      <button
+                        key={btn.scope}
+                        type="button"
+                        disabled={dbBusy}
+                        onClick={async () => {
+                          setDbBusy(true);
+                          try {
+                            const r = await apiFetch<{ deletedRows: number; remainingRows: number }>('/api/admin/prune-logs', {
+                              method: 'POST',
+                              body: JSON.stringify({ scope: btn.scope }),
+                            });
+                            setMsg(
+                              isFa
+                                ? `✅ ${r.deletedRows} ردیف قدیمی با موفقیت پاکسازی شد (${r.remainingRows} لاگ باقی مانده).`
+                                : `Pruned ${r.deletedRows} stale rows.`
+                            );
+                            await loadDbStats();
+                          } finally {
+                            setDbBusy(false);
+                          }
+                        }}
+                        className={`px-3 py-2 rounded-xl text-[11px] font-black transition ${
+                          btn.scope === 'ALL_STALE' ? 'btn-emerald' : 'surface-card border hairline hover:border-brand text-main'
+                        }`}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                  {dbStats && dbStats.tables.length > 0 && (
+                    <details className="pt-1">
+                      <summary className="cursor-pointer text-[11px] font-bold text-sub hover:text-main">
+                        {isFa ? `مشاهده آمار جزئی ${dbStats.tables.length} جدول دیتابیس ▼` : `View row counts across all ${dbStats.tables.length} tables ▼`}
+                      </summary>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 mt-2 max-h-56 overflow-y-auto">
+                        {dbStats.tables.map((t) => (
+                          <div key={t.table} className="surface-card rounded-xl px-2.5 py-1.5 border hairline flex items-center justify-between gap-1 text-[10px]" dir="ltr">
+                            <span className="font-mono truncate text-sub">{t.table}</span>
+                            <span className="font-mono font-black text-main shrink-0">{t.rows}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              </div>
+
+              {/* Backup & Restore Two-Column Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+                {/* Backup Export Card */}
+                <div className="surface-card rounded-3xl p-5 border border-emerald-500/30 space-y-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h4 className="font-black text-sm text-main flex items-center gap-2">
+                        <Download className="w-4 h-4 text-jade" />
+                        <span>{isFa ? 'گرفتن بکاپ کامل دیتابیس (JSON Export)' : 'Full D1 Database Backup Export'}</span>
+                      </h4>
+                      <p className="text-[11px] text-dim mt-1 leading-relaxed">
+                        {isFa
+                          ? 'خروجی یکپارچه از تمام جداول (کاربران، تنظیمات، تریدها، کارمزد ۳٪، کپی‌ترید، هوش مصنوعی و کانال‌ها) با فرمت استاندارد dollarino-d1-backup-v1.'
+                          : 'Export all D1 tables (users, settings, trades, 3% fees, copy-trade, AI & channels) as a single dollarino-d1-backup-v1 JSON archive.'}
+                      </p>
+                    </div>
+                  </div>
+                  <label className="surface-soft rounded-xl p-3 border hairline flex items-center gap-2 cursor-pointer font-bold text-[11px]">
+                    <input
+                      type="checkbox"
+                      checked={dbExcludeSecrets}
+                      onChange={(e) => setDbExcludeSecrets(e.target.checked)}
+                    />
+                    <span>{isFa ? 'حذف کلیدهای رمزنگاری‌شده ربات و خزانه از فایل خروجی (برای بکاپ عمومی امن‌تر)' : 'Exclude encrypted bot & treasury secrets from backup file'}</span>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={dbBusy || roleLower !== 'owner'}
+                    onClick={async () => {
+                      setDbBusy(true);
+                      try {
+                        const backup = await apiFetch<{
+                          format: string;
+                          totalRows: number;
+                          tableOrder: string[];
+                        }>(`/api/admin/database/backup${dbExcludeSecrets ? '?excludeSecrets=1' : ''}`);
+                        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+                        a.href = url;
+                        a.download = `dollarino-d1-backup-${stamp}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        URL.revokeObjectURL(url);
+                        setMsg(
+                          isFa
+                            ? `✅ بکاپ کامل (${backup.tableOrder?.length ?? 0} جدول و ${backup.totalRows ?? 0} رکورد) دانلود شد!`
+                            : `Backup downloaded (${backup.totalRows} rows)!`
+                        );
+                      } catch (err) {
+                        setMsg(err instanceof Error ? err.message : 'Backup export failed');
+                      } finally {
+                        setDbBusy(false);
+                      }
+                    }}
+                    className="w-full py-3 rounded-2xl btn-emerald font-black inline-flex items-center justify-center gap-2 disabled:opacity-45"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>{dbBusy ? '...' : isFa ? '⬇️ دانلود فایل بکاپ کامل دیتابیس (.json)' : '⬇️ Download Full D1 Backup (.json)'}</span>
+                  </button>
+                </div>
+
+                {/* Restore Import Card */}
+                <div className="surface-card rounded-3xl p-5 border border-[#1652F0]/30 space-y-4">
+                  <div>
+                    <h4 className="font-black text-sm text-main flex items-center gap-2">
+                      <Upload className="w-4 h-4 text-brand" />
+                      <span>{isFa ? 'بازگردانی دیتابیس از فایل بکاپ (Restore)' : 'Restore Database from Backup JSON'}</span>
+                    </h4>
+                    <p className="text-[11px] text-dim mt-1 leading-relaxed">
+                      {isFa
+                        ? 'فایل JSON بکاپ را انتخاب کنید تا با اسکیمای فعلی تطبیق داده شده و به‌صورت دسته‌ای (Batch) بازیابی شود.'
+                        : 'Upload a dollarino-d1-backup-v1 JSON file to merge or restore into D1 safely.'}
+                    </p>
+                  </div>
+
+                  <label className="surface-soft rounded-2xl p-3 border border-dashed border-[var(--brand)]/50 flex flex-col items-center justify-center gap-1.5 cursor-pointer hover:bg-[var(--soft)] transition">
+                    <Upload className="w-5 h-5 text-brand" />
+                    <span className="font-black text-main">
+                      {restorePreview
+                        ? isFa
+                          ? `فایل بارگذاری شد: ${restorePreview.tableCount} جدول · ${restorePreview.totalRows} ردیف`
+                          : `Loaded: ${restorePreview.tableCount} tables · ${restorePreview.totalRows} rows`
+                        : isFa
+                          ? 'انتخاب فایل بکاپ (.json)'
+                          : 'Select .json backup file'}
+                    </span>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const txt = await file.text();
+                          const parsed = JSON.parse(txt) as Record<string, unknown>;
+                          if (parsed.format !== 'dollarino-d1-backup-v1' || typeof parsed.tables !== 'object' || !parsed.tables) {
+                            setMsg(isFa ? '❌ فرمت فایل بکاپ نامعتبر است.' : 'Invalid backup format.');
+                            return;
+                          }
+                          const tablesObj = parsed.tables as Record<string, unknown[]>;
+                          const tNames = Object.keys(tablesObj);
+                          const rowsTotal = tNames.reduce((sum, k) => sum + (Array.isArray(tablesObj[k]) ? tablesObj[k]!.length : 0), 0);
+                          setRestorePreview({
+                            format: String(parsed.format),
+                            version: String(parsed.version || ''),
+                            exportedAt: String(parsed.exportedAt || ''),
+                            tableCount: tNames.length,
+                            totalRows: rowsTotal,
+                            raw: parsed,
+                          });
+                          setMsg(isFa ? `فایل بکاپ با ${rowsTotal} ردیف آماده بازگردانی است.` : `Backup parsed (${rowsTotal} rows).`);
+                        } catch {
+                          setMsg(isFa ? '❌ خطا در خواندن فایل JSON.' : 'Failed to parse JSON file.');
+                        }
+                      }}
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRestoreMode('MERGE')}
+                      className={`p-2.5 rounded-xl border text-[11px] font-black transition ${
+                        restoreMode === 'MERGE' ? 'btn-cobalt border-transparent' : 'surface-soft hairline text-sub'
+                      }`}
+                    >
+                      {isFa ? 'ادغام ایمن (MERGE)' : 'Safe Merge'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRestoreMode('REPLACE')}
+                      className={`p-2.5 rounded-xl border text-[11px] font-black transition ${
+                        restoreMode === 'REPLACE' ? 'bg-amber-500 text-white border-transparent' : 'surface-soft hairline text-sub'
+                      }`}
+                    >
+                      {isFa ? 'جایگزینی کامل (REPLACE)' : 'Full Replace'}
+                    </button>
+                  </div>
+
+                  {restoreMode === 'REPLACE' && (
+                    <input
+                      dir="ltr"
+                      value={restoreConfirmText}
+                      onChange={(e) => setRestoreConfirmText(e.target.value)}
+                      placeholder="Type RESTORE_REPLACE_DB to confirm"
+                      className="surface-input w-full rounded-xl px-3 py-2 font-mono text-[11px]"
+                    />
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={dbBusy || !restorePreview || roleLower !== 'owner' || (restoreMode === 'REPLACE' && restoreConfirmText !== 'RESTORE_REPLACE_DB')}
+                    onClick={async () => {
+                      if (!restorePreview) return;
+                      setDbBusy(true);
+                      try {
+                        const r = await apiFetch<{ ok: boolean; insertedRows: number; errors?: string[] }>('/api/admin/database/restore', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            mode: restoreMode,
+                            confirmPhrase: restoreConfirmText,
+                            backup: restorePreview.raw,
+                          }),
+                        });
+                        setMsg(
+                          isFa
+                            ? `✅ بازگردانی کامل شد: ${r.insertedRows} ردیف بازیابی گردید${r.errors?.length ? ` (${r.errors.length} هشدار)` : ''}.`
+                            : `Restored ${r.insertedRows} rows!`
+                        );
+                        setRestoreConfirmText('');
+                        await Promise.all([load(), loadDbStats()]);
+                      } catch (err) {
+                        setMsg(err instanceof Error ? err.message : 'Restore failed');
+                      } finally {
+                        setDbBusy(false);
+                      }
+                    }}
+                    className="w-full py-3 rounded-2xl btn-cobalt font-black inline-flex items-center justify-center gap-2 disabled:opacity-45"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>{dbBusy ? '...' : isFa ? '♻️ اجرای بازگردانی بکاپ در دیتابیس' : '♻️ Execute Restore Now'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Danger Zone: Wipe / Reset Database */}
+              <div className="rounded-3xl p-5 sm:p-6 border border-rose-500/40 bg-rose-500/8 space-y-4 text-xs">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-black text-sm text-loss flex items-center gap-2">
+                      <AlertTriangle className="w-5 h-5" />
+                      <span>{isFa ? 'منطقه حساس — ریست عملیاتی یا پاکسازی کامل دیتابیس (Wipe Database)' : 'Danger Zone — Operational Reset or Full Factory Wipe'}</span>
+                    </h4>
+                    <p className="text-[11px] text-sub mt-1 leading-relaxed">
+                      {isFa
+                        ? 'پیشنهاد می‌شود قبل از هرگونه پاکسازی، یک بکاپ JSON از بخش بالا دانلود کنید. این عملیات غیرقابل بازگشت است.'
+                        : 'Download a full JSON backup above before running any wipe. This action is permanent.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWipeMode('OPERATIONAL_RESET');
+                      setWipeConfirmText('');
+                    }}
+                    className={`rounded-2xl p-3.5 border text-start transition ${
+                      wipeMode === 'OPERATIONAL_RESET'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-main'
+                        : 'surface-card hairline text-sub'
+                    }`}
+                  >
+                    <div className="font-black text-xs">{isFa ? '۱. ریست داده‌های عملیاتی (Operational Reset)' : '1. Operational Data Reset'}</div>
+                    <div className="text-[11px] text-dim mt-1">
+                      {isFa
+                        ? 'پاکسازی تمام تریدها، سیگنال‌ها، لاگ‌ها، تیکت‌ها و کارمزدها — بدون حذف کاربران، توکن ربات، تنظیمات و هوش مصنوعی.'
+                        : 'Clears trades, signals, logs, tickets & fees while keeping users, settings, bot token & AI engines.'}
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWipeMode('FULL_FACTORY_WIPE');
+                      setWipeConfirmText('');
+                    }}
+                    className={`rounded-2xl p-3.5 border text-start transition ${
+                      wipeMode === 'FULL_FACTORY_WIPE'
+                        ? 'bg-rose-500/20 border-rose-500/60 text-main'
+                        : 'surface-card hairline text-sub'
+                    }`}
+                  >
+                    <div className="font-black text-xs text-loss">{isFa ? '۲. پاکسازی کامل کل دیتابیس (Full Factory Wipe)' : '2. Full Factory Wipe (Delete All Data)'}</div>
+                    <div className="text-[11px] text-dim mt-1">
+                      {isFa
+                        ? 'حذف ۱۰۰٪ جداول و داده‌های پلتفرم از صفر (با انتخاب اختیاری حفظ حساب Owner و تنظیمات پایه).'
+                        : 'Deletes all platform tables and users cleanly (optionally preserving your Owner login & core settings).'}
+                    </div>
+                  </button>
+                </div>
+
+                {wipeMode === 'FULL_FACTORY_WIPE' && (
+                  <label className="surface-card rounded-xl p-3 border hairline flex items-center gap-2 cursor-pointer font-bold text-[11px]">
+                    <input
+                      type="checkbox"
+                      checked={wipePreserveOwner}
+                      onChange={(e) => setWipePreserveOwner(e.target.checked)}
+                    />
+                    <span>
+                      {isFa
+                        ? '✅ حساب کاربری مالک (Owner) و تنظیمات اصلی سیستم حفظ شوند تا دسترسی پنل قطع نشود'
+                        : '✅ Preserve Owner account & core system_settings so admin access stays intact'}
+                    </span>
+                  </label>
+                )}
+
+                <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-center">
+                  <input
+                    dir="ltr"
+                    value={wipeConfirmText}
+                    onChange={(e) => setWipeConfirmText(e.target.value)}
+                    placeholder={
+                      wipeMode === 'FULL_FACTORY_WIPE'
+                        ? 'Type DELETE_ALL_DATA to confirm wipe'
+                        : 'Type RESET_OPERATIONAL_DATA to confirm reset'
+                    }
+                    className="surface-input rounded-2xl px-4 py-3 font-mono text-xs border-rose-500/35"
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      dbBusy ||
+                      roleLower !== 'owner' ||
+                      wipeConfirmText !== (wipeMode === 'FULL_FACTORY_WIPE' ? 'DELETE_ALL_DATA' : 'RESET_OPERATIONAL_DATA')
+                    }
+                    onClick={async () => {
+                      const expected = wipeMode === 'FULL_FACTORY_WIPE' ? 'DELETE_ALL_DATA' : 'RESET_OPERATIONAL_DATA';
+                      if (wipeConfirmText !== expected) return;
+                      setDbBusy(true);
+                      try {
+                        const r = await apiFetch<{ ok: boolean; deletedRows: number; affectedTablesCount: number }>(
+                          '/api/admin/database/wipe',
+                          {
+                            method: 'POST',
+                            body: JSON.stringify({
+                              mode: wipeMode,
+                              preserveOwnerAndSettings: wipePreserveOwner,
+                              confirmPhrase: wipeConfirmText,
+                            }),
+                          }
+                        );
+                        setWipeConfirmText('');
+                        setMsg(
+                          isFa
+                            ? `🧹 عملیات پاکسازی انجام شد: ${r.deletedRows} ردیف از ${r.affectedTablesCount} جدول حذف گردید.`
+                            : `Wipe finished: deleted ${r.deletedRows} rows across ${r.affectedTablesCount} tables.`
+                        );
+                        await Promise.all([load(), loadDbStats()]);
+                      } catch (err) {
+                        setMsg(err instanceof Error ? err.message : 'Database wipe failed');
+                      } finally {
+                        setDbBusy(false);
+                      }
+                    }}
+                    className="px-6 py-3 rounded-2xl bg-[#DC2626] hover:bg-[#B91C1C] disabled:opacity-40 text-white font-black inline-flex items-center justify-center gap-2 transition shadow-md"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>
+                      {dbBusy
+                        ? '...'
+                        : wipeMode === 'FULL_FACTORY_WIPE'
+                          ? isFa
+                            ? '🔥 پاکسازی کامل دیتابیس'
+                            : '🔥 Wipe Full Database'
+                          : isFa
+                            ? '🧹 اجرای ریست عملیاتی'
+                            : '🧹 Run Operational Reset'}
+                    </span>
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </>

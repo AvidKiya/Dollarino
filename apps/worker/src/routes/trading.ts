@@ -49,7 +49,7 @@ import {
   type SniperTargetType,
 } from '../engine/listing-sniper.js';
 import { checkPreTradeOnboardingGate } from '../engine/onboarding-gate.js';
-import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 import {
   executeSignalForUser,
   logAudit,
@@ -270,7 +270,23 @@ tradingRoutes.get('/dashboard', async (c) => {
   const { effectiveMode, adapter, provider, label, balance, walletSummary } =
     await resolveModeAwareWalletAndBalance(c.env, user.id, cfg ?? null, activeRow?.provider);
 
-  const [openTradesRaw, pendingOrders, closedTrades, recentSignals, stats, periodStats, walletRow, ledgerRows, aiRow, recentAiDecisions, entitlement, platformAI, activeEngine] = await Promise.all([
+  const isLitePoll = c.req.query('lite') === '1';
+
+  const [
+    openTradesRaw,
+    pendingOrders,
+    closedTrades,
+    recentSignals,
+    stats,
+    closedSeriesRaw,
+    walletRow,
+    ledgerRows,
+    aiRow,
+    recentAiDecisions,
+    entitlement,
+    platformAI,
+    activeEngine,
+  ] = await Promise.all([
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC`).bind(user.id, effectiveMode).all<{
       id: string;
       symbol: string;
@@ -295,7 +311,16 @@ tradingRoutes.get('/dashboard', async (c) => {
     }>(),
     c.env.DB.prepare(`SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC`).bind(user.id).all(),
     c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? ORDER BY closed_at DESC LIMIT 60`).bind(user.id, effectiveMode).all(),
-    c.env.DB.prepare(`SELECT * FROM signals WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC LIMIT 24`).bind(user.id).all(),
+    c.env.DB.prepare(
+      `SELECT * FROM (
+         SELECT * FROM signals WHERE user_id = ? ORDER BY created_at DESC LIMIT 24
+       )
+       UNION ALL
+       SELECT * FROM (
+         SELECT * FROM signals WHERE user_id IS NULL ORDER BY created_at DESC LIMIT 24
+       )
+       ORDER BY created_at DESC LIMIT 24`
+    ).bind(user.id).all(),
     c.env.DB.prepare(
       `SELECT
         COUNT(*) as total_trades,
@@ -303,7 +328,9 @@ tradingRoutes.get('/dashboard', async (c) => {
         COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as total_pnl,
         COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as gross_wins,
         COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) < 0 THEN ABS(CAST(realized_pnl AS REAL)) ELSE 0 END), 0) as gross_losses,
-        COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as today_pnl
+        COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as today_pnl,
+        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-24 hours') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_24h_pnl,
+        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-7 days') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_7d_pnl
        FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
     ).bind(user.id, effectiveMode).first<{
       total_trades: number;
@@ -312,13 +339,17 @@ tradingRoutes.get('/dashboard', async (c) => {
       gross_wins: number;
       gross_losses: number;
       today_pnl: number;
+      last_24h_pnl: number;
+      last_7d_pnl: number;
     }>(),
-    c.env.DB.prepare(
-      `SELECT
-        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-24 hours') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_24h_pnl,
-        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-7 days') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_7d_pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
-    ).bind(user.id, effectiveMode).first<{ last_24h_pnl: number; last_7d_pnl: number }>(),
+    isLitePoll
+      ? Promise.resolve({ results: [] as Array<{ symbol: string; realized_pnl: string; closed_at: string }> })
+      : c.env.DB.prepare(
+          `SELECT symbol, realized_pnl, closed_at
+           FROM trades
+           WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at IS NOT NULL
+           ORDER BY closed_at DESC LIMIT 240`
+        ).bind(user.id, effectiveMode).all<{ symbol: string; realized_pnl: string; closed_at: string }>().catch(() => ({ results: [] })),
     c.env.DB.prepare(
       `SELECT COALESCE(SUM(CASE WHEN event_type IN ('DEPOSIT','TOPUP') THEN amount_usd ELSE 0 END), 0) as deposited
        FROM wallet_ledger WHERE user_id = ? AND mode = ?`
@@ -350,7 +381,7 @@ tradingRoutes.get('/dashboard', async (c) => {
     let mark = priceCache.get(pos.symbol);
     let spark = sparkCache.get(pos.symbol);
     if (mark === undefined) {
-      const k = await adapter.getKlines(pos.symbol, '5m', 24).catch(() => []);
+      const k = isLitePoll ? [] : await adapter.getKlines(pos.symbol, '5m', 24).catch(() => []);
       mark = k.length ? k[k.length - 1]!.close : Number(await adapter.getTickerPrice(pos.symbol).catch(() => pos.entry_price));
       spark = k.length ? k.map((c) => c.close) : [Number(pos.entry_price), mark];
       priceCache.set(pos.symbol, mark);
@@ -378,50 +409,65 @@ tradingRoutes.get('/dashboard', async (c) => {
     });
   }
 
-  // Hourly, Daily (30d cumulative), & 7-day weekly breakdown
-  const [hourlyAgg, dailyAgg, weeklyAgg] = await Promise.all([
-    c.env.DB.prepare(
-      `SELECT substr(closed_at, 1, 13) || ':00' as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl, COUNT(*) as trades
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at IS NOT NULL
-       GROUP BY bucket ORDER BY bucket DESC LIMIT 24`
-    ).bind(user.id, effectiveMode).all<{ bucket: string; pnl: number; trades: number }>(),
-    c.env.DB.prepare(
-      `SELECT date(closed_at) as bucket, SUM(CAST(realized_pnl AS REAL)) as pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at >= date('now', '-30 days') AND closed_at IS NOT NULL
-       GROUP BY bucket ORDER BY bucket ASC`
-    ).bind(user.id, effectiveMode).all<{ bucket: string; pnl: number }>(),
-    c.env.DB.prepare(
-      `SELECT date(closed_at) as day, COUNT(*) as count,
-              SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN 1 ELSE 0 END) as wins,
-              SUM(CAST(realized_pnl AS REAL)) as pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at >= date('now', '-7 days')
-       GROUP BY day ORDER BY day ASC`
-    ).bind(user.id, effectiveMode).all<{ day: string; count: number; wins: number; pnl: number }>(),
-  ]);
+  // Derive hourly, 30d daily, 7d weekly, & chronological Equity Curve in-memory from single closedSeriesRaw scan
+  const seriesSource = isLitePoll
+    ? []
+    : closedSeriesRaw.results.length > 0
+      ? closedSeriesRaw.results
+      : (closedTrades.results as Array<{ symbol: string; realized_pnl: string; closed_at: string | null }>).filter((r) => Boolean(r.closed_at));
+
+  const closedAsc = [...seriesSource].reverse();
+  const hourlyMap = new Map<string, { pnl: number; trades: number }>();
+  const dailyMap = new Map<string, number>();
+  const weeklyMap = new Map<string, { count: number; wins: number; pnl: number }>();
+  const cutoff30dIso = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+  const cutoff7dIso = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+
+  for (const r of closedAsc) {
+    if (!r.closed_at) continue;
+    const pnl = Number(r.realized_pnl || 0);
+    const hourKey = `${r.closed_at.slice(0, 13)}:00`;
+    const hPrev = hourlyMap.get(hourKey) ?? { pnl: 0, trades: 0 };
+    hourlyMap.set(hourKey, { pnl: hPrev.pnl + pnl, trades: hPrev.trades + 1 });
+
+    const dayKey = r.closed_at.slice(0, 10);
+    if (dayKey >= cutoff30dIso) {
+      dailyMap.set(dayKey, (dailyMap.get(dayKey) ?? 0) + pnl);
+    }
+    if (dayKey >= cutoff7dIso) {
+      const wPrev = weeklyMap.get(dayKey) ?? { count: 0, wins: 0, pnl: 0 };
+      weeklyMap.set(dayKey, { count: wPrev.count + 1, wins: wPrev.wins + (pnl > 0 ? 1 : 0), pnl: wPrev.pnl + pnl });
+    }
+  }
+
+  const hourlyPnl = Array.from(hourlyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-24)
+    .map(([bucket, v]) => ({ bucket, pnl: Number(v.pnl.toFixed(2)), trades: v.trades }));
+
+  const dailyPnl = Array.from(dailyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([bucket, pnl]) => ({ bucket, pnl: Number(pnl.toFixed(2)) }));
+
+  const weeklyResults = Array.from(weeklyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([day, v]) => ({ day, count: v.count, wins: v.wins, pnl: Number(v.pnl.toFixed(2)) }));
 
   let runningCum = 0;
-  const cumulative30d = dailyAgg.results.map((d) => {
+  const cumulative30d = dailyPnl.map((d) => {
     runningCum += Number(d.pnl || 0);
     return { date: d.bucket, dailyPnl: Number(d.pnl || 0), cumulativePnl: Number(runningCum.toFixed(2)) };
   });
 
-  // Build real chronological Equity Curve from actual closed trades + live open unrealized PnL
-  const closedAscRows = await c.env.DB.prepare(
-    `SELECT symbol, realized_pnl, closed_at
-     FROM trades
-     WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at IS NOT NULL
-     ORDER BY closed_at ASC LIMIT 240`
-  ).bind(user.id, effectiveMode).all<{ symbol: string; realized_pnl: string; closed_at: string }>().catch(() => ({ results: [] }));
-
-  const closedSum = closedAscRows.results.reduce((s, r) => s + Number(r.realized_pnl || 0), 0);
+  const closedSum = closedAsc.reduce((s, r) => s + Number(r.realized_pnl || 0), 0);
   const currentEqTotal = Math.max(0, Number(balance.total || 0) + totalUnrealizedPnl);
   const totalDepositedEst =
     (walletRow?.deposited ?? 0) > 0
       ? Number(walletRow!.deposited)
       : Math.max(effectiveMode === 'LIVE' ? 0 : 10, currentEqTotal - closedSum - totalUnrealizedPnl);
   const curveStartEq = Math.max(effectiveMode === 'LIVE' ? 0 : 10, Number((totalEq - closedSum).toFixed(2)));
-  const startUnix = closedAscRows.results[0]?.closed_at
-    ? Math.floor(Date.parse(closedAscRows.results[0].closed_at.replace(' ', 'T') + 'Z') / 1000) - 3600
+  const startUnix = closedAsc[0]?.closed_at
+    ? Math.floor(Date.parse(closedAsc[0].closed_at.replace(' ', 'T') + 'Z') / 1000) - 3600
     : Math.floor(Date.now() / 1000) - 7200;
 
   const equityCurve: Array<{ time: number; label: string; equity: number; pnl: number }> = [
@@ -435,7 +481,8 @@ tradingRoutes.get('/dashboard', async (c) => {
   let runEq = curveStartEq;
   let runRealized = 0;
   let lastTs = equityCurve[0]!.time;
-  for (const row of closedAscRows.results) {
+  for (const row of closedAsc) {
+    if (!row.closed_at) continue;
     const p = Number(row.realized_pnl || 0);
     runEq += p;
     runRealized += p;
@@ -470,7 +517,7 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   // Live 8-channel Signal Mixer snapshot on active symbol using real HTF trend
   let mixerSnapshot = null;
-  if (cfg) {
+  if (cfg && !isLitePoll) {
     const [klines, htfKlines] = await Promise.all([
       adapter.getKlines(cfg.symbol, cfg.entry_timeframe, 240).catch(() => []),
       adapter.getKlines(cfg.symbol, cfg.higher_timeframe || '1h', 120).catch(() => []),
@@ -542,6 +589,7 @@ tradingRoutes.get('/dashboard', async (c) => {
   }
 
   return c.json({
+    lite: isLitePoll,
     config: cfg,
     activeEngine,
     riskTermsAcceptedAt: uRiskRow?.risk_terms_accepted_at ?? null,
@@ -570,20 +618,28 @@ tradingRoutes.get('/dashboard', async (c) => {
       winRate: stats?.total_trades ? (stats.wins / stats.total_trades) * 100 : 0,
       totalPnl,
       todayPnl: stats?.today_pnl ?? 0,
-      last24hPnl: periodStats?.last_24h_pnl ?? 0,
-      last7dPnl: periodStats?.last_7d_pnl ?? 0,
+      last24hPnl: stats?.last_24h_pnl ?? 0,
+      last7dPnl: stats?.last_7d_pnl ?? 0,
       unrealizedPnl: Number(totalUnrealizedPnl.toFixed(2)),
       allTimePct: totalDeposited > 0 ? Number(((totalPnl / totalDeposited) * 100).toFixed(2)) : 0,
       totalDeposited,
       profitFactor,
     },
-    charts: {
-      hourlyPnl: [...hourlyAgg.results].reverse(),
-      dailyPnl: [...dailyAgg.results],
-      cumulative30d,
-      weeklyResults: weeklyAgg.results,
-      equityCurve,
-    },
+    charts: isLitePoll
+      ? {
+          hourlyPnl: [],
+          dailyPnl: [],
+          cumulative30d: [],
+          weeklyResults: [],
+          equityCurve: [],
+        }
+      : {
+          hourlyPnl,
+          dailyPnl,
+          cumulative30d,
+          weeklyResults,
+          equityCurve,
+        },
     mixerSnapshot,
   });
 });
@@ -598,8 +654,6 @@ tradingRoutes.get('/wallet/ledger', async (c) => {
 
 tradingRoutes.post('/wallet/topup', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{ amountUsd?: number; note?: string }>();
   const amount = Number(body.amountUsd ?? 0);
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
@@ -932,10 +986,6 @@ tradingRoutes.post('/sniper/buy-candidate', async (c) => {
   if (!gate.ok) {
     return c.json({ error: gate.error, code: gate.code }, 403);
   }
-  const entGate = await requirePaidEntitlement(c.env.DB, user);
-  if (!entGate.ok) {
-    return c.json({ error: entGate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  }
 
   const body = await c.req.json<{ candidate?: SniperCandidate }>().catch(() => ({} as { candidate?: SniperCandidate }));
   if (!body.candidate || !body.candidate.tokenAddress || !body.candidate.symbol || !(Number(body.candidate.priceUsd) > 0)) {
@@ -959,8 +1009,6 @@ tradingRoutes.post('/sniper/buy-candidate', async (c) => {
 
 tradingRoutes.post('/wallet/reset', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{ balance?: number }>().catch(() => ({} as { balance?: number }));
   let targetBal = Number(body.balance);
   if (!Number.isFinite(targetBal) || targetBal <= 0) {
@@ -1059,11 +1107,12 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     sets.push(`trading_mode_selected = 1`);
   }
   if (body.trading_mode === 'LIVE') {
-    const ent = await resolveUserEntitlement(c.env.DB, user);
-    if (!ent.allowLiveTrading) {
+    const feeCheck = await checkLiveFeeEnforcement(c.env.DB, user.id);
+    if (!feeCheck.allowed) {
       return c.json({
-        error: 'برای فعال‌سازی معامله واقعی با Trust Wallet، ابتدا یکی از پلن‌های اشتراک را فعال کنید.',
-        code: 'SUBSCRIPTION_REQUIRED',
+        error: feeCheck.reasonFa || 'برای فعال‌سازی حساب واقعی، ابتدا کارمزد معوق ۳٪ سودهای قبلی را تسویه کنید.',
+        code: 'FEE_SETTLEMENT_REQUIRED',
+        enforcement: feeCheck,
       }, 402);
     }
     const [uWallet, perpConn, copyVault, liveEx] = await Promise.all([
@@ -1275,24 +1324,7 @@ tradingRoutes.post('/bot/start', async (c) => {
   } catch { /* ignore */ }
 
   const targetStrategy = typeof body.strategyKey === 'string' ? body.strategyKey : (cfg?.strategy_key || 'dollarino_v01');
-  if (!entitlement.hasPaidPlan && entitlement.subscriptionRequired) {
-    return c.json({
-      error: 'برای روشن کردن ربات و معامله در دلارینو، ابتدا یکی از پلن‌های اشتراک را فعال کنید.',
-      code: 'SUBSCRIPTION_REQUIRED',
-    }, 402);
-  }
-  if (cfg?.trading_mode === 'LIVE' && !entitlement.allowLiveTrading) {
-    return c.json({
-      error: 'برای معاملات واقعی روی Trust Wallet، اشتراک فعال الزامی است.',
-      code: 'SUBSCRIPTION_REQUIRED',
-    }, 402);
-  }
-  if (targetStrategy === 'ai_autonomous_agent' && !entitlement.allowAiTrading) {
-    return c.json({
-      error: 'برای ترید با «هوش مصنوعی دلارینو»، اشتراک فعال لازم است.',
-      code: 'SUBSCRIPTION_REQUIRED',
-    }, 402);
-  }
+  void entitlement;
   const allowPaperFallback = (cfg?.trading_mode ?? 'PAPER') === 'PAPER' && !ensemble.capExceeded;
   if (targetStrategy === 'ai_autonomous_agent' && ensemble.engines.length === 0 && nonCentralEngines.length === 0 && !allowPaperFallback) {
     return c.json({
@@ -1977,10 +2009,6 @@ tradingRoutes.post('/orders/manual', async (c) => {
   if (!onboardingGate.ok) {
     return c.json({ ok: false, error: onboardingGate.error, code: onboardingGate.code }, 403);
   }
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) {
-    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  }
   const body = await c.req.json<{
     symbol: string;
     direction: Direction;
@@ -2076,16 +2104,6 @@ tradingRoutes.post('/signals/execute', async (c) => {
   if (!onboardingGate.ok) {
     return c.json({ error: onboardingGate.error, code: onboardingGate.code }, 403);
   }
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) {
-    return c.json(
-      {
-        error: 'برای اجرای سیگنال و معامله، ابتدا اشتراک دلارینو را خریداری و فعال کنید.',
-        code: 'SUBSCRIPTION_REQUIRED',
-      },
-      402
-    );
-  }
   const body = await c.req.json<{ rawText?: string; signal?: Record<string, unknown>; executeNow?: boolean; source?: 'copytrade' | 'scanner' }>();
   const parsed = parseDollarinoSignal(body.signal ?? body.rawText ?? '');
   if (!parsed) return c.json({ error: 'Could not parse valid Dollarino signal' }, 400);
@@ -2118,17 +2136,6 @@ tradingRoutes.post('/signals/execute', async (c) => {
 
   if (body.executeNow === false) {
     return c.json({ ok: true, signalId: sigId, parsed, formatted });
-  }
-
-  const ent = await resolveUserEntitlement(c.env.DB, user);
-  if (!ent.hasPaidPlan && ent.subscriptionRequired) {
-    return c.json(
-      {
-        error: 'برای اجرای سیگنال و معامله، ابتدا اشتراک دلارینو را خریداری و فعال کنید.',
-        code: 'SUBSCRIPTION_REQUIRED',
-      },
-      402
-    );
   }
 
   const execRes = await executeSignalForUser(c.env, user.id, parsed, {
@@ -2333,8 +2340,6 @@ tradingRoutes.get('/markets', async (c) => {
 
 tradingRoutes.post('/scanner', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     strategyKey?: StrategyKey;
     timeframe?: Timeframe;
@@ -2453,14 +2458,6 @@ tradingRoutes.post('/scanner', async (c) => {
 
 tradingRoutes.post('/ai-agent/run', async (c) => {
   const user = c.get('user');
-  const entitlement = await resolveUserEntitlement(c.env.DB, user);
-  if (!entitlement.allowAiTrading) {
-    return c.json({
-      ok: false,
-      error: 'Active Pro or VIP subscription required for Autonomous AI Trading.',
-      code: 'SUBSCRIPTION_REQUIRED',
-    }, 402);
-  }
   const body = await c.req.json<{
     symbol?: string;
     timeframe?: Timeframe;
@@ -2712,8 +2709,6 @@ tradingRoutes.get('/cards', async (c) => {
 
 tradingRoutes.post('/cards/issue', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     mode?: 'LIVE' | 'PAPER';
     period?: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
@@ -3046,8 +3041,6 @@ tradingRoutes.get('/strategies', async (c) => {
 
 tradingRoutes.post('/strategies/evaluate', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     language?: CustomStrategyLanguage;
     code?: string;
@@ -3104,8 +3097,6 @@ tradingRoutes.post('/strategies/evaluate', async (c) => {
 
 tradingRoutes.post('/strategies', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
   const body = await c.req.json<{
     id?: string;
     name?: string;
@@ -3163,10 +3154,6 @@ tradingRoutes.delete('/strategies/:id', async (c) => {
 
 tradingRoutes.post('/strategies/:id/activate', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) {
-    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  }
   const id = c.req.param('id');
   const row = await c.env.DB.prepare(
     `SELECT id, name, language, timeframe FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
@@ -3227,8 +3214,7 @@ tradingRoutes.post('/ai-scan-now', async (c) => {
     if (!onboardingGate.ok) {
       return c.json({ ok: false, error: onboardingGate.error, code: onboardingGate.code }, 403);
     }
-    const gate = await requirePaidEntitlement(c.env.DB, user);
-    canExecute = gate.ok;
+    canExecute = true;
   }
 
   const results = await Promise.all(

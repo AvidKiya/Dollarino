@@ -43,6 +43,16 @@ import {
   importOwnerMnemonicAsTreasury,
   saveManualTreasuryReceivers,
 } from '../services/treasury.js';
+import {
+  invalidatePublicCopyTradersCache,
+  invalidateSettingsCache,
+  setCachedSystemSetting,
+} from '../services/settings-cache.js';
+
+function isSystemOwner(user: { role?: string; telegramId?: string | null }, env: Env): boolean {
+  const ownerTg = env.OWNER_TELEGRAM_ID || '944021185';
+  return user.role === 'owner' || Boolean(user.telegramId && user.telegramId === ownerTg);
+}
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 adminRoutes.use('*', requireAuth);
@@ -60,7 +70,7 @@ adminRoutes.get('/overview', async (c) => {
     c.env.DB.prepare(
       `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username,
               phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified, ui_mode,
-              wallet_balance_usdt, created_at, last_active_at
+              wallet_balance_usdt, COALESCE(fee_prepaid_credit_usd, 0) as fee_credit_usd, COALESCE(referral_balance_usd, 0) as referral_balance_usd, created_at, last_active_at
        FROM users ORDER BY created_at DESC LIMIT 250`
     ).all<{
       id: string;
@@ -79,9 +89,41 @@ adminRoutes.get('/overview', async (c) => {
       trust_wallet_verified: number;
       ui_mode: string | null;
       wallet_balance_usdt: number;
+      fee_credit_usd: number;
+      referral_balance_usd: number;
       created_at: string;
       last_active_at: string | null;
-    }>(),
+    }>().catch(async () => {
+      const legacy = await c.env.DB.prepare(
+        `SELECT id, email, username, role, is_blocked, telegram_id, telegram_username,
+                phone_number, phone_verified, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified, ui_mode,
+                wallet_balance_usdt, created_at, last_active_at
+         FROM users ORDER BY created_at DESC LIMIT 250`
+      ).all<{
+        id: string;
+        email: string;
+        username: string;
+        role: string;
+        is_blocked: number;
+        telegram_id: string | null;
+        telegram_username: string | null;
+        phone_number: string | null;
+        phone_verified: number;
+        trust_wallet_address: string | null;
+        trust_wallet_tron: string | null;
+        trust_wallet_solana: string | null;
+        trust_wallet_ton: string | null;
+        trust_wallet_verified: number;
+        ui_mode: string | null;
+        wallet_balance_usdt: number;
+        created_at: string;
+        last_active_at: string | null;
+      }>();
+      return {
+        ...legacy,
+        results: legacy.results.map((u) => ({ ...u, fee_credit_usd: 0, referral_balance_usd: 0 })),
+      };
+    }),
     c.env.DB.prepare(
       `SELECT COUNT(*) as total, SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) as open_count,
               COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as total_pnl
@@ -112,10 +154,24 @@ adminRoutes.get('/overview', async (c) => {
     if (!activeSubByUser.has(s.user_id)) activeSubByUser.set(s.user_id, s);
   }
 
+  const userFeesRows = await c.env.DB.prepare(
+    `SELECT user_id,
+            COALESCE(SUM(CASE WHEN status = 'ACCRUED' THEN fee_usd ELSE 0 END), 0) as accrued_fee_usd,
+            COALESCE(SUM(fee_usd), 0) as total_fee_usd,
+            COUNT(*) as profitable_live_count
+     FROM server_fee_ledger GROUP BY user_id`
+  ).all<{ user_id: string; accrued_fee_usd: number; total_fee_usd: number; profitable_live_count: number }>().catch(() => ({ results: [] }));
+  const feeByUser = new Map<string, { accrued_fee_usd: number; total_fee_usd: number; profitable_live_count: number }>();
+  for (const fr of userFeesRows.results) feeByUser.set(fr.user_id, fr);
+
   const enrichedUsers = users.results.map((u) => {
     const sub = activeSubByUser.get(u.id);
+    const fee = feeByUser.get(u.id);
     return {
       ...u,
+      accruedFeeUsd: Number((fee?.accrued_fee_usd || 0).toFixed(4)),
+      totalFeeUsd: Number((fee?.total_fee_usd || 0).toFixed(4)),
+      profitableLiveCount: fee?.profitable_live_count || 0,
       activePlan: sub?.plan_code || (u.role === 'owner' || u.role === 'admin' ? 'vip_owner' : null),
       subscriptionExpiresAt: sub?.expires_at || null,
     };
@@ -407,12 +463,63 @@ adminRoutes.patch('/users/:id', async (c) => {
 adminRoutes.put('/settings', async (c) => {
   const body = await c.req.json<Record<string, string>>();
   for (const [k, v] of Object.entries(body)) {
-    await c.env.DB.prepare(
-      `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
-    ).bind(k, String(v)).run();
+    await setCachedSystemSetting(c.env.DB, k, String(v));
   }
+  invalidateSettingsCache(c.env.DB);
   return c.json({ ok: true });
+});
+
+adminRoutes.post('/signal-controls', async (c) => {
+  const actor = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    publishSignalsToChannels?: boolean;
+    publishSignalsToBotUsers?: boolean;
+    alwaysOnSignals?: boolean;
+    alwaysOnAiBroadcast?: boolean;
+    channelSignalsEnabled?: boolean;
+    channelResultsEnabled?: boolean;
+    channelNewsEnabled?: boolean;
+    channelEducationEnabled?: boolean;
+    channelAlertsEnabled?: boolean;
+    copyPublishToChannel?: boolean;
+  };
+  const pairs: Array<[string, boolean | undefined]> = [
+    ['publish_signals_to_channels', body.publishSignalsToChannels],
+    ['auto_publish_signals_to_channel', body.publishSignalsToChannels],
+    ['publish_signals_to_bot_users', body.publishSignalsToBotUsers],
+    ['always_on_signals_enabled', body.alwaysOnSignals],
+    ['always_on_ai_broadcast_enabled', body.alwaysOnAiBroadcast],
+    ['channel_signals_enabled', body.channelSignalsEnabled],
+    ['channel_results_enabled', body.channelResultsEnabled],
+    ['channel_news_enabled', body.channelNewsEnabled],
+    ['channel_education_enabled', body.channelEducationEnabled],
+    ['channel_alerts_enabled', body.channelAlertsEnabled],
+    ['copy_publish_to_channel', body.copyPublishToChannel],
+  ];
+  for (const [k, v] of pairs) {
+    if (typeof v === 'boolean') {
+      await setCachedSystemSetting(c.env.DB, k, v ? 'true' : 'false');
+    }
+  }
+  invalidateSettingsCache(c.env.DB);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'UPDATE_SIGNAL_CONTROLS', 'system_settings', 'signal_broadcast', ?)`
+  ).bind(randomId('aud'), actor.id, JSON.stringify(body)).run().catch(() => {});
+
+  const cfg = await resolveChannelAndBotConfig(c.env);
+  return c.json({
+    ok: true,
+    controls: {
+      publishSignalsToChannels: cfg.signalsToChannelsEnabled,
+      publishSignalsToBotUsers: cfg.signalsToBotEnabled,
+      channelSignalsEnabled: cfg.signalsEnabled,
+      channelResultsEnabled: cfg.resultsEnabled,
+      channelNewsEnabled: cfg.newsEnabled,
+      channelEducationEnabled: cfg.educationEnabled,
+      channelAlertsEnabled: cfg.alertsEnabled,
+    },
+  });
 });
 
 adminRoutes.get('/founder-profile', async (c) => {
@@ -786,6 +893,8 @@ adminRoutes.post('/site-traders/sync-auto', async (c) => {
       .bind(k, v)
       .run();
   }
+  invalidateSettingsCache(c.env.DB);
+  invalidatePublicCopyTradersCache(c.env.DB);
   const syncRes = await syncAutoTopSiteTraders(c.env.DB, true);
   const [candidates, autoConfig, traders] = await Promise.all([
     discoverTopSiteTraders(c.env.DB, 35),
@@ -850,6 +959,7 @@ adminRoutes.post('/copy-traders', async (c) => {
     body.is_verified !== false ? 1 : 0
   ).run();
 
+  invalidatePublicCopyTradersCache(c.env.DB);
   return c.json({ ok: true, id }, 201);
 });
 
@@ -896,12 +1006,14 @@ adminRoutes.patch('/copy-traders/:id', async (c) => {
     id
   ).run();
 
+  invalidatePublicCopyTradersCache(c.env.DB);
   return c.json({ ok: true });
 });
 
 adminRoutes.delete('/copy-traders/:id', async (c) => {
   const id = c.req.param('id');
   await c.env.DB.prepare(`DELETE FROM copy_traders WHERE id = ?`).bind(id).run();
+  invalidatePublicCopyTradersCache(c.env.DB);
   return c.json({ ok: true });
 });
 
@@ -974,6 +1086,7 @@ adminRoutes.post('/copy-traders/:id/trades', async (c) => {
     mirrorResult = await confirmAndMirrorCopyTrade(c.env, id, true);
   }
 
+  invalidatePublicCopyTradersCache(c.env.DB);
   return c.json({ ok: true, id, publishStatus, mirrorResult }, 201);
 });
 
@@ -988,6 +1101,7 @@ adminRoutes.patch('/copy-traders/trades/:tradeId', async (c) => {
          closed_at = CASE WHEN ? = 'CLOSED' THEN datetime('now') ELSE closed_at END
      WHERE id = ?`
   ).bind(body.status ?? null, body.exit_price ?? null, typeof body.pnl_pct === 'number' ? body.pnl_pct : null, body.status ?? null, tradeId).run();
+  invalidatePublicCopyTradersCache(c.env.DB);
   return c.json({ ok: true });
 });
 
@@ -1088,7 +1202,9 @@ adminRoutes.get('/telegram/channel-status', async (c) => {
       automation: {
         alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
         alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
-        autoPublishSignalsToChannel: (autoPubSig?.value ?? 'true') !== 'false',
+        autoPublishSignalsToChannel: cfg.signalsToChannelsEnabled,
+        publishSignalsToChannels: cfg.signalsToChannelsEnabled,
+        publishSignalsToBotUsers: cfg.signalsToBotEnabled,
       },
       error: 'توکن ربات تلگرام هنوز تنظیم نشده است. می‌توانید همین‌جا از پنل ادمین توکن ربات را وارد و ذخیره کنید.',
     });
@@ -1107,7 +1223,9 @@ adminRoutes.get('/telegram/channel-status', async (c) => {
     automation: {
       alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
       alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
-      autoPublishSignalsToChannel: (autoPubSig?.value ?? 'true') !== 'false',
+      autoPublishSignalsToChannel: cfg.signalsToChannelsEnabled,
+      publishSignalsToChannels: cfg.signalsToChannelsEnabled,
+      publishSignalsToBotUsers: cfg.signalsToBotEnabled,
     },
     channels: {
       signals: { target: cfg.signalsChannelId || cfg.channelHandle, enabled: cfg.signalsEnabled },
@@ -1623,20 +1741,33 @@ adminRoutes.get('/system-health', async (c) => {
 });
 
 adminRoutes.post('/prune-logs', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    scope?: 'ALL_STALE' | 'AUDIT_ONLY' | 'SIGNALS_30D' | 'NEWS_30D' | 'AI_SIGNALS';
+  };
+  const scope = body.scope || 'ALL_STALE';
   const cutoffSec = Math.floor(Date.now() / 1000) - 86400;
-  const [r1, r2, r3, r4] = await Promise.all([
-    c.env.DB.prepare(`DELETE FROM audit_logs WHERE created_at < datetime('now', '-5 days')`).run(),
-    c.env.DB.prepare(`DELETE FROM signals WHERE created_at < datetime('now', '-30 days') AND status != 'PENDING'`).run().catch(() => ({ meta: { changes: 0 } })),
-    c.env.DB.prepare(`DELETE FROM channel_news WHERE created_at < datetime('now', '-30 days')`).run().catch(() => ({ meta: { changes: 0 } })),
-    c.env.DB.prepare(`DELETE FROM rate_limits WHERE window_start < ?`).bind(cutoffSec).run().catch(() => ({ meta: { changes: 0 } })),
-  ]);
+  let totalDeleted = 0;
+
+  if (scope === 'AUDIT_ONLY' || scope === 'ALL_STALE') {
+    const r1 = await c.env.DB.prepare(`DELETE FROM audit_logs WHERE created_at < datetime('now', '-5 days')`).run().catch(() => ({ meta: { changes: 0 } }));
+    const r4 = await c.env.DB.prepare(`DELETE FROM rate_limits WHERE window_start < ?`).bind(cutoffSec).run().catch(() => ({ meta: { changes: 0 } }));
+    totalDeleted += (r1.meta?.changes ?? 0) + (r4.meta?.changes ?? 0);
+  }
+  if (scope === 'SIGNALS_30D' || scope === 'ALL_STALE') {
+    const r2 = await c.env.DB.prepare(`DELETE FROM signals WHERE created_at < datetime('now', '-14 days') AND status != 'PENDING'`).run().catch(() => ({ meta: { changes: 0 } }));
+    totalDeleted += r2.meta?.changes ?? 0;
+  }
+  if (scope === 'NEWS_30D' || scope === 'ALL_STALE') {
+    const r3 = await c.env.DB.prepare(`DELETE FROM channel_news WHERE created_at < datetime('now', '-14 days')`).run().catch(() => ({ meta: { changes: 0 } }));
+    totalDeleted += r3.meta?.changes ?? 0;
+  }
+  if (scope === 'AI_SIGNALS' || scope === 'ALL_STALE') {
+    const r5 = await c.env.DB.prepare(`DELETE FROM platform_ai_signals WHERE created_at < datetime('now', '-7 days')`).run().catch(() => ({ meta: { changes: 0 } }));
+    totalDeleted += r5.meta?.changes ?? 0;
+  }
+
   const countAfter = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM audit_logs`).first<{ cnt: number }>().catch(() => ({ cnt: 0 }));
-  const totalDeleted =
-    (r1.meta?.changes ?? 0) +
-    (r2.meta?.changes ?? 0) +
-    (r3.meta?.changes ?? 0) +
-    (r4.meta?.changes ?? 0);
-  return c.json({ ok: true, deletedRows: totalDeleted, remainingRows: countAfter?.cnt ?? 0 });
+  return c.json({ ok: true, scope, deletedRows: totalDeleted, remainingRows: countAfter?.cnt ?? 0 });
 });
 
 // =========================================================================
@@ -1744,6 +1875,529 @@ adminRoutes.post('/treasury/deposits/:id/decide', async (c) => {
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
   }
+});
+
+// =========================================================================
+// Owner User Controls (Fee Credit Grant, Debt Waiver, Safe User Delete)
+// =========================================================================
+
+adminRoutes.post('/users/:id/fee-credit', async (c) => {
+  const actor = c.get('user');
+  if (!isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی سیستم اجازه اعطای اعتبار کارمزد دارد.' }, 403);
+  }
+  const targetId = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as { amountUsd?: number; note?: string };
+  const amount = Number(body.amountUsd);
+  if (!Number.isFinite(amount) || Math.abs(amount) > 100_000) {
+    return c.json({ error: 'مبلغ اعتبار نامعتبر است.' }, 400);
+  }
+  await c.env.DB.prepare(
+    `UPDATE users SET fee_prepaid_credit_usd = ROUND(MAX(0, COALESCE(fee_prepaid_credit_usd, 0) + ?), 4) WHERE id = ?`
+  ).bind(amount, targetId).run();
+  const updated = await c.env.DB.prepare(
+    `SELECT username, telegram_id, COALESCE(fee_prepaid_credit_usd, 0) as fee_credit_usd FROM users WHERE id = ?`
+  ).bind(targetId).first<{
+    username: string; telegram_id: string | null; fee_credit_usd: number;
+  }>().catch(() => null);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'ADJUST_FEE_CREDIT', 'users', ?, ?)`
+  ).bind(randomId('aud'), actor.id, targetId, JSON.stringify({ amount, note: body.note || '' })).run().catch(() => {});
+
+  if (updated?.telegram_id && amount > 0) {
+    const botToken = await resolveTelegramBotToken(c.env).catch(() => '');
+    if (botToken) {
+      await new TelegramBotClient(botToken)
+        .sendMessage(
+          updated.telegram_id,
+          `🎁 مدیریت دلارینو مبلغ $${amount.toFixed(2)} اعتبار رایگان کارمزد ۳٪ سود به حساب شما اضافه کرد!\nموجودی فعلی اعتبار کارمزد: $${Number(updated.fee_credit_usd || 0).toFixed(2)}`
+        )
+        .catch(() => {});
+    }
+  }
+  return c.json({ ok: true, feeCreditUsd: Number(updated?.fee_credit_usd || 0) });
+});
+
+adminRoutes.post('/users/:id/reset-fee-debt', async (c) => {
+  const actor = c.get('user');
+  if (!isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی سیستم اجازه بخشش بدهی کارمزد را دارد.' }, 403);
+  }
+  const targetId = c.req.param('id');
+  const res = await c.env.DB.prepare(
+    `UPDATE server_fee_ledger SET status = 'WAIVED', note = 'Waived by owner'
+     WHERE user_id = ? AND status = 'ACCRUED'`
+  ).bind(targetId).run();
+  await c.env.DB.prepare(
+    `UPDATE users SET fee_penalty_usd = 0, fee_lock_status = 'ACTIVE', fee_grace_deadline = NULL WHERE id = ?`
+  ).bind(targetId).run().catch(() => {});
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'WAIVE_SERVER_FEE_DEBT', 'users', ?, ?)`
+  ).bind(randomId('aud'), actor.id, targetId, JSON.stringify({ waivedRows: res.meta?.changes ?? 0 })).run().catch(() => {});
+  return c.json({ ok: true, waivedRows: res.meta?.changes ?? 0 });
+});
+
+adminRoutes.delete('/users/:id', async (c) => {
+  const actor = c.get('user');
+  if (!isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی سیستم اجازه حذف کاربر را دارد.' }, 403);
+  }
+  const targetId = c.req.param('id');
+  if (targetId === actor.id) {
+    return c.json({ error: 'امکان حذف حساب مالک فعلی وجود ندارد.' }, 400);
+  }
+  const target = await c.env.DB.prepare(`SELECT id, role, username FROM users WHERE id = ?`).bind(targetId).first<{ id: string; role: string; username: string }>().catch(() => null);
+  if (!target) return c.json({ error: 'کاربر یافت نشد.' }, 404);
+  if (target.role === 'owner') return c.json({ error: 'امکان حذف حساب Owner وجود ندارد.' }, 403);
+
+  const userTablesWithFk = [
+    'support_messages',
+    'support_tickets',
+    'referral_withdrawals',
+    'referrals',
+    'gift_redemptions',
+    'server_fee_ledger',
+    'treasury_deposits',
+    'wallet_ledger',
+    'notifications',
+    'audit_logs',
+    'trades',
+    'pending_orders',
+    'signals',
+    'dex_trades',
+    'perp_dex_orders',
+    'perp_dex_connections',
+    'copy_positions_v2',
+    'copy_follow_rules',
+    'user_copy_vaults',
+    'copy_subscriptions',
+    'price_alerts',
+    'tradingview_free_alerts',
+    'user_ai_agents',
+    'user_strategies',
+    'ai_connections',
+    'exchange_connections',
+    'telegram_bots',
+    'user_subscriptions',
+    'bot_configs',
+  ];
+  for (const tbl of userTablesWithFk) {
+    if (tbl === 'referrals') {
+      await c.env.DB.prepare(`DELETE FROM referrals WHERE referrer_user_id = ? OR referred_user_id = ?`).bind(targetId, targetId).run().catch(() => {});
+    } else {
+      await c.env.DB.prepare(`DELETE FROM ${tbl} WHERE user_id = ?`).bind(targetId).run().catch(() => {});
+    }
+  }
+  await c.env.DB.prepare(`DELETE FROM users WHERE id = ? AND role != 'owner'`).bind(targetId).run();
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'DELETE_USER', 'users', ?, ?)`
+  ).bind(randomId('aud'), actor.id, targetId, JSON.stringify({ username: target.username })).run().catch(() => {});
+  return c.json({ ok: true, deletedUsername: target.username });
+});
+
+// =========================================================================
+// Owner-Only Full D1 Database Backup, Restore, Wipe & Telemetry
+// =========================================================================
+
+// Parent-first order for inserts/backups; reverse for safe FK-clean deletes
+const D1_BACKUP_TABLE_ORDER = [
+  'system_settings',
+  'subscription_plans',
+  'copy_traders',
+  'onchain_api_providers',
+  'platform_ai_engines',
+  'promo_banners',
+  'users',
+  'bot_configs',
+  'exchange_connections',
+  'ai_connections',
+  'user_strategies',
+  'user_ai_agents',
+  'user_subscriptions',
+  'telegram_bots',
+  'telegram_pending_actions',
+  'signals',
+  'trades',
+  'pending_orders',
+  'wallet_ledger',
+  'audit_logs',
+  'notifications',
+  'price_alerts',
+  'tradingview_free_alerts',
+  'gift_codes',
+  'gift_redemptions',
+  'referrals',
+  'referral_withdrawals',
+  'support_tickets',
+  'support_messages',
+  'copy_trader_trades',
+  'copy_subscriptions',
+  'watched_smart_wallets',
+  'copy_follow_rules',
+  'user_copy_vaults',
+  'copy_positions_v2',
+  'dex_trades',
+  'perp_dex_connections',
+  'perp_dex_orders',
+  'channel_news',
+  'scheduled_broadcasts',
+  'platform_ai_signals',
+  'new_listing_events',
+  'server_fee_ledger',
+  'treasury_deposits',
+  'admin_audit_logs',
+  'rate_limits',
+  'market_snapshots',
+];
+
+const OPERATIONAL_RESET_TABLES = [
+  'support_messages',
+  'support_tickets',
+  'server_fee_ledger',
+  'treasury_deposits',
+  'wallet_ledger',
+  'notifications',
+  'audit_logs',
+  'trades',
+  'pending_orders',
+  'signals',
+  'dex_trades',
+  'perp_dex_orders',
+  'copy_positions_v2',
+  'copy_trader_trades',
+  'copy_subscriptions',
+  'channel_news',
+  'scheduled_broadcasts',
+  'platform_ai_signals',
+  'new_listing_events',
+  'price_alerts',
+  'tradingview_free_alerts',
+  'telegram_pending_actions',
+  'rate_limits',
+  'market_snapshots',
+];
+
+async function discoverAllUserTables(db: D1Database): Promise<string[]> {
+  const masterRows = await db
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name != 'd1_migrations'
+       ORDER BY name ASC`
+    )
+    .all<{ name: string }>()
+    .catch(() => ({ results: [] }));
+  const present = new Set(masterRows.results.map((r) => r.name));
+  const ordered: string[] = [];
+  for (const t of D1_BACKUP_TABLE_ORDER) {
+    if (present.has(t)) {
+      ordered.push(t);
+      present.delete(t);
+    }
+  }
+  for (const rest of present) ordered.push(rest);
+  return ordered;
+}
+
+adminRoutes.get('/database/stats', async (c) => {
+  const actor = c.get('user');
+  const tables = await discoverAllUserTables(c.env.DB);
+  const [pageCountRow, pageSizeRow, idxRow] = await Promise.all([
+    c.env.DB.prepare(`PRAGMA page_count`).first<{ page_count: number }>().catch(() => null),
+    c.env.DB.prepare(`PRAGMA page_size`).first<{ page_size: number }>().catch(() => null),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'`
+    ).first<{ cnt: number }>().catch(() => ({ cnt: 0 })),
+  ]);
+
+  const tableStats: Array<{ table: string; rows: number }> = [];
+  for (let i = 0; i < tables.length; i += 12) {
+    const chunk = tables.slice(i, i + 12);
+    const counts = await Promise.all(
+      chunk.map(async (tbl) => {
+        const res = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM "${tbl.replace(/"/g, '')}"`)
+          .first<{ cnt: number }>()
+          .catch(() => ({ cnt: 0 }));
+        return { table: tbl, rows: Number(res?.cnt || 0) };
+      })
+    );
+    tableStats.push(...counts);
+  }
+
+  tableStats.sort((a, b) => b.rows - a.rows);
+  const totalRows = tableStats.reduce((s, t) => s + t.rows, 0);
+  const rawBytes = Number(pageCountRow?.page_count || 0) * Number(pageSizeRow?.page_size || 4096);
+  const sizeBytes = rawBytes > 0 ? rawBytes : Math.max(16384, totalRows * 380);
+
+  return c.json({
+    ok: true,
+    isOwner: isSystemOwner(actor, c.env),
+    tableCount: tables.length,
+    indexCount: idxRow?.cnt ?? 0,
+    totalRows,
+    sizeBytes,
+    sizeKb: Math.max(1, Math.round(sizeBytes / 1024)),
+    tables: tableStats,
+  });
+});
+
+adminRoutes.get('/database/backup', async (c) => {
+  const actor = c.get('user');
+  if (!isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی سیستم (Owner) اجازه گرفتن بکاپ کامل دیتابیس را دارد.' }, 403);
+  }
+  const excludeSecrets = c.req.query('excludeSecrets') === '1';
+  const tables = await discoverAllUserTables(c.env.DB);
+  const data: Record<string, Array<Record<string, unknown>>> = {};
+  const rowCounts: Record<string, number> = {};
+  let totalRows = 0;
+
+  for (const tbl of tables) {
+    const safeTbl = tbl.replace(/"/g, '');
+    const res = await c.env.DB.prepare(`SELECT * FROM "${safeTbl}"`).all<Record<string, unknown>>().catch(() => ({ results: [] }));
+    let rows = res.results ?? [];
+    if (excludeSecrets && tbl === 'system_settings') {
+      rows = rows.filter((r) => !['telegram_bot_token_enc', 'telegram_webhook_secret_auto', 'treasury_mnemonic_enc'].includes(String(r.key || '')));
+    }
+    data[tbl] = rows;
+    rowCounts[tbl] = rows.length;
+    totalRows += rows.length;
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'DATABASE_BACKUP_EXPORT', 'database', 'd1', ?)`
+  ).bind(randomId('aud'), actor.id, JSON.stringify({ tables: tables.length, totalRows, excludeSecrets })).run().catch(() => {});
+
+  const payload = {
+    format: 'dollarino-d1-backup-v1',
+    version: '11.5.0',
+    exportedAt: new Date().toISOString(),
+    exportedBy: actor.username,
+    excludeSecrets,
+    tableOrder: tables,
+    rowCounts,
+    totalRows,
+    tables: data,
+  };
+
+  if (c.req.query('download') === '1') {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    return new Response(JSON.stringify(payload, null, 2), {
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="dollarino-d1-backup-${stamp}.json"`,
+      },
+    });
+  }
+  return c.json(payload);
+});
+
+adminRoutes.post('/database/restore', async (c) => {
+  const actor = c.get('user');
+  if (!isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی سیستم (Owner) اجازه بازگردانی دیتابیس را دارد.' }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    mode?: 'REPLACE' | 'MERGE';
+    confirmPhrase?: string;
+    backup?: {
+      format?: string;
+      tableOrder?: string[];
+      tables?: Record<string, Array<Record<string, unknown>>>;
+    };
+  } | null;
+
+  if (!body || !body.backup || body.backup.format !== 'dollarino-d1-backup-v1' || typeof body.backup.tables !== 'object') {
+    return c.json({ error: 'فرمت فایل بکاپ نامعتبر است. فقط فایل‌های dollarino-d1-backup-v1 قابل بازگردانی هستند.' }, 400);
+  }
+
+  const mode = body.mode === 'MERGE' ? 'MERGE' : 'REPLACE';
+  if (mode === 'REPLACE' && body.confirmPhrase !== 'RESTORE_REPLACE_DB') {
+    return c.json({ error: 'برای بازگردانی جایگزین (REPLACE)، عبارت تایید RESTORE_REPLACE_DB الزامی است.' }, 400);
+  }
+
+  const existingTables = await discoverAllUserTables(c.env.DB);
+  const existingSet = new Set(existingTables);
+  const backupTables = body.backup.tables;
+
+  const rawOrder = Array.isArray(body.backup.tableOrder) ? body.backup.tableOrder : Object.keys(backupTables);
+  const restoreOrder: string[] = [];
+  for (const t of existingTables) {
+    if (Object.prototype.hasOwnProperty.call(backupTables, t) && !restoreOrder.includes(t)) restoreOrder.push(t);
+  }
+  for (const t of rawOrder) {
+    if (existingSet.has(t) && Object.prototype.hasOwnProperty.call(backupTables, t) && !restoreOrder.includes(t)) restoreOrder.push(t);
+  }
+
+  if (mode === 'REPLACE') {
+    for (const tbl of [...restoreOrder].reverse()) {
+      const safeTbl = tbl.replace(/"/g, '');
+      await c.env.DB.prepare(`DELETE FROM "${safeTbl}"`).run().catch(() => {});
+    }
+  }
+
+  let insertedRows = 0;
+  const restoredTables: Array<{ table: string; rows: number; skipped?: number }> = [];
+  const errors: string[] = [];
+
+  for (const tbl of restoreOrder) {
+    const rows = backupTables[tbl];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      restoredTables.push({ table: tbl, rows: 0 });
+      continue;
+    }
+    const safeTbl = tbl.replace(/"/g, '');
+    const infoRes = await c.env.DB.prepare(`PRAGMA table_info("${safeTbl}")`).all<{ name: string }>().catch(() => ({ results: [] }));
+    const validCols = new Set(infoRes.results.map((r) => r.name));
+    if (validCols.size === 0) continue;
+
+    const sampleKeys = new Set<string>();
+    for (const r of rows.slice(0, 5)) {
+      if (r && typeof r === 'object') {
+        for (const k of Object.keys(r)) {
+          if (validCols.has(k)) sampleKeys.add(k);
+        }
+      }
+    }
+    const cols = Array.from(sampleKeys);
+    if (cols.length === 0) continue;
+
+    const colSql = cols.map((col) => `"${col.replace(/"/g, '')}"`).join(', ');
+    const placeholders = cols.map(() => '?').join(', ');
+    const sql = `INSERT OR REPLACE INTO "${safeTbl}" (${colSql}) VALUES (${placeholders})`;
+
+    let okCount = 0;
+    let skipCount = 0;
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50);
+      const stmts = chunk.map((r) => {
+        const vals = cols.map((col) => (r[col] === undefined ? null : r[col]));
+        return c.env.DB.prepare(sql).bind(...vals);
+      });
+      try {
+        await c.env.DB.batch(stmts);
+        okCount += chunk.length;
+      } catch (batchErr) {
+        for (const stmt of stmts) {
+          try {
+            await stmt.run();
+            okCount++;
+          } catch (rowErr) {
+            skipCount++;
+            if (errors.length < 10) {
+              errors.push(`${tbl}: ${rowErr instanceof Error ? rowErr.message : String(batchErr)}`);
+            }
+          }
+        }
+      }
+    }
+    insertedRows += okCount;
+    restoredTables.push({ table: tbl, rows: okCount, ...(skipCount > 0 ? { skipped: skipCount } : {}) });
+  }
+
+  invalidateSettingsCache(c.env.DB);
+  invalidatePublicCopyTradersCache(c.env.DB);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'DATABASE_RESTORE', 'database', 'd1', ?)`
+  ).bind(randomId('aud'), actor.id, JSON.stringify({ mode, insertedRows, tablesCount: restoredTables.length })).run().catch(() => {});
+
+  return c.json({
+    ok: true,
+    mode,
+    insertedRows,
+    restoredTables,
+    errors,
+  });
+});
+
+adminRoutes.post('/database/wipe', async (c) => {
+  const actor = c.get('user');
+  if (!isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی سیستم (Owner) اجازه پاکسازی یا ریست دیتابیس را دارد.' }, 403);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as {
+    mode?: 'OPERATIONAL_RESET' | 'FULL_FACTORY_WIPE';
+    preserveOwnerAndSettings?: boolean;
+    confirmPhrase?: string;
+  };
+  const mode = body.mode === 'FULL_FACTORY_WIPE' ? 'FULL_FACTORY_WIPE' : 'OPERATIONAL_RESET';
+  const expectedPhrase = mode === 'FULL_FACTORY_WIPE' ? 'DELETE_ALL_DATA' : 'RESET_OPERATIONAL_DATA';
+  if (body.confirmPhrase !== expectedPhrase) {
+    return c.json({ error: `برای تایید پاکسازی باید دقیقاً عبارت "${expectedPhrase}" را وارد کنید.` }, 400);
+  }
+
+  let deletedRows = 0;
+  const affectedTables: string[] = [];
+
+  if (mode === 'OPERATIONAL_RESET') {
+    for (const tbl of OPERATIONAL_RESET_TABLES) {
+      const safeTbl = tbl.replace(/"/g, '');
+      const res = await c.env.DB.prepare(`DELETE FROM "${safeTbl}"`).run().catch(() => null);
+      if (res) {
+        deletedRows += res.meta?.changes ?? 0;
+        affectedTables.push(tbl);
+      }
+    }
+    await c.env.DB.prepare(
+      `UPDATE bot_configs SET bot_state = 'STOPPED', paper_balance = COALESCE(custom_paper_balance, 10000), updated_at = datetime('now')`
+    ).run().catch(() => {});
+  } else {
+    const preserve = body.preserveOwnerAndSettings !== false;
+    const allTables = await discoverAllUserTables(c.env.DB);
+    const deleteOrder = [...allTables].reverse();
+    for (const tbl of deleteOrder) {
+      const safeTbl = tbl.replace(/"/g, '');
+      if (preserve && tbl === 'system_settings') continue;
+      if (preserve && tbl === 'platform_ai_engines') continue;
+      if (preserve && tbl === 'subscription_plans') continue;
+      if (preserve && tbl === 'users') {
+        const ownerTg = c.env.OWNER_TELEGRAM_ID || '944021185';
+        const res = await c.env.DB.prepare(
+          `DELETE FROM users WHERE id != ? AND role != 'owner' AND COALESCE(telegram_id, '') != ?`
+        ).bind(actor.id, ownerTg).run().catch(() => null);
+        if (res) {
+          deletedRows += res.meta?.changes ?? 0;
+          affectedTables.push('users (non-owner)');
+        }
+        continue;
+      }
+      if (preserve && tbl === 'bot_configs') {
+        const ownerTg = c.env.OWNER_TELEGRAM_ID || '944021185';
+        const res = await c.env.DB.prepare(
+          `DELETE FROM bot_configs WHERE user_id != ? AND user_id NOT IN (SELECT id FROM users WHERE role = 'owner' OR COALESCE(telegram_id, '') = ?)`
+        ).bind(actor.id, ownerTg).run().catch(() => null);
+        if (res) {
+          deletedRows += res.meta?.changes ?? 0;
+          affectedTables.push('bot_configs (non-owner)');
+        }
+        continue;
+      }
+      const res = await c.env.DB.prepare(`DELETE FROM "${safeTbl}"`).run().catch(() => null);
+      if (res) {
+        deletedRows += res.meta?.changes ?? 0;
+        affectedTables.push(tbl);
+      }
+    }
+  }
+
+  invalidateSettingsCache(c.env.DB);
+  invalidatePublicCopyTradersCache(c.env.DB);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'DATABASE_WIPE', 'database', 'd1', ?)`
+  ).bind(randomId('aud'), actor.id, JSON.stringify({ mode, preserveOwnerAndSettings: body.preserveOwnerAndSettings !== false, deletedRows })).run().catch(() => {});
+
+  return c.json({
+    ok: true,
+    mode,
+    deletedRows,
+    affectedTablesCount: affectedTables.length,
+    affectedTables,
+  });
 });
 
 

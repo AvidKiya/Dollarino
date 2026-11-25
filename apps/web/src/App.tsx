@@ -251,17 +251,22 @@ export function App() {
   useEffect(() => {
     if (!user) return;
     const iv = setInterval(() => {
-      void apiFetch<DashboardPayload>('/api/trading/dashboard')
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void apiFetch<DashboardPayload>('/api/trading/dashboard?lite=1')
         .then((d) => {
           if (d.iranRate?.usdtIrt) setLiveUsdtIrt(d.iranRate.usdtIrt, d.iranRate.source);
-          setDashboard(d);
+          setDashboard((prev) =>
+            prev && (d.charts?.equityCurve?.length ?? 0) <= 2 && (prev.charts?.equityCurve?.length ?? 0) > 2
+              ? { ...d, charts: prev.charts, mixerSnapshot: d.mixerSnapshot ?? prev.mixerSnapshot }
+              : d
+          );
         })
         .catch(() => {});
-    }, 30_000);
+    }, 45_000);
     return () => clearInterval(iv);
   }, [user]);
 
-  // V11.4: Real-time automatic ArzDigital Tether/Toman rate polling (12s while tab is visible, zero manual refresh button)
+  // Real-time Tether/Toman rate polling (45s while tab is visible to minimize edge/D1 load)
   useEffect(() => {
     const pollRate = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
@@ -288,7 +293,7 @@ export function App() {
         })
         .catch(() => {});
     };
-    const rateIv = setInterval(pollRate, 12_000);
+    const rateIv = setInterval(pollRate, 45_000);
     return () => clearInterval(rateIv);
   }, []);
 
@@ -341,7 +346,10 @@ export function App() {
         pushFloatingToast(err.message, 'warn');
       } else if (err instanceof ApiError && err.status === 402) {
         pushFloatingToast(
-          lang === 'fa' ? 'برای روشن کردن ربات، ابتدا اشتراک خود را فعال کنید.' : 'Please activate a subscription to start the bot.',
+          err.message ||
+            (lang === 'fa'
+              ? 'حساب واقعی نیازمند تسویه کارمزد ۳٪ سودهای قبلی است (دمو رایگان است).'
+              : 'Live mode requires settling overdue 3% profit-share fees (Demo stays free).'),
           'warn'
         );
         setActiveTab('pricing');

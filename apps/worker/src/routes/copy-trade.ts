@@ -24,7 +24,7 @@ import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import { activateExclusiveTradingEngine, getActiveEngineState } from '../engine/exclusive-engine.js';
 import { executeSignalForUser, logAudit, notifyUserTelegram } from '../engine/executor.js';
 import type { Env } from '../env.js';
-import { requirePaidEntitlement } from './subscriptions.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 import { buildVerifiedCardCanonicalPayload } from './trading.js';
 import { syncAutoTopSiteTraders } from '../services/site-traders.js';
 import { fetchEvmNativeBalance, fetchSolanaBalance, fetchTronBalances } from './trustwallet.js';
@@ -153,11 +153,6 @@ copyTradeRoutes.post('/follow', async (c) => {
   if (!trader) return c.json({ error: 'تریدر تاییدشده یافت نشد.' }, 404);
 
   if (follow) {
-    const gate = await requirePaidEntitlement(c.env.DB, user);
-    if (!gate.ok) {
-      return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-    }
-
     // Point #1 Rule: Following a trader MUST NOT start the bot or override user's selected engines!
     // Auto-mirror activates ONLY when user turns ON Copy-Trade engine and clicks Start on main dashboard.
     const activeState = await getActiveEngineState(c.env.DB, user.id);
@@ -236,10 +231,6 @@ copyTradeRoutes.post('/trades/:tradeId/confirm-publish', async (c) => {
 
 copyTradeRoutes.post('/copy-now/:tradeId', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) {
-    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  }
 
   const tradeId = c.req.param('tradeId');
   const trade = await c.env.DB.prepare(
@@ -444,12 +435,6 @@ copyTradeRoutes.post('/rules', async (c) => {
   if (!traderId) return c.json({ error: 'شناسه تریدر یا کیف‌پول الزامی است.' }, 400);
 
   const isActive = body.isActive === false ? 0 : 1;
-  if (isActive) {
-    const gate = await requirePaidEntitlement(c.env.DB, user);
-    if (!gate.ok) {
-      return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-    }
-  }
 
   let traderLabel = String(body.traderLabel || '').trim();
   let chainId = String(body.chainId || 'solana').toLowerCase().trim();

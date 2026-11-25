@@ -7,6 +7,10 @@ import {
 import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/renderer.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import {
+  getAllCachedSystemSettings,
+  getCachedSystemSetting,
+} from '../services/settings-cache.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { resolveTelegramBotToken } from './token.js';
 import {
@@ -20,11 +24,7 @@ import {
 } from './formatter.js';
 
 export async function getSystemSettingValue(db: D1Database, key: string, fallback: string): Promise<string> {
-  const row = await db.prepare('SELECT value FROM system_settings WHERE key = ?')
-    .bind(key)
-    .first<{ value: string }>()
-    .catch(() => null);
-  return row?.value || fallback;
+  return getCachedSystemSetting(db, key, fallback);
 }
 
 export async function resolveChannelAndBotConfig(env: Env): Promise<{
@@ -39,6 +39,8 @@ export async function resolveChannelAndBotConfig(env: Env): Promise<{
   communityGroupId: string;
   communityGroupInvite: string;
   signalsEnabled: boolean;
+  signalsToChannelsEnabled: boolean;
+  signalsToBotEnabled: boolean;
   resultsEnabled: boolean;
   newsEnabled: boolean;
   educationEnabled: boolean;
@@ -46,43 +48,30 @@ export async function resolveChannelAndBotConfig(env: Env): Promise<{
   botUsername: string;
   webAppUrl: string;
 }> {
-  const [
-    channelRaw,
-    sigChanRaw,
-    sigInviteRaw,
-    resChanRaw,
-    resInviteRaw,
-    newsChanRaw,
-    eduChanRaw,
-    alertsChanRaw,
-    commGroupRaw,
-    commInviteRaw,
-    sigEn,
-    resEn,
-    newsEn,
-    eduEn,
-    alertsEn,
-    botUserRaw,
-    webUrlRaw,
-  ] = await Promise.all([
-    getSystemSettingValue(env.DB, 'official_channel', env.DEFAULT_SIGNAL_CHANNEL || OFFICIAL_CHANNEL_HANDLE),
-    getSystemSettingValue(env.DB, 'signals_channel_id', ''),
-    getSystemSettingValue(env.DB, 'signals_channel_invite', SIGNALS_CHANNEL_INVITE),
-    getSystemSettingValue(env.DB, 'results_channel_id', ''),
-    getSystemSettingValue(env.DB, 'results_channel_invite', RESULTS_CHANNEL_INVITE),
-    getSystemSettingValue(env.DB, 'news_channel_id', ''),
-    getSystemSettingValue(env.DB, 'education_channel_id', ''),
-    getSystemSettingValue(env.DB, 'alerts_channel_id', ''),
-    getSystemSettingValue(env.DB, 'community_group_id', ''),
-    getSystemSettingValue(env.DB, 'community_group_invite', ''),
-    getSystemSettingValue(env.DB, 'channel_signals_enabled', 'true'),
-    getSystemSettingValue(env.DB, 'channel_results_enabled', 'true'),
-    getSystemSettingValue(env.DB, 'channel_news_enabled', 'true'),
-    getSystemSettingValue(env.DB, 'channel_education_enabled', 'true'),
-    getSystemSettingValue(env.DB, 'channel_alerts_enabled', 'true'),
-    getSystemSettingValue(env.DB, 'bot_username', 'Dollarino_bot'),
-    getSystemSettingValue(env.DB, 'public_web_url', env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev'),
-  ]);
+  const s = await getAllCachedSystemSettings(env.DB);
+  const g = (k: string, fb: string) => {
+    const v = s.get(k);
+    return v !== undefined && v !== '' ? v : fb;
+  };
+  const channelRaw = g('official_channel', env.DEFAULT_SIGNAL_CHANNEL || OFFICIAL_CHANNEL_HANDLE);
+  const sigChanRaw = g('signals_channel_id', '');
+  const sigInviteRaw = g('signals_channel_invite', SIGNALS_CHANNEL_INVITE);
+  const resChanRaw = g('results_channel_id', '');
+  const resInviteRaw = g('results_channel_invite', RESULTS_CHANNEL_INVITE);
+  const newsChanRaw = g('news_channel_id', '');
+  const eduChanRaw = g('education_channel_id', '');
+  const alertsChanRaw = g('alerts_channel_id', '');
+  const commGroupRaw = g('community_group_id', '');
+  const commInviteRaw = g('community_group_invite', '');
+  const sigEn = g('channel_signals_enabled', 'true');
+  const sigToChanEn = g('publish_signals_to_channels', 'true');
+  const sigToBotEn = g('publish_signals_to_bot_users', 'true');
+  const resEn = g('channel_results_enabled', 'true');
+  const newsEn = g('channel_news_enabled', 'true');
+  const eduEn = g('channel_education_enabled', 'true');
+  const alertsEn = g('channel_alerts_enabled', 'true');
+  const botUserRaw = g('bot_username', 'Dollarino_bot');
+  const webUrlRaw = g('public_web_url', env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev');
   const norm = (val: string) => {
     const t = val.trim();
     if (!t) return '';
@@ -105,6 +94,8 @@ export async function resolveChannelAndBotConfig(env: Env): Promise<{
     communityGroupId: norm(commGroupRaw),
     communityGroupInvite: commInviteRaw.trim(),
     signalsEnabled: sigEn !== 'false',
+    signalsToChannelsEnabled: sigToChanEn !== 'false',
+    signalsToBotEnabled: sigToBotEn !== 'false',
     resultsEnabled: resEn !== 'false',
     newsEnabled: newsEn !== 'false',
     educationEnabled: eduEn !== 'false',
@@ -223,8 +214,8 @@ export async function publishSignalBroadcast(
       fullSignal.timeframe,
       fullSignal.price,
       fullSignal.stopLoss,
-      fullSignal.leverage,
-      fullSignal.tp1,
+      fullSignal.leverage ?? 5,
+      fullSignal.tp1 ?? fullSignal.price,
       fullSignal.tp2 ?? null,
       fullSignal.tp3 ?? null,
       formattedText,
@@ -244,10 +235,10 @@ export async function publishSignalBroadcast(
   }
 
   const tg = new TelegramBotClient(botToken);
-  const autoPublish = (await getSystemSettingValue(env.DB, 'auto_publish_signals_to_channel', 'true')) === 'true';
-  const alsoOfficial = (await getSystemSettingValue(env.DB, 'signals_also_official', 'true')) === 'true';
+  const autoPublish = (await getSystemSettingValue(env.DB, 'auto_publish_signals_to_channel', 'true')) !== 'false';
+  const alsoOfficial = (await getSystemSettingValue(env.DB, 'signals_also_official', 'true')) !== 'false';
 
-  if (cfg.signalsEnabled && (params.publishToChannel ?? autoPublish)) {
+  if (cfg.signalsEnabled && cfg.signalsToChannelsEnabled && (params.publishToChannel ?? autoPublish)) {
     const primaryTarget = cfg.signalsChannelId || cfg.channelHandle;
     const targets = new Set<string>();
     if (primaryTarget) targets.add(primaryTarget);
@@ -283,7 +274,7 @@ export async function publishSignalBroadcast(
     }
   }
 
-  if (params.notifySubscribers) {
+  if (params.notifySubscribers && cfg.signalsToBotEnabled) {
     const subs = await env.DB.prepare(
       `SELECT DISTINCT u.telegram_id
        FROM users u
@@ -457,8 +448,8 @@ export async function publishSignalClosedCard(
   ];
 
   let sentToResultsChannel = false;
-  // 2A. Dedicated Results Channel (when configured by admin)
-  if (cfg.resultsChannelId) {
+  // 2A. Dedicated Results Channel (when configured & enabled by admin)
+  if (cfg.resultsEnabled && cfg.signalsToChannelsEnabled && cfg.resultsChannelId) {
     try {
       if (pngBytes) {
         await tg.sendPhotoBuffer(cfg.resultsChannelId, pngBytes, `dollarino-result-${params.symbol}.png`, caption, {
@@ -474,7 +465,7 @@ export async function publishSignalClosedCard(
   }
 
   // 2B. If tied to a channel signal message, reply directly to that signal with result card!
-  if (params.signalId) {
+  if (cfg.resultsEnabled && cfg.signalsToChannelsEnabled && params.signalId) {
     const sigRow = await env.DB.prepare(
       `SELECT channel_message_id, channel_chat_id FROM signals WHERE id = ? LIMIT 1`
     ).bind(params.signalId).first<{ channel_message_id: number | null; channel_chat_id: string | null }>().catch(() => null);
@@ -624,21 +615,33 @@ export async function publishChannelNews(
     resultsChannelInvite: cfg.resultsChannelInvite,
   });
 
+  const shouldPostChannel =
+    cfg.signalsToChannelsEnabled &&
+    (params.category === 'ALERT'
+      ? cfg.alertsEnabled
+      : params.category === 'EDUCATION' || params.category === 'PROMO' || params.category === 'ANNOUNCEMENT'
+        ? cfg.educationEnabled
+        : params.category === 'SIGNAL_UPDATE'
+          ? cfg.signalsEnabled
+          : cfg.newsEnabled);
+
   let channelMessageId: number | undefined;
   let channelErr: string | undefined;
-  try {
-    const res = params.mediaUrl?.startsWith('http')
-      ? await tg.sendPhoto(targetChannel, params.mediaUrl, text.slice(0, 1020), { inlineKeyboard: markup })
-      : await tg.sendMessage(targetChannel, text, { inlineKeyboard: markup });
-    channelMessageId = res.message_id;
-    await env.DB.prepare(`UPDATE channel_news SET channel_message_id = ? WHERE id = ?`)
-      .bind(res.message_id, id).run().catch(() => {});
-  } catch (err) {
-    channelErr = err instanceof Error ? err.message : String(err);
+  if (shouldPostChannel) {
+    try {
+      const res = params.mediaUrl?.startsWith('http')
+        ? await tg.sendPhoto(targetChannel, params.mediaUrl, text.slice(0, 1020), { inlineKeyboard: markup })
+        : await tg.sendMessage(targetChannel, text, { inlineKeyboard: markup });
+      channelMessageId = res.message_id;
+      await env.DB.prepare(`UPDATE channel_news SET channel_message_id = ? WHERE id = ?`)
+        .bind(res.message_id, id).run().catch(() => {});
+    } catch (err) {
+      channelErr = err instanceof Error ? err.message : String(err);
+    }
   }
 
   let usersNotified = 0;
-  if (params.notifyBotUsers) {
+  if (params.notifyBotUsers && cfg.signalsToBotEnabled) {
     const users = await env.DB.prepare(
       `SELECT DISTINCT u.telegram_id
        FROM users u

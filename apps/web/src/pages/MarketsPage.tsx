@@ -75,7 +75,10 @@ export function MarketsPage({
         .catch(() => {});
     };
     syncRate();
-    const iv = setInterval(syncRate, 12_000);
+    const iv = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      syncRate();
+    }, 45_000);
     return () => clearInterval(iv);
   }, []);
   const [favs, setFavs] = useState<string[]>(() => {

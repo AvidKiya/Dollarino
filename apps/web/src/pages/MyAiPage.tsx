@@ -197,14 +197,10 @@ export function MyAiPage({
             : 'Personal AI paused.',
       });
     } catch (e) {
-      if (e instanceof ApiError && e.status === 402) {
-        setNotice({
-          ok: false,
-          text: isFa ? 'برای فعال‌سازی ترید خودکار با هوش مصنوعی من، ابتدا اشتراک خود را فعال کنید.' : e.message,
-        });
-      } else {
-        setNotice({ ok: false, text: e instanceof Error ? e.message : 'Activation error' });
-      }
+      setNotice({
+        ok: false,
+        text: e instanceof Error ? e.message : isFa ? 'خطا در فعال‌سازی موتور هوشمند' : 'Activation error',
+      });
     } finally {
       setBusy(false);
     }
