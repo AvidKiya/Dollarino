@@ -24,6 +24,7 @@ import { getExchangeMarkets, MAJOR_LIQUID_COINS } from '../exchanges/markets.js'
 import { compileTrainedRulesToVisualDef, DEFAULT_TRAINED_RULES, type TrainedAIRules } from '../routes/my-ai.js';
 import { publishSignalBroadcast, publishSignalClosedCard } from '../telegram/publisher.js';
 import { checkLiveFeeEnforcement } from '../services/server-fee.js';
+import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 import { parseActiveEnginesFromConfig, type TradingEngineChoice } from './exclusive-engine.js';
 import { runNewListingAndMemeSniperForUser } from './listing-sniper.js';
 import {
@@ -242,6 +243,15 @@ export class TradingBotCoordinator implements DurableObject {
     const cfg = await this.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
       .bind(userId).first<UserBotConfigRow>();
     if (!cfg || (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE')) {
+      return;
+    }
+
+    const onboardingGate = await checkPreTradeOnboardingGate(this.env.DB, userId).catch(() => ({ ok: true }));
+    if (!onboardingGate.ok) {
+      await this.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`)
+        .bind(userId)
+        .run()
+        .catch(() => {});
       return;
     }
 

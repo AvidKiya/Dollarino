@@ -38,8 +38,8 @@ import {
   type CapitalPresetId,
   type Timeframe,
 } from '@dollarino/core';
-import { apiFetch } from '../lib/api';
-import { formatTomanEq } from '../lib/format';
+import { ApiError, apiFetch } from '../lib/api';
+import { formatTomanEq, getLiveUsdtIrt } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import { pushFloatingToast } from '../lib/toast';
@@ -50,6 +50,7 @@ import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '.
 import { QuickWidgetsBar } from '../components/QuickWidgetsBar';
 import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { SetupWizardModal } from '../components/SetupWizardModal';
+import { SniperWorkbench } from '../components/SniperWorkbench';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
 import { WeeklyCardPage } from './WeeklyCardPage';
@@ -136,31 +137,17 @@ export function OverviewPage({
   const [wizardOpen, setWizardOpen] = useState(false);
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
 
-  // V11.0: Risk Terms modal, Custom Paper Balance, Live IRT Refresh, Multi-Engine & Listing Sniper
+  // V11.0 / V11.4: Unified Pre-Trade Onboarding Gate (Mode + Risk Terms), Custom Paper Balance, Multi-Engine & Sniper Workbench
   const [riskModalOpen, setRiskModalOpen] = useState(false);
   const [riskChecked, setRiskChecked] = useState(false);
+  const [gateTradingMode, setGateTradingMode] = useState<'PAPER' | 'LIVE'>(() =>
+    data.config.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER'
+  );
   const [pendingStartAction, setPendingStartAction] = useState<(() => Promise<void>) | null>(null);
   const [paperResetOpen, setPaperResetOpen] = useState(false);
   const [customPaperInput, setCustomPaperInput] = useState(() =>
     String(Math.round(Number(data.config.custom_paper_balance || data.config.paper_balance || 10000)))
   );
-  const [liveIrtOverride, setLiveIrtOverride] = useState<{ usdtIrt: number; source: string } | null>(null);
-  const [irtRefreshing, setIrtRefreshing] = useState(false);
-  const [sniperScanning, setSniperScanning] = useState(false);
-  const [sniperCandidates, setSniperCandidates] = useState<Array<{
-    symbol: string;
-    name: string;
-    chainId: string;
-    source: string;
-    safetyScore: number;
-    liquidityUsd: number;
-    priceUsd: number;
-    change1hPct: number;
-    trustWalletSwapUrl: string;
-    dexScreenerUrl: string;
-  }>>([]);
-  const [sniperBudgetInput, setSniperBudgetInput] = useState(() => String(data.config.sniper_budget_usd ?? 25));
-  const [sniperMinSafetyInput, setSniperMinSafetyInput] = useState(() => String(data.config.sniper_min_safety ?? 65));
 
   // V11.1: Bot Capital Cap & Dynamic Capital-Aware Settings
   const [budgetDrawerOpen, setBudgetDrawerOpen] = useState(false);
@@ -241,6 +228,12 @@ export function OverviewPage({
   };
 
   const runAiInstantScan = async (autoExecute = false) => {
+    if (autoExecute && !onboardingGateComplete) {
+      runWithRiskCheck(async () => {
+        await runAiInstantScan(true);
+      });
+      return;
+    }
     setAiScanBusy(true);
     try {
       const res = await apiFetch<{ ok: boolean; results: AiScanResultItem[] }>('/api/trading/ai-scan-now', {
@@ -264,6 +257,12 @@ export function OverviewPage({
       );
       if (autoExecute && executedCount > 0) await onRefresh();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        runWithRiskCheck(async () => {
+          await runAiInstantScan(autoExecute);
+        });
+        return;
+      }
       toastMsg(e instanceof Error ? e.message : 'AI Scan Error', true);
     } finally {
       setAiScanBusy(false);
@@ -281,8 +280,8 @@ export function OverviewPage({
     data.walletSummary?.liveBalanceUsd ??
       (data.config.trading_mode === 'LIVE' ? totalEq : 0)
   );
-  const liveIranIrt = liveIrtOverride?.usdtIrt || data.iranRate?.usdtIrt || 290_000;
-  const liveIranSource = liveIrtOverride?.source || data.iranRate?.source || 'arzdigital';
+  const liveIranIrt = data.iranRate?.usdtIrt || getLiveUsdtIrt() || 290_000;
+  const liveIranSource = data.iranRate?.source || 'arzdigital';
   const iranSourceLabel = (() => {
     if (!isFa) return liveIranSource.toUpperCase();
     switch (liveIranSource) {
@@ -373,20 +372,34 @@ export function OverviewPage({
     if (data.config.sniper_enabled) list.push('LISTING_SNIPER');
     return list;
   }, [data.activeEngine?.activeEngines, activeStrategy, data.config.sniper_enabled]);
+  const hasSelectedMode =
+    data.tradingModeSelected === true || Number(data.config.trading_mode_selected ?? 0) === 1;
   const hasAcceptedRisk = Boolean(data.riskTermsAcceptedAt || user.risk_terms_accepted_at);
+  const onboardingGateComplete = hasSelectedMode && hasAcceptedRisk;
   const freeTradesRem = data.serverFeeSummary?.freeTradesRemaining ?? 3;
   const freeTradesLim = data.serverFeeSummary?.freeTradesLimit ?? 3;
 
-  const refreshLiveIranRate = async () => {
-    setIrtRefreshing(true);
+  const completePreTradeOnboarding = async (modeToSave: 'PAPER' | 'LIVE') => {
+    setBusy(true);
     try {
-      const r = await apiFetch<{ usdtIrt: number; source: string }>('/api/public/usdt-irt-rate?refresh=1');
-      if (r.usdtIrt > 0) setLiveIrtOverride({ usdtIrt: r.usdtIrt, source: r.source });
-      toastMsg(isFa ? `نرخ لحظه‌ای تتر بروز شد: ${Math.round(r.usdtIrt).toLocaleString('en-US')} تومان` : `Live USDT/IRT updated`);
-    } catch {
-      /* ignore */
+      await apiFetch('/api/trading/accept-risk-terms', {
+        method: 'POST',
+        body: JSON.stringify({ tradingMode: modeToSave }),
+      });
+      setRiskModalOpen(false);
+      toastMsg(
+        isFa
+          ? `✅ حالت ${modeToSave === 'LIVE' ? 'واقعی (Trust Wallet)' : 'دمو آزمایشی'} و قوانین ریسک تایید شدند.`
+          : `✅ ${modeToSave} mode and risk terms confirmed.`
+      );
+      const fn = pendingStartAction;
+      setPendingStartAction(null);
+      if (fn) await fn();
+      else await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Onboarding save failed', true);
     } finally {
-      setIrtRefreshing(false);
+      setBusy(false);
     }
   };
 
@@ -446,44 +459,13 @@ export function OverviewPage({
     }
   };
 
-  const runSniperScanNow = async (execute = false) => {
-    setSniperScanning(true);
-    try {
-      await apiFetch('/api/trading/sniper', {
-        method: 'POST',
-        body: JSON.stringify({
-          enabled: true,
-          budgetUsd: Math.max(5, Number(sniperBudgetInput || 25)),
-          minSafety: Math.max(40, Math.min(95, Number(sniperMinSafetyInput || 65))),
-        }),
-      });
-      const res = await apiFetch<{ candidates: typeof sniperCandidates; boughtCount: number }>(
-        '/api/trading/sniper/scan-now',
-        {
-          method: 'POST',
-          body: JSON.stringify({ execute }),
-        }
-      );
-      setSniperCandidates(res.candidates || []);
-      toastMsg(
-        isFa
-          ? `اسکن لیستینگ و میم‌کوین کامل شد: ${(res.candidates || []).length} توکن واجد شرایط${res.boughtCount > 0 ? ` · ${res.boughtCount} خرید ثبت شد!` : ''}`
-          : `Sniper scan complete: ${(res.candidates || []).length} candidates`
-      );
-      if (res.boughtCount > 0) await onRefresh();
-    } catch (e) {
-      toastMsg(e instanceof Error ? e.message : 'Sniper scan failed', true);
-    } finally {
-      setSniperScanning(false);
-    }
-  };
-
   const runWithRiskCheck = (startAction: () => Promise<void>) => {
-    if (hasAcceptedRisk) {
+    if (onboardingGateComplete) {
       void startAction();
       return;
     }
-    setRiskChecked(false);
+    setGateTradingMode(data.config.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER');
+    setRiskChecked(hasAcceptedRisk);
     setPendingStartAction(() => startAction);
     setRiskModalOpen(true);
   };
@@ -509,7 +491,7 @@ export function OverviewPage({
         method: 'POST',
         body: JSON.stringify({ preset }),
       });
-      toastMsg(res.message || (isFa ? 'پیش‌فرض بر اساس بودجه اعمال شد ✅' : 'Budget-based defaults applied ✅'));
+      toastMsg(res.message || (isFa ? 'تنظیمات مدیریت سرمایه اعمال شد ✅' : 'Capital management defaults applied ✅'));
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Reset failed', true);
@@ -536,18 +518,18 @@ export function OverviewPage({
           method: 'POST',
           body: JSON.stringify({ preset: 'balanced', budgetMode: budgetModeInput, budgetUsd: cleanUsd, budgetPct: cleanPct }),
         });
-        toastMsg(res.message || (isFa ? 'سقف بودجه و تنظیمات پویا اعمال شد ✅' : 'Budget & dynamic settings applied ✅'));
+        toastMsg(res.message || (isFa ? 'سقف سرمایه و تنظیمات پویای مدیریت سرمایه اعمال شد ✅' : 'Capital cap & dynamic defaults applied ✅'));
       } else {
         toastMsg(
           isFa
             ? `سقف سرمایه ربات روی $${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')} ذخیره شد ✅`
-            : `Bot budget cap saved ($${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')}) ✅`
+            : `Bot capital cap saved ($${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')}) ✅`
         );
       }
       setBudgetDrawerOpen(false);
       await onRefresh();
     } catch (e) {
-      toastMsg(e instanceof Error ? e.message : 'Budget save failed', true);
+      toastMsg(e instanceof Error ? e.message : 'Capital cap save failed', true);
     } finally {
       setBusy(false);
     }
@@ -589,6 +571,12 @@ export function OverviewPage({
 
   const executeScanSetupInline = async (item: AiScanResultItem) => {
     if (item.action !== 'LONG' && item.action !== 'SHORT') return;
+    if (!onboardingGateComplete) {
+      runWithRiskCheck(async () => {
+        await executeScanSetupInline(item);
+      });
+      return;
+    }
     setBusy(true);
     try {
       await apiFetch('/api/trading/orders/manual', {
@@ -610,6 +598,12 @@ export function OverviewPage({
       toastMsg(isFa ? `پوزیشن ${item.symbol} (${item.action}) با موفقیت باز شد!` : `${item.symbol} ${item.action} opened!`);
       await onRefresh();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        runWithRiskCheck(async () => {
+          await executeScanSetupInline(item);
+        });
+        return;
+      }
       toastMsg(e instanceof Error ? e.message : 'Order failed', true);
     } finally {
       setBusy(false);
@@ -862,7 +856,7 @@ export function OverviewPage({
               }`}
             >
               <Wallet className="w-3.5 h-3.5 text-amber-300" />
-              <span>{isFa ? 'تنظیم بودجه' : 'Set Cap'}</span>
+              <span>{isFa ? 'تنظیم سقف سرمایه' : 'Set Cap'}</span>
             </button>
             <button
               type="button"
@@ -871,10 +865,10 @@ export function OverviewPage({
               className={`h-8 px-3 rounded-xl text-[11px] font-black inline-flex items-center gap-1 transition ${
                 isGlass ? 'ios-glass-emerald-btn' : 'bg-[#059669] hover:bg-[#047857] text-white'
               }`}
-              title={isFa ? 'تنظیم خودکار مارجین، اهرم و تعداد معاملات متناسب با بودجه فعلی' : 'Apply budget-based defaults'}
+              title={isFa ? 'تنظیم خودکار مارجین، اهرم و تعداد معاملات با فرمول مدیریت سرمایه' : 'Apply capital management defaults'}
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>{isFa ? 'پیش‌فرض بر اساس بودجه' : 'Budget Defaults'}</span>
+              <span>{isFa ? 'تنظیم مدیریت سرمایه' : 'Capital Management'}</span>
             </button>
           </div>
         </div>
@@ -1005,7 +999,7 @@ export function OverviewPage({
                   isGlass ? 'ios-glass-btn' : 'btn-ghost border hairline'
                 }`}
               >
-                {isFa ? 'ذخیره سقف بودجه' : 'Save Cap Only'}
+                {isFa ? 'ذخیره سقف سرمایه' : 'Save Cap Only'}
               </button>
               <button
                 type="button"
@@ -1015,7 +1009,7 @@ export function OverviewPage({
                   isGlass ? 'ios-glass-emerald-btn' : 'bg-[#059669] hover:bg-[#047857] text-white'
                 }`}
               >
-                {isFa ? 'ذخیره + پیش‌فرض بر اساس بودجه' : 'Save + Budget Defaults'}
+                {isFa ? 'ذخیره + مدیریت سرمایه هوشمند' : 'Save + Capital Defaults'}
               </button>
             </div>
           </div>
@@ -1039,7 +1033,7 @@ export function OverviewPage({
       setManualLevInput(String(suggestedLev));
       await patchConfig(
         { max_leverage: suggestedLev, use_signal_leverage: true },
-        isFa ? `اهرم پیشنهادی (${suggestedLev}× متناسب با بودجه) فعال شد ✅` : `Budget-suggested leverage (${suggestedLev}×) enabled ✅`
+        isFa ? `اهرم پیشنهادی (${suggestedLev}× مطابق مدیریت سرمایه) فعال شد ✅` : `Capital-suggested leverage (${suggestedLev}×) enabled ✅`
       );
     };
 
@@ -1053,8 +1047,8 @@ export function OverviewPage({
             <p className="text-[11px] text-dim">
               {isAutoLev
                 ? isFa
-                  ? `حالت فعلی: پیشنهادی بر اساس بودجه و هوش مصنوعی (تا سقف ${data.config.max_leverage}×)`
-                  : `Active: Suggested by Budget & AI (up to ${data.config.max_leverage}×)`
+                  ? `حالت فعلی: پیشنهادی مدیریت سرمایه و هوش مصنوعی (تا سقف ${data.config.max_leverage}×)`
+                  : `Active: Suggested by Capital Management & AI (up to ${data.config.max_leverage}×)`
                 : isFa
                   ? `حالت فعلی: اهرم دستی ثابت ${data.config.max_leverage}× برای تمام معاملات`
                   : `Active: Fixed Manual ${data.config.max_leverage}× for trades`}
@@ -1200,68 +1194,104 @@ export function OverviewPage({
         typeof document !== 'undefined' &&
         createPortal(
           <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[220] bg-black/80 backdrop-blur-sm grid place-items-center p-4" onClick={() => setRiskModalOpen(false)}>
-            <div className="pop-in panel rounded-[28px] w-full max-w-md p-6 space-y-4 border border-amber-500/40" onClick={(e) => e.stopPropagation()}>
+            <div className="pop-in panel rounded-[28px] w-full max-w-lg p-6 space-y-4 border border-amber-500/40 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between">
                 <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
                   <ShieldCheck className="w-5 h-5 text-[#F59E0B]" />
-                  <span>{isFa ? 'تاییدیه ریسک و شفافیت معاملات (الزامی)' : 'Risk & Transparency Acknowledgment'}</span>
+                  <span>{isFa ? 'گام الزامی پیش از اولین معامله' : 'Mandatory Pre-Trade Onboarding'}</span>
                 </h3>
                 <button type="button" onClick={() => setRiskModalOpen(false)} className="btn-ghost p-1.5 rounded-xl">
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="surface-soft rounded-2xl p-4 text-xs text-sub leading-relaxed space-y-2 border hairline">
-                <p>
-                  {isFa
-                    ? '۱. بازارهای ارز دیجیتال دارای نوسانات بالا و ریسک ذاتی هستند و هیچ سامانه هوش مصنوعی سود قطعی یا تضمینی ارائه نمی‌دهد.'
-                    : '1. Crypto markets carry inherent volatility and risk; no AI or strategy guarantees profits.'}
+
+              {/* Step 1: Choose Mode (Demo vs Real Trust Wallet) */}
+              <div className="space-y-2">
+                <p className="text-xs font-black text-main">
+                  {isFa ? '۱. انتخاب کنید ربات با کدام حساب معامله کند:' : '1. Choose Trading Account Mode:'}
                 </p>
-                <p>
-                  {isFa
-                    ? '۲. دلارینو یک دستیار تحلیل و اتوماسیون غیرامانی است؛ تمامی تصمیمات، انتخاب اهرم، استراتژی‌ها و مدیریت سرمایه با مسئولیت شخصی شما انجام می‌شود.'
-                    : '2. Dollarino is strictly a non-custodial automation tool; all trade choices, leverage, and risk are your sole responsibility.'}
-                </p>
-                <p>
-                  {isFa
-                    ? `۳. ${freeTradesLim} معامله سودده اول واقعی ۰٪ کارمزد است و پس از آن فقط ۳٪ از سود خالص معاملات موفق (در حالت لایو) به‌عنوان هزینه سرور محاسبه می‌شود.`
-                    : `3. Your first ${freeTradesLim} profitable LIVE trades are 0% fee; afterwards only 3% of net live profits apply.`}
-                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setGateTradingMode('PAPER')}
+                    className={`p-3 rounded-2xl border text-start transition space-y-1 ${
+                      gateTradingMode === 'PAPER'
+                        ? 'border-amber-500 bg-amber-500/15 ring-1 ring-amber-500/40'
+                        : 'surface-soft hairline hover:border-[var(--line-strong)]'
+                    }`}
+                  >
+                    <p className="text-xs font-black text-main">{isFa ? '🎮 حساب دمو آزمایشی (رایگان)' : '🎮 Free Demo Simulator'}</p>
+                    <p className="text-[11px] text-dim leading-relaxed">
+                      {isFa
+                        ? `$${Math.round(demoBalDisplay).toLocaleString('en-US')} اعتبار شبیه‌سازی با قیمت واقعی بازار — بدون نیاز به پول واقعی.`
+                        : `$${Math.round(demoBalDisplay).toLocaleString('en-US')} virtual capital on live prices — zero real risk.`}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setGateTradingMode('LIVE')}
+                    className={`p-3 rounded-2xl border text-start transition space-y-1 ${
+                      gateTradingMode === 'LIVE'
+                        ? 'border-emerald-500 bg-emerald-500/15 ring-1 ring-emerald-500/40'
+                        : 'surface-soft hairline hover:border-[var(--line-strong)]'
+                    }`}
+                  >
+                    <p className="text-xs font-black text-main">{isFa ? '🛡 حساب واقعی (Trust Wallet)' : '🛡 Real Mode (Trust Wallet)'}</p>
+                    <p className="text-[11px] text-dim leading-relaxed">
+                      {isFa
+                        ? `اتصال غیرامانی به کیف‌پول شما (حداقل $10) · ${freeTradesLim} معامله سودده اول ۰٪ کارمزد.`
+                        : `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`}
+                    </p>
+                  </button>
+                </div>
               </div>
-              <label className="flex items-start gap-2.5 text-xs font-bold text-main cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={riskChecked}
-                  onChange={(e) => setRiskChecked(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 accent-[#059669]"
-                />
-                <span>
-                  {isFa
-                    ? 'متن بالا را خواندم و می‌پذیرم که تمام مسئولیت ریسک معاملات با خودم است.'
-                    : 'I read and accept full responsibility for my trading risks.'}
-                </span>
-              </label>
+
+              {/* Step 2: Risk Terms */}
+              <div className="space-y-2">
+                <p className="text-xs font-black text-main">
+                  {isFa ? '۲. تایید قوانین و پذیرش ریسک معاملات:' : '2. Risk & Transparency Terms:'}
+                </p>
+                <div className="surface-soft rounded-2xl p-3.5 text-xs text-sub leading-relaxed space-y-2 border hairline">
+                  <p>
+                    {isFa
+                      ? '۱. بازارهای ارز دیجیتال دارای نوسانات بالا و ریسک ذاتی هستند و هیچ سامانه هوش مصنوعی سود قطعی یا تضمینی ارائه نمی‌دهد.'
+                      : '1. Crypto markets carry inherent volatility and risk; no AI or strategy guarantees profits.'}
+                  </p>
+                  <p>
+                    {isFa
+                      ? '۲. دلارینو یک دستیار تحلیل و اتوماسیون غیرامانی است؛ تمامی تصمیمات، انتخاب اهرم، استراتژی‌ها و مدیریت سرمایه با مسئولیت شخصی شما انجام می‌شود.'
+                      : '2. Dollarino is strictly a non-custodial automation tool; all trade choices, leverage, and risk are your sole responsibility.'}
+                  </p>
+                  <p>
+                    {isFa
+                      ? `۳. ${freeTradesLim} معامله سودده اول واقعی ۰٪ کارمزد است و پس از آن فقط ۳٪ از سود خالص معاملات موفق (در حالت لایو) به‌عنوان هزینه سرور محاسبه می‌شود.`
+                      : `3. Your first ${freeTradesLim} profitable LIVE trades are 0% fee; afterwards only 3% of net live profits apply.`}
+                  </p>
+                </div>
+                <label className="flex items-start gap-2.5 text-xs font-bold text-main cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={riskChecked}
+                    onChange={(e) => setRiskChecked(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-[#059669]"
+                  />
+                  <span>
+                    {isFa
+                      ? 'حالت حساب را انتخاب کردم، متن بالا را خواندم و تمام مسئولیت ریسک معاملات را می‌پذیرم.'
+                      : 'I selected my account mode and accept full responsibility for my trading risks.'}
+                  </span>
+                </label>
+              </div>
+
               <div className="flex gap-2">
                 <button
                   type="button"
                   disabled={!riskChecked || busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await apiFetch('/api/trading/accept-risk-terms', { method: 'POST' });
-                      setRiskModalOpen(false);
-                      const fn = pendingStartAction;
-                      setPendingStartAction(null);
-                      if (fn) await fn();
-                      else await onRefresh();
-                    } catch (err) {
-                      toastMsg(err instanceof Error ? err.message : 'Failed to save acceptance', true);
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
+                  onClick={() => void completePreTradeOnboarding(gateTradingMode)}
                   className="btn-emerald flex-1 py-3 rounded-xl text-xs font-black disabled:opacity-40"
                 >
-                  {isFa ? '✅ تایید و شروع ربات' : '✅ Accept & Start Bot'}
+                  {isFa ? '✅ تایید قوانین، ثبت حالت و ادامه' : '✅ Confirm Mode & Risk Terms'}
                 </button>
                 <button type="button" onClick={() => setRiskModalOpen(false)} className="btn-ghost px-4 py-3 rounded-xl text-xs font-bold">
                   {isFa ? 'انصراف' : 'Cancel'}
@@ -1306,6 +1336,133 @@ export function OverviewPage({
     </>
   );
 
+  const renderPreTradeOnboardingBanner = () => {
+    if (onboardingGateComplete) return null;
+    return (
+      <section className="panel-glass rounded-[28px] p-4 sm:p-6 border-2 border-amber-500/45 bg-gradient-to-br from-amber-500/12 via-transparent to-emerald-500/10 space-y-4 shadow-lg">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <img
+              src="/images/transparent/risk-referral-3d.png"
+              alt="Onboarding Gate"
+              className="w-12 h-12 sm:w-14 sm:h-14 object-contain shrink-0"
+            />
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-500">
+                  {isFa ? 'گام الزامی پیش از اولین معامله' : 'Required Before First Trade'}
+                </span>
+                {!hasSelectedMode && (
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400">
+                    {isFa ? 'انتخاب حساب دمو / واقعی' : 'Select Demo / Live'}
+                  </span>
+                )}
+                {!hasAcceptedRisk && (
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-400">
+                    {isFa ? 'تایید قوانین ریسک' : 'Risk Terms'}
+                  </span>
+                )}
+              </div>
+              <h2 className="font-display font-bold text-base sm:text-lg text-main">
+                {isFa
+                  ? 'پیش از شروع معامله (حتی آزمایشی)، حساب خود را انتخاب و قوانین ریسک را تایید کنید'
+                  : 'Select Your Account Mode & Accept Risk Terms Before Your First Trade'}
+              </h2>
+              <p className="text-xs text-dim leading-relaxed">
+                {isFa
+                  ? 'برای حفظ شفافیت و امنیت سرمایه شما، تا زمانی که این دو مورد را تایید نکنید هیچ سفارش یا رباتی معامله باز نمی‌کند.'
+                  : 'For your safety and transparency, no bot or manual order can open until both steps are confirmed.'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setGateTradingMode('PAPER')}
+            className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
+              gateTradingMode === 'PAPER'
+                ? 'border-amber-500 bg-amber-500/15 ring-1 ring-amber-500/40'
+                : 'surface-soft hairline hover:border-[var(--line-strong)]'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs sm:text-sm font-black text-main">
+                {isFa ? '🎮 حساب دمو آزمایشی (رایگان)' : '🎮 Free Demo Simulator'}
+              </span>
+              {gateTradingMode === 'PAPER' && <CheckCircle2 className="w-4 h-4 text-amber-500" />}
+            </div>
+            <p className="text-[11px] text-dim">
+              {isFa
+                ? `$${Math.round(demoBalDisplay).toLocaleString('en-US')} اعتبار شبیه‌سازی با قیمت واقعی بازار — بدون ریسک مالی.`
+                : `$${Math.round(demoBalDisplay).toLocaleString('en-US')} virtual capital on real market prices.`}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setGateTradingMode('LIVE')}
+            className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
+              gateTradingMode === 'LIVE'
+                ? 'border-emerald-500 bg-emerald-500/15 ring-1 ring-emerald-500/40'
+                : 'surface-soft hairline hover:border-[var(--line-strong)]'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs sm:text-sm font-black text-main">
+                {isFa ? '🛡 حساب واقعی (Trust Wallet)' : '🛡 Real Mode (Trust Wallet)'}
+              </span>
+              {gateTradingMode === 'LIVE' && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+            </div>
+            <p className="text-[11px] text-dim">
+              {isFa
+                ? `اتصال غیرامانی با حداقل $10 موجودی · ${freeTradesLim} معامله سودده اول ۰٪ کارمزد.`
+                : `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`}
+            </p>
+          </button>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+          <label className="flex items-start gap-2.5 text-xs font-bold text-main cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={riskChecked || hasAcceptedRisk}
+              onChange={(e) => setRiskChecked(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-[#059669]"
+            />
+            <span>
+              {isFa
+                ? 'قوانین پلتفرم دلارینو، غیرامانی بودن کیف‌پول و مسئولیت کامل ریسک معاملات را مطالعه کردم و می‌پذیرم.'
+                : 'I read and accept Dollarino non-custodial rules and full trading risk responsibility.'}
+            </span>
+          </label>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setRiskChecked(hasAcceptedRisk);
+                setRiskModalOpen(true);
+              }}
+              className="btn-ghost px-3 py-2.5 rounded-xl text-[11px] font-bold"
+            >
+              {isFa ? 'مشاهده متن قوانین' : 'Read Terms'}
+            </button>
+            <button
+              type="button"
+              disabled={busy || (!riskChecked && !hasAcceptedRisk)}
+              onClick={() => void completePreTradeOnboarding(gateTradingMode)}
+              className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black disabled:opacity-45"
+            >
+              {isFa ? '✅ تایید حالت و قوانین ریسک' : '✅ Confirm Mode & Terms'}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
   if (uiMode === 'simple') {
     const activeExLabel =
       data.config.trading_mode === 'LIVE'
@@ -1320,6 +1477,8 @@ export function OverviewPage({
 
     return (
       <div className="space-y-5 max-w-5xl mx-auto">
+        {renderPreTradeOnboardingBanner()}
+
         {/* Fee Warning Banner (Non-blocking on open positions: 3% server fee after 3 free live profit trades) */}
         {feeEnf && (feeEnf.lockStatus === 'LOCKED' || feeEnf.lockStatus === 'WARNING') && (
           <div
@@ -1424,21 +1583,14 @@ export function OverviewPage({
               </div>
               {!hideBal && (
                 <div className="flex flex-wrap items-center gap-2 text-xs text-white/90 font-semibold leading-relaxed">
-                  <span>
-                    {isFa
-                      ? `نرخ تتر (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} ت · ${freeTradesRem > 0 ? `${freeTradesRem}/${freeTradesLim} معامله اول رایگان · ` : ''}فقط ۳٪ از سود واقعی`
-                      : `USDT/IRT (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} · ${freeTradesRem}/${freeTradesLim} Free Live Wins · 3% Profit Fee`}
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>
+                      {isFa
+                        ? `نرخ لحظه‌ای تتر (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} ت · ${freeTradesRem > 0 ? `${freeTradesRem}/${freeTradesLim} معامله اول رایگان · ` : ''}فقط ۳٪ از سود واقعی`
+                        : `Live USDT/IRT (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} · ${freeTradesRem}/${freeTradesLim} Free Live Wins · 3% Profit Fee`}
+                    </span>
                   </span>
-                  <button
-                    type="button"
-                    disabled={irtRefreshing}
-                    onClick={() => void refreshLiveIranRate()}
-                    className="ios-glass-btn h-6 px-2.5 rounded-full text-[10px] font-black inline-flex items-center gap-1"
-                    title={isFa ? 'بروزرسانی نرخ لحظه‌ای تتر' : 'Refresh live Tether rate'}
-                  >
-                    <RefreshCw className={`w-3 h-3 ${irtRefreshing ? 'animate-spin' : ''}`} />
-                    <span>{isFa ? 'بروزرسانی نرخ' : 'Refresh'}</span>
-                  </button>
                   {data.config.trading_mode === 'PAPER' && (
                     <button
                       type="button"
@@ -1713,8 +1865,11 @@ export function OverviewPage({
                 badge: isFa ? 'لیستینگ و میم‌کوین' : 'SNIPER',
                 title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'Listing & Meme Sniper',
                 desc: isFa ? 'رصد لحظه‌ای لیستینگ‌های جدید و میم‌کوین‌های ایمن.' : 'Snipes fresh exchange listings & high-safety DEX gems.',
-                actionLabel: sniperScanning ? '...' : isFa ? '🔍 اسکن لحظه‌ای' : '🔍 Scan Now',
-                onAction: () => void runSniperScanNow(false),
+                actionLabel: isFa ? '⚙️ میز تنظیم و شکار →' : '⚙️ Sniper Workbench →',
+                onAction: () => {
+                  if (!activeEngines.includes('LISTING_SNIPER')) void toggleEngineChoice('LISTING_SNIPER', true);
+                  setTimeout(() => document.getElementById('sniper-workbench')?.scrollIntoView({ behavior: 'smooth' }), 100);
+                },
               },
             ].map((item, idx) => {
               const on = activeEngines.includes(item.engine);
@@ -1831,8 +1986,8 @@ export function OverviewPage({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-black text-main">
                     {isFa
-                      ? `قدم ۲: پیش‌فرض بر اساس بودجه ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
-                      : `Step 2: Budget-Based Defaults ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} Cap)`}
+                      ? `قدم ۲: مدیریت سرمایه هوشمند ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
+                      : `Step 2: Capital Management ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} Cap)`}
                   </p>
                   <span className="text-[11px] text-dim font-bold">
                     {isFa
@@ -1864,7 +2019,7 @@ export function OverviewPage({
                               trailing_stop_pct: p.rec.trailingStopPct,
                               risk_profile_json: { preset: p.id },
                             },
-                            isFa ? `پیش‌فرض بودجه «${friendlyTitle}» اعمال شد: ${p.descFa} ✅` : `${p.titleEn} saved`
+                            isFa ? `تنظیم مدیریت سرمایه «${friendlyTitle}» اعمال شد: ${p.descFa} ✅` : `${p.titleEn} saved`
                           )
                         }
                         className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
@@ -1902,6 +2057,32 @@ export function OverviewPage({
             )}
           </div>
         </section>
+
+        {activeEngines.includes('LISTING_SNIPER') && (
+          <SniperWorkbench
+            lang={lang}
+            uiMode="simple"
+            tradingMode={data.config.trading_mode}
+            initialConfig={{
+              enabled: Boolean(data.config.sniper_enabled),
+              targetType: data.config.sniper_target_type || 'BOTH',
+              budgetUsd: data.config.sniper_budget_usd ?? 25,
+              minSafetyScore: data.config.sniper_min_safety_score ?? data.config.sniper_min_safety ?? 75,
+              minLiquidityUsd: data.config.sniper_min_liquidity_usd ?? 25_000,
+              maxPairAgeHours: data.config.sniper_max_pair_age_hours ?? 24,
+              maxTaxPct: data.config.sniper_max_tax_pct ?? 5,
+              tpPct: data.config.sniper_tp_pct ?? 35,
+              slPct: data.config.sniper_sl_pct ?? 15,
+              trailingEnabled: data.config.sniper_trailing_enabled !== 0,
+              trailingPct: data.config.sniper_trailing_pct ?? 8,
+              maxOpenPositions: data.config.sniper_max_open_positions ?? 3,
+              autoExecute: data.config.sniper_auto_execute !== 0,
+              slippagePct: data.config.sniper_slippage_pct ?? 3,
+            }}
+            onRefreshDashboard={onRefresh}
+            onRequireOnboardingGate={() => runWithRiskCheck(async () => {})}
+          />
+        )}
 
         {/* 3. ULTRA-CLEAN OPEN TRADES & HISTORY (PLAIN LANGUAGE WITH TOMAN!) */}
         <section className="panel rounded-[26px] p-5 space-y-4">
@@ -2043,6 +2224,8 @@ export function OverviewPage({
 
   return (
     <div className="space-y-6 tab-enter">
+      {renderPreTradeOnboardingBanner()}
+
       {/* 1. Signature Overview Hero + Live Royal Blue & Gold 3D Glass Equity Card */}
       <section className="grid lg:grid-cols-[1.05fr_1fr] gap-8 items-center">
         <div>
@@ -2121,8 +2304,8 @@ export function OverviewPage({
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
               <span>
                 {isFa
-                  ? `پیش‌فرض بر اساس بودجه ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
-                  : `Budget Defaults ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`}
+                  ? `تنظیم مدیریت سرمایه ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
+                  : `Capital Management ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`}
               </span>
             </button>
           </div>
@@ -2222,16 +2405,10 @@ export function OverviewPage({
                       <span>{isFa ? 'تنظیم موجودی دمو' : 'Set Demo $'}</span>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    disabled={irtRefreshing}
-                    onClick={() => void refreshLiveIranRate()}
-                    className="ios-glass-btn px-2.5 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1"
-                    title={isFa ? 'بروزرسانی نرخ لحظه‌ای تتر' : 'Refresh live Tether rate'}
-                  >
-                    <RefreshCw className={`w-3 h-3 ${irtRefreshing ? 'animate-spin' : ''}`} />
+                  <span className="ios-glass-btn px-2.5 py-0.5 rounded-full text-[10px] font-black inline-flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span>{Math.round(liveIranIrt).toLocaleString('en-US')} ت ({iranSourceLabel})</span>
-                  </button>
+                  </span>
                 </div>
                 <div dir="ltr" className="font-display font-bold text-3xl sm:text-4xl tabular text-white mt-1 font-num">
                   {hideBal ? '••••••' : <AnimatedNumber value={totalEq} format={(n) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`} />}
@@ -2397,8 +2574,9 @@ export function OverviewPage({
               id: 'ai' as const,
               engine: 'CENTRAL_AI' as const,
               active: activeEngines.includes('CENTRAL_AI'),
-              icon: BrainCircuit,
-              code: 'DOLLARINO AI',
+              img: '/images/transparent/ai-brain-3d.png',
+              roundedImg: false,
+              code: isFa ? 'هوش مرکزی' : 'DOLLARINO AI',
               title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
               desc: isFa ? 'اجماع چند مدل هوش مصنوعی روی ساختار بازار بدون نیاز به کلید API شخصی.' : 'Consensus Multi-LLM engine managed centrally by Dollarino.',
               win: 74,
@@ -2409,9 +2587,10 @@ export function OverviewPage({
               id: 'myai' as const,
               engine: 'MY_AI' as const,
               active: activeEngines.includes('MY_AI'),
-              icon: Bot,
-              code: 'RAW PERSONAL AI',
-              title: isFa ? 'هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
+              img: '/images/transparent/ai-brain-3d.png',
+              roundedImg: false,
+              code: isFa ? 'هوش شخصی' : 'PERSONAL AI',
+              title: isFa ? 'هوش مصنوعی شخصی من' : 'Raw Personal AI',
               desc: isFa ? 'به زبان فارسی به ربات یاد بده چطور معامله کند و همزمان با بقیه اجرا شود.' : 'Teach your personal AI rules in chat and run concurrently 24/7.',
               win: 76,
               color: '#a855f7',
@@ -2421,11 +2600,12 @@ export function OverviewPage({
               id: 'dorna' as const,
               engine: 'STRATEGY' as const,
               active: activeEngines.includes('STRATEGY'),
-              icon: Crosshair,
-              code: 'HUNTING · ۲ بخش',
+              img: '/images/transparent/mascot-astronaut.png',
+              roundedImg: false,
+              code: isFa ? 'شکار · ۲ بخش' : 'STRATEGY',
               title: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
               desc: isFa
-                ? 'دارای ۲ بخش: ۱) استراتژی‌های آماده ما (دُرنا V1، KBOS، SP2L) و ۲) استراتژی شخصی شما.'
+                ? 'دارای ۲ بخش: ۱) استراتژی‌های آماده (دُرنا V1، KBOS، SP2L) و ۲) استراتژی شخصی شما.'
                 : '2 sub-modes: Our preset hunters (Dorna V1, KBOS, SP2L) OR your custom Pine/Python strategy.',
               win: 68,
               color: '#10d9a3',
@@ -2435,10 +2615,11 @@ export function OverviewPage({
               id: 'copy' as const,
               engine: 'COPY_TRADE' as const,
               active: activeEngines.includes('COPY_TRADE'),
-              icon: Trophy,
-              code: 'COPY TRADE',
+              img: '/images/transparent/trophy-copy-3d.png',
+              roundedImg: false,
+              code: isFa ? 'کپی‌ترید' : 'COPY TRADE',
               title: isFa ? 'کپی‌ترید تاییدشده دلارینو' : 'Verified Copy-Trade',
-              desc: isFa ? 'آینه‌سازی معاملات تریدرهای فالو‌شده (با روشن کردن این موتور و زدن Start اجرا می‌شود).' : 'Mirror followed traders & smart wallets when this engine & bot are active.',
+              desc: isFa ? 'آینه‌سازی معاملات تریدرهای فالو‌شده (با روشن کردن این موتور و زدن شروع اجرا می‌شود).' : 'Mirror followed traders & smart wallets when this engine & bot are active.',
               win: 79,
               color: '#38e1ff',
               onClick: () => void toggleEngineChoice('COPY_TRADE'),
@@ -2447,30 +2628,33 @@ export function OverviewPage({
               id: 'sniper' as const,
               engine: 'LISTING_SNIPER' as const,
               active: activeEngines.includes('LISTING_SNIPER'),
-              icon: Flame,
-              code: 'LISTING & MEME SNIPER',
-              title: isFa ? 'اسنایپ لیستینگ و میم‌کوین' : 'New Listing & Meme Sniper',
+              img: '/images/transparent/sniper-rocket-3d.png',
+              roundedImg: true,
+              code: isFa ? 'شکار لیستینگ' : 'SNIPER',
+              title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'New Listing & Meme Sniper',
               desc: isFa ? 'شکار خودکار ارزهای تازه‌لیست‌شده صرافی‌ها و میم‌کوین‌های انفجاری ایمن DEX.' : 'Auto-snipes fresh CEX listings & safe booming DEX meme tokens.',
               win: 81,
               color: '#f97316',
               onClick: () => void toggleEngineChoice('LISTING_SNIPER'),
             },
-          ].map((e) => {
-            const Icon = e.icon;
-            return (
+          ].map((e) => (
             <div
               key={e.id}
               onClick={e.onClick}
               className={`cursor-pointer panel panel-hover rounded-[24px] p-4 sm:p-5 flex flex-col justify-between gap-3 relative ${
-                e.active ? 'ring-2 ring-[var(--gold)]' : ''
+                e.active ? 'ring-2 ring-[#059669] bg-emerald-500/8' : ''
               }`}
             >
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="h-9 w-9 rounded-xl grid place-items-center shrink-0" style={{ background: `${e.color}1e`, color: e.color }}>
-                    <Icon className="w-4 h-4" />
-                  </span>
-                  <span dir="ltr" className="text-[10px] font-black tracking-widest px-2 py-0.5 rounded-full shrink-0" style={{ background: `${e.color}1c`, color: e.color }}>
+                  {e.roundedImg ? (
+                    <div className="w-11 h-11 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-white/15 shrink-0">
+                      <img src={e.img} alt={e.title} className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <img src={e.img} alt={e.title} className="w-11 h-11 object-contain shrink-0" />
+                  )}
+                  <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0" style={{ background: `${e.color}1c`, color: e.color }}>
                     {e.code}
                   </span>
                 </div>
@@ -2504,11 +2688,10 @@ export function OverviewPage({
                   <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
                     <button
                       type="button"
-                      disabled={sniperScanning}
-                      onClick={() => void runSniperScanNow(false)}
+                      onClick={() => document.getElementById('sniper-workbench')?.scrollIntoView({ behavior: 'smooth' })}
                       className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-[#F97316] text-[10px] font-black hover:bg-amber-500/25"
                     >
-                      {sniperScanning ? '...' : isFa ? 'اسکن لحظه‌ای لیستینگ' : 'Scan Now'}
+                      {isFa ? 'تنظیمات و اسکن شکارچی ↓' : 'Sniper Workbench ↓'}
                     </button>
                   </div>
                 )}
@@ -2535,110 +2718,37 @@ export function OverviewPage({
                     {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
                     <span>{e.active ? (isFa ? 'روشن (هم‌زمان)' : 'ON (Concurrent)') : isFa ? 'خاموش (کلیک = روشن)' : 'OFF (Tap ON)'}</span>
                   </span>
-                  <span>{e.win}% WR</span>
+                  <span>{e.win}% {isFa ? 'نرخ برد' : 'WR'}</span>
                 </div>
               </div>
             </div>
-            );
-          })}
+          ))}
         </div>
 
-        {/* Dedicated CEX New Listing & Booming Meme Sniper Radar Box */}
-        <div className="panel rounded-[24px] p-4 sm:p-5 border border-orange-500/25 bg-gradient-to-br from-orange-500/8 via-transparent to-amber-500/8 space-y-3.5">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-orange-400/35 shrink-0 shadow-md">
-                <img src="/images/transparent/sniper-rocket-3d.png" alt="Sniper" className="w-full h-full object-cover" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-black text-main">
-                    {isFa ? 'اسنایپر هوشمند لیستینگ صرافی‌ها و میم‌کوین‌های انفجاری' : 'CEX Listing & Booming Meme Sniper'}
-                  </span>
-                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-400 font-black">
-                    {activeEngines.includes('LISTING_SNIPER') ? (isFa ? 'روشن و خودکار' : 'AUTO ACTIVE') : isFa ? 'آماده اسکن' : 'STANDBY'}
-                  </span>
-                </div>
-                <p className="text-[11px] text-dim mt-0.5">
-                  {isFa
-                    ? 'شکار خودکار لیستینگ‌های جدید Binance + میم‌کوین‌های داغ با فیلتر آنتی‌هانی‌پات و سقف بودجه مجاز ربات'
-                    : 'Detects fresh CEX listings & booming safe meme tokens with anti-honeypot scoring and strict budget cap.'}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs shrink-0">
-              <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-dim surface-soft px-2.5 py-1.5 rounded-xl border hairline">
-                <span>{isFa ? 'بودجه ($):' : 'Budget ($):'}</span>
-                <input
-                  type="number"
-                  min={5}
-                  max={5000}
-                  value={sniperBudgetInput}
-                  onChange={(e) => setSniperBudgetInput(e.target.value)}
-                  dir="ltr"
-                  className="bg-transparent w-14 text-main text-xs font-num font-black focus:outline-none"
-                />
-              </label>
-              <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-dim surface-soft px-2.5 py-1.5 rounded-xl border hairline">
-                <span>{isFa ? 'ایمنی ≥:' : 'Safe ≥:'}</span>
-                <input
-                  type="number"
-                  min={40}
-                  max={95}
-                  value={sniperMinSafetyInput}
-                  onChange={(e) => setSniperMinSafetyInput(e.target.value)}
-                  dir="ltr"
-                  className="bg-transparent w-11 text-main text-xs font-num font-black focus:outline-none"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={sniperScanning}
-                onClick={() => void runSniperScanNow(false)}
-                className="btn-ghost h-9 px-3.5 rounded-xl text-xs font-black"
-              >
-                {sniperScanning ? '...' : isFa ? '🔍 اسکن لیستینگ' : '🔍 Scan'}
-              </button>
-              <button
-                type="button"
-                disabled={sniperScanning}
-                onClick={() => void runSniperScanNow(true)}
-                className="h-9 px-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-black shadow-sm"
-              >
-                {isFa ? '🎯 شکار فوری' : '🎯 Snipe Now'}
-              </button>
-            </div>
-          </div>
-
-          {sniperCandidates.length > 0 && (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t hairline">
-              {sniperCandidates.slice(0, 8).map((c, idx) => (
-                <div key={`${c.symbol}_${c.chainId}_${idx}`} className="surface-soft rounded-xl p-3 text-[11px] space-y-1.5 border hairline">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-main">{c.symbol}</span>
-                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-jade text-[10px] font-black">
-                      {c.safetyScore}/100 · {c.chainId.toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-dim font-num" dir="ltr">
-                    <span>Liq ${Math.round(c.liquidityUsd).toLocaleString()}</span>
-                    <span className={c.change1hPct >= 0 ? 'text-jade font-black' : 'text-loss'}>
-                      {c.change1hPct >= 0 ? `+${c.change1hPct.toFixed(1)}%` : `${c.change1hPct.toFixed(1)}%`} (1h)
-                    </span>
-                  </div>
-                  <a
-                    href={c.trustWalletSwapUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block text-center py-1 rounded-lg bg-[#059669]/20 hover:bg-[#059669] text-[#34D399] hover:text-white font-black text-[10px] transition"
-                  >
-                    {isFa ? 'خرید ۱-کلیک در Trust Wallet 🛡' : '1-Click Buy in Trust Wallet 🛡'}
-                  </a>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Dedicated Unified CEX New Listing & Booming Meme Sniper Workbench */}
+        <SniperWorkbench
+          lang={lang}
+          uiMode="pro"
+          tradingMode={data.config.trading_mode}
+          initialConfig={{
+            enabled: Boolean(data.config.sniper_enabled),
+            targetType: data.config.sniper_target_type || 'BOTH',
+            budgetUsd: data.config.sniper_budget_usd ?? 25,
+            minSafetyScore: data.config.sniper_min_safety_score ?? data.config.sniper_min_safety ?? 75,
+            minLiquidityUsd: data.config.sniper_min_liquidity_usd ?? 25_000,
+            maxPairAgeHours: data.config.sniper_max_pair_age_hours ?? 24,
+            maxTaxPct: data.config.sniper_max_tax_pct ?? 5,
+            tpPct: data.config.sniper_tp_pct ?? 35,
+            slPct: data.config.sniper_sl_pct ?? 15,
+            trailingEnabled: data.config.sniper_trailing_enabled !== 0,
+            trailingPct: data.config.sniper_trailing_pct ?? 8,
+            maxOpenPositions: data.config.sniper_max_open_positions ?? 3,
+            autoExecute: data.config.sniper_auto_execute !== 0,
+            slippagePct: data.config.sniper_slippage_pct ?? 3,
+          }}
+          onRefreshDashboard={onRefresh}
+          onRequireOnboardingGate={() => runWithRiskCheck(async () => {})}
+        />
 
         {/* Compact Live AI Core Bar & Instant Market Scan */}
         <div className="panel rounded-[22px] p-4 border border-blue-500/20 bg-gradient-to-br from-blue-600/8 via-transparent to-emerald-500/8 space-y-3">
@@ -2729,11 +2839,11 @@ export function OverviewPage({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="font-display font-bold text-lg text-main">
-                {isFa ? '۲. پیش‌فرض بر اساس بودجه و اهرم' : '2. Budget Defaults & Leverage'}
+                {isFa ? '۲. تنظیمات مدیریت سرمایه و اهرم' : '2. Capital Management & Leverage'}
               </h3>
               <p className="text-[11px] text-dim">
                 {isFa
-                  ? `محاسبه‌شده برای بودجه مؤثر $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} ربات (باقی‌مانده: $${activeCapitalRes.remainingBudgetUsd.toLocaleString('en-US')})`
+                  ? `محاسبه‌شده برای سقف سرمایه مؤثر $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} ربات (باقی‌مانده: $${activeCapitalRes.remainingBudgetUsd.toLocaleString('en-US')})`
                   : `Auto-scaled to $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} bot cap ($${activeCapitalRes.remainingBudgetUsd.toLocaleString('en-US')} left)`}
               </p>
             </div>

@@ -6,7 +6,6 @@ import {
   Flame,
   LayoutGrid,
   List,
-  RefreshCw,
   Search,
   Star,
   TrendingUp,
@@ -54,7 +53,6 @@ export function MarketsPage({
   const [visibleCount, setVisibleCount] = useState(60);
   const [liveIrt, setLiveIrt] = useState<number>(() => iranRate || getLiveUsdtIrt());
   const [liveIrtSource, setLiveIrtSource] = useState<string>(() => getLiveIranSource());
-  const [irtRefreshing, setIrtRefreshing] = useState(false);
 
   useEffect(() => {
     if (iranRate && iranRate >= 30_000) {
@@ -64,32 +62,22 @@ export function MarketsPage({
   }, [iranRate]);
 
   useEffect(() => {
-    apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate')
-      .then((res) => {
-        if (res?.usdtIrt && res.usdtIrt >= 30_000) {
-          setLiveIrt(res.usdtIrt);
-          if (res.source) setLiveIrtSource(res.source);
-          setLiveUsdtIrt(res.usdtIrt, res.source);
-        }
-      })
-      .catch(() => {});
+    const syncRate = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate?refresh=1')
+        .then((res) => {
+          if (res?.usdtIrt && res.usdtIrt >= 30_000) {
+            setLiveIrt(res.usdtIrt);
+            if (res.source) setLiveIrtSource(res.source);
+            setLiveUsdtIrt(res.usdtIrt, res.source);
+          }
+        })
+        .catch(() => {});
+    };
+    syncRate();
+    const iv = setInterval(syncRate, 12_000);
+    return () => clearInterval(iv);
   }, []);
-
-  const refreshLiveIrt = async () => {
-    setIrtRefreshing(true);
-    try {
-      const res = await apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate?refresh=1');
-      if (res?.usdtIrt && res.usdtIrt >= 30_000) {
-        setLiveIrt(res.usdtIrt);
-        if (res.source) setLiveIrtSource(res.source);
-        setLiveUsdtIrt(res.usdtIrt, res.source);
-      }
-    } catch {
-      // keep existing liveIrt
-    } finally {
-      setIrtRefreshing(false);
-    }
-  };
   const [favs, setFavs] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem('dollarino_fav_pairs');
@@ -140,22 +128,16 @@ export function MarketsPage({
         {/* Top 5 Market Pulse Strip incl. Live Iran Tether/USD */}
         <div className="panel rounded-2xl p-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center items-center">
           <div className="col-span-2 sm:col-span-1 space-y-0.5 border-b sm:border-b-0 sm:border-e hairline pb-2 sm:pb-0 sm:pe-2">
-            <div className="inline-flex items-center gap-1 text-[11px] font-bold text-dim">
-              <span>{isFa ? 'دلار / تتر ایران' : 'Iran USDT/USD'}</span>
-              <button
-                type="button"
-                disabled={irtRefreshing}
-                onClick={() => void refreshLiveIrt()}
-                className="text-dim hover:text-main"
-                aria-label="Refresh USDT IRT"
-              >
-                <RefreshCw className={`w-3 h-3 ${irtRefreshing ? 'animate-spin' : ''}`} />
-              </button>
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-bold text-dim">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>{isFa ? 'دلار / تتر ایران (زنده)' : 'Live Iran USDT/USD'}</span>
             </div>
             <p dir="ltr" className="font-display font-bold text-sm sm:text-base text-jade font-num">
               {Math.round(liveIrt).toLocaleString('en-US')} <span className="text-[10px]">ت</span>
             </p>
-            <p className="text-[10px] font-bold text-dim truncate">{liveIrtSource.toUpperCase()}</p>
+            <p className="text-[10px] font-bold text-dim truncate">
+              {liveIrtSource === 'arzdigital' ? (isFa ? 'مرجع ارزدیجیتال' : 'ArzDigital') : liveIrtSource.toUpperCase()}
+            </p>
           </div>
 
           <div className="space-y-0.5">
@@ -486,21 +468,18 @@ export function MarketsPage({
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
         <div className="col-span-2 sm:col-span-1 panel rounded-2xl p-3.5 space-y-1 border border-emerald-500/25">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-dim">{isFa ? 'دلار / تتر ایران' : 'Iran USDT/IRT'}</span>
-            <button
-              type="button"
-              disabled={irtRefreshing}
-              onClick={() => void refreshLiveIrt()}
-              className="text-dim hover:text-main"
-              aria-label="Refresh live Iran USD"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${irtRefreshing ? 'animate-spin' : ''}`} />
-            </button>
+            <span className="text-dim">{isFa ? 'دلار / تتر ایران (زنده)' : 'Live Iran USDT/IRT'}</span>
+            <span className="inline-flex items-center gap-1 text-[10px] text-emerald-500 font-bold">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              {isFa ? 'خودکار' : 'LIVE'}
+            </span>
           </div>
           <p dir="ltr" className="font-display font-bold text-lg text-jade font-num">
             {Math.round(liveIrt).toLocaleString('en-US')} <span className="text-[11px]">ت</span>
           </p>
-          <p className="text-[10px] font-bold text-dim">{liveIrtSource.toUpperCase()}</p>
+          <p className="text-[10px] font-bold text-dim">
+            {liveIrtSource === 'arzdigital' ? (isFa ? 'مرجع ارزدیجیتال (ArzDigital)' : 'ArzDigital') : liveIrtSource.toUpperCase()}
+          </p>
         </div>
 
         <div className="panel rounded-2xl p-3.5 space-y-1.5">

@@ -301,7 +301,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       new Request('https://dollarino.pages.dev/api/trading/bot/start', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategyKey: 'dollarino_ai' }),
+        body: JSON.stringify({ strategyKey: 'dollarino_ai', acceptRiskTerms: true }),
       }),
       env
     );

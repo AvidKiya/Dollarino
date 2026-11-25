@@ -530,8 +530,8 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     const today = new Date().toISOString().slice(0, 10);
 
     await db.prepare(
-      `INSERT INTO users (id, email, username, role, password_hash, referral_code, telegram_id, phone_verified)
-       VALUES (?, ?, ?, 'owner', 'hash', 'DLR-AI01', '944021185', 1)`
+      `INSERT INTO users (id, email, username, role, password_hash, referral_code, telegram_id, phone_verified, risk_terms_accepted_at)
+       VALUES (?, ?, ?, 'owner', 'hash', 'DLR-AI01', '944021184', 1, datetime('now'))`
     ).bind('usr_ai_owner_1', 'aiowner@dollarino.test', 'AiOwner').run();
     await db.prepare(
       `INSERT INTO bot_configs (user_id, trading_mode, market_type, strategy_key, symbol, entry_timeframe, webhook_secret)
@@ -608,10 +608,10 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     const unknownPx = await fetchPublicTickerPrice('NONEXISTENT99USDT');
     expect(unknownPx).toBe('0');
 
-    // 2. Setup owner user with LIVE trading mode & an active KCEX connection, PLUS a huge old PAPER loss today
+    // 2. Setup owner user with LIVE trading mode & an active KCEX + Trust Wallet + $100 balance, PLUS a huge old PAPER loss today
     await db.prepare(
-      `INSERT INTO users (id, email, username, role, password_hash, referral_code, telegram_id, phone_verified)
-       VALUES (?, ?, ?, 'owner', 'hash', 'DLR-AUTO1', '944021185', 1)`
+      `INSERT INTO users (id, email, username, role, password_hash, referral_code, telegram_id, phone_verified, risk_terms_accepted_at, trust_wallet_address, wallet_balance_usdt)
+       VALUES (?, ?, ?, 'owner', 'hash', 'DLR-AUTO1', '944021185', 1, datetime('now'), '0x71C7656EC7ab88b098defB751B7401B5f6d8976F', 100)`
     ).bind('usr_auto_fix_1', 'autofix@dollarino.test', 'AutoFix').run();
     await db.prepare(
       `INSERT INTO bot_configs (user_id, bot_state, trading_mode, trade_execution_mode, market_type, strategy_key, symbol, entry_timeframe, webhook_secret, paper_balance, daily_max_loss_pct)

@@ -196,6 +196,43 @@ export interface RecentSignalRow {
 
 export type TradingEngineChoice = 'CENTRAL_AI' | 'MY_AI' | 'STRATEGY' | 'COPY_TRADE' | 'LISTING_SNIPER';
 
+export type SniperTargetType = 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME' | 'BOTH';
+
+export interface SniperSettings {
+  enabled: boolean;
+  targetType: SniperTargetType;
+  budgetUsd: number;
+  minSafetyScore: number;
+  minLiquidityUsd: number;
+  maxPairAgeHours: number;
+  maxTaxPct: number;
+  tpPct: number;
+  slPct: number;
+  trailingEnabled: boolean;
+  trailingPct: number;
+  maxOpenPositions: number;
+  autoExecute: boolean;
+  slippagePct: number;
+  networks: string[];
+}
+
+export interface SniperCandidate {
+  symbol: string;
+  tokenAddress: string;
+  chainId: string;
+  source: string;
+  targetKind?: 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME';
+  safetyScore: number;
+  liquidityUsd: number;
+  volume24hUsd?: number;
+  priceUsd: number;
+  change1hPct: number;
+  change5mPct?: number;
+  pairAgeHours?: number;
+  estimatedTaxPct?: number;
+  note: string;
+}
+
 export interface ActiveEngineState {
   activeEngine: TradingEngineChoice | 'NONE';
   activeEngines: TradingEngineChoice[];
@@ -210,6 +247,7 @@ export interface ActiveEngineState {
 export interface DashboardPayload {
   activeEngine?: ActiveEngineState;
   riskTermsAcceptedAt?: string | null;
+  tradingModeSelected?: boolean;
   sniperEvents?: Array<{
     id: string;
     symbol: string;
@@ -226,6 +264,7 @@ export interface DashboardPayload {
   config: {
     bot_state: string;
     trading_mode: 'PAPER' | 'LIVE';
+    trading_mode_selected?: number;
     market_type?: 'SPOT' | 'FUTURES';
     direction_mode?: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY';
     hedge_mode?: number;
@@ -249,8 +288,19 @@ export interface DashboardPayload {
     sniper_enabled?: number;
     sniper_budget_usd?: number;
     sniper_min_safety?: number;
+    sniper_min_safety_score?: number;
     sniper_min_liquidity_usd?: number;
     sniper_networks_json?: string;
+    sniper_target_type?: SniperTargetType;
+    sniper_max_pair_age_hours?: number;
+    sniper_max_tax_pct?: number;
+    sniper_tp_pct?: number;
+    sniper_sl_pct?: number;
+    sniper_trailing_enabled?: number;
+    sniper_trailing_pct?: number;
+    sniper_max_open_positions?: number;
+    sniper_auto_execute?: number;
+    sniper_slippage_pct?: number;
     bot_budget_mode?: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
     bot_budget_usd?: number;
     bot_budget_pct?: number;

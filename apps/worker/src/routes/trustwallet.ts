@@ -766,7 +766,7 @@ trustWalletRoutes.post('/execution-mode', async (c) => {
         liveNoticeMsg = `کیف‌پول واقعی Trust Wallet فعال شد — موجودی واقعی: $${readiness.totalUsd.toFixed(2)} ✅`;
       }
     }
-    sets.push(`trading_mode = ?`);
+    sets.push(`trading_mode = ?`, `trading_mode_selected = 1`);
     vals.push(body.tradingMode);
   }
 

@@ -17,6 +17,7 @@ import {
   type TradingEngineChoice,
 } from '../engine/exclusive-engine.js';
 import { executeSignalForUser, resolveUserCapitalSummary, type UserBotConfigRow } from '../engine/executor.js';
+import { checkPreTradeOnboardingGate } from '../engine/onboarding-gate.js';
 import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
@@ -354,6 +355,45 @@ function isUserAdmin(telegramId: string, role: string, env: Env): boolean {
   return isSuperAdminUser(telegramId, role, env) || role === 'admin';
 }
 
+async function buildTelegramOnboardingGatePayload(env: Env, userId: string): Promise<{
+  text: string;
+  inlineKeyboard: InlineKeyboardButton[][];
+}> {
+  const gate = await checkPreTradeOnboardingGate(env.DB, userId);
+  const modePicked = gate.hasSelectedMode;
+  const riskDone = gate.hasAcceptedRisk;
+  const isLive = gate.tradingMode === 'LIVE';
+  const text =
+    `🛡 **تنظیم و تایید اجباری قبل از اولین معامله**\n\n` +
+    `برای حفظ سرمایه شما، تا زمانی که هر دو مورد زیر را تایید نکنید **هیچ معامله‌ای (حتی آزمایشی/دمو)** باز نمی‌شود:\n\n` +
+    `۱️⃣ انتخاب حالت معاملاتی: ${modePicked ? (isLive ? '✅ حساب واقعی (Trust Wallet)' : '✅ حساب دمو (آزمایشی)') : '⏳ هنوز انتخاب نشده'}\n` +
+    `۲️⃣ مطالعه و پذیرش مسئولیت ریسک بازار: ${riskDone ? '✅ تایید شد' : '⏳ هنوز تایید نشده'}\n\n` +
+    `⚖️ *توضیح ریسک:* دلارینو دستیار تحلیل و اتوماسیون غیرامانی است و هیچ سود تضمینی ندارد؛ مسئولیت کامل ریسک معاملات، اهرم و حد ضرر با کاربر است (۳ معامله سودده اول واقعی ۰٪ کارمزد و پس از آن ۳٪ کارمزد سود).`;
+
+  const inlineKeyboard: InlineKeyboardButton[][] = [
+    [
+      {
+        text: modePicked && !isLive ? '✅ حالت دمو (آزمایشی)' : '🧪 انتخاب حالت دمو (آزمایشی)',
+        callback_data: 'tg_onboard_mode:PAPER',
+        style: modePicked && !isLive ? 'success' : 'primary',
+      },
+      {
+        text: modePicked && isLive ? '✅ حالت واقعی (Trust Wallet)' : '🛡 انتخاب حالت واقعی (Trust)',
+        callback_data: 'tg_onboard_mode:LIVE',
+        style: modePicked && isLive ? 'success' : undefined,
+      },
+    ],
+    [
+      {
+        text: riskDone ? '✅ قوانین و ریسک تایید شد' : '☑️ متن ریسک را خواندم و تایید می‌کنم',
+        callback_data: 'tg_onboard_accept',
+        style: riskDone ? 'success' : 'primary',
+      },
+    ],
+  ];
+  return { text, inlineKeyboard };
+}
+
 async function startBotOneClickForTelegram(params: {
   env: Env;
   bot: TelegramBotClient;
@@ -362,8 +402,17 @@ async function startBotOneClickForTelegram(params: {
   tgId: string;
   webAppUrl: string;
   overrideStrategyKey?: string;
-}): Promise<{ ok: boolean; nextState?: string; text: string }> {
+}): Promise<{ ok: boolean; nextState?: string; needsOnboardingGate?: boolean; text: string }> {
   const { env, user, overrideStrategyKey } = params;
+
+  const onboardingGate = await checkPreTradeOnboardingGate(env.DB, user.id);
+  if (!onboardingGate.ok) {
+    return {
+      ok: false,
+      needsOnboardingGate: true,
+      text: `⛔️ ${onboardingGate.error}`,
+    };
+  }
 
   const cfg = await env.DB.prepare(
     'SELECT trading_mode, strategy_key, market_type, entry_timeframe, higher_timeframe, margin_pct, max_leverage, ai_min_confidence FROM bot_configs WHERE user_id = ?'
@@ -382,10 +431,16 @@ async function startBotOneClickForTelegram(params: {
 
   if (cfg?.trading_mode === 'LIVE') {
     const readiness = await getTrustWalletLiveTotalUsd(env.DB, user.id);
-    if (readiness.hasWallet && !readiness.meetsMinimum) {
+    if (!readiness.hasWallet) {
       return {
         ok: false,
-        text: `⚠️ برای اجرای ربات روی کیف‌پول واقعی (Trust Wallet)، حداقل ${readiness.minRequiredUsd} دلار موجودی نیاز است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}).\nفعلاً می‌توانید بدون هیچ هزینه‌ای روی شبیه‌ساز دمو ۱۰٬۰۰۰ دلاری اجرا کنید.`,
+        text: '⚠️ حساب شما روی حالت **واقعی (Trust Wallet)** است اما هنوز کیف‌پول Trust Wallet متصل نکرده‌اید.\nابتدا آدرس کیف‌پول خود را متصل کنید یا حالت حساب را به «دمو آزمایشی» تغییر دهید.',
+      };
+    }
+    if (!readiness.meetsMinimum) {
+      return {
+        ok: false,
+        text: `⚠️ برای اجرای ربات روی کیف‌پول واقعی (Trust Wallet)، حداقل ${readiness.minRequiredUsd} دلار موجودی نیاز است (موجودی فعلی: $${readiness.totalUsd.toFixed(2)}).`,
       };
     }
   }
@@ -408,8 +463,14 @@ async function startBotOneClickForTelegram(params: {
     user.id,
     cfg?.trading_mode === 'PAPER' ? 'paper' : undefined
   );
-  const nextState = cfg?.trading_mode === 'LIVE' && provider !== 'paper' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
-  const effectiveTradingMode = provider === 'paper' ? 'PAPER' : (cfg?.trading_mode || 'PAPER');
+  if (cfg?.trading_mode === 'LIVE' && provider === 'paper') {
+    return {
+      ok: false,
+      text: '⚠️ حالت معاملاتی شما روی **واقعی (Trust Wallet)** تنظیم شده و به‌طور خودکار به دمو تغییر نمی‌کند. لطفاً ابتدا اتصال Trust Wallet / Agent Wallet خود را تکمیل کنید یا حالت را روی دمو بگذارید.',
+    };
+  }
+  const nextState = cfg?.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
+  const effectiveTradingMode = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
 
   const engineChoice: TradingEngineChoice =
     targetStrategy === 'ai_autonomous_agent'
@@ -471,10 +532,6 @@ async function startBotOneClickForTelegram(params: {
       .catch(() => ({ cnt: 0 })),
   ]);
 
-  const liveFallbackNote =
-    cfg?.trading_mode === 'LIVE' && provider === 'paper'
-      ? '\n⚠️ توجه: کیف‌پول Trust Wallet هنوز برای اجرای زنده متصل نیست؛ بنابراین ربات فعلاً روی **کیف‌پول دمو (قابل تنظیم)** ترید خودکار انجام می‌دهد.'
-      : '';
   const exclNote =
     excl.activeEngines.length > 1
       ? `\n🎛 **حالت چندموتوره همزمان:** ${enginesLabel} بدون تداخل با یکدیگر در حال اجرا هستند.`
@@ -488,8 +545,7 @@ async function startBotOneClickForTelegram(params: {
     `• موجودی آزاد: $${Number(bal.free || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}\n` +
     `• معاملات باز فعلی: ${openCountRow?.cnt ?? 0}\n\n` +
     `🔍 اسکن خودکار کل بازار هر ۱۵ ثانیه در حال اجراست و به‌محض یافتن نقطه ورود مطمئن، معامله با حد ضرر و ۳ تارگت خودکار باز می‌شود.` +
-    exclNote +
-    liveFallbackNote;
+    exclNote;
 
   return { ok: true, nextState, text };
 }
@@ -498,8 +554,17 @@ async function runInstantAiAutoTradeForTelegram(params: {
   env: Env;
   user: ProvisionedUserRow;
   tgId: string;
-}): Promise<{ ok: boolean; needSubscription?: boolean; text: string }> {
+}): Promise<{ ok: boolean; needSubscription?: boolean; needsOnboardingGate?: boolean; text: string }> {
   const { env, user, tgId: _tgId } = params;
+
+  const onboardingGate = await checkPreTradeOnboardingGate(env.DB, user.id);
+  if (!onboardingGate.ok) {
+    return {
+      ok: false,
+      needsOnboardingGate: true,
+      text: `⛔️ ${onboardingGate.error}`,
+    };
+  }
 
   const cfg = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
     .bind(user.id)
@@ -1348,8 +1413,8 @@ async function showTradeQuantitiesMenu(env: Env, bot: TelegramBotClient, chatId:
 
   const kb: InlineKeyboardButton[][] = [
     [
-      { text: `💼 سقف بودجه ربات`, callback_data: 'cfg_edit:bot_budget_usd', style: 'primary' },
-      { text: `⚡ پیش‌فرض بر اساس بودجه`, callback_data: 'cfg_apply_dynamic', style: 'success' },
+      { text: `💼 سقف سرمایه ربات`, callback_data: 'cfg_edit:bot_budget_usd', style: 'primary' },
+      { text: `⚡ پیش‌فرض مدیریت سرمایه`, callback_data: 'cfg_apply_dynamic', style: 'success' },
     ],
     [
       { text: `💰 تغییر مارجین (${cfg?.margin_pct ?? 10}%)`, callback_data: 'cfg_edit:margin_pct' },
@@ -1640,6 +1705,52 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data.startsWith('tg_onboard_mode:')) {
+      const modeChoice = data.split(':')[1] === 'LIVE' ? 'LIVE' : 'PAPER';
+      await env.DB.prepare(
+        `UPDATE bot_configs SET trading_mode = ?, trading_mode_selected = 1, updated_at = datetime('now') WHERE user_id = ?`
+      )
+        .bind(modeChoice, user.id)
+        .run();
+      await bot.answerCallbackQuery(
+        cq.id,
+        modeChoice === 'LIVE' ? 'حالت واقعی (Trust Wallet) انتخاب شد 🛡' : 'حالت دمو آزمایشی انتخاب شد 🧪'
+      );
+      const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+      if (msgId) {
+        await bot.editMessageText(chatId, msgId, gatePrompt.text, gatePrompt.inlineKeyboard).catch(() => {});
+      } else {
+        await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+      }
+      return { ok: true };
+    }
+
+    if (data === 'tg_onboard_accept') {
+      const nowIso = new Date().toISOString();
+      await env.DB.prepare(`UPDATE users SET risk_terms_accepted_at = COALESCE(risk_terms_accepted_at, ?) WHERE id = ?`)
+        .bind(nowIso, user.id)
+        .run();
+      const gateCheck = await checkPreTradeOnboardingGate(env.DB, user.id);
+      if (gateCheck.ok) {
+        await bot.answerCallbackQuery(cq.id, 'قوانین تایید و حساب آماده معامله شد ✅');
+        const readyTxt = `✅ **تایید قوانین و انتخاب حالت حساب (${gateCheck.tradingMode === 'LIVE' ? 'واقعی Trust Wallet' : 'دمو آزمایشی'}) کامل شد!**\n\nهم‌اکنون می‌توانید در ربات یا وب با خیال راحت معامله یا ربات خودکار را روشن کنید.`;
+        if (msgId) {
+          await bot.editMessageText(chatId, msgId, readyTxt, miniAppInlineKeyboard(webAppUrl, '', 'none', false, getUserUiMode(user))).catch(() => {});
+        } else {
+          await bot.sendMessage(chatId, readyTxt, { inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, getUserUiMode(user)) });
+        }
+      } else {
+        await bot.answerCallbackQuery(cq.id, 'قوانین تایید شد؛ لطفاً حالت دمو یا واقعی را هم انتخاب کنید 👆', true);
+        const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+        if (msgId) {
+          await bot.editMessageText(chatId, msgId, gatePrompt.text, gatePrompt.inlineKeyboard).catch(() => {});
+        } else {
+          await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+        }
+      }
+      return { ok: true };
+    }
+
     if (data === 'tg_web_login') {
       await bot.answerCallbackQuery(cq.id, 'لینک ورود سریع ساخته شد 🌐');
       await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
@@ -1859,7 +1970,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await env.DB.prepare(
         `UPDATE bot_configs SET margin_pct = ?, max_leverage = ?, max_open_positions = ?, daily_max_loss_pct = ?, trailing_stop_pct = ?, updated_at = datetime('now') WHERE user_id = ?`
       ).bind(rec.marginPct, rec.maxLeverage, rec.maxOpenPositions, rec.dailyMaxLossPct, rec.trailingStopPct, user.id).run();
-      await bot.answerCallbackQuery(cq.id, `پیش‌فرض بر اساس بودجه $${rec.effectiveCapitalUsd} اعمال شد ✅`);
+      await bot.answerCallbackQuery(cq.id, `تنظیمات مدیریت سرمایه برای $${rec.effectiveCapitalUsd} اعمال شد ✅`);
       await showTradeQuantitiesMenu(env, bot, chatId, user.id, msgId);
       return { ok: true };
     }
@@ -1936,6 +2047,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await bot.answerCallbackQuery(cq.id, 'این سیگنال منقضی شده است (بیش از ۱ ساعت گذشته).', true);
         return { ok: true };
       }
+      const gate = await checkPreTradeOnboardingGate(env.DB, user.id);
+      if (!gate.ok) {
+        const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.answerCallbackQuery(cq.id, 'ابتدا حالت معاملاتی و قوانین ریسک را تایید کنید.', true);
+        await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+        return { ok: true };
+      }
       const res = await executeSignalForUser(
         env,
         user.id,
@@ -1974,10 +2092,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           webAppUrl,
         });
         await bot.answerCallbackQuery(cq.id, res.ok ? 'اتوترید خودکار روشن شد 🤖' : res.text, !res.ok);
+        if (res.needsOnboardingGate) {
+          const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+          await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+          return { ok: true };
+        }
         if (msgId) {
-          await bot.editMessageText(chatId, msgId, res.text, miniAppInlineKeyboard(webAppUrl, '', 'none', true, getUserUiMode(user))).catch(() => {});
+          await bot.editMessageText(chatId, msgId, res.text, miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, getUserUiMode(user))).catch(() => {});
         } else {
-          await bot.sendMessage(chatId, res.text, { inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', true, getUserUiMode(user)) });
+          await bot.sendMessage(chatId, res.text, { inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, getUserUiMode(user)) });
         }
         return { ok: true };
       }
@@ -2072,6 +2195,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data.startsWith('tg_wiz_go:')) {
+      const onboardingGate = await checkPreTradeOnboardingGate(env.DB, user.id);
+      if (!onboardingGate.ok) {
+        await bot.answerCallbackQuery(cq.id, 'ابتدا حالت حساب و قوانین ریسک را تایید کنید ⛔️', true);
+        const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+        return { ok: true };
+      }
       const modeChoice = data.split(':')[1] || 'auto';
       let st: TelegramStepState = { step: 'WIZARD' };
       try { if (user.telegram_state) st = { ...st, ...(JSON.parse(user.telegram_state) as TelegramStepState) }; } catch { /* ignore */ }
@@ -2188,6 +2318,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         overrideStrategyKey: 'ai_autonomous_agent',
       });
       await bot.answerCallbackQuery(cq.id, res.ok ? 'ترید هوشمند اتومات روشن شد ✅' : res.text, !res.ok);
+      if (res.needsOnboardingGate) {
+        const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+        return { ok: true };
+      }
       await bot.sendMessage(chatId, res.text, {
         inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', res.ok, getUserUiMode(user)),
       });
@@ -2233,6 +2368,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data === 'tg_myai_activate') {
+      const gate = await checkPreTradeOnboardingGate(env.DB, user.id);
+      if (!gate.ok) {
+        const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.answerCallbackQuery(cq.id, 'ابتدا حالت حساب و قوانین ریسک را تایید کنید.', true);
+        await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+        return { ok: true };
+      }
       const ent = await resolveUserEntitlement(env.DB, {
         id: user.id,
         email: user.email,
@@ -2456,6 +2598,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         overrideStrategyKey: stratKey,
       });
       await bot.answerCallbackQuery(cq.id, res.ok ? `استراتژی ${resolveEngineDisplayLabel(stratKey)} روشن شد ✅` : res.text, !res.ok);
+      if (res.needsOnboardingGate) {
+        const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+        return { ok: true };
+      }
       await bot.sendMessage(chatId, res.text, {
         inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'hunt', res.ok, getUserUiMode(user)),
       });
@@ -2694,14 +2841,19 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     if (data === 'tg_instant_ai_trade') {
-      await bot.answerCallbackQuery(cq.id, 'در حال اسکن زنده و اجرای فوری معامله... ⚡️');
+      await bot.answerCallbackQuery(cq.id, 'در حال بررسی...');
       const res = await runInstantAiAutoTradeForTelegram({ env, user, tgId });
+      if (res.needsOnboardingGate) {
+        const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+        return { ok: true };
+      }
       if (res.needSubscription) {
         await showSubscriptionMenu(env, bot, chatId, user, tgId);
         return { ok: true };
       }
       await bot.sendMessage(chatId, res.text, {
-        inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', true, getUserUiMode(user)),
+        inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'ai', res.ok, getUserUiMode(user)),
       });
       return { ok: true };
     }
@@ -2732,6 +2884,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         webAppUrl,
       });
       await bot.answerCallbackQuery(cq.id, res.ok ? 'ربات خودکار روشن شد 🟢' : res.text, !res.ok);
+      if (res.needsOnboardingGate) {
+        const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+        await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+        return { ok: true };
+      }
       if (msgId) {
         await bot.editMessageText(chatId, msgId, res.text, miniAppInlineKeyboard(webAppUrl, '', 'ai', res.ok, getUserUiMode(user))).catch(() => bot.sendMessage(chatId, res.text));
       } else {
@@ -3149,8 +3306,9 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
       replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
     });
-    await bot.sendMessage(chatId, '🎛 کنترل سریع ربات:', {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
+    const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+    await bot.sendMessage(chatId, gatePrompt.text, {
+      inlineKeyboard: gatePrompt.inlineKeyboard,
     });
     await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
     return { ok: true };
@@ -3862,6 +4020,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       webAppUrl,
       overrideStrategyKey: 'ai_autonomous_agent',
     });
+    if (res.needsOnboardingGate) {
+      const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+      await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+      return { ok: true };
+    }
     await bot.sendMessage(chatId, res.text, {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, uiMode),
     });
@@ -3885,12 +4048,20 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text === '🧪 شبیه‌ساز دمو مشابه تراست‌ولت') {
     await env.DB.prepare(
-      `UPDATE bot_configs SET trading_mode = 'PAPER', updated_at = datetime('now') WHERE user_id = ?`
+      `UPDATE bot_configs SET trading_mode = 'PAPER', trading_mode_selected = 1, updated_at = datetime('now') WHERE user_id = ?`
     ).bind(user.id).run();
+    const gateCheck = await checkPreTradeOnboardingGate(env.DB, user.id);
     await bot.sendMessage(
       chatId,
-      `🧪 **شبیه‌ساز دمو مشابه Trust Wallet ($10,000) فعال شد!**\nتمام معاملات اسپات، میم‌کوین، کپی‌ترید و فیوچرز با قیمت لحظه‌ای واقعی روی حساب آزمایشی اجرا می‌شوند.`
+      `🧪 **شبیه‌ساز دمو مشابه Trust Wallet ($10,000) انتخاب شد!**` +
+        (gateCheck.hasAcceptedRisk
+          ? `\nتمام معاملات اسپات، میم‌کوین، کپی‌ترید و فیوچرز با قیمت لحظه‌ای واقعی روی حساب آزمایشی آماده اجراست.`
+          : `\n⚠️ برای شروع اولین معامله یا روشن کردن ربات، لطفاً متن قوانین و ریسک را نیز تایید کنید:`)
     );
+    if (!gateCheck.ok) {
+      const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+      await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+    }
     return { ok: true };
   }
 
@@ -4103,6 +4274,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       tgId,
       webAppUrl,
     });
+    if (res.needsOnboardingGate) {
+      const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+      await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+      return { ok: true };
+    }
     await bot.sendMessage(chatId, res.text, {
       inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, uiMode),
     });
@@ -4111,14 +4287,25 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text === '⚡️ شکار فوری AI' || text === '⚡️ شکار و ترید فوری AI' || text === '/scan') {
     await clearState();
+    const preGate = await checkPreTradeOnboardingGate(env.DB, user.id);
+    if (!preGate.ok) {
+      const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+      await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+      return { ok: true };
+    }
     await bot.sendMessage(chatId, '⚡️ در حال تحلیل لحظه‌ای ۵ نماد اصلی با هوش مصنوعی دلارینو و اجرای خودکار سیگنال معتبر...');
     const res = await runInstantAiAutoTradeForTelegram({ env, user, tgId });
+    if (res.needsOnboardingGate) {
+      const gatePrompt = await buildTelegramOnboardingGatePayload(env, user.id);
+      await bot.sendMessage(chatId, gatePrompt.text, { inlineKeyboard: gatePrompt.inlineKeyboard });
+      return { ok: true };
+    }
     if (res.needSubscription) {
       await showSubscriptionMenu(env, bot, chatId, user, tgId);
       return { ok: true };
     }
     await bot.sendMessage(chatId, res.text, {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', true, uiMode),
+      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', res.ok, uiMode),
     });
     return { ok: true };
   }
