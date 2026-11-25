@@ -17,6 +17,7 @@ import {
   SERVER_PROFIT_FEE_PCT,
   tryVerifyEvmReceiptOnchain,
 } from '../services/server-fee.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import {
   getUserTreasuryDepositOptions,
   MIN_TREASURY_DEPOSIT_USD,
@@ -177,12 +178,8 @@ export async function requirePaidEntitlement(
   return { ok: true, entitlement };
 }
 
-export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Promise<UserEntitlement> {
+export async function resolveUserEntitlement(_db: D1Database, user: AuthUser): Promise<UserEntitlement> {
   const isAdminUser = user.role === 'owner' || user.role === 'admin';
-  const reqSetting = await db.prepare(
-    `SELECT value FROM system_settings WHERE key = 'subscription_required'`
-  ).first<{ value: string }>().catch(() => null);
-  const subscriptionRequired = reqSetting?.value === 'true';
 
   if (isAdminUser) {
     return {
@@ -215,7 +212,7 @@ export async function resolveUserEntitlement(db: D1Database, user: AuthUser): Pr
     allowLiveTrading: true,
     daysRemaining: 3650,
     expiresAt: null,
-    subscriptionRequired: subscriptionRequired && false,
+    subscriptionRequired: false,
   };
 }
 
@@ -392,7 +389,7 @@ export async function rewardReferrerIfEligible(
           `• پاداش نقدی واریزشده: +$${commissionUsd.toFixed(2)} USDT\n` +
           (days > 0 ? `• هدیه اشتراک: +${days} روز اشتراک Pro\n` : '') +
           `• سطح همکاری شما: ${tier}\n` +
-          `می‌توانید از بخش اشتراک/رفرال در سایت مبلغ را به USDT برداشت یا تبدیل به اشتراک کنید.`
+          `می‌توانید از بخش کارمزد و رفرال در سایت مبلغ را به USDT برداشت یا تبدیل به اعتبار کارمزد ۳٪ کنید.`
       )
       .catch(() => {});
   }
@@ -828,6 +825,7 @@ subscriptionRoutes.patch('/admin/config', async (c) => {
     ).bind(body.vipPriceUsd ?? null, body.vipPriceToman ?? null).run();
   }
 
+  invalidateSettingsCache(c.env.DB);
   return c.json({ ok: true });
 });
 
@@ -1039,40 +1037,32 @@ subscriptionRoutes.post('/referrals/redeem-balance', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { amountUsd?: number };
   const amt = Math.round(Number(body.amountUsd || 0) * 100) / 100;
   if (!Number.isFinite(amt) || amt < 5) {
-    return c.json({ error: 'حداقل مبلغ برای تبدیل به اشتراک ۵ دلار است.' }, 400);
+    return c.json({ error: 'حداقل مبلغ برای تبدیل به اعتبار کارمزد ۳٪ معادل ۵ دلار است.' }, 400);
   }
 
   // Atomic balance deduction to eliminate double-spend races
   const res = await c.env.DB.prepare(
-    `UPDATE users SET referral_balance_usd = ROUND(referral_balance_usd - ?, 2)
+    `UPDATE users SET referral_balance_usd = ROUND(referral_balance_usd - ?, 2),
+                      fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 2)
      WHERE id = ? AND COALESCE(referral_balance_usd, 0) >= ?`
   )
-    .bind(amt, user.id, amt)
+    .bind(amt, amt, user.id, amt)
     .run();
 
   if (!res.meta?.changes || res.meta.changes < 1) {
     return c.json({ error: 'موجودی کمیسیون رفرال کافی نیست.' }, 400);
   }
 
-  const days = Math.max(7, Math.min(365, Math.round(amt * 2))); // $1 = 2 days Pro
-  const subId = randomId('sub');
   const wId = randomId('rw');
   await c.env.DB.prepare(
-    `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
-     VALUES (?, ?, 'pro_monthly', 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'تبدیل کمیسیون رفرال به اشتراک')`
-  )
-    .bind(subId, user.id, `REF_REDEEM:${wId}`, days)
-    .run();
-
-  await c.env.DB.prepare(
     `INSERT INTO referral_withdrawals (id, user_id, amount_usd, target_type, status, admin_note, processed_at)
-     VALUES (?, ?, ?, 'SUBSCRIPTION_CREDIT', 'APPROVED', ?, datetime('now'))`
+     VALUES (?, ?, ?, 'FEE_CREDIT', 'APPROVED', ?, datetime('now'))`
   )
-    .bind(wId, user.id, amt, `Converted to ${days} Pro days (${subId})`)
+    .bind(wId, user.id, amt, `Converted $${amt.toFixed(2)} to 3% profit-fee credit`)
     .run();
 
-  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Converted $${amt.toFixed(2)} referral balance to +${days} Pro days`);
-  return c.json({ ok: true, convertedUsd: amt, daysGranted: days });
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Converted $${amt.toFixed(2)} referral balance to 3% profit-fee credit`);
+  return c.json({ ok: true, convertedUsd: amt, feeCreditAddedUsd: amt });
 });
 
 subscriptionRoutes.post('/referrals/withdraw', async (c) => {

@@ -504,7 +504,10 @@ export function Layout({
 
   useEffect(() => {
     void loadNotifications();
-    const iv = setInterval(() => void loadNotifications(), 20_000);
+    const iv = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void loadNotifications();
+    }, 60_000);
     return () => {
       clearInterval(iv);
     };

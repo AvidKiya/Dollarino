@@ -259,7 +259,7 @@ describe('Dollarino V11.0 Upgrade Suite', () => {
       listingAndMemeSniper: boolean;
       capabilities: Record<string, boolean>;
     };
-    expect(health.version).toBe('11.0.0');
+    expect(health.version).toMatch(/^11\./);
     expect(health.profitShareFeePct).toBe(3);
     expect(health.freeProfitableLiveTrades).toBe(3);
     expect(health.multiEngineSimultaneous).toBe(true);

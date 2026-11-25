@@ -14,7 +14,7 @@ import { toggleTradingEngine } from '../engine/exclusive-engine.js';
 import { logAudit } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
-import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 
 export interface TrainedAIRules {
   style: 'SCALP' | 'SWING' | 'TREND' | 'HYBRID';
@@ -463,13 +463,6 @@ myAiRoutes.post('/activate', async (c) => {
     () => ({} as { active?: boolean; startBot?: boolean })
   );
   const active = body.active !== false;
-
-  if (active) {
-    const gate = await requirePaidEntitlement(c.env.DB, user);
-    if (!gate.ok) {
-      return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-    }
-  }
 
   const agent = await ensureAgent(c.env.DB, user.id);
   const rules = parseRulesJson(agent.system_rules_json);

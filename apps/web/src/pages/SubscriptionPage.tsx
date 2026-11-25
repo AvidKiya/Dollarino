@@ -343,9 +343,15 @@ export function SubscriptionPage({
             </h1>
             <p className="text-xs sm:text-sm text-white/85 leading-relaxed">
               {isFa
-                ? `در دلارینو تمام امکانات رایگان است، کیف‌پول دمو دلخواه ($50 تا $10M) رایگان است و ۳ معامله سودده اول واقعی شما بدون کارمزد (۰٪) محاسبه می‌شود؛ از معامله سودده چهارم به بعد ۹۷٪ سود برای شما و فقط ۳٪ کارمزد سرور محاسبه می‌گردد. حتی در صورت سررسید کارمزد، پوزیشن‌های باز شما هرگز رها یا بسته نمی‌شوند و صرفاً ورود جدید متوقف می‌شود.`
-                : `All tools and customizable demo wallets ($50–$10M) are 100% free. Your first 3 profitable LIVE trades carry 0% fee; afterwards you keep 97% of net profits (3% server fee). Existing open positions are always managed until close.`}
+                ? `در دلارینو تمام امکانات رایگان است، کیف‌پول دمو دلخواه ($50 تا $10M) رایگان است و ۳ معامله سودده اول واقعی شما بدون کارمزد (۰٪) محاسبه می‌شود؛ از معامله سودده چهارم به بعد ۹۷٪ سود برای شما و فقط ۳٪ کارمزد سرور محاسبه می‌گردد. برخلاف پلتفرم‌های اشتراکی که پول اشتراک را اول می‌گیرند و سود یا ضرر کاربر برایشان مهم نیست، دلارینو تمام تلاشش را برای سود شما می‌کند چون ما فقط وقتی بیشتر درآمد داریم که شما سود بیشتری بگیرید! (پوزیشن‌های باز شما حتی هنگام تسویه کارمزد همیشه مدیریت می‌شوند.)`
+                : `All tools and customizable demo wallets ($50–$10M) are 100% free. Unlike subscription bots that take your money upfront whether you lose or win, Dollarino charges $0 subscription and works relentlessly for your profit because our 3% server fee (after your first 3 free live wins, keeping 97%) grows ONLY when you earn more!`}
             </p>
+            <div className="rounded-2xl p-3 bg-emerald-500/15 border border-emerald-400/35 text-[11px] sm:text-xs text-emerald-100 leading-relaxed">
+              <strong className="text-emerald-300">{isFa ? '🤝 هم‌راستایی ۱۰۰٪ منافع با شما: ' : '🤝 100% Profit Alignment: '}</strong>
+              {isFa
+                ? 'پلتفرم‌های رقیب از همان روز اول هزینه اشتراک می‌گیرند و اگر ضرر کنید آسیبی نمی‌بینند؛ اما درآمد دلارینو کاملاً وابسته به سود خالص معاملات شماست و بنابراین تمام موتورهای هوش مصنوعی، کپی‌ترید و سپرهای ریسک ما به نفع حداکثرسازی سود شما کار می‌کنند.'
+                : 'Subscription platforms profit even when users lose. Dollarino earns $0 upfront and only takes 3% of verified net live profits — our AI and risk shields are aligned with your success.'}
+            </div>
           </div>
         </div>
       </div>
@@ -866,7 +872,7 @@ export function SubscriptionPage({
                       ctx.fillStyle = '#34D399';
                       ctx.font = 'bold 26px sans-serif';
                       ctx.textAlign = 'right';
-                      ctx.fillText('DOLLARINO V10 · AI + TRUST WALLET', 1135, 95);
+                      ctx.fillText('DOLLARINO V11.5 · AI + TRUST WALLET', 1135, 95);
 
                       ctx.fillStyle = '#FFFFFF';
                       ctx.font = 'bold 46px sans-serif';

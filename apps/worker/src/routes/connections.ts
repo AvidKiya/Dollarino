@@ -7,7 +7,7 @@ import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { normalizeProxyBaseUrl } from '../exchanges/proxy.js';
 import { TelegramBotClient } from '../telegram/client.js';
-import { requirePaidEntitlement, resolveUserEntitlement } from './subscriptions.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 
 export const connectionRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 connectionRoutes.use('*', requireAuth);
@@ -86,18 +86,8 @@ connectionRoutes.post('/exchanges', async (c) => {
     return c.json({ error: `API Key and API Secret are required for ${provider === 'bitunix' ? 'Bitunix' : 'Toobit'}` }, 400);
   }
 
-  const ent = await resolveUserEntitlement(c.env.DB, user);
-  const canActivateNow = !ent.subscriptionRequired || ent.hasPaidPlan;
-  if (body.activate === true && !canActivateNow) {
-    return c.json(
-      {
-        error: 'برای فعال‌سازی اتصال صرافی و ترید، اشتراک فعال لازم است.',
-        code: 'SUBSCRIPTION_REQUIRED',
-      },
-      402
-    );
-  }
-  const shouldActivate = body.activate !== false && canActivateNow;
+  await resolveUserEntitlement(c.env.DB, user);
+  const shouldActivate = body.activate !== false;
 
   let normalizedProxy: string | undefined;
   if (body.proxyUrl?.trim()) {
@@ -166,7 +156,7 @@ connectionRoutes.post('/exchanges', async (c) => {
     `UPDATE exchange_connections SET last_test_status = ?, last_tested_at = datetime('now') WHERE id = ?`
   ).bind(test.ok ? 'OK' : test.message.slice(0, 240), id).run();
 
-  return c.json({ id, test, activated: shouldActivate, requiresSubscription: !canActivateNow });
+  return c.json({ id, test, activated: shouldActivate, requiresSubscription: false });
 });
 
 connectionRoutes.patch('/exchanges/:id/proxy', async (c) => {
@@ -217,13 +207,7 @@ connectionRoutes.post('/exchanges/:id/activate', async (c) => {
     .bind(id, user.id).first<{ id: string; provider: string }>();
   if (!row) return c.json({ error: 'Connection not found' }, 404);
 
-  const ent = await resolveUserEntitlement(c.env.DB, user);
-  if (ent.subscriptionRequired && !ent.hasPaidPlan) {
-    return c.json({
-      error: 'برای فعال‌سازی صرافی و شروع ترید، اشتراک فعال لازم است.',
-      code: 'SUBSCRIPTION_REQUIRED',
-    }, 402);
-  }
+  await resolveUserEntitlement(c.env.DB, user);
 
   await c.env.DB.prepare('UPDATE exchange_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
   await c.env.DB.prepare('UPDATE exchange_connections SET is_active = 1 WHERE id = ?').bind(id).run();
@@ -250,10 +234,6 @@ connectionRoutes.post('/exchanges/:id/test', async (c) => {
 
 connectionRoutes.post('/exchanges/test-order', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) {
-    return c.json({ ok: false, error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  }
   const body = await c.req.json<{ symbol?: string; direction?: 'LONG' | 'SHORT' }>().catch(() => ({} as { symbol?: string; direction?: 'LONG' | 'SHORT' }));
   const symbol = (body.symbol || 'BTCUSDT').toUpperCase();
   const direction = body.direction || 'LONG';

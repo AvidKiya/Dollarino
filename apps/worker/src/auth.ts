@@ -412,8 +412,8 @@ authRoutes.post('/login', async (c) => {
 authRoutes.post('/quick-demo', async (c) => {
   return c.json(
     {
-      error: 'سرویس تست رایگان غیرفعال شده است. برای ورود به دلارینو لطفاً ثبت‌نام کرده و اشتراک خود را فعال کنید.',
-      code: 'PAID_ONLY_PLATFORM',
+      error: 'برای ورود به دلارینو و استفاده از شبیه‌ساز رایگان دمو و تمام امکانات بدون اشتراک، لطفاً از طریق ربات تلگرام @Dollarino_bot وارد شوید.',
+      code: 'TELEGRAM_AUTH_REQUIRED',
     },
     403
   );

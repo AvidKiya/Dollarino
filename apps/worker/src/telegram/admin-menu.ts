@@ -4,6 +4,7 @@ import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { formatIranDateTime, formatToman, mainMenuKeyboard, settingsKeyboard } from './formatter.js';
 import { publishChannelNews, resolveChannelAndBotConfig } from './publisher.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 
 export interface AdminPerms {
   users?: boolean;
@@ -63,6 +64,7 @@ export async function getSystemSetting(db: D1Database, key: string, fallback = '
 
 export async function setSystemSetting(db: D1Database, key: string, value: string): Promise<void> {
   await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)`).bind(key, value).run();
+  invalidateSettingsCache(db);
 }
 
 async function auditAdmin(db: D1Database, actorId: string, message: string, details?: unknown) {
@@ -86,7 +88,7 @@ export function isAdminSessionExpired(lastActiveAt?: string | null): boolean {
 export function adminMainKeyboard(actor: AdminActor): InlineKeyboardButton[][] {
   const rows: InlineKeyboardButton[][] = [
     [
-      { text: '⏳ تایید اشتراک‌ها', callback_data: 'adm:tx:PENDING_REVIEW:0', style: 'success' },
+      { text: '⏳ تایید فیش‌های ۳٪', callback_data: 'adm:tx:PENDING_REVIEW:0', style: 'success' },
       { text: '👥 کاربران', callback_data: 'adm:users', style: 'primary' },
     ],
     [
@@ -130,9 +132,9 @@ export async function openAdminPanelHome(
   ]);
   const text =
     `💼 **پنل مدیریت جامع دلارینو**\n\n` +
-    `👤 مدیر: ${actor.username} (${actor.isSuperAdmin ? 'مدیر اصلی 👑' : 'ادمین'})\n` +
-    `👥 کاربران: ${uTotal?.cnt ?? 0} | 💎 اشتراک فعال: ${subActive?.cnt ?? 0}\n` +
-    `⏳ فیش در انتظار تایید: **${pendingTx?.cnt ?? 0}** | 💬 تیکت باز: **${openTickets?.cnt ?? 0}**\n\n` +
+    `👤 مدیر: ${actor.username} (${actor.isSuperAdmin ? 'مالک اصلی 👑' : 'ادمین'})\n` +
+    `👥 کاربران: ${uTotal?.cnt ?? 0} | 💎 بدون اشتراک (۳٪ سود واقعی)\n` +
+    `⏳ فیش ۳٪ در انتظار تایید: **${pendingTx?.cnt ?? 0}** | 💬 تیکت باز: **${openTickets?.cnt ?? 0}**\n\n` +
     `بخش مورد نظر را انتخاب کنید:`;
 
   const kb = adminMainKeyboard(actor);
@@ -348,7 +350,7 @@ export async function handleAdminCallback(
     await auditAdmin(env.DB, actor.id, `Upgraded user ${uid} to VIP 30d`);
     const target = await env.DB.prepare(`SELECT telegram_id FROM users WHERE id = ?`).bind(uid).first<{ telegram_id: string | null }>();
     if (target?.telegram_id) {
-      await bot.sendMessage(target.telegram_id, '👑 تبریک! حساب شما توسط مدیر سیستم به اشتراک VIP (۳۰ روزه) ارتقا یافت.').catch(() => {});
+      await bot.sendMessage(target.telegram_id, '👑 تبریک! حساب شما توسط مدیر سیستم ارتقا یافت و اعتبار کارمزد ویژه فعال شد.').catch(() => {});
     }
     await bot.answerCallbackQuery(cqId, 'کاربر VIP شد 👑');
     await renderAdminUserCard(env, bot, chatId, msgId, uid);
@@ -359,8 +361,8 @@ export async function handleAdminCallback(
     const uid = data.slice('adm:u_downgrade:'.length);
     await env.DB.prepare(`UPDATE user_subscriptions SET status = 'REVOKED', reviewed_by = ?, reviewed_at = datetime('now') WHERE user_id = ? AND status = 'ACTIVE'`)
       .bind(actor.id, uid).run();
-    await auditAdmin(env.DB, actor.id, `Downgraded user ${uid} to free`);
-    await bot.answerCallbackQuery(cqId, 'اشتراک به عادی تنزل یافت');
+    await auditAdmin(env.DB, actor.id, `Downgraded user ${uid} to standard`);
+    await bot.answerCallbackQuery(cqId, 'وضعیت کاربر به استاندارد تنظیم شد');
     await renderAdminUserCard(env, bot, chatId, msgId, uid);
     return true;
   }
@@ -421,7 +423,7 @@ export async function handleAdminCallback(
         { text: '👑 کاربران VIP', callback_data: 'adm:bc_target:vip' },
       ],
       [
-        { text: '👤 کاربران بدون اشتراک', callback_data: 'adm:bc_target:free' },
+        { text: '👤 کاربران استاندارد', callback_data: 'adm:bc_target:free' },
         { text: '🟢 فعال امروز', callback_data: 'adm:bc_target:active_today' },
       ],
       [{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }],
@@ -529,7 +531,7 @@ export async function handleAdminCallback(
     const kb: InlineKeyboardButton[][] = [];
     if (sub.status === 'PENDING_REVIEW') {
       kb.push([
-        { text: '✅ تایید و فعال‌سازی اشتراک', callback_data: `adm:tx_approve:${sub.id}` },
+        { text: '✅ تایید و ثبت پرداخت ۳٪', callback_data: `adm:tx_approve:${sub.id}` },
         { text: '❌ رد تراکنش', callback_data: `adm:tx_reject:${sub.id}` },
       ]);
     }
@@ -575,7 +577,7 @@ export async function handleAdminCallback(
         if (sub.telegram_id) {
           await bot.sendMessage(
             sub.telegram_id,
-            `🎉 پرداخت شما تایید شد!\n\n✅ اشتراک ${plan?.name_fa || sub.plan_code} به مدت ${days} روز برای شما فعال گردید. اکنون می‌توانید از تمام امکانات ویژه استفاده کنید!`,
+            `🎉 پرداخت شما تایید شد!\n\n✅ اعتبار کارمزد / تسویه ۳٪ برای حساب شما ثبت گردید. دلارینو بدون اشتراک ماهانه است و همه امکانات هم‌اکنون در دسترس شماست.`,
             { inlineKeyboard: [[{ text: 'حساب کاربری 👤', callback_data: 'tg_account' }]] }
           ).catch(() => {});
         }
@@ -1255,7 +1257,7 @@ async function renderAdminUserCard(
     `• 📱 موبایل (KYC): ${u.phone_verified ? `✅ تاییدشده (${u.phone_number || '—'})` : '⏳ احرازنشده'}\n` +
     `• 🦊 Trust Wallet: ${u.trust_wallet_address || 'متصل‌نشده'}\n` +
     `• نقش: ${u.role} | وضعیت: ${u.is_blocked ? '🔒 مسدود' : '🟢 فعال'}\n` +
-    `• اشتراک: ${sub ? `💎 ${sub.plan_code} (تا ${formatIranDateTime(sub.expires_at)})` : 'بدون اشتراک فعال'}\n` +
+    `• مدل کارمزد: ✅ اشتراک ماهانه ۰٪ · کارمزد ۳٪ فقط روی سود واقعی\n` +
     `• کیف پول: ${walletUsdt.toFixed(2)} USDT (${formatToman(walletUsdt, rate)} ت)\n` +
     `• موجودی شبیه‌ساز: ${cfg?.paper_balance ?? '10000'} USDT (${cfg?.trading_mode ?? 'PAPER'})\n` +
     `• عضویت: ${formatIranDateTime(u.created_at)}\n` +

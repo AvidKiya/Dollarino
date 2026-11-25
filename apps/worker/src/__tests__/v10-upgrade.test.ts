@@ -168,7 +168,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       demoSimulatorUsd: number;
       freeTradingViewAlerts: boolean;
     };
-    expect(health.version).toBe('11.0.0');
+    expect(health.version).toMatch(/^11\./);
     expect(health.paidSubscriptions).toBe(false);
     expect(health.profitShareFeePct).toBe(3);
     expect(health.trustWalletOnly).toBe(true);

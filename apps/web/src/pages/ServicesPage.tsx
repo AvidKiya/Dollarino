@@ -424,7 +424,7 @@ export function ServicesPage({
             <div className="px-4 py-3.5 flex items-center justify-between gap-3 text-xs">
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
                 <UserCheck className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'وضعیت اشتراک' : 'Plan Status'}</span>
+                <span>{isFa ? 'وضعیت دسترسی و مدل کارمزد' : 'Access & Profit-Fee Model'}</span>
               </span>
               <span className="px-3 py-1 rounded-full bg-[#0D9455]/12 text-[#0D9455] text-[11px] font-black">
                 {activePlanLabel}
@@ -595,7 +595,7 @@ export function ServicesPage({
             >
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
                 <Users className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'زیرمجموعه‌ها و اشتراک (+۷ روز هدیه)' : 'Referrals & Plans'}</span>
+                <span>{isFa ? 'زیرمجموعه‌ها و اعتبار کارمزد ۳٪ (+$۲ پاداش)' : 'Referrals & 3% Fee Credit (+$2 Bonus)'}</span>
               </span>
               <Arrow className="w-4 h-4 text-dim" />
             </button>
@@ -972,7 +972,7 @@ export function ServicesPage({
       </div>
 
       <div className="space-y-2">
-        <p className="text-xs font-black text-dim px-1">{isFa ? 'مدیریت حساب، اشتراک و پشتیبانی' : 'Account, Plans & Support'}</p>
+        <p className="text-xs font-black text-dim px-1">{isFa ? 'مدیریت حساب، کارمزد ۳٪ سود و پشتیبانی' : 'Account, 3% Profit Fee & Support'}</p>
         <div className="panel rounded-[26px] divide-y hairline overflow-hidden">
           <button
             type="button"
@@ -1097,7 +1097,7 @@ export function ServicesPage({
                     {user.role.toUpperCase()}
                   </span>
                 </div>
-                <span className="text-[11px] text-dim block">{isFa ? 'کاربران، اشتراک‌ها، کدهای هدیه و AI' : 'Users, plans, gift codes & AI'}</span>
+                <span className="text-[11px] text-dim block">{isFa ? 'کاربران، بکاپ/مدیریت دیتابیس، کد هدیه و AI' : 'Users, DB Backup/Wipe, gift codes & AI'}</span>
               </div>
               <Arrow className="w-4 h-4 text-dim shrink-0" />
             </button>

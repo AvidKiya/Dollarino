@@ -1623,7 +1623,7 @@ export function DexTrustPage({
             )}
 
             <div className="surface-soft rounded-2xl p-3.5 space-y-2 text-xs">
-              <p className="font-black text-main">{isFa ? 'آدرس‌های رسمی واریز اشتراک دلارینو:' : 'Official Dollarino Subscription Receivers:'}</p>
+              <p className="font-black text-main">{isFa ? 'آدرس‌های رسمی تسویه کارمزد ۳٪ سود دلارینو:' : 'Official Dollarino 3% Profit-Fee Settlement Receivers:'}</p>
               <p className="text-dim">
                 BEP20 (Trust Wallet EVM): <code dir="ltr" className="text-main">{twStatus?.platformReceivers.evm || '—'}</code>
               </p>

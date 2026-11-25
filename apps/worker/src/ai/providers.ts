@@ -16,6 +16,7 @@ import {
 } from '@dollarino/core';
 import { decryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import { getCachedSystemSetting } from '../services/settings-cache.js';
 
 export type AIConsensusMode = 'SINGLE' | 'DUAL' | 'ENSEMBLE_3' | 'ENSEMBLE_AUTO';
 
@@ -161,11 +162,7 @@ function uniqueSortedLevels(vals: number[], ref: number, asc = true): number[] {
 }
 
 async function getSetting(db: D1Database, key: string, fallback: string): Promise<string> {
-  const row = await db.prepare('SELECT value FROM system_settings WHERE key = ?')
-    .bind(key)
-    .first<{ value: string }>()
-    .catch(() => null);
-  return row?.value ?? fallback;
+  return getCachedSystemSetting(db, key, fallback);
 }
 
 export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary> {
@@ -1817,8 +1814,8 @@ export async function generateSupportAIReply(
   const primary = ensemble.engines[0];
   if (primary) {
     const sysPrompt = isEn
-      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely about Dollarino platform features (exclusive Trust Wallet non-custodial Web3 integration across EVM/Solana/TON/TRON, $10,000 Trust Wallet Demo Simulator, choice between Manual Confirmation and Full 24/7 Autonomous Auto-Trade via Perp Agent Key + Copy-Vault, DEX Screener radar, Central Multi-AI, My Custom AI, Dorna V1 strategy, Smart Copy V2, Browser Extension, Subscriptions, and Anti-Scam safety). Never ask for passwords or seed phrases. If the user asks about billing verification, account refunds, or complex manual issues, advise them they can click "Speak with Human Admins" anytime.`
-      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. به زبان فارسی روان، محترمانه، دقیق و کوتاه پاسخ بدهید. اطلاعات کامل پلتفرم: اتصال انحصاری و غیرامانی به Trust Wallet روی تمام شبکه‌های EVM/BSC/Base/Solana/TON/TRON به‌همراه شبیه‌ساز دمو ۱۰ هزار دلاری مشابه تراست‌ولت، امکان انتخاب بین تایید دستی یا تمام‌اتوترید خودکار ۲۴/۷ (از طریق Perp Agent Key و Copy-Vault بدون حق برداشت)، اسکنر ضدراگ و توکن‌های DEX، ۴ موتور معاملاتی (هوش مصنوعی مرکزی، هوش مصنوعی من، استراتژی دُرنا V1، کپی‌ترید هوشمند ولت‌ها)، افزونه کروم و اشتراک‌ها. هرگز رمز یا ۱۲ کلمه بازیابی نخواهید. در پایان یا در موارد تایید دستی/مالی یادآوری کنید در صورت نیاز می‌توانند دکمه «گفتگو با مدیران انسانی» را بزنند.`;
+      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely about Dollarino platform features (exclusive Trust Wallet non-custodial Web3 integration across EVM/Solana/TON/TRON, customizable $50–$10M Demo Simulator, choice between Manual Confirmation and Full 24/7 Autonomous Auto-Trade via Perp Agent Key + Copy-Vault, DEX Screener radar, Central Multi-AI, My Custom AI, Dorna V1 strategy, Smart Copy V2, Browser Extension, and 0% Subscription fee model: platform is 100% free with first 3 profitable live trades at 0% fee and only 3% server fee strictly on net live profit afterward — so unlike subscription platforms that take money upfront regardless of losses, Dollarino only earns more when the user profits more). Never ask for passwords or seed phrases. If the user asks about settlement or manual review, advise them they can click "Speak with Human Admins" anytime.`
+      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. به زبان فارسی روان، محترمانه، دقیق و کوتاه پاسخ بدهید. اطلاعات کامل پلتفرم: اتصال انحصاری و غیرامانی به Trust Wallet روی تمام شبکه‌های EVM/BSC/Base/Solana/TON/TRON به‌همراه شبیه‌ساز دمو رایگان قابل تنظیم (۵۰ تا ۱۰ میلیون دلار)، امکان انتخاب بین تایید دستی یا تمام‌اتوترید خودکار ۲۴/۷، اسکنر ضدراگ و توکن‌های DEX، ۴ موتور معاملاتی، افزونه کروم و مدل شفاف درآمدی بدون اشتراک: پلتفرم کاملاً رایگان است، ۳ معامله سودده اول واقعی ۰٪ کارمزد دارد و بعد از آن فقط ۳٪ از سود واقعی (۹۷٪ سود برای کاربر) بابت هزینه سرور کسر می‌شود؛ یعنی برعکس پلتفرم‌های اشتراکی که اول پول می‌گیرند و سود یا ضرر کاربر برایشان مهم نیست، دلارینو فقط وقتی بیشتر سود می‌برد که کاربر سود بیشتری بگیرد. هرگز رمز یا ۱۲ کلمه بازیابی نخواهید.`;
 
     const historyText = (params.recentMessages ?? [])
       .slice(-6)
@@ -1871,20 +1868,20 @@ export async function generateSupportAIReply(
         : `دلارینو ۴ موتور هوشمند دارد (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا V1 و کپی‌ترید).\nبرای سیگنال‌گیری و ترید خودکار:\n۱. موتور دلخواه را انتخاب کرده و دکمه «شروع ربات» را فعال کنید.\n۲. در صفحه اصلی یا پایانه حرفه‌ای می‌توانید دکمه «اسکن و شکار فوری AI» را بزنید تا تحلیل لحظه‌ای بازار و نقطه ورود، حد ضرر و ۳ تارگت سود نمایش داده شوند.\n۳. تمامی معاملات به‌صورت اجباری دارای حد ضرر و ریسک‌فری خودکار در تارگت اول هستند.\n\nدر صورت نیاز می‌توانید با دکمه زیر مستقیماً با مدیران انسانی گفتگو کنید.`,
     };
   }
-  if (/اشتراک|خرید|پرداخت|قیمت|تمدید|کارت|پکیج|sub|plan|usdt|trc20/.test(lower)) {
+  if (/اشتراک|خرید|پرداخت|قیمت|تمدید|کارمزد|۳٪|پکیج|sub|plan|fee|usdt|trc20/.test(lower)) {
     return {
       usedModel: 'Dollarino AI Support Core',
       reply: isEn
-        ? `Subscriptions can be activated seamlessly via USDT (TRC20 / BSC) or Trust Wallet. After transferring, submit your TXID (transaction hash) in the Subscriptions page for instant or fast admin approval. If you already sent a payment and want an urgent manual check, tap "Speak with Human Admins".`
-        : `برای فعال‌سازی یا تمدید اشتراک می‌توانید از بخش «اشتراک و کپی‌ترید» پکیج دلخواه را انتخاب و مبلغ تتر را روی شبکه TRC20 یا BSC واریز کرده و هش تراکنش (TXID) را ثبت کنید.\nاگر تراکنش را ثبت کرده‌اید و نیاز به بررسی یا تایید فوری توسط مدیریت دارید، دکمه «ارتباط مستقیم با مدیران انسانی» را بزنید تا پیامتان با اولویت بالا به مدیران ارسال شود.`,
+        ? `Dollarino has $0 subscription fees — everything (demo simulator, AI, strategies, copy-trade, DEX radar) is 100% free! Unlike subscription bots that charge upfront regardless of whether you lose, Dollarino tries its hardest to make you profit because we charge 0% on your first 3 profitable live trades and only 3% server fee strictly on net live profit afterward (you keep 97%).`
+        : `در دلارینو **هیچ اشتراک پولی یا هزینه ماهانه‌ای وجود ندارد** و تمام امکانات (شبیه‌ساز دمو، هوش مصنوعی، استراتژی‌ها، کپی‌ترید و رادار DEX) ۱۰۰٪ رایگان است!\nبرخلاف پلتفرم‌های اشتراکی که پول را اول کار می‌گیرند و سود یا ضرر شما برایشان مهم نیست، دلارینو تمام تلاشش را برای سود شما می‌کند چون فقط زمانی بیشتر درآمد دارد (۳٪ کارمزد سرور روی سود خالص واقعی پس از ۳ معامله سودده اول رایگان — یعنی ۹۷٪ سود برای شما) که شما سود بیشتری بگیرید.`,
     };
   }
 
   return {
     usedModel: 'Dollarino AI Support Core',
     reply: isEn
-      ? `Hello ${params.username}! I am the Dollarino AI Support Assistant.\n${params.contextSummary ? `Your current status: ${params.contextSummary}\n` : ''}Ask me anything about Trust Wallet connection, Manual vs 24/7 Auto-Trade, DEX & Perp Futures, AI bots, or subscriptions — or tap "Speak with Human Admins" anytime to chat directly with our management team.`
-      : `سلام ${params.username} عزیز! من دستیار هوشمند پشتیبانی دلارینو هستم.\n${params.contextSummary ? `وضعیت فعلی حساب شما: ${params.contextSummary}\n` : ''}هر سوالی درباره اتصال Trust Wallet، انتخاب تایید دستی یا تمام‌اتوترید ۲۴/۷، شبیه‌ساز دمو، معاملات DEX/Perp یا فعال‌سازی اشتراک دارید بپرسید تا فوراً راهنمایی‌تان کنم. همچنین هر زمان خواستید می‌توانید با دکمه «گفتگو با مدیران انسانی» مستقیماً با تیم مدیریت صحبت کنید.`,
+      ? `Hello ${params.username}! I am the Dollarino AI Support Assistant.\n${params.contextSummary ? `Your current status: ${params.contextSummary}\n` : ''}Ask me anything about Trust Wallet connection, Manual vs 24/7 Auto-Trade, customizable Demo Simulator, DEX & Perp Futures, AI bots, or our 0% Subscription / 3% Profit-Share model — or tap "Speak with Human Admins" anytime.`
+      : `سلام ${params.username} عزیز! من دستیار هوشمند پشتیبانی دلارینو هستم.\n${params.contextSummary ? `وضعیت فعلی حساب شما: ${params.contextSummary}\n` : ''}هر سوالی درباره اتصال Trust Wallet، انتخاب تایید دستی یا تمام‌اتوترید ۲۴/۷، شبیه‌ساز دمو رایگان، معاملات DEX/Perp یا مدل شفاف ۳٪ کارمزد از سود (بدون اشتراک) دارید بپرسید تا فوراً راهنمایی‌تان کنم.`,
   };
 }
 

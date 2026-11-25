@@ -5,7 +5,7 @@ import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
-import { requirePaidEntitlement } from './subscriptions.js';
+import { resolveUserEntitlement } from './subscriptions.js';
 
 export const chartAiRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 chartAiRoutes.use('*', requireAuth);
@@ -44,10 +44,6 @@ chartAiRoutes.get('/chats/:id', async (c) => {
 
 chartAiRoutes.post('/analyze', async (c) => {
   const user = c.get('user');
-  const gate = await requirePaidEntitlement(c.env.DB, user);
-  if (!gate.ok) {
-    return c.json({ error: gate.error, code: 'SUBSCRIPTION_REQUIRED' }, 402);
-  }
   const body = await c.req.json<{
     chatId?: string;
     symbol: string;
