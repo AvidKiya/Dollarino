@@ -210,7 +210,7 @@ function SetupActionCard({
           onClick={() => onOpenTerminal(setup.symbol)}
           className="btn-cobalt w-full sm:w-auto px-3.5 py-2 rounded-xl text-[11px] font-black"
         >
-          {isFa ? '📈 باز کردن در ترمینال معاملاتی' : 'Open Symbol in Terminal'}
+          {isFa ? 'باز کردن در ترمینال معاملاتی' : 'Open Symbol in Terminal'}
         </button>
       )}
     </div>
@@ -397,8 +397,8 @@ export function DedicatedAiChatSurface({
     const optimisticText =
       cleanText ||
       (isFa
-        ? '📊 لطفاً این تصویر چارت را تحلیل کن و ستاپ معاملاتی بده.'
-        : '📊 Please analyze this chart screenshot and suggest a trading setup.');
+        ? 'لطفاً این تصویر چارت را تحلیل کن و ستاپ معاملاتی بده.'
+        : 'Please analyze this chart screenshot and suggest a trading setup.');
 
     const optimisticUserMsg: AiChatMessageItem = {
       id: `tmp-${Date.now()}`,
@@ -461,8 +461,8 @@ export function DedicatedAiChatSurface({
               if (pStatus === 404 || /Route not found/i.test(pText)) {
                 throw new Error(
                   isFa
-                    ? '⚠️ سرور بک‌اند (Cloudflare Worker) هنوز به نسخه جدید v9.9.1 آپدیت نشده است (Route not found). لطفاً دستور npx wrangler deploy را روی سرور اجرا کنید تا مسیر جدید هوش مصنوعی فعال شود.'
-                    : '⚠️ Backend Cloudflare Worker is still on an older version (Route not found). Run `npx wrangler deploy` to update the API routes.'
+                    ? 'سرور بک‌اند (Cloudflare Worker) هنوز به نسخه جدید آپدیت نشده است (Route not found). لطفاً دستور npx wrangler deploy را روی سرور اجرا کنید تا مسیر جدید هوش مصنوعی فعال شود.'
+                    : 'Backend Cloudflare Worker is still on an older version (Route not found). Run `npx wrangler deploy` to update the API routes.'
                 );
               }
               throw pubErr;
@@ -470,8 +470,8 @@ export function DedicatedAiChatSurface({
           } else {
             throw new Error(
               isFa
-                ? '⚠️ سرور بک‌اند (Cloudflare Worker) هنوز به نسخه جدید v9.9.1 آپدیت نشده است (Route not found). لطفاً دستور npx wrangler deploy را روی سرور اجرا کنید.'
-                : '⚠️ Backend Cloudflare Worker is still on an older version (Route not found). Run `npx wrangler deploy`.'
+                ? 'سرور بک‌اند (Cloudflare Worker) هنوز به نسخه جدید آپدیت نشده است (Route not found). لطفاً دستور npx wrangler deploy را روی سرور اجرا کنید.'
+                : 'Backend Cloudflare Worker is still on an older version (Route not found). Run `npx wrangler deploy`.'
             );
           }
         } else {
@@ -492,7 +492,7 @@ export function DedicatedAiChatSurface({
         {
           id: `ai-${Date.now()}`,
           role: 'assistant',
-          content: res.visionFallbackNotice ? `ℹ️ ${res.visionFallbackNotice}\n\n${res.reply}` : res.reply,
+          content: res.visionFallbackNotice ? `${res.visionFallbackNotice}\n\n${res.reply}` : res.reply,
           modelId: res.modelId,
           modelLabel: res.modelLabel,
           usedVision: res.usedVision,
@@ -510,16 +510,16 @@ export function DedicatedAiChatSurface({
   const activeModel = models.find((m) => m.id === selectedModelId) || models[0];
   const quickStarters = isFa
     ? [
-        '📊 تحلیل لحظه‌ای بیت‌کوین و ستاپ امروز',
-        '🧠 کد Pine Script استراتژی EMA + RSI بنویس',
-        '🛡 با سرمایه ۵۰۰ دلار و ریسک ۲٪ چقدر حجم بگیرم؟',
-        '👨‍💻 دلارینو و سازنده‌اش آوید کیا را معرفی کن',
+        'تحلیل لحظه‌ای بیت‌کوین و ستاپ امروز',
+        'کد Pine Script استراتژی EMA + RSI بنویس',
+        'با سرمایه ۵۰۰ دلار و ریسک ۲٪ چقدر حجم بگیرم؟',
+        'دلارینو و سازنده‌اش آوید کیا را معرفی کن',
       ]
     : [
-        '📊 Live BTC analysis & setup',
-        '🧠 Write an EMA + RSI Pine Script strategy',
-        '🛡 Position sizing for $500 & 2% risk',
-        '👨‍💻 Who built Dollarino?',
+        'Live BTC analysis & setup',
+        'Write an EMA + RSI Pine Script strategy',
+        'Position sizing for $500 & 2% risk',
+        'Who built Dollarino?',
       ];
 
   return (
@@ -621,7 +621,7 @@ export function DedicatedAiChatSurface({
             <div className="space-y-2">
               <ImagePlus className="w-10 h-10 text-[var(--gold)] mx-auto" />
               <p className="font-display font-bold text-base text-white">
-                {isFa ? 'عکس چارت را همین‌جا رها کنید 📸' : 'Drop chart image here 📸'}
+                {isFa ? 'عکس چارت را همین‌جا رها کنید' : 'Drop chart image here'}
               </p>
             </div>
           </div>
@@ -730,7 +730,7 @@ export function DedicatedAiChatSurface({
               >
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.supportsVision ? '👁️ ' : '🤖 '}
+                    {m.supportsVision ? '[Vision] ' : ''}
                     {m.label}
                   </option>
                 ))}
@@ -796,7 +796,11 @@ export function DedicatedAiChatSurface({
                     <div className="flex items-center gap-1.5 text-[10px] font-bold text-[var(--gold)] mb-1">
                       <Bot className="w-3 h-3" />
                       <span>{m.modelLabel}</span>
-                      {m.usedVision && <span>· 👁️ Vision</span>}
+                      {m.usedVision && (
+                        <span className="inline-flex items-center gap-1">
+                          · <Eye className="w-3 h-3" /> Vision
+                        </span>
+                      )}
                     </div>
                   )}
 
@@ -867,8 +871,9 @@ export function DedicatedAiChatSurface({
             <div className="flex items-center gap-3 p-2 rounded-2xl surface-soft border hairline">
               <img src={pendingImage} alt="Preview" className="h-12 w-16 object-cover rounded-xl border hairline" />
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-bold text-main truncate">
-                  {isFa ? '📸 عکس چارت آماده ارسال به AI' : '📸 Chart ready for AI'}
+                <p className="text-[11px] font-bold text-main truncate flex items-center gap-1.5">
+                  <ImagePlus className="w-3.5 h-3.5 text-brand shrink-0" />
+                  <span className="truncate">{isFa ? 'عکس چارت آماده ارسال به AI' : 'Chart ready for AI'}</span>
                 </p>
                 <p className="text-[10px] text-dim truncate">
                   {isFa ? 'پیام بنویسید یا دکمه ارسال را بزنید.' : 'Add prompt or send.'}
@@ -1023,7 +1028,8 @@ export function DollarinoRobotLogoIcon({ size = 82 }: { size?: number }) {
 
 const ORB_STORAGE_KEY = 'dollarino_ai_orb_pos_v3';
 const ORB_SIZE = 58;
-const ORB_MARGIN = 12;
+const ORB_MOBILE_SIZE = 44;
+const ORB_MARGIN = 10;
 const ORB_IDLE_MS = 2800;
 
 const LIQUID_ORB_LOGO_DATA_URI =
@@ -1036,8 +1042,11 @@ interface OrbPos {
 
 function clampOrbY(y: number): number {
   if (typeof window === 'undefined') return 320;
-  const min = 70;
-  const max = Math.max(min + 40, window.innerHeight - ORB_SIZE - 96);
+  const mobile = (document.documentElement.clientWidth || window.innerWidth) < 640;
+  const orbSize = mobile ? ORB_MOBILE_SIZE : ORB_SIZE;
+  const bottomReserve = mobile ? 148 : 96;
+  const min = mobile ? 84 : 70;
+  const max = Math.max(min + 40, window.innerHeight - orbSize - bottomReserve);
   return Math.min(max, Math.max(min, y));
 }
 
@@ -1049,18 +1058,20 @@ function defaultOrbSide(lang: Lang): 'left' | 'right' {
 function loadSavedOrbPos(lang: Lang): OrbPos {
   const fallbackSide = defaultOrbSide(lang);
   if (typeof window === 'undefined') return { side: fallbackSide, y: 640 };
+  const mobile = (document.documentElement.clientWidth || window.innerWidth) < 640;
+  const defaultOffset = mobile ? 195 : 135;
   try {
     const raw = localStorage.getItem(ORB_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<OrbPos>;
       const side = parsed.side === 'left' || parsed.side === 'right' ? parsed.side : fallbackSide;
-      const y = clampOrbY(typeof parsed.y === 'number' ? parsed.y : window.innerHeight - 135);
+      const y = clampOrbY(typeof parsed.y === 'number' ? parsed.y : window.innerHeight - defaultOffset);
       return { side, y };
     }
   } catch {
     // ignore storage limits
   }
-  return { side: fallbackSide, y: clampOrbY(window.innerHeight - 135) };
+  return { side: fallbackSide, y: clampOrbY(window.innerHeight - defaultOffset) };
 }
 
 export function FloatingAiChat({
@@ -1138,7 +1149,8 @@ export function FloatingAiChat({
   // Hide floating orb when user is already inside the dedicated full-page AI Chat view
   if (authenticated && activeTab === 'aichat') return null;
 
-  const restX = pos.side === 'right' ? Math.max(ORB_MARGIN, vw - ORB_SIZE - ORB_MARGIN) : ORB_MARGIN;
+  const currentOrbSize = vw < 640 ? ORB_MOBILE_SIZE : ORB_SIZE;
+  const restX = pos.side === 'right' ? Math.max(ORB_MARGIN, vw - currentOrbSize - ORB_MARGIN) : ORB_MARGIN;
   const activeX = dragCoords ? dragCoords.x : restX;
   const activeY = dragCoords ? dragCoords.y : clampOrbY(pos.y);
 

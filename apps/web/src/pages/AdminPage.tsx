@@ -1048,7 +1048,7 @@ export function AdminPage({
                     {currentUser.role === 'owner' ? (isFa ? 'مالک سیستم · OWNER' : 'OWNER') : currentUser.role.toUpperCase()}
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-white/15 border border-white/20 text-white text-[10px] font-bold">
-                    V11.5 Command
+                    V11.6 Command
                   </span>
                 </div>
                 <div className="text-[11px] text-white/80 font-mono-num mt-0.5" dir="ltr">
@@ -2421,7 +2421,7 @@ export function AdminPage({
               </div>
             </div>
 
-            <form onSubmit={savePayConfig} className="surface-card p-5 space-y-3">
+            <form onSubmit={savePayConfig} className="surface-card p-5 space-y-3 text-xs">
               <div className="flex items-center justify-between">
                 <h3 className="font-black text-sm text-main flex items-center gap-2">
                   <Settings className="w-4 h-4 text-brand" />
@@ -2431,29 +2431,46 @@ export function AdminPage({
                   {isFa ? '۳ معامله ۰٪ + ۳٪ سود' : '3 Free -> 3%'}
                 </span>
               </div>
-              <input
-                value={payCfg.usdtTrc20Wallet}
-                onChange={(e) => setPayCfg({ ...payCfg, usdtTrc20Wallet: e.target.value })}
-                placeholder="USDT TRC20 Settlement Wallet Address"
-                className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
-              />
-              <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-dim mb-1">
+                  {isFa ? 'آدرس ولت تسویه تتر TRC20 (شبکه TRON):' : 'USDT TRC20 Settlement Wallet Address:'}
+                </label>
                 <input
-                  value={payCfg.iranCardNumber}
-                  onChange={(e) => setPayCfg({ ...payCfg, iranCardNumber: e.target.value })}
-                  placeholder="Card Number (6037-...)"
-                  className="surface-input rounded-xl px-3 py-2 font-mono-num"
-                />
-                <input
-                  value={payCfg.iranCardHolder}
-                  onChange={(e) => setPayCfg({ ...payCfg, iranCardHolder: e.target.value })}
-                  placeholder="Card Holder Name"
-                  className="surface-input rounded-xl px-3 py-2"
+                  dir="ltr"
+                  value={payCfg.usdtTrc20Wallet}
+                  onChange={(e) => setPayCfg({ ...payCfg, usdtTrc20Wallet: e.target.value })}
+                  placeholder="T..."
+                  className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
                 />
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">
+                    {isFa ? 'شماره کارت بانکی ریالی (اختیاری):' : 'Iran Bank Card Number (optional):'}
+                  </label>
+                  <input
+                    dir="ltr"
+                    value={payCfg.iranCardNumber}
+                    onChange={(e) => setPayCfg({ ...payCfg, iranCardNumber: e.target.value })}
+                    placeholder="6037-..."
+                    className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">
+                    {isFa ? 'نام صاحب کارت بانکی:' : 'Card Holder Name:'}
+                  </label>
+                  <input
+                    value={payCfg.iranCardHolder}
+                    onChange={(e) => setPayCfg({ ...payCfg, iranCardHolder: e.target.value })}
+                    placeholder={isFa ? 'نام و نام خانوادگی...' : 'Card holder name'}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+              </div>
 
-              <div className="pt-2 border-t hairline space-y-2">
-                <div className="flex items-center justify-between">
+              <div className="pt-2 border-t hairline space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[11px] font-black text-amber-400 inline-flex items-center gap-1">
                     <Wallet className="w-3.5 h-3.5" />
                     <span>{isFa ? 'آدرس‌های دریافت Trust Wallet و امنیت ربات:' : 'Trust Wallet Receivers & KYC Gate:'}</span>
@@ -2467,28 +2484,43 @@ export function AdminPage({
                     <span>{isFa ? 'اجبار احراز شماره تماس تلگرام' : 'Require Telegram Phone KYC'}</span>
                   </label>
                 </div>
-                <input
-                  dir="ltr"
-                  value={trustReceivers.evm}
-                  onChange={(e) => setTrustReceivers({ ...trustReceivers, evm: e.target.value })}
-                  placeholder="Trust Wallet EVM / BEP20 Receiver (0x...)"
-                  className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
-                />
-                <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">
+                    {isFa ? 'آدرس ولت EVM / BEP20 جهت دریافت کارمزد (Trust Wallet):' : 'Trust Wallet EVM / BEP20 Receiver (0x...):'}
+                  </label>
                   <input
                     dir="ltr"
-                    value={trustReceivers.sol}
-                    onChange={(e) => setTrustReceivers({ ...trustReceivers, sol: e.target.value })}
-                    placeholder="Solana Receiver (optional)"
-                    className="surface-input rounded-xl px-3 py-2 font-mono-num"
+                    value={trustReceivers.evm}
+                    onChange={(e) => setTrustReceivers({ ...trustReceivers, evm: e.target.value })}
+                    placeholder="0x..."
+                    className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
                   />
-                  <input
-                    dir="ltr"
-                    value={trustReceivers.ton}
-                    onChange={(e) => setTrustReceivers({ ...trustReceivers, ton: e.target.value })}
-                    placeholder="TON Receiver (optional)"
-                    className="surface-input rounded-xl px-3 py-2 font-mono-num"
-                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-bold text-dim mb-1">
+                      {isFa ? 'آدرس دریافت Solana (اختیاری):' : 'Solana Receiver (optional):'}
+                    </label>
+                    <input
+                      dir="ltr"
+                      value={trustReceivers.sol}
+                      onChange={(e) => setTrustReceivers({ ...trustReceivers, sol: e.target.value })}
+                      placeholder="Solana address..."
+                      className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-dim mb-1">
+                      {isFa ? 'آدرس دریافت TON (اختیاری):' : 'TON Receiver (optional):'}
+                    </label>
+                    <input
+                      dir="ltr"
+                      value={trustReceivers.ton}
+                      onChange={(e) => setTrustReceivers({ ...trustReceivers, ton: e.target.value })}
+                      placeholder="UQ... / EQ..."
+                      className="w-full surface-input rounded-xl px-3 py-2 font-mono-num"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -2909,8 +2941,9 @@ export function AdminPage({
                     className="w-24 h-24 rounded-3xl object-cover border-2 border-[var(--gold)] shadow-lg"
                   />
                 ) : (
-                  <div className="w-24 h-24 rounded-3xl panel border hairline grid place-items-center text-dim">
-                    <Camera className="w-8 h-8 opacity-60" />
+                  <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-[#0B1E5B] via-[#1652F0] to-[#059669] border-2 border-[var(--gold)]/70 shadow-lg flex flex-col items-center justify-center text-white gap-1">
+                    <span className="font-display font-black text-2xl tracking-tight">AK</span>
+                    <span className="text-[9px] font-bold opacity-85">{isFa ? 'تصویر بنیان‌گذار' : 'Founder'}</span>
                   </div>
                 )}
               </div>
@@ -3092,18 +3125,18 @@ export function AdminPage({
           )}
 
           {(adminSection === 'all' || adminSection === 'users') && (
-          <div className="surface-card p-5 space-y-3 overflow-x-auto tab-enter">
+          <div className="surface-card p-4 sm:p-5 space-y-3 tab-enter">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-black flex items-center gap-2 text-main">
                 <Users className="w-4 h-4 text-brand" />
                 <span>{isFa ? 'مدیریت کاربران، احراز هویت شماره و Trust Wallet' : 'Users, Phone KYC & Trust Wallets'}</span>
               </h3>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-xs w-full sm:w-auto">
                 <input
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
                   placeholder={isFa ? 'جستجو نام، ایمیل، تلفن، آدرس...' : 'Search user / phone / wallet...'}
-                  className="surface-input rounded-xl px-3 py-1.5 text-xs"
+                  className="surface-input rounded-xl px-3 py-1.5 text-xs flex-1 sm:flex-initial"
                 />
                 {[
                   { id: 'all', label: isFa ? 'همه' : 'All' },
@@ -3123,100 +3156,94 @@ export function AdminPage({
               </div>
             </div>
 
-            <table className="w-full text-xs">
-              <thead className="text-dim border-b">
-                <tr>
-                  <th className="py-2 px-2 text-start">User</th>
-                  <th className="py-2 px-2 text-start">{isFa ? 'تلگرام و تلفن KYC' : 'Telegram & KYC'}</th>
-                  <th className="py-2 px-2 text-start">{isFa ? 'کیف‌پول Trust Wallet' : 'Trust Wallet'}</th>
-                  <th className="py-2 px-2 text-start">{isFa ? 'نقش / پلن / حالت' : 'Role / Plan / UI'}</th>
-                  <th className="py-2 px-2 text-end">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {data.users
-                  .filter((u) => {
-                    if (userFilter === 'kyc_verified' && u.phone_verified !== 1) return false;
-                    if (userFilter === 'trust_wallet' && !u.trust_wallet_address && !u.trust_wallet_tron) return false;
-                    if (userFilter === 'unverified' && u.phone_verified === 1) return false;
-                    const q = userSearch.trim().toLowerCase();
-                    if (!q) return true;
-                    return [u.username, u.email, u.telegram_id, u.telegram_username, u.phone_number, u.trust_wallet_address]
-                      .filter(Boolean)
-                      .some((v) => String(v).toLowerCase().includes(q));
-                  })
-                  .map((u) => (
-                  <tr key={u.id}>
-                    <td className="py-2.5 px-2 text-main font-semibold">
-                      <div>{u.username}</div>
-                      <div className="text-[11px] text-dim">{u.email}</div>
-                    </td>
-                    <td className="py-2.5 px-2 font-mono-num text-sub">
-                      <div dir="ltr" className="inline-block text-start">{u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '-'}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
-                          {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
-                          <span dir="ltr">{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-2 font-mono-num text-[11px] text-sub" dir="ltr">
-                      {u.trust_wallet_address ? (
-                        <span className="badge-signal px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                          <Wallet className="w-3 h-3" />
-                          <span>{u.trust_wallet_address.slice(0, 6)}...{u.trust_wallet_address.slice(-4)}</span>
-                        </span>
-                      ) : (
-                        <span className="text-dim">—</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-2">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span className="px-2 py-0.5 rounded surface-soft text-main font-bold">{u.role}</span>
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-jade font-bold" dir="ltr">
-                          {isFa ? `اعتبار کارمزد: $${Number(u.fee_credit_usd || 0).toFixed(2)}` : `Credit: $${Number(u.fee_credit_usd || 0).toFixed(2)}`}
-                        </span>
-                        {Number(u.accruedFeeUsd || 0) > 0 && (
-                          <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-500 font-bold" dir="ltr">
-                            {isFa ? `معوق ۳٪: $${Number(u.accruedFeeUsd).toFixed(2)}` : `3% Due: $${Number(u.accruedFeeUsd).toFixed(2)}`}
+            {(() => {
+              const filteredUsers = data.users.filter((u) => {
+                if (userFilter === 'kyc_verified' && u.phone_verified !== 1) return false;
+                if (userFilter === 'trust_wallet' && !u.trust_wallet_address && !u.trust_wallet_tron) return false;
+                if (userFilter === 'unverified' && u.phone_verified === 1) return false;
+                const q = userSearch.trim().toLowerCase();
+                if (!q) return true;
+                return [u.username, u.email, u.telegram_id, u.telegram_username, u.phone_number, u.trust_wallet_address]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(q));
+              });
+              return (
+                <>
+                  {/* Mobile Card Layout (Prevents Horizontal Clipping on 390px) */}
+                  <div className="md:hidden space-y-2.5">
+                    {filteredUsers.map((u) => (
+                      <div key={u.id} className="surface-soft rounded-2xl p-3.5 border hairline space-y-2.5 text-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-black text-main truncate">{u.username}</div>
+                            <div className="text-[11px] text-dim truncate" dir="ltr">{u.email}</div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="px-2 py-0.5 rounded-lg bg-[var(--panel)] border hairline text-main font-bold text-[10px]">{u.role}</span>
+                            <span className="px-2 py-0.5 rounded-lg bg-[var(--panel)] border hairline text-dim text-[10px]">{u.ui_mode || 'simple'}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <span dir="ltr" className="font-mono-num text-sub">
+                            {u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '—'}
                           </span>
-                        )}
-                        <span className="px-2 py-0.5 rounded bg-[var(--soft)] border hairline text-dim">{u.ui_mode || 'simple'}</span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-2 text-end space-x-1 space-y-1">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await apiFetch(`/api/admin/users/${u.id}/kyc`, {
-                            method: 'PATCH',
-                            body: JSON.stringify({ phoneVerified: u.phone_verified !== 1 }),
-                          });
-                          setMsg(isFa ? `وضعیت KYC کاربر ${u.username} بروزرسانی شد.` : 'User KYC updated.');
-                          void load();
-                        }}
-                        className="px-2 py-1 rounded-lg bg-emerald-500/15 text-jade font-bold"
-                      >
-                        {u.phone_verified === 1 ? (isFa ? 'لغو KYC' : 'Revoke KYC') : (isFa ? 'تایید KYC' : 'Approve KYC')}
-                      </button>
-                      {roleLower === 'owner' && (
-                        <>
+                          <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
+                            {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
+                            <span dir="ltr">{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          {u.trust_wallet_address && (
+                            <span dir="ltr" className="badge-signal px-2 py-0.5 rounded-full inline-flex items-center gap-1 font-mono-num">
+                              <Wallet className="w-3 h-3" />
+                              <span>{u.trust_wallet_address.slice(0, 6)}...{u.trust_wallet_address.slice(-4)}</span>
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-jade font-bold" dir="ltr">
+                            {isFa ? `اعتبار: $${Number(u.fee_credit_usd || 0).toFixed(2)}` : `Credit: $${Number(u.fee_credit_usd || 0).toFixed(2)}`}
+                          </span>
+                          {Number(u.accruedFeeUsd || 0) > 0 && (
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-500 font-bold" dir="ltr">
+                              {isFa ? `معوق ۳٪: $${Number(u.accruedFeeUsd).toFixed(2)}` : `3% Due: $${Number(u.accruedFeeUsd).toFixed(2)}`}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t hairline">
                           <button
                             type="button"
                             onClick={async () => {
-                              await apiFetch(`/api/admin/users/${u.id}/fee-credit`, {
-                                method: 'POST',
-                                body: JSON.stringify({ amountUsd: 5, note: 'Owner grant' }),
+                              await apiFetch(`/api/admin/users/${u.id}/kyc`, {
+                                method: 'PATCH',
+                                body: JSON.stringify({ phoneVerified: u.phone_verified !== 1 }),
                               });
-                              setMsg(isFa ? `$5 اعتبار کارمزد ۳٪ به ${u.username} اعطا شد ✅` : `Granted $5 fee credit to ${u.username}`);
+                              setMsg(isFa ? `وضعیت KYC کاربر ${u.username} بروزرسانی شد.` : 'User KYC updated.');
                               void load();
                             }}
-                            className="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400 font-bold inline-flex items-center gap-0.5"
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-jade font-bold text-[11px]"
                           >
-                            <DollarSign className="w-3 h-3" />
-                            <span>+$5</span>
+                            {u.phone_verified === 1 ? (isFa ? 'لغو KYC' : 'Revoke KYC') : (isFa ? 'تایید KYC' : 'Approve KYC')}
                           </button>
-                          {Number(u.accruedFeeUsd || 0) > 0 && (
+                          {roleLower === 'owner' && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await apiFetch(`/api/admin/users/${u.id}/fee-credit`, {
+                                  method: 'POST',
+                                  body: JSON.stringify({ amountUsd: 5, note: 'Owner grant' }),
+                                });
+                                setMsg(isFa ? `$5 اعتبار کارمزد ۳٪ به ${u.username} اعطا شد ✅` : `Granted $5 fee credit to ${u.username}`);
+                                void load();
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 font-bold inline-flex items-center gap-0.5 text-[11px]"
+                            >
+                              <DollarSign className="w-3 h-3" />
+                              <span>+$5</span>
+                            </button>
+                          )}
+                          {roleLower === 'owner' && Number(u.accruedFeeUsd || 0) > 0 && (
                             <button
                               type="button"
                               onClick={async () => {
@@ -3224,63 +3251,216 @@ export function AdminPage({
                                 setMsg(isFa ? `بدهی کارمزد ۳٪ کاربر ${u.username} تسویه/بخشیده شد ✅` : '3% fee debt waived');
                                 void load();
                               }}
-                              className="px-2 py-1 rounded-lg bg-sky-500/15 text-sky-400 font-bold"
+                              className="px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-400 font-bold text-[11px]"
                             >
                               {isFa ? 'بخشش ۳٪' : 'Waive 3%'}
                             </button>
                           )}
-                        </>
-                      )}
-                      {u.role.toLowerCase() !== 'owner' && (
-                        <>
-                          {roleLower === 'owner' && (
-                            <button
-                              onClick={async () => {
-                                await apiFetch(`/api/admin/users/${u.id}`, {
-                                  method: 'PATCH',
-                                  body: JSON.stringify({ role: u.role.toLowerCase() === 'admin' ? 'user' : 'admin' }),
-                                });
-                                void load();
-                              }}
-                              className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand font-bold"
-                            >
-                              {u.role.toLowerCase() === 'admin' ? 'Demote' : 'Make Admin'}
-                            </button>
+                          {u.role.toLowerCase() !== 'owner' && (
+                            <>
+                              {roleLower === 'owner' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await apiFetch(`/api/admin/users/${u.id}`, {
+                                      method: 'PATCH',
+                                      body: JSON.stringify({ role: u.role.toLowerCase() === 'admin' ? 'user' : 'admin' }),
+                                    });
+                                    void load();
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand font-bold text-[11px]"
+                                >
+                                  {u.role.toLowerCase() === 'admin' ? 'Demote' : 'Make Admin'}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await apiFetch(`/api/admin/users/${u.id}`, {
+                                    method: 'PATCH',
+                                    body: JSON.stringify({ is_blocked: !u.is_blocked }),
+                                  });
+                                  void load();
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-loss font-bold text-[11px]"
+                              >
+                                {u.is_blocked ? 'Unblock' : 'Block'}
+                              </button>
+                              {roleLower === 'owner' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!window.confirm(isFa ? `آیا از حذف کامل کاربر ${u.username} و تمام تاریخچه‌اش مطمئنید؟` : `Permanently delete ${u.username}?`)) return;
+                                    await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+                                    setMsg(isFa ? `کاربر ${u.username} حذف شد.` : `Deleted ${u.username}`);
+                                    void load();
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-rose-600/20 text-rose-400 font-bold inline-flex items-center"
+                                  title={isFa ? 'حذف کامل کاربر' : 'Delete User'}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </>
                           )}
-                          <button
-                            onClick={async () => {
-                              await apiFetch(`/api/admin/users/${u.id}`, {
-                                method: 'PATCH',
-                                body: JSON.stringify({ is_blocked: !u.is_blocked }),
-                              });
-                              void load();
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-loss font-bold"
-                          >
-                            {u.is_blocked ? 'Unblock' : 'Block'}
-                          </button>
-                          {roleLower === 'owner' && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                if (!window.confirm(isFa ? `آیا از حذف کامل کاربر ${u.username} و تمام تاریخچه‌اش مطمئنید؟` : `Permanently delete ${u.username}?`)) return;
-                                await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
-                                setMsg(isFa ? `کاربر ${u.username} حذف شد.` : `Deleted ${u.username}`);
-                                void load();
-                              }}
-                              className="px-2 py-1 rounded-lg bg-rose-600/20 text-rose-400 font-bold inline-flex items-center"
-                              title={isFa ? 'حذف کامل کاربر' : 'Delete User'}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop Table Layout */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-dim border-b">
+                        <tr>
+                          <th className="py-2 px-2 text-start">User</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'تلگرام و تلفن KYC' : 'Telegram & KYC'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'کیف‌پول Trust Wallet' : 'Trust Wallet'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'نقش / پلن / حالت' : 'Role / Plan / UI'}</th>
+                          <th className="py-2 px-2 text-end">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {filteredUsers.map((u) => (
+                          <tr key={u.id}>
+                            <td className="py-2.5 px-2 text-main font-semibold">
+                              <div>{u.username}</div>
+                              <div className="text-[11px] text-dim">{u.email}</div>
+                            </td>
+                            <td className="py-2.5 px-2 font-mono-num text-sub">
+                              <div dir="ltr" className="inline-block text-start">{u.telegram_username ? `@${u.telegram_username}` : u.telegram_id || '-'}</div>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
+                                  {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
+                                  <span dir="ltr">{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-2 font-mono-num text-[11px] text-sub" dir="ltr">
+                              {u.trust_wallet_address ? (
+                                <span className="badge-signal px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                  <Wallet className="w-3 h-3" />
+                                  <span>{u.trust_wallet_address.slice(0, 6)}...{u.trust_wallet_address.slice(-4)}</span>
+                                </span>
+                              ) : (
+                                <span className="text-dim">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-2">
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="px-2 py-0.5 rounded surface-soft text-main font-bold">{u.role}</span>
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-jade font-bold" dir="ltr">
+                                  {isFa ? `اعتبار کارمزد: $${Number(u.fee_credit_usd || 0).toFixed(2)}` : `Credit: $${Number(u.fee_credit_usd || 0).toFixed(2)}`}
+                                </span>
+                                {Number(u.accruedFeeUsd || 0) > 0 && (
+                                  <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-500 font-bold" dir="ltr">
+                                    {isFa ? `معوق ۳٪: $${Number(u.accruedFeeUsd).toFixed(2)}` : `3% Due: $${Number(u.accruedFeeUsd).toFixed(2)}`}
+                                  </span>
+                                )}
+                                <span className="px-2 py-0.5 rounded bg-[var(--soft)] border hairline text-dim">{u.ui_mode || 'simple'}</span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-2 text-end space-x-1 space-y-1">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await apiFetch(`/api/admin/users/${u.id}/kyc`, {
+                                    method: 'PATCH',
+                                    body: JSON.stringify({ phoneVerified: u.phone_verified !== 1 }),
+                                  });
+                                  setMsg(isFa ? `وضعیت KYC کاربر ${u.username} بروزرسانی شد.` : 'User KYC updated.');
+                                  void load();
+                                }}
+                                className="px-2 py-1 rounded-lg bg-emerald-500/15 text-jade font-bold"
+                              >
+                                {u.phone_verified === 1 ? (isFa ? 'لغو KYC' : 'Revoke KYC') : (isFa ? 'تایید KYC' : 'Approve KYC')}
+                              </button>
+                              {roleLower === 'owner' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      await apiFetch(`/api/admin/users/${u.id}/fee-credit`, {
+                                        method: 'POST',
+                                        body: JSON.stringify({ amountUsd: 5, note: 'Owner grant' }),
+                                      });
+                                      setMsg(isFa ? `$5 اعتبار کارمزد ۳٪ به ${u.username} اعطا شد ✅` : `Granted $5 fee credit to ${u.username}`);
+                                      void load();
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400 font-bold inline-flex items-center gap-0.5"
+                                  >
+                                    <DollarSign className="w-3 h-3" />
+                                    <span>+$5</span>
+                                  </button>
+                                  {Number(u.accruedFeeUsd || 0) > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await apiFetch(`/api/admin/users/${u.id}/reset-fee-debt`, { method: 'POST' });
+                                        setMsg(isFa ? `بدهی کارمزد ۳٪ کاربر ${u.username} تسویه/بخشیده شد ✅` : '3% fee debt waived');
+                                        void load();
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-sky-500/15 text-sky-400 font-bold"
+                                    >
+                                      {isFa ? 'بخشش ۳٪' : 'Waive 3%'}
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                              {u.role.toLowerCase() !== 'owner' && (
+                                <>
+                                  {roleLower === 'owner' && (
+                                    <button
+                                      onClick={async () => {
+                                        await apiFetch(`/api/admin/users/${u.id}`, {
+                                          method: 'PATCH',
+                                          body: JSON.stringify({ role: u.role.toLowerCase() === 'admin' ? 'user' : 'admin' }),
+                                        });
+                                        void load();
+                                      }}
+                                      className="px-2.5 py-1 rounded-lg banner-cobalt-soft text-brand font-bold"
+                                    >
+                                      {u.role.toLowerCase() === 'admin' ? 'Demote' : 'Make Admin'}
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={async () => {
+                                      await apiFetch(`/api/admin/users/${u.id}`, {
+                                        method: 'PATCH',
+                                        body: JSON.stringify({ is_blocked: !u.is_blocked }),
+                                      });
+                                      void load();
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-loss font-bold"
+                                  >
+                                    {u.is_blocked ? 'Unblock' : 'Block'}
+                                  </button>
+                                  {roleLower === 'owner' && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        if (!window.confirm(isFa ? `آیا از حذف کامل کاربر ${u.username} و تمام تاریخچه‌اش مطمئنید؟` : `Permanently delete ${u.username}?`)) return;
+                                        await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+                                        setMsg(isFa ? `کاربر ${u.username} حذف شد.` : `Deleted ${u.username}`);
+                                        void load();
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-rose-600/20 text-rose-400 font-bold inline-flex items-center"
+                                      title={isFa ? 'حذف کامل کاربر' : 'Delete User'}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              );
+            })()}
           </div>
           )}
 

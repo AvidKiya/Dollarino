@@ -257,4 +257,108 @@ export async function verifyTelegramLoginWidget(
   };
 }
 
+// ---------- RFC 4648 Base32 & RFC 6238 TOTP (Google Authenticator 2FA) ----------
+
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+export function base32Encode(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+  return output;
+}
+
+export function base32Decode(input: string): Uint8Array {
+  const clean = input.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (const ch of clean) {
+    const idx = BASE32_ALPHABET.indexOf(ch);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(out);
+}
+
+export function generateTotpSecret(byteLen = 20): string {
+  const buf = new Uint8Array(byteLen);
+  crypto.getRandomValues(buf);
+  return base32Encode(buf);
+}
+
+export async function generateTotpCodeAt(
+  secretBase32: string,
+  timestampMs = Date.now(),
+  stepSeconds = 30,
+  digits = 6
+): Promise<string> {
+  const keyBytes = base32Decode(secretBase32);
+  if (keyBytes.length === 0) throw new Error('Invalid TOTP secret');
+  const counter = Math.floor(timestampMs / 1000 / stepSeconds);
+  const msg = new Uint8Array(8);
+  let c = BigInt(counter);
+  for (let i = 7; i >= 0; i--) {
+    msg[i] = Number(c & 0xffn);
+    c >>= 8n;
+  }
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    toArrayBuffer(keyBytes),
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign']
+  );
+  const hmac = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, toArrayBuffer(msg)));
+  const offset = hmac[hmac.length - 1]! & 0x0f;
+  const binCode =
+    ((hmac[offset]! & 0x7f) << 24) |
+    ((hmac[offset + 1]! & 0xff) << 16) |
+    ((hmac[offset + 2]! & 0xff) << 8) |
+    (hmac[offset + 3]! & 0xff);
+  const mod = 10 ** digits;
+  return String(binCode % mod).padStart(digits, '0');
+}
+
+export async function verifyTotpCode(
+  secretBase32: string,
+  rawCode: string,
+  windowSteps = 1,
+  timestampMs = Date.now()
+): Promise<boolean> {
+  const cleanCode = String(rawCode || '').replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(cleanCode)) return false;
+  for (let w = -windowSteps; w <= windowSteps; w++) {
+    const candidate = await generateTotpCodeAt(secretBase32, timestampMs + w * 30_000).catch(() => '');
+    if (candidate.length === 6) {
+      let diff = 0;
+      for (let i = 0; i < 6; i++) diff |= candidate.charCodeAt(i) ^ cleanCode.charCodeAt(i);
+      if (diff === 0) return true;
+    }
+  }
+  return false;
+}
+
+export function buildTotpOtpAuthUri(accountLabel: string, secretBase32: string, issuer = 'Dollarino'): string {
+  const cleanLabel = encodeURIComponent(`${issuer}:${accountLabel || 'user'}`);
+  return `otpauth://totp/${cleanLabel}?secret=${encodeURIComponent(secretBase32)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+}
+
+
 

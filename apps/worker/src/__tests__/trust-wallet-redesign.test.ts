@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runTokenRugAndSafetyScan } from '../dex/smart-copy.js';
@@ -346,18 +348,42 @@ describe('Trust Wallet Exclusive Redesign & 24/7 Controls', () => {
     const magicJson = (await magicLoginRes.json()) as { token: string; user: { id: string } };
     expect(magicJson.user.id).toBe(userId);
 
-    // 3) Connect ALL 4 chain families simultaneously inside Trust Wallet
+    // 3) Connect ALL 4 chain families simultaneously inside Trust Wallet using real EIP-191 ECDSA signature + one-time nonce
+    const priv = new Uint8Array(32).fill(0x23);
+    const pubUncompressed = secp256k1.getPublicKey(priv, false);
+    const evmAddr =
+      '0x' +
+      Buffer.from(keccak_256(pubUncompressed.slice(1)).slice(-20)).toString('hex');
+
+    const nonceRes = await worker.fetch(
+      new Request('https://dollarino.pages.dev/api/trustwallet/nonce', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${magicJson.token}` },
+      }),
+      env
+    );
+    expect(nonceRes.status).toBe(200);
+    const nonceJson = (await nonceRes.json()) as { ok: boolean; message: string };
+    const msgBytes = Buffer.from(nonceJson.message, 'utf8');
+    const prefixBytes = Buffer.from(`\x19Ethereum Signed Message:\n${msgBytes.length}`, 'utf8');
+    const digest = keccak_256(Buffer.concat([prefixBytes, msgBytes]));
+    const recSig = secp256k1.sign(digest, priv, { prehash: false, lowS: true, format: 'recovered' });
+    const ethSig = new Uint8Array(65);
+    ethSig.set(recSig.slice(1, 65), 0);
+    ethSig[64] = 27 + recSig[0]!;
+    const sigHex = '0x' + Buffer.from(ethSig).toString('hex');
+
     const connectAllRes = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/trustwallet/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${magicJson.token}` },
         body: JSON.stringify({
-          evmAddress: '0x1111111111111111111111111111111111111111',
+          evmAddress: evmAddr,
           solanaAddress: 'So11111111111111111111111111111111111111112',
           tronAddress: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
           tonAddress: 'EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N',
-          signature: '0x' + 'ab'.repeat(65),
-          signedMessage: 'Dollarino Trust Wallet Verification',
+          signature: sigHex,
+          signedMessage: nonceJson.message,
         }),
       }),
       env
@@ -382,7 +408,7 @@ describe('Trust Wallet Exclusive Redesign & 24/7 Controls', () => {
       };
     };
     expect(statusJson.connected).toBe(true);
-    expect(statusJson.wallet.evmAddress).toBe('0x1111111111111111111111111111111111111111');
+    expect(statusJson.wallet.evmAddress).toBe(evmAddr);
     expect(statusJson.wallet.solanaAddress).toBe('So11111111111111111111111111111111111111112');
     expect(statusJson.wallet.tronAddress).toBe('T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb');
     expect(statusJson.wallet.tonAddress).toBe('EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N');

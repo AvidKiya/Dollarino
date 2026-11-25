@@ -10,7 +10,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  Copy,
   CreditCard,
+  Crosshair,
   Download,
   ExternalLink,
   FileText,
@@ -27,6 +29,7 @@ import {
   Save,
   Send,
   Shield,
+  Smartphone,
   Sparkles,
   Sprout,
   Sun,
@@ -37,6 +40,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import { apiFetch, setStoredToken } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import type { AuthUserInfo, DashboardPayload, NavTab } from '../lib/types';
@@ -116,6 +120,87 @@ export function ServicesPage({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const [totpEnabled, setTotpEnabled] = useState(Boolean(user.totp_enabled));
+  const [totpSetup, setTotpSetup] = useState<{ secret: string; otpauthUri: string; qrDataUrl: string } | null>(null);
+  const [totpInputCode, setTotpInputCode] = useState('');
+  const [totpBusy, setTotpBusy] = useState(false);
+  const [totpMsg, setTotpMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    setTotpEnabled(Boolean(user.totp_enabled));
+  }, [user.totp_enabled]);
+
+  useEffect(() => {
+    if (!accountView) return;
+    void apiFetch<{ enabled: boolean }>('/api/auth/2fa/status')
+      .then((s) => setTotpEnabled(Boolean(s.enabled)))
+      .catch(() => {});
+  }, [accountView]);
+
+  const handleStart2faSetup = async () => {
+    setTotpBusy(true);
+    setTotpMsg(null);
+    try {
+      const res = await apiFetch<{ ok: boolean; secret: string; otpauthUri: string }>('/api/auth/2fa/setup', {
+        method: 'POST',
+      });
+      const qrDataUrl = await QRCode.toDataURL(res.otpauthUri, { width: 200, margin: 1 });
+      setTotpSetup({ secret: res.secret, otpauthUri: res.otpauthUri, qrDataUrl });
+      setTotpInputCode('');
+    } catch (err) {
+      setTotpMsg({ ok: false, text: err instanceof Error ? err.message : '2FA setup error' });
+    } finally {
+      setTotpBusy(false);
+    }
+  };
+
+  const handleEnable2fa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpBusy(true);
+    setTotpMsg(null);
+    try {
+      await apiFetch<{ ok: boolean }>('/api/auth/2fa/enable', {
+        method: 'POST',
+        body: JSON.stringify({ code: totpInputCode.trim() }),
+      });
+      setTotpEnabled(true);
+      setTotpSetup(null);
+      setTotpInputCode('');
+      if (onUpdateUser) onUpdateUser({ ...user, totp_enabled: 1 });
+      setTotpMsg({
+        ok: true,
+        text: isFa ? 'تایید دوعاملی Google Authenticator با موفقیت فعال شد!' : 'Google Authenticator 2FA enabled!',
+      });
+    } catch (err) {
+      setTotpMsg({ ok: false, text: err instanceof Error ? err.message : 'Verification failed' });
+    } finally {
+      setTotpBusy(false);
+    }
+  };
+
+  const handleDisable2fa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpBusy(true);
+    setTotpMsg(null);
+    try {
+      await apiFetch<{ ok: boolean }>('/api/auth/2fa/disable', {
+        method: 'POST',
+        body: JSON.stringify({ code: totpInputCode.trim() }),
+      });
+      setTotpEnabled(false);
+      setTotpInputCode('');
+      if (onUpdateUser) onUpdateUser({ ...user, totp_enabled: 0 });
+      setTotpMsg({
+        ok: true,
+        text: isFa ? 'تایید دوعاملی غیرفعال شد.' : '2FA disabled.',
+      });
+    } catch (err) {
+      setTotpMsg({ ok: false, text: err instanceof Error ? err.message : 'Disable failed' });
+    } finally {
+      setTotpBusy(false);
+    }
+  };
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -567,18 +652,158 @@ export function ServicesPage({
           </button>
         </form>
 
+        {/* Two-Factor Authentication (Google Authenticator TOTP 2FA) */}
+        <div className="panel rounded-[26px] p-5 space-y-3 border hairline">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-jade" />
+              <div>
+                <h3 className="text-sm font-black text-main">
+                  {isFa ? 'تایید دوعاملی (Google Authenticator / 2FA)' : 'Two-Factor Authentication (2FA)'}
+                </h3>
+                <p className="text-[11px] text-dim">
+                  {isFa
+                    ? 'افزودن کد ۶ رقمی یکبارمصرف برای امنیت بیشتر هنگام ورود به حساب'
+                    : 'Protect logins with 6-digit Google Authenticator TOTP codes.'}
+                </p>
+              </div>
+            </div>
+            <span
+              className={`px-2.5 py-1 rounded-full text-[10px] font-black shrink-0 ${
+                totpEnabled ? 'bg-emerald-500/15 text-jade border border-emerald-500/30' : 'surface-soft text-dim'
+              }`}
+            >
+              {totpEnabled ? (isFa ? 'فعال' : 'Active') : isFa ? 'غیرفعال' : 'Off'}
+            </span>
+          </div>
+
+          {totpMsg && (
+            <div className={`p-2.5 rounded-xl text-[11px] font-bold ${totpMsg.ok ? 'bg-emerald-500/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
+              {totpMsg.text}
+            </div>
+          )}
+
+          {totpEnabled ? (
+            <form onSubmit={handleDisable2fa} className="space-y-2.5 pt-1">
+              <p className="text-[11px] text-sub">
+                {isFa
+                  ? 'برای غیرفعال‌سازی تایید دوعاملی، کد ۶ رقمی فعلی Google Authenticator را وارد کنید:'
+                  : 'Enter your current 6-digit authenticator code to disable 2FA:'}
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  dir="ltr"
+                  required
+                  value={totpInputCode}
+                  onChange={(e) => setTotpInputCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  className="field text-xs font-mono-num text-center tracking-widest flex-1"
+                />
+                <button
+                  type="submit"
+                  disabled={totpBusy || totpInputCode.length !== 6}
+                  className="px-4 py-2.5 rounded-xl bg-rose-500/15 text-loss border border-rose-500/30 text-xs font-black shrink-0 disabled:opacity-50"
+                >
+                  {totpBusy ? '...' : isFa ? 'غیرفعال‌سازی 2FA' : 'Disable 2FA'}
+                </button>
+              </div>
+            </form>
+          ) : totpSetup ? (
+            <form onSubmit={handleEnable2fa} className="space-y-3 pt-1">
+              <div className="surface-soft rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 border hairline">
+                <img
+                  src={totpSetup.qrDataUrl}
+                  alt="2FA QR Code"
+                  className="w-36 h-36 rounded-2xl bg-white p-2 shrink-0 border border-black/10"
+                />
+                <div className="space-y-2 min-w-0 flex-1 text-xs">
+                  <p className="font-bold text-main">
+                    {isFa ? '۱. بارکد را در Google Authenticator اسکن کنید' : '1. Scan QR in Google Authenticator'}
+                  </p>
+                  <p className="text-[11px] text-dim leading-relaxed">
+                    {isFa
+                      ? 'یا کد مخفی زیر را به صورت دستی وارد برنامه کنید:'
+                      : 'Or enter this setup key manually:'}
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <code dir="ltr" className="px-2.5 py-1.5 rounded-lg bg-black/25 text-jade font-mono text-[11px] select-all break-all">
+                      {totpSetup.secret}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(totpSetup.secret);
+                        setTotpMsg({ ok: true, text: isFa ? 'کلید مخفی کپی شد' : 'Secret copied' });
+                      }}
+                      className="p-1.5 rounded-lg btn-ghost shrink-0"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-dim block">
+                  {isFa ? '۲. کد ۶ رقمی تولیدشده توسط برنامه را جهت تایید و فعال‌سازی وارد کنید:' : '2. Enter 6-digit code to activate:'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    dir="ltr"
+                    required
+                    value={totpInputCode}
+                    onChange={(e) => setTotpInputCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="123456"
+                    className="field text-sm font-mono-num text-center tracking-widest flex-1"
+                  />
+                  <button
+                    type="submit"
+                    disabled={totpBusy || totpInputCode.length !== 6}
+                    className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black shrink-0 disabled:opacity-50"
+                  >
+                    {totpBusy ? '...' : isFa ? 'تایید و فعال‌سازی' : 'Activate 2FA'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTotpSetup(null)}
+                    className="px-3 py-2.5 rounded-xl btn-ghost text-xs font-bold"
+                  >
+                    {isFa ? 'انصراف' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              disabled={totpBusy}
+              onClick={() => void handleStart2faSetup()}
+              className="btn-emerald w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2"
+            >
+              <Shield className="w-4 h-4" />
+              <span>{totpBusy ? '...' : isFa ? 'راه‌اندازی تایید دوعاملی Google Authenticator' : 'Setup Google Authenticator 2FA'}</span>
+            </button>
+          )}
+        </div>
+
         {/* Dollarino Quick Settings */}
         <div className="space-y-1.5">
           <p className="text-xs font-extrabold text-dim px-1">{isFa ? 'حساب کاربری دلارینو' : 'Dollarino Settings'}</p>
           <div className="panel rounded-[24px] divide-y hairline overflow-hidden">
             <button
               type="button"
-              onClick={() => onNavigate('copy')}
+              onClick={() => onNavigate('dex')}
               className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-xs hover:bg-[var(--soft)] transition"
             >
               <span className="inline-flex items-center gap-2.5 font-bold text-main">
                 <KeyRound className="w-4 h-4 text-dim" />
-                <span>{isFa ? 'اتصال و دسترسی Trust Wallet (۲۴/۷ و دستی)' : 'Trust Wallet & 24/7 Access'}</span>
+                <span>{isFa ? 'کیف‌پول Trust Wallet، سرمایه شخصی و فاکتورها' : 'Trust Wallet, Wallet Cap & Invoices'}</span>
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-dim font-bold">
@@ -753,6 +978,7 @@ export function ServicesPage({
 
   const featuredServices: Array<{
     tab: NavTab;
+    subTab?: 'radar' | 'sniper' | 'copy' | 'risk';
     title: string;
     subtitle: string;
     icon: typeof Bot;
@@ -788,20 +1014,30 @@ export function ServicesPage({
     },
     {
       tab: 'copy',
-      title: isFa ? 'کپی‌ترید V2، ولت نهنگ‌ها و Trust Wallet' : 'Smart Copy V2, Whales & Trust Wallet',
-      subtitle: isFa ? 'تریدرهای تاییدشده + اتصال Trust Wallet و خزانه تمام‌اتومات ۲۴/۷' : 'Verified Copy Traders, 24/7 Copy-Vault & Trust Wallet',
+      title: isFa ? 'رادار، کپی و اسنایپر' : 'Radar, Copy & Sniper',
+      subtitle: isFa ? 'تریدرهای تاییدشده + Top-10 نهنگ‌ها + اسکنر DexScreener' : 'Verified Copy Traders, Top-10 Whales & DexScreener',
       icon: Users,
       tileBg: 'bg-[#0EA5E9]/15',
       tileColor: 'text-[#0284C7] dark:text-[#38BDF8]',
     },
     {
+      tab: 'copy',
+      subTab: 'sniper' as const,
+      title: isFa ? 'میز اسنایپر لیست جدید و میم‌کوین' : 'New Listing & Meme Sniper Hub',
+      subtitle: isFa ? 'شکار خودکار لیست صرافی + میم‌کوین‌های پرجهش با TP/SL و Trailing' : 'Auto CEX Listing & Meme Sniper with TP/SL & Trailing',
+      icon: Crosshair,
+      tileBg: 'bg-amber-500/15',
+      tileColor: 'text-amber-600 dark:text-amber-400',
+      badge: 'Sniper',
+    },
+    {
       tab: 'dex',
-      title: isFa ? 'فیوچرز کیف‌پول (Perp DEX) و رادار ضدراگ' : 'Wallet Perp DEX & Anti-Rug Radar',
-      subtitle: isFa ? 'Hyperliquid / Jupiter Perps تا ۱۰۰x روی کیف‌پول + اسکنر DexScreener' : 'Hyperliquid / Jupiter Perps up to 100x + Anti-Rug DEX radar',
+      title: isFa ? 'کیف‌پول Trust Wallet، سرمایه شخصی و فاکتورها' : 'Trust Wallet, Wallet Cap & Invoices',
+      subtitle: isFa ? 'مدیریت سرمایه ۱۰۰٪ داخل Trust Wallet خودتان، سقف ربات و فاکتور کارمزد ۳٪' : 'Multi-chain addresses, wallet budget cap & 3% fee invoices',
       icon: Sparkles,
       tileBg: 'bg-[#10B981]/15',
       tileColor: 'text-[#0D9455] dark:text-[#34D399]',
-      badge: 'Perp DEX',
+      badge: 'Trust Wallet',
     },
     {
       tab: 'card',
@@ -945,9 +1181,15 @@ export function ServicesPage({
             const Icon = srv.icon;
             return (
               <button
-                key={srv.tab}
+                key={`${srv.tab}-${srv.subTab || 'main'}`}
                 type="button"
-                onClick={() => onNavigate(srv.tab)}
+                onClick={() => {
+                  if (srv.subTab) {
+                    sessionStorage.setItem('dollarino_copy_subtab', srv.subTab);
+                    window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: srv.subTab }));
+                  }
+                  onNavigate(srv.tab);
+                }}
                 className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
               >
                 <span className={`w-10 h-10 rounded-2xl ${srv.tileBg} ${srv.tileColor} grid place-items-center shrink-0`}>
@@ -983,9 +1225,9 @@ export function ServicesPage({
               <UserCheck className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، ویرایش مشخصات و رمز عبور' : 'Account Details, Avatar & Password'}</span>
+              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، امنیت (2FA) و رمز عبور' : 'Account Details, 2FA Security & Password'}</span>
               <span className="text-[11px] text-dim block">
-                {isFa ? 'ویرایش نام کاربری، ایمیل، بیوگرافی، عکس پروفایل و رمز عبور (شماره تماس ثابت)' : 'Edit profile, email, bio, avatar & password'}
+                {isFa ? 'احراز دومرحله‌ای Google Authenticator، ویرایش نام کاربری، ایمیل و عکس پروفایل' : 'Google Authenticator 2FA, profile, email, bio, avatar & password'}
               </span>
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
@@ -1001,7 +1243,7 @@ export function ServicesPage({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'کارمزد ۳٪ سود، خزانه و باشگاه دعوت' : '3% Profit Fee, Treasury & Referrals'}</span>
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'کارمزد ۳٪ سود، فاکتورها و باشگاه دعوت' : '3% Profit Fee, Invoices & Referrals'}</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#0D9455]/15 text-[#0D9455] dark:text-[#34D399]">
                   {isFa ? 'اعتبار کارمزد غیرقابل‌برداشت' : 'Prepaid Fee Credit'}
                 </span>
@@ -1023,8 +1265,8 @@ export function ServicesPage({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (v9.7 ZIP)'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">v9.7 گرافیکی</span>
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (V11.6 ZIP)'}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">V11.6 گرافیکی</span>
               </div>
               <span className="text-[11px] text-dim block">{isFa ? 'طراحی Liquid Glass هم‌شکل سایت · کنترل ربات، بازارها و رادار DEX' : 'Liquid Glass UI matching web app · Bot, Markets & DEX radar'}</span>
             </div>

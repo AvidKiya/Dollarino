@@ -1,6 +1,7 @@
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { fetchDexTrendingOverview, type DexTokenEnriched } from '../dex/screener.js';
+import { executeLiveEvmVaultSwap, executeLiveSolanaVaultJupiterSwap } from '../dex/smart-copy.js';
 import { checkLiveFeeEnforcement } from '../services/server-fee.js';
 import { logAudit, notifyUserTelegram, pushNotification, resolveUserCapitalSummary, type UserBotConfigRow } from './executor.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
@@ -289,7 +290,87 @@ export async function executeSniperBuyForCandidate(params: {
     return { ok: true, tradeId };
   }
 
-  // LIVE mode: create PENDING_SIGN entry & deliver 1-tap Trust Wallet swap link
+  // LIVE mode: when trade_execution_mode === 'AUTO', attempt genuine on-chain execution via user's funded 24/7 Copy-Vault first!
+  const slippagePct = Math.max(1, Math.min(35, Number(cfg.sniper_slippage_pct ?? 12)));
+  if (cfg.trade_execution_mode === 'AUTO') {
+    let vaultExec: { executedOnchain: boolean; txHash: string | null; note: string } = {
+      executedOnchain: false,
+      txHash: null,
+      note: '',
+    };
+    if (pick.chainId === 'solana') {
+      vaultExec = await executeLiveSolanaVaultJupiterSwap(
+        env,
+        userId,
+        pick.tokenAddress,
+        budgetUsd,
+        Math.round(slippagePct * 100)
+      ).catch(() => ({ executedOnchain: false, txHash: null, note: '' }));
+    } else if (['bsc', 'base', 'ethereum', 'arbitrum'].includes(pick.chainId)) {
+      vaultExec = await executeLiveEvmVaultSwap(
+        env,
+        userId,
+        pick.chainId,
+        pick.tokenAddress,
+        budgetUsd,
+        slippagePct
+      ).catch(() => ({ executedOnchain: false, txHash: null, note: '' }));
+    }
+
+    if (vaultExec.executedOnchain && vaultExec.txHash) {
+      const tradeId = randomId('dtr');
+      await env.DB.prepare(
+        `INSERT INTO dex_trades (id, user_id, chain_id, dex_id, pair_address, token_address, token_symbol, quote_symbol, direction, amount_usd, token_qty, entry_price_usd, stop_loss_usd, tp1_usd, tx_hash, status, note)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'USDT', 'BUY', ?, ?, ?, ?, ?, ?, 'OPEN', ?)`
+      )
+        .bind(
+          tradeId,
+          userId,
+          pick.chainId,
+          pick.dexId,
+          pick.pairAddress,
+          pick.tokenAddress,
+          pick.symbol,
+          budgetUsd,
+          qty,
+          pick.priceUsd,
+          slUsd,
+          tp1Usd,
+          vaultExec.txHash,
+          `[شکارچی واقعی ۲۴/۷ آن‌چین] ${vaultExec.note}`
+        )
+        .run();
+
+      await logAudit(
+        env.DB,
+        userId,
+        'ORDER',
+        'INFO',
+        `🎯 شکارچی واقعی آن‌چین: خرید $${budgetUsd} از ${pick.symbol} (${pick.chainId.toUpperCase()} · TX: ${vaultExec.txHash})`,
+        pick.symbol
+      );
+      await pushNotification(
+        env.DB,
+        userId,
+        'TRADE',
+        `⚡ خرید خودکار واقعی ${pick.symbol} ($${budgetUsd})`,
+        `${vaultExec.note} · TX: ${vaultExec.txHash.slice(0, 14)}...`
+      );
+      await notifyUserTelegram(
+        env,
+        userId,
+        `⚡ **شکار خودکار واقعی ۲۴/۷ روی بلاکچین انجام شد!**\n` +
+          `• ارز: **${pick.symbol}** (${pick.chainId.toUpperCase()})\n` +
+          `• مبلغ: $${budgetUsd} · امتیاز امنیت: **${pick.safetyScore}/100**\n` +
+          `• ورود: $${pick.priceUsd} | 🎯 TP1 (+${tpPct}%): $${tp1Usd} | ⛔️ SL (-${slPct}%): $${slUsd}\n` +
+          `• تراکنش: \`${vaultExec.txHash}\``
+      ).catch(() => {});
+
+      return { ok: true, tradeId };
+    }
+  }
+
+  // Fallback for MANUAL_CONFIRM or unfunded Copy-Vault: create PENDING_SIGN entry & deliver 1-tap Trust Wallet swap link
   const tradeId = randomId('dtr');
   await env.DB.prepare(
     `INSERT INTO dex_trades (id, user_id, chain_id, dex_id, pair_address, token_address, token_symbol, quote_symbol, direction, amount_usd, token_qty, entry_price_usd, stop_loss_usd, tp1_usd, status, note)

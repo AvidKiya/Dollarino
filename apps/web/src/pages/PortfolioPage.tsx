@@ -6,10 +6,12 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  Gamepad2,
   NotebookPen,
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Wallet,
@@ -21,6 +23,8 @@ import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
 import type { DashboardPayload } from '../lib/types';
 import { CoinIcon } from '../components/CoinIcon';
+import { ChainLogo } from '../components/BrandLogos';
+import { DexPortfolioPanel } from '../components/DexPortfolioPanel';
 import { AreaChart } from '../components/DollarinoViz';
 
 interface AuditLog {
@@ -305,7 +309,7 @@ export function PortfolioPage({
         method: 'PATCH',
         body: JSON.stringify(p.patch),
       });
-      pushFloatingToast(isFa ? `تنظیم پیشنهادی «${p.titleFa}» روی ربات اعمال شد ✅` : `Applied "${p.titleEn}" ✅`, 'success');
+      pushFloatingToast(isFa ? `تنظیم پیشنهادی «${p.titleFa}» روی ربات اعمال شد` : `Applied "${p.titleEn}"`, 'success');
       await onRefresh();
     } catch (e) {
       pushFloatingToast(e instanceof Error ? e.message : 'Update failed', 'error');
@@ -350,8 +354,8 @@ export function PortfolioPage({
       pushFloatingToast(
         res.message ||
           (nextMode === 'LIVE'
-            ? isFa ? 'حساب روی حالت واقعی Trust Wallet قرار گرفت ✅' : 'Switched to Real Trust Wallet mode ✅'
-            : isFa ? 'حساب روی حالت شبیه‌ساز دمو قرار گرفت 🧪' : 'Switched to Demo Simulator mode 🧪'),
+            ? isFa ? 'حساب روی حالت واقعی Trust Wallet قرار گرفت' : 'Switched to Real Trust Wallet mode'
+            : isFa ? 'حساب روی حالت شبیه‌ساز دمو قرار گرفت' : 'Switched to Demo Simulator mode'),
         res.warningCode ? 'warn' : 'success'
       );
       await onRefresh();
@@ -379,7 +383,7 @@ export function PortfolioPage({
         setNoteTitle('');
         setNoteContent('');
       }
-      pushFloatingToast(isFa ? 'یادداشت شخصی در کیف‌پول ذخیره شد ✅' : 'Personal note saved ✅', 'success');
+      pushFloatingToast(isFa ? 'یادداشت شخصی در کیف‌پول ذخیره شد' : 'Personal note saved', 'success');
       loadNotes();
     } catch (e) {
       pushFloatingToast(e instanceof Error ? e.message : 'Save note failed', 'error');
@@ -408,7 +412,56 @@ export function PortfolioPage({
     data.walletSummary?.liveBalanceUsd ??
       (data.config.trading_mode === 'LIVE' ? totalEq : 0)
   );
-  const unreal = data.openTrades.reduce((s, t) => s + Number(t.unrealized_pnl || 0), 0);
+  const dexTradesAll = data.dexTrades || [];
+  const openDexTrades = useMemo(
+    () => dexTradesAll.filter((t) => t.status === 'OPEN' || t.status === 'PENDING_SIGN'),
+    [dexTradesAll]
+  );
+  const openSmartCopy = useMemo(
+    () => (data.smartCopyPositions || []).filter((p) => p.status === 'OPEN' || p.status === 'PENDING_TRUST_SIGN'),
+    [data.smartCopyPositions]
+  );
+  const openPerpOrders = useMemo(
+    () => (data.perpOrders || []).filter((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED'),
+    [data.perpOrders]
+  );
+  const totalOpenCount =
+    data.openTrades.length + openDexTrades.length + openSmartCopy.length + openPerpOrders.length;
+
+  const openBreakdown = useMemo(() => {
+    let profitableCount = 0;
+    let losingCount = 0;
+    let sum = 0;
+    for (const t of data.openTrades) {
+      const p = Number(t.unrealized_pnl || 0);
+      sum += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    for (const d of openDexTrades) {
+      if (d.status !== 'OPEN') continue;
+      const p = Number(d.unrealized_pnl_usd || 0);
+      sum += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    for (const cp of openSmartCopy) {
+      if (cp.status !== 'OPEN') continue;
+      const p = Number(cp.unrealized_pnl_usd ?? cp.pnl_usd ?? 0);
+      sum += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    for (const po of openPerpOrders) {
+      const p = Number(po.unrealized_pnl_usd || 0);
+      sum += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    return { profitableCount, losingCount, sum };
+  }, [data.openTrades, openDexTrades, openSmartCopy, openPerpOrders]);
+
+  const unreal = data.stats.unrealizedPnl ?? openBreakdown.sum;
 
   const curveSeries = useMemo(() => {
     const raw = data.charts.equityCurve || [];
@@ -434,6 +487,15 @@ export function PortfolioPage({
   const slices = useMemo(() => {
     const bySym = new Map<string, number>();
     data.openTrades.forEach((p) => bySym.set(p.symbol, (bySym.get(p.symbol) ?? 0) + Number(p.margin_used || 0)));
+    openDexTrades.forEach((d) =>
+      bySym.set(`${d.token_symbol} (${d.chain_id.toUpperCase()})`, (bySym.get(`${d.token_symbol} (${d.chain_id.toUpperCase()})`) ?? 0) + Number(d.amount_usd || 0))
+    );
+    openSmartCopy.forEach((cp) =>
+      bySym.set(`${cp.token_symbol} (COPY)`, (bySym.get(`${cp.token_symbol} (COPY)`) ?? 0) + Number(cp.margin_usd || 0))
+    );
+    openPerpOrders.forEach((po) =>
+      bySym.set(`${po.symbol} (PERP)`, (bySym.get(`${po.symbol} (PERP)`) ?? 0) + Number(po.margin_usd || 0))
+    );
     const palette = ['#F59E0B', '#1652F0', '#8B5CF6', '#EF4444', '#06B6D4'];
     const items = [...bySym.entries()].map(([sym, val], idx) => ({
       label: sym.replace('USDT', ''),
@@ -442,10 +504,10 @@ export function PortfolioPage({
     }));
     items.unshift({ label: 'USDT', value: Math.max(1, freeCash), color: '#10B981' });
     return items;
-  }, [data.openTrades, freeCash]);
+  }, [data.openTrades, openDexTrades, openSmartCopy, openPerpOrders, freeCash]);
 
   const assetCards = useMemo(() => {
-    const map = new Map<string, { symbol: string; base: string; usd: number; count: number; pnl: number }>();
+    const map = new Map<string, { symbol: string; base: string; usd: number; count: number; pnl: number; chainId?: string; kindTag?: string }>();
     map.set('USDT', { symbol: 'USDT', base: 'USDT', usd: freeCash, count: 0, pnl: 0 });
     ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].forEach((sym) => {
       const base = sym.replace('USDT', '');
@@ -458,6 +520,54 @@ export function PortfolioPage({
       prev.count += 1;
       prev.pnl += Number(p.unrealized_pnl || 0);
       map.set(base, prev);
+    });
+    openDexTrades.forEach((d) => {
+      const key = `${d.token_symbol}_${d.chain_id}`;
+      const prev = map.get(key) ?? {
+        symbol: `${d.token_symbol}USDT`,
+        base: d.token_symbol,
+        usd: 0,
+        count: 0,
+        pnl: 0,
+        chainId: d.chain_id,
+        kindTag: d.source_key === 'SNIPER' ? 'Sniper' : 'DEX',
+      };
+      prev.usd += Number(d.amount_usd || 0);
+      prev.count += 1;
+      prev.pnl += Number(d.unrealized_pnl_usd || 0);
+      map.set(key, prev);
+    });
+    openSmartCopy.forEach((cp) => {
+      const key = `${cp.token_symbol}_copy_${cp.chain_id}`;
+      const prev = map.get(key) ?? {
+        symbol: `${cp.token_symbol}USDT`,
+        base: cp.token_symbol,
+        usd: 0,
+        count: 0,
+        pnl: 0,
+        chainId: cp.chain_id,
+        kindTag: 'Copy',
+      };
+      prev.usd += Number(cp.margin_usd || 0);
+      prev.count += 1;
+      prev.pnl += Number(cp.unrealized_pnl_usd ?? cp.pnl_usd ?? 0);
+      map.set(key, prev);
+    });
+    openPerpOrders.forEach((po) => {
+      const base = po.symbol.replace('USDT', '').replace('/', '');
+      const key = `${base}_perp`;
+      const prev = map.get(key) ?? {
+        symbol: po.symbol.includes('USDT') ? po.symbol : `${po.symbol}USDT`,
+        base,
+        usd: 0,
+        count: 0,
+        pnl: 0,
+        kindTag: 'Perp DEX',
+      };
+      prev.usd += Number(po.margin_usd || 0);
+      prev.count += 1;
+      prev.pnl += Number(po.unrealized_pnl_usd || 0);
+      map.set(key, prev);
     });
     const q = assetQ.trim().toLowerCase();
     return [...map.values()]
@@ -472,11 +582,71 @@ export function PortfolioPage({
         if (b.usd !== a.usd) return b.usd - a.usd;
         return 0;
       });
-  }, [data.openTrades, freeCash, assetQ, hideZero, isFa]);
+  }, [data.openTrades, openDexTrades, openSmartCopy, openPerpOrders, freeCash, assetQ, hideZero, isFa]);
 
   const closeOne = async (id: string) => {
-    await apiFetch(`/api/trading/positions/${id}/close`, { method: 'POST' });
-    await onRefresh();
+    setBusy(true);
+    try {
+      await apiFetch(`/api/trading/positions/${id}/close`, { method: 'POST' });
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeDexTrade = async (id: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/trustwallet/dex-trades/${id}/close`, { method: 'POST', body: JSON.stringify({}) });
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeSmartCopy = async (id: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/copy-trade/positions-v2/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'CLOSE' }) });
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closePerpOrder = async (id: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/dex/perp-orders/${id}/close`, { method: 'POST' });
+      await onRefresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeBatch = async (scope: 'ALL_PROFITABLE' | 'ALL_LOSING') => {
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; closedCount: number; realizedTotalUsd: number }>(
+        '/api/trading/positions/close-batch',
+        { method: 'POST', body: JSON.stringify({ scope }) }
+      );
+      pushFloatingToast(
+        res.closedCount > 0
+          ? isFa
+            ? `${res.closedCount} معامله با مجموع $${res.realizedTotalUsd.toFixed(2)} بسته شد.`
+            : `Closed ${res.closedCount} trades ($${res.realizedTotalUsd.toFixed(2)}).`
+          : isFa
+            ? 'معامله‌ای در این دسته پیدا نشد.'
+            : 'No matching positions found.',
+        res.closedCount > 0 ? 'success' : 'info'
+      );
+      await onRefresh();
+    } catch (e) {
+      pushFloatingToast(e instanceof Error ? e.message : 'Batch close failed', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const filteredLogs = useMemo(() => {
@@ -512,19 +682,31 @@ export function PortfolioPage({
                 type="button"
                 disabled={busy}
                 onClick={() => void switchTradingMode('PAPER')}
-                className={`px-3 py-1 rounded-full transition ${isPaper ? 'bg-amber-400 text-slate-950 shadow' : 'text-white/80 hover:text-white'}`}
+                className={`px-3 py-1 rounded-full transition inline-flex items-center gap-1 ${isPaper ? 'bg-amber-400 text-slate-950 shadow' : 'text-white/80 hover:text-white'}`}
               >
-                {isFa ? `دمو 🧪 ($${Math.round(demoBalDisplay).toLocaleString('en-US')})` : `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`}
+                <Gamepad2 className="w-3.5 h-3.5" />
+                {isFa ? (
+                  <span>
+                    دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${Math.round(demoBalDisplay).toLocaleString('en-US')}</span>)
+                  </span>
+                ) : (
+                  `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`
+                )}
               </button>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => void switchTradingMode('LIVE')}
-                className={`px-3 py-1 rounded-full transition ${!isPaper ? 'bg-emerald-500 text-white shadow' : 'text-white/80 hover:text-white'}`}
+                className={`px-3 py-1 rounded-full transition inline-flex items-center gap-1 ${!isPaper ? 'bg-emerald-500 text-white shadow' : 'text-white/80 hover:text-white'}`}
               >
-                {isFa
-                  ? `حساب واقعی 🛡 ($${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })})`
-                  : `Real ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`}
+                <ShieldCheck className="w-3.5 h-3.5" />
+                {isFa ? (
+                  <span>
+                    حساب واقعی (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })}</span>)
+                  </span>
+                ) : (
+                  `Real ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`
+                )}
               </button>
             </div>
           </div>
@@ -552,8 +734,8 @@ export function PortfolioPage({
         <div className="relative z-10 text-center space-y-1.5 py-1">
           <p className="text-xs text-white/80 font-bold">
             {isFa
-              ? `ارزش کل خزانه و تاریخچه دارایی (${isPaper ? 'دمو' : 'حساب واقعی Trust Wallet'})`
-              : `Total Vault & Asset Equity (${isPaper ? 'Demo' : 'Live Trust Wallet'})`}
+              ? `ارزش کل سرمایه (${isPaper ? 'حساب دمو' : 'مستقیماً داخل Trust Wallet شما'})`
+              : `Total Capital Equity (${isPaper ? 'Demo' : 'Inside Your Trust Wallet'})`}
           </p>
           <p dir="ltr" className="font-display font-bold text-4xl sm:text-5xl tabular text-white font-num drop-shadow">
             {hideBal
@@ -569,19 +751,19 @@ export function PortfolioPage({
             </p>
           )}
           <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px]">
-            <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90">
-              {isFa ? 'آزاد:' : 'Free:'}{' '}
-              <span dir="ltr" className="font-num font-black text-white">
+            <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90 inline-flex items-center gap-1">
+              <span>{isFa ? 'آزاد:' : 'Free:'}</span>
+              <span dir="ltr" style={{ unicodeBidi: 'isolate' }} className="inline-block font-num font-black text-white">
                 ${freeCash.toLocaleString('en-US', { maximumFractionDigits: 0 })}
               </span>
             </span>
-            <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90">
-              {isFa ? 'درگیر:' : 'Used:'}{' '}
-              <span dir="ltr" className="font-num font-black text-white">
+            <span className="ios-glass-stat px-3 py-1 rounded-full text-white/90 inline-flex items-center gap-1">
+              <span>{isFa ? 'درگیر:' : 'Used:'}</span>
+              <span dir="ltr" style={{ unicodeBidi: 'isolate' }} className="inline-block font-num font-black text-white">
                 ${usedMargin.toLocaleString('en-US', { maximumFractionDigits: 0 })}
               </span>
             </span>
-            <span dir="ltr" className={`ios-glass-stat px-3 py-1 rounded-full font-black font-num ${unreal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+            <span dir="ltr" style={{ unicodeBidi: 'isolate' }} className={`inline-block ios-glass-stat px-3 py-1 rounded-full font-black font-num ${unreal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
               {unreal >= 0 ? `+$${unreal.toFixed(2)}` : `-$${Math.abs(unreal).toFixed(2)}`}
             </span>
           </div>
@@ -676,17 +858,21 @@ export function PortfolioPage({
         <div className="grid grid-cols-2 gap-3">
           {assetCards.map((a) => (
             <button
-              key={a.base}
+              key={`${a.base}_${a.chainId || a.kindTag || 'cex'}`}
               type="button"
-              onClick={() => onOpenTerminal(a.base === 'USDT' ? 'BTCUSDT' : `${a.base}USDT`)}
+              onClick={() => (a.chainId ? setLedgerTab('wallet') : onOpenTerminal(a.base === 'USDT' ? 'BTCUSDT' : `${a.base}USDT`))}
               className="panel panel-hover rounded-[22px] p-4 flex flex-col justify-between gap-3 text-start"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <CoinIcon symbol={a.symbol} size={32} />
+                  {a.chainId ? <ChainLogo chain={a.chainId} size={30} /> : <CoinIcon symbol={a.symbol} size={32} />}
                   <div className="min-w-0">
-                    <p className="font-display font-bold text-sm text-main truncate">{coinDisplayName(a.base, isFa)}</p>
-                    <p className="text-[10px] font-bold text-dim">{a.base}</p>
+                    <p className="font-display font-bold text-sm text-main truncate">
+                      {a.chainId ? a.base : coinDisplayName(a.base, isFa)}
+                    </p>
+                    <p className="text-[10px] font-bold text-dim uppercase">
+                      {a.chainId ? `${a.chainId} · ${a.kindTag || 'DEX'}` : a.kindTag ? `${a.base} · ${a.kindTag}` : a.base}
+                    </p>
                   </div>
                 </div>
                 {a.count > 0 && (
@@ -894,21 +1080,21 @@ export function PortfolioPage({
         )}
       </div>
 
-      {/* 7. Unified Work Reports, Open/Closed Trades & Wallet Ledger */}
+      {/* 7. Unified Work Reports, Open/Closed Trades & Integrated Wallet/DEX Ledger */}
       <div className="panel rounded-[26px] p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="tab-bar w-full">
+          <div className="tab-bar w-full overflow-x-auto">
             {[
-              { id: 'open' as const, l: isFa ? `باز (${data.openTrades.length})` : `Open (${data.openTrades.length})` },
+              { id: 'open' as const, l: isFa ? `معاملات باز (${totalOpenCount})` : `Open (${totalOpenCount})` },
               { id: 'closed' as const, l: isFa ? `تاریخچه (${data.closedTrades.length})` : `History (${data.closedTrades.length})` },
-              { id: 'wallet' as const, l: isFa ? 'تراکنش ولت' : 'Wallet Ledger' },
+              { id: 'wallet' as const, l: isFa ? `کیف‌پول و تراکنش‌ها (${dexTradesAll.length})` : `Wallet & DEX (${dexTradesAll.length})` },
               { id: 'logs' as const, l: isFa ? 'گزارش کار ربات' : 'Work Reports' },
             ].map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setLedgerTab(t.id)}
-                className={`tab-pill flex-1 ${ledgerTab === t.id ? 'tab-pill-active' : ''}`}
+                className={`tab-pill flex-1 whitespace-nowrap ${ledgerTab === t.id ? 'tab-pill-active' : ''}`}
               >
                 {t.l}
               </button>
@@ -917,24 +1103,53 @@ export function PortfolioPage({
         </div>
 
         {ledgerTab === 'open' && (
-          data.openTrades.length === 0 ? (
+          totalOpenCount === 0 ? (
             <div className="py-10 text-center text-xs text-dim">{isFa ? 'معامله بازی ندارید.' : 'No open positions.'}</div>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
+              {(openBreakdown.profitableCount > 0 || openBreakdown.losingCount > 0) && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {openBreakdown.profitableCount > 0 && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeBatch('ALL_PROFITABLE')}
+                      className="px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-black shadow-xs"
+                    >
+                      {isFa ? `برداشت همه سودها (${openBreakdown.profitableCount})` : `Take All Profit (${openBreakdown.profitableCount})`}
+                    </button>
+                  )}
+                  {openBreakdown.losingCount > 0 && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeBatch('ALL_LOSING')}
+                      className="px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white border border-rose-500/30 text-xs font-black"
+                    >
+                      {isFa ? `بستن همه ضررها (${openBreakdown.losingCount})` : `Close All Losing (${openBreakdown.losingCount})`}
+                    </button>
+                  )}
+                </div>
+              )}
+
               {data.openTrades.map((p) => {
                 const u = Number(p.unrealized_pnl || 0);
                 const long = p.direction === 'LONG';
+                const srcLabel = isFa ? p.source_label_fa || 'ربات استراتژی' : p.source_label_en || 'Strategy Bot';
                 return (
                   <div key={p.id} className="rounded-2xl bg-[var(--soft)] border hairline p-4 flex flex-wrap items-center gap-3 text-xs">
                     <CoinIcon symbol={p.symbol} size={32} />
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button type="button" onClick={() => onOpenTerminal(p.symbol)} className="font-bold text-main hover:underline">
                           {p.symbol}
                         </button>
                         <span className={`inline-flex items-center gap-0.5 text-[10px] font-black px-1.5 py-0.5 rounded ${long ? 'bg-jade/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
                           {long ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
                           {p.direction} {p.leverage}×
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-500/12 text-brand">
+                          {srcLabel}
                         </span>
                       </div>
                       <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
@@ -946,7 +1161,105 @@ export function PortfolioPage({
                     </span>
                     <button
                       type="button"
+                      disabled={busy}
                       onClick={() => void closeOne(p.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white font-black transition inline-flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'بستن' : 'Close'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openDexTrades.map((d) => {
+                const u = Number(d.unrealized_pnl_usd || 0);
+                const srcLabel = isFa ? d.source_label_fa || 'DEX / اسنایپر' : d.source_label_en || 'DEX / Sniper';
+                return (
+                  <div key={d.id} className="rounded-2xl bg-[var(--soft)] border hairline p-4 flex flex-wrap items-center gap-3 text-xs">
+                    <ChainLogo chain={d.chain_id} size={30} />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <strong className="font-bold text-main">{d.token_symbol}</strong>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 uppercase">
+                          {d.chain_id} · {srcLabel}
+                        </span>
+                      </div>
+                      <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
+                        Size ${Number(d.amount_usd).toFixed(2)} · Entry ${Number(d.entry_price_usd).toPrecision(4)} → Live ${Number(d.live_price_usd).toPrecision(4)}
+                      </p>
+                    </div>
+                    <span dir="ltr" className={`ms-auto font-display font-bold text-base tabular ${u >= 0 ? 'text-jade' : 'text-loss'}`}>
+                      {u >= 0 ? `+$${u.toFixed(2)}` : `-$${Math.abs(u).toFixed(2)}`}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeDexTrade(d.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white font-black transition inline-flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>{d.status === 'PENDING_SIGN' ? (isFa ? 'لغو' : 'Cancel') : isFa ? 'بستن' : 'Close'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openSmartCopy.map((cp) => {
+                const u = Number(cp.unrealized_pnl_usd ?? cp.pnl_usd ?? 0);
+                return (
+                  <div key={cp.id} className="rounded-2xl bg-[var(--soft)] border hairline p-4 flex flex-wrap items-center gap-3 text-xs">
+                    <ChainLogo chain={cp.chain_id} size={30} />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <strong className="font-bold text-main">{cp.token_symbol}</strong>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/15 text-jade">
+                          {isFa ? cp.source_label_fa || `کپی‌ترید (${cp.trader_label})` : cp.source_label_en || `Copy (${cp.trader_label})`}
+                        </span>
+                      </div>
+                      <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
+                        Size ${Number(cp.margin_usd).toFixed(2)} · Entry ${Number(cp.entry_price_usd).toPrecision(4)} → Live ${Number(cp.live_price_usd ?? cp.current_price_usd).toPrecision(4)}
+                      </p>
+                    </div>
+                    <span dir="ltr" className={`ms-auto font-display font-bold text-base tabular ${u >= 0 ? 'text-jade' : 'text-loss'}`}>
+                      {u >= 0 ? `+$${u.toFixed(2)}` : `-$${Math.abs(u).toFixed(2)}`}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeSmartCopy(cp.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white font-black transition inline-flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'بستن' : 'Close'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openPerpOrders.map((po) => {
+                const u = Number(po.unrealized_pnl_usd || 0);
+                return (
+                  <div key={po.id} className="rounded-2xl bg-[var(--soft)] border hairline p-4 flex flex-wrap items-center gap-3 text-xs">
+                    <CoinIcon symbol={po.symbol} size={30} />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <strong className="font-bold text-main">{po.symbol}</strong>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400">
+                          {po.side} {po.leverage}× · {isFa ? po.source_label_fa || po.venue : po.source_label_en || po.venue}
+                        </span>
+                      </div>
+                      <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
+                        Margin ${Number(po.margin_usd).toFixed(2)} · Entry ${Number(po.entry_price).toFixed(2)}
+                      </p>
+                    </div>
+                    <span dir="ltr" className={`ms-auto font-display font-bold text-base tabular ${u >= 0 ? 'text-jade' : 'text-loss'}`}>
+                      {u >= 0 ? `+$${u.toFixed(2)}` : `-$${Math.abs(u).toFixed(2)}`}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closePerpOrder(po.id)}
                       className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white font-black transition inline-flex items-center gap-1"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -989,26 +1302,38 @@ export function PortfolioPage({
         )}
 
         {ledgerTab === 'wallet' && (
-          walletLedger.length === 0 ? (
-            <div className="py-10 text-center text-xs text-dim">{isFa ? 'تراکنش مالی ثبت نشده است.' : 'No wallet transactions yet.'}</div>
-          ) : (
-            <div className="space-y-2 max-h-[400px] overflow-y-auto text-xs">
-              {walletLedger.map((w) => (
-                <div key={w.id} className="surface-soft rounded-xl px-4 py-3 flex items-center justify-between gap-3">
-                  <div>
-                    <span className="font-bold text-main">{w.event_type}</span>
-                    {w.note && <p className="text-[11px] text-dim">{w.note}</p>}
-                  </div>
-                  <div dir="ltr" className="text-end font-num">
-                    <span className={`font-bold ${w.amount_usd >= 0 ? 'text-jade' : 'text-loss'}`}>
-                      {Number(w.amount_usd) >= 0 ? `+$${Number(w.amount_usd).toFixed(2)}` : `-$${Math.abs(Number(w.amount_usd)).toFixed(2)}`}
-                    </span>
-                    <p className="text-[10px] text-dim">Bal: ${Number(w.balance_after).toFixed(2)}</p>
-                  </div>
+          <div className="space-y-4">
+            <DexPortfolioPanel
+              lang={lang}
+              tradingMode={isPaper ? 'PAPER' : 'LIVE'}
+              initialTrades={dexTradesAll}
+              onAfterChange={onRefresh}
+            />
+
+            <div className="space-y-2 border-t hairline pt-4">
+              <p className="text-xs font-black text-main">{isFa ? 'گردش مالی کیف‌پول' : 'Wallet Ledger'}</p>
+              {walletLedger.length === 0 ? (
+                <div className="py-6 text-center text-xs text-dim">{isFa ? 'تراکنش مالی ثبت نشده است.' : 'No wallet transactions yet.'}</div>
+              ) : (
+                <div className="space-y-2 max-h-[340px] overflow-y-auto text-xs">
+                  {walletLedger.map((w) => (
+                    <div key={w.id} className="surface-soft rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                      <div>
+                        <span className="font-bold text-main">{w.event_type}</span>
+                        {w.note && <p className="text-[11px] text-dim">{w.note}</p>}
+                      </div>
+                      <div dir="ltr" className="text-end font-num">
+                        <span className={`font-bold ${w.amount_usd >= 0 ? 'text-jade' : 'text-loss'}`}>
+                          {Number(w.amount_usd) >= 0 ? `+$${Number(w.amount_usd).toFixed(2)}` : `-$${Math.abs(Number(w.amount_usd)).toFixed(2)}`}
+                        </span>
+                        <p className="text-[10px] text-dim">Bal: ${Number(w.balance_after).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )
+          </div>
         )}
 
         {ledgerTab === 'logs' && (

@@ -45,6 +45,7 @@ import type { LookId } from './AppearanceModal';
 import { DollarinoBrandMark } from './BrandGraphics';
 import { WalletLogo } from './BrandLogos';
 import { CoinIcon } from './CoinIcon';
+import { SmoothSlider } from './SmoothSlider';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from './ConfirmTradeSheet';
 import type { ExchangeMarket } from './SymbolPickerModal';
 
@@ -57,38 +58,41 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'خانه و ربات خودکار', labelEn: 'Home & Auto Bot', icon: Home },
-  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet', labelEn: 'Trust Wallet', icon: Flame },
-  { id: 'copy', labelFa: 'کپی از حرفه‌ای‌ها', labelEn: 'Copy Top Traders', icon: Users },
-  { id: 'pricing', labelFa: 'کارمزد ۳٪ و خزانه/دعوت', labelEn: '3% Fee & Treasury', icon: CreditCard },
+  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و سرمایه', labelEn: 'Trust Wallet & Capital', icon: Flame },
+  { id: 'copy', labelFa: 'رادار، اسنایپر، کپی‌ترید و ریسک', labelEn: 'Radar, Sniper, Copy & Risk', icon: Users },
+  { id: 'portfolio', labelFa: 'کیف‌پول و پورتفوی یکپارچه', labelEn: 'Unified Portfolio & Wallet', icon: Wallet },
+  { id: 'pricing', labelFa: 'کارمزد ۳٪ و اعتبار مالی', labelEn: '3% Fee & Credit', icon: CreditCard },
 ];
 
 const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', labelFa: 'نمای کلی', labelEn: 'Overview', icon: LayoutDashboard },
   { id: 'terminal', labelFa: 'پایانه و چارت AI', labelEn: 'Terminal & Chart AI', icon: CandlestickChart },
-  { id: 'markets', labelFa: 'بازارهای فیوچرز', labelEn: 'Markets', icon: Globe },
+  { id: 'markets', labelFa: 'بازارها و فیوچرز Perp', labelEn: 'Markets & Perp DEX', icon: Globe },
   { id: 'radar', labelFa: 'رادار و استراتژی شخصی', labelEn: 'Radar & Custom IDE', icon: Radar },
   { id: 'aichat', labelFa: 'چت و تحلیل چارت AI', labelEn: 'AI Chat & Vision', icon: Sparkles },
   { id: 'myai', labelFa: 'هوش مصنوعی من', labelEn: 'My AI Agent', icon: BrainCircuit },
 ];
 
 const PRO_WALLET_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
-  { id: 'copy', labelFa: 'کپی‌ترید و Trust Wallet', labelEn: 'Copy & Trust Wallet', icon: Users },
-  { id: 'dex', labelFa: 'تراست‌ولت و DEX', labelEn: 'Trust Wallet & DEX', icon: Flame },
-  { id: 'portfolio', labelFa: 'پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
+  { id: 'copy', labelFa: 'رادار، اسنایپر، کپی‌ترید و ریسک', labelEn: 'Radar, Sniper, Copy & Risk', icon: Users },
+  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و سرمایه', labelEn: 'Trust Wallet & Capital', icon: Flame },
+  { id: 'portfolio', labelFa: 'کیف‌پول، پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
   { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
 ];
 
 const MAIN_VIEWS = [...PRO_TRADING_VIEWS, ...PRO_WALLET_VIEWS];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
-  { id: 'pricing', labelFa: 'کارمزد ۳٪ (۳ معامله رایگان)', labelEn: '3% Fee (3 Free Live)', icon: CreditCard },
+  { id: 'pricing', labelFa: 'کارمزد ۳٪ و اعتبار مالی', labelEn: '3% Fee & Credit', icon: CreditCard },
   { id: 'faq', labelFa: 'راهنما و سوالات', labelEn: 'FAQ & Guide', icon: CircleHelp },
 ];
 
 export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
   if (id === 'aichat') return isFa ? 'چت هوش مصنوعی AI' : 'AI Chat & Vision';
-  if (id === 'dex') return isFa ? 'Trust Wallet و DEX' : 'Trust Wallet & DEX';
+  if (id === 'dex') return isFa ? 'Trust Wallet و سرمایه' : 'Trust Wallet & Capital';
+  if (id === 'markets') return isFa ? 'بازارها و فیوچرز Perp' : 'Markets & Perp DEX';
+  if (id === 'copy') return isFa ? 'رادار، اسنایپر، کپی‌ترید و ریسک' : 'Radar, Sniper, Copy & Risk';
   if (id === 'myai') return isFa ? 'هوش مصنوعی من' : 'My AI Agent';
   if (id === 'services') return isFa ? 'خدمات' : 'Services';
   if (id === 'card') return isFa ? 'کارت سود' : 'Profit Card';
@@ -768,7 +772,7 @@ export function Layout({
               }`}
             >
               <CreditCard className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{isFa ? 'کارمزد ۳٪ و خزانه' : '3% Fee & Vault'}</span>
+              <span className="truncate">{isFa ? 'کارمزد ۳٪ و فاکتورها' : '3% Fee & Invoices'}</span>
             </button>
             <button
               type="button"
@@ -971,7 +975,7 @@ export function Layout({
 
         <div className="surface-soft rounded-xl px-3 py-2 text-[10px] text-dim space-y-1 border hairline">
           <p className="font-bold text-main">
-            {isFa ? '👨‍💻 سازنده: آوید کیا' : '👨‍💻 Creator: Avid Kiya'}
+            {isFa ? 'سازنده: آوید کیا' : 'Creator: Avid Kiya'}
           </p>
           <div className="flex flex-wrap gap-2" dir="ltr">
             <a href="https://t.me/avidkiya" target="_blank" rel="noreferrer" className="hover:text-main underline">
@@ -1679,14 +1683,12 @@ export function Layout({
                   {qtLev}×
                 </span>
               </div>
-              <input
-                type="range"
+              <SmoothSlider
                 min={1}
                 max={uiMode === 'simple' ? 15 : 50}
                 value={qtLev}
-                onChange={(e) => setQtLev(Number(e.target.value))}
-                className="w-full"
-                style={{ ['--fill' as string]: `${((qtLev - 1) / ((uiMode === 'simple' ? 15 : 50) - 1)) * 100}%` }}
+                onChange={setQtLev}
+                dir="ltr"
               />
             </div>
 

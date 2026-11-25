@@ -40,7 +40,7 @@ async function syncBadgeState() {
     const isRunning = state === 'RUNNING_PAPER' || state === 'RUNNING_LIVE';
     const openCnt = Array.isArray(data?.openTrades) ? data.openTrades.length : 0;
     await chrome.action.setBadgeText({ text: isRunning ? (openCnt > 0 ? String(openCnt) : 'ON') : 'OFF' });
-    await chrome.action.setBadgeBackgroundColor({ color: isRunning ? '#10b981' : '#64748b' });
+    await chrome.action.setBadgeBackgroundColor({ color: isRunning ? '#059669' : '#64748b' });
   } catch {
     // ignore transient offline error
   }

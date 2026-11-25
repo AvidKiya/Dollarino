@@ -33,6 +33,7 @@ import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
 import type { DashboardPayload } from '../lib/types';
 import { CoinIcon } from '../components/CoinIcon';
+import { SmoothSlider } from '../components/SmoothSlider';
 import { AreaChart, ConsensusGauge } from '../components/DollarinoViz';
 import { HybridLab } from '../components/HybridLab';
 import { StrategyIdePanel } from '../components/StrategyIdePanel';
@@ -349,14 +350,14 @@ export function RadarLabPage({
 
   return (
     <div className="space-y-6">
-      {/* Header + 3 Sub-Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center gap-2" style={{ color: 'var(--gold)' }}>
+      {/* Header + 5 Sub-Tabs */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div className="shrink-0">
+          <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-1.5 flex items-center gap-2" style={{ color: 'var(--gold)' }}>
             <span className="live-gold h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold)' }} />
             <span>RADAR · HYBRID LAB · BACKTESTER</span>
           </p>
-          <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
+          <h2 className="font-display font-bold text-2xl sm:text-3xl text-main">
             {subTab === 'radar'
               ? isFa ? 'رادار سیگنال زنده و اسکنر' : 'AI Signal Radar & Scanner'
               : subTab === 'tvalerts'
@@ -369,12 +370,12 @@ export function RadarLabPage({
           </h2>
         </div>
 
-        <div className="tab-bar w-full sm:w-auto">
+        <div className="tab-bar w-full xl:w-auto lg:flex-nowrap overflow-x-auto no-scrollbar">
           {[
             { id: 'radar' as const, icon: Radar, l: isFa ? 'رادار و اسکن' : 'Live Radar' },
-            { id: 'tvalerts' as const, icon: BellRing, l: isFa ? 'آلرت رایگان TradingView' : 'TV Free Alerts' },
+            { id: 'tvalerts' as const, icon: BellRing, l: isFa ? 'آلرت TradingView' : 'TV Free Alerts' },
             { id: 'ide' as const, icon: Code2, l: isFa ? 'Pine / Python IDE' : 'Pine / Python IDE' },
-            { id: 'lab' as const, icon: SlidersHorizontal, l: isFa ? 'آزمایشگاه و KBOS' : 'Lab & KBOS' },
+            { id: 'lab' as const, icon: SlidersHorizontal, l: isFa ? 'آزمایشگاه KBOS' : 'Lab & KBOS' },
             { id: 'backtest' as const, icon: BarChart3, l: isFa ? 'بک‌تست ۹۰۰ کندل' : 'Backtester' },
           ].map((t) => {
             const Icon = t.icon;
@@ -383,9 +384,9 @@ export function RadarLabPage({
                 key={t.id}
                 type="button"
                 onClick={() => setSubTab(t.id)}
-                className={`tab-pill flex-1 sm:flex-initial ${subTab === t.id ? 'tab-pill-active' : ''}`}
+                className={`tab-pill flex-1 sm:flex-initial !px-3.5 !py-2 !text-[11.5px] ${subTab === t.id ? 'tab-pill-active' : ''}`}
               >
-                <Icon className="w-4 h-4 shrink-0" />
+                <Icon className="w-3.5 h-3.5 shrink-0" />
                 <span>{t.l}</span>
               </button>
             );
@@ -594,7 +595,7 @@ export function RadarLabPage({
                   <span className="text-dim">{isFa ? 'آستانه ورود میکسر' : 'Mixer Min Score'}</span>
                   <span className="font-bold text-main">{mixerThreshold}%</span>
                 </div>
-                <input type="range" min={45} max={90} value={mixerThreshold} onChange={(e) => setMixerThreshold(Number(e.target.value))} className="w-full" style={{ ['--fill' as string]: `${((mixerThreshold - 45) / 45) * 100}%` }} />
+                <SmoothSlider min={45} max={90} value={mixerThreshold} onChange={setMixerThreshold} dir="ltr" />
               </div>
 
               {[

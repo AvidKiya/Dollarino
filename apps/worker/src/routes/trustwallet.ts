@@ -1,13 +1,73 @@
 import { Hono } from 'hono';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { requireAuth } from '../auth.js';
 import { randomId } from '../crypto.js';
 import { buildTrustWalletSwapLinks, getDexTokenPools } from '../dex/screener.js';
 import type { AuthUser, Env } from '../env.js';
-import { checkLiveFeeEnforcement } from '../services/server-fee.js';
+import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
 
 export const trustWalletRoutes = new Hono<{ Bindings: Env; Variables: { user: AuthUser } }>();
 
 trustWalletRoutes.use('*', requireAuth);
+
+function hexToBytesStrict(hex: string): Uint8Array | null {
+  const clean = hex.trim().replace(/^0x/i, '');
+  if (!clean || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) return null;
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+function bytesToHexLower(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export function verifyEip191PersonalSign(
+  message: string,
+  signatureHex: string,
+  expectedEvmAddress: string
+): boolean {
+  if (!message || !isValidEvm(expectedEvmAddress)) return false;
+  const rawSig = hexToBytesStrict(signatureHex);
+  if (!rawSig || rawSig.length !== 65) return false;
+
+  const r = rawSig.slice(0, 32);
+  const s = rawSig.slice(32, 64);
+  const vRaw = rawSig[64]!;
+  let recovery = -1;
+  if (vRaw === 27 || vRaw === 0) recovery = 0;
+  else if (vRaw === 28 || vRaw === 1) recovery = 1;
+  else if (vRaw >= 35) recovery = (vRaw - 35) % 2;
+  if (recovery !== 0 && recovery !== 1) return false;
+
+  try {
+    const recoveredSig = new Uint8Array(65);
+    recoveredSig[0] = recovery;
+    recoveredSig.set(r, 1);
+    recoveredSig.set(s, 33);
+
+    const enc = new TextEncoder();
+    const msgBytes = enc.encode(message);
+    const prefixBytes = enc.encode(`\x19Ethereum Signed Message:\n${msgBytes.length}`);
+    const prefixed = new Uint8Array(prefixBytes.length + msgBytes.length);
+    prefixed.set(prefixBytes, 0);
+    prefixed.set(msgBytes, prefixBytes.length);
+    const digest = keccak_256(prefixed);
+
+    const pubCompressed = secp256k1.recoverPublicKey(recoveredSig, digest, { prehash: false });
+    const pubUncompressed = secp256k1.Point.fromBytes(pubCompressed).toBytes(false);
+    const addrBytes = keccak_256(pubUncompressed.slice(1)).slice(-20);
+    const recoveredAddress = '0x' + bytesToHexLower(addrBytes);
+    return recoveredAddress.toLowerCase() === expectedEvmAddress.trim().toLowerCase();
+  } catch {
+    return false;
+  }
+}
 
 export function isValidEvm(addr: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
@@ -142,7 +202,10 @@ trustWalletRoutes.get('/status', async (c) => {
   ]);
 
   const receivers: Record<string, string> = {};
-  for (const r of settingsRows.results) receivers[r.key] = r.value;
+  for (const r of settingsRows.results) {
+    const v = String(r.value || '').trim();
+    receivers[r.key] = /YourTRC20WalletAddress|^0xYour/i.test(v) ? '' : v;
+  }
 
   const publicUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
   const trustDappOpenUrl = `https://link.trustwallet.com/open_url?coin_id=20000714&url=${encodeURIComponent(publicUrl)}`;
@@ -175,7 +238,19 @@ trustWalletRoutes.post('/nonce', async (c) => {
   const user = c.get('user');
   const nonce = randomId('tw');
   const message = `Dollarino Trust Wallet Verification\nUser: ${user.username}\nNonce: ${nonce}\nNote: Read-only & non-custodial ownership check. No funds move.`;
-  return c.json({ ok: true, nonce, message });
+  await c.env.DB.prepare(
+    `DELETE FROM trust_wallet_nonces WHERE user_id = ? AND (used = 1 OR expires_at <= datetime('now'))`
+  )
+    .bind(user.id)
+    .run()
+    .catch(() => {});
+  await c.env.DB.prepare(
+    `INSERT INTO trust_wallet_nonces (nonce, user_id, message, purpose, used, expires_at)
+     VALUES (?, ?, ?, 'CONNECT', 0, datetime('now', '+5 minutes'))`
+  )
+    .bind(nonce, user.id, message)
+    .run();
+  return c.json({ ok: true, nonce, message, expiresInSeconds: 300 });
 });
 
 trustWalletRoutes.post('/dapp-handoff', async (c) => {
@@ -246,7 +321,49 @@ trustWalletRoutes.post('/connect', async (c) => {
     return c.json({ error: 'فرمت آدرس TON نامعتبر است (باید با EQ یا UQ شروع شود).' }, 400);
   }
 
-  const verified = body.signature && body.signature.length > 20 ? 1 : 0;
+  const signature = body.signature?.trim() || '';
+  let verified = 0;
+
+  if (signature) {
+    if (!evm) {
+      return c.json({ error: 'برای تایید رمزنگاری امضای کیف‌پول (EIP-191)، آدرس EVM معتبر الزامی است.' }, 400);
+    }
+    const signedMsg = body.signedMessage?.trim() || '';
+    const nonceRow = signedMsg
+      ? await c.env.DB.prepare(
+          `SELECT nonce, message, used FROM trust_wallet_nonces
+           WHERE user_id = ? AND message = ? AND expires_at > datetime('now')
+           ORDER BY created_at DESC LIMIT 1`
+        )
+          .bind(user.id, signedMsg)
+          .first<{ nonce: string; message: string; used: number }>()
+      : await c.env.DB.prepare(
+          `SELECT nonce, message, used FROM trust_wallet_nonces
+           WHERE user_id = ? AND used = 0 AND expires_at > datetime('now')
+           ORDER BY created_at DESC LIMIT 1`
+        )
+          .bind(user.id)
+          .first<{ nonce: string; message: string; used: number }>();
+
+    if (!nonceRow || nonceRow.used === 1) {
+      return c.json(
+        { error: 'کد یک‌بارمصرف تایید مالکیت (Nonce) یافت نشد، منقضی شده یا قبلاً استفاده شده است. لطفاً دوباره روی دکمه امضا کلیک کنید.' },
+        401
+      );
+    }
+
+    const sigValid = verifyEip191PersonalSign(nonceRow.message, signature, evm);
+    if (!sigValid) {
+      return c.json({ error: 'امضای کیف‌پول با آدرس EVM مطابقت ندارد و تایید نشد (ECDSA mismatch).' }, 401);
+    }
+
+    await c.env.DB.prepare(
+      `UPDATE trust_wallet_nonces SET used = 1 WHERE nonce = ? AND used = 0`
+    )
+      .bind(nonceRow.nonce)
+      .run();
+    verified = 1;
+  }
 
   await c.env.DB.prepare(
     `UPDATE users SET
@@ -357,11 +474,14 @@ trustWalletRoutes.post('/balance', async (c) => {
 
 trustWalletRoutes.get('/dex-trades', async (c) => {
   const user = c.get('user');
+  const modeFilter = (c.req.query('mode') || '').toUpperCase();
   const rows = await c.env.DB.prepare(
     `SELECT * FROM dex_trades WHERE user_id = ? ORDER BY opened_at DESC LIMIT 80`
   ).bind(user.id).all<{
     id: string;
     chain_id: string;
+    dex_id?: string | null;
+    pair_address?: string | null;
     token_address: string;
     token_symbol: string;
     amount_usd: number;
@@ -372,15 +492,23 @@ trustWalletRoutes.get('/dex-trades', async (c) => {
     tp1_usd: number | null;
     status: string;
     tx_hash: string | null;
+    note?: string | null;
     realized_pnl_usd: number;
     realized_pnl_pct: number;
     opened_at: string;
     closed_at: string | null;
   }>();
 
+  const filtered = rows.results.filter((t) => {
+    const isPaper = Boolean(t.tx_hash && t.tx_hash.startsWith('PAPER_'));
+    if (modeFilter === 'PAPER') return isPaper;
+    if (modeFilter === 'LIVE') return !isPaper;
+    return true;
+  });
+
   // Enrich OPEN trades with live DexScreener prices (deduplicated)
   const openTokens = new Map<string, { chainId: string; tokenAddress: string }>();
-  for (const t of rows.results) {
+  for (const t of filtered) {
     if (t.status === 'OPEN' || t.status === 'PENDING_SIGN') {
       openTokens.set(`${t.chain_id}:${t.token_address}`, { chainId: t.chain_id, tokenAddress: t.token_address });
     }
@@ -394,12 +522,14 @@ trustWalletRoutes.get('/dex-trades', async (c) => {
     })
   );
 
-  const enriched = rows.results.map((t) => {
+  const enriched = filtered.map((t) => {
     const livePx = livePrices.get(`${t.chain_id}:${t.token_address}`) ?? t.entry_price_usd;
     const unrealizedPct = t.entry_price_usd > 0 ? ((livePx - t.entry_price_usd) / t.entry_price_usd) * 100 : 0;
     const unrealizedUsd = (t.amount_usd * unrealizedPct) / 100;
+    const isPaper = Boolean(t.tx_hash && t.tx_hash.startsWith('PAPER_'));
     return {
       ...t,
+      mode: isPaper ? 'PAPER' : 'LIVE',
       live_price_usd: livePx,
       unrealized_pnl_pct: Number(unrealizedPct.toFixed(2)),
       unrealized_pnl_usd: Number(unrealizedUsd.toFixed(2)),
@@ -503,6 +633,45 @@ trustWalletRoutes.post('/dex-trades/:id/confirm', async (c) => {
   return c.json({ ok: true, id, status: 'OPEN' });
 });
 
+trustWalletRoutes.patch('/dex-trades/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    stopLossUsd?: number | null;
+    tp1Usd?: number | null;
+    note?: string;
+  };
+  const row = await c.env.DB.prepare(
+    `SELECT id, status FROM dex_trades WHERE id = ? AND user_id = ? LIMIT 1`
+  )
+    .bind(id, user.id)
+    .first<{ id: string; status: string }>();
+  if (!row) return c.json({ error: 'معامله یافت نشد.' }, 404);
+
+  const sl = body.stopLossUsd === null ? null : body.stopLossUsd !== undefined ? Math.max(0, Number(body.stopLossUsd)) : undefined;
+  const tp1 = body.tp1Usd === null ? null : body.tp1Usd !== undefined ? Math.max(0, Number(body.tp1Usd)) : undefined;
+
+  await c.env.DB.prepare(
+    `UPDATE dex_trades
+     SET stop_loss_usd = CASE WHEN ? IS NOT NULL THEN ? ELSE stop_loss_usd END,
+         tp1_usd = CASE WHEN ? IS NOT NULL THEN ? ELSE tp1_usd END,
+         note = COALESCE(?, note)
+     WHERE id = ? AND user_id = ?`
+  )
+    .bind(
+      sl !== undefined ? 1 : null,
+      sl ?? null,
+      tp1 !== undefined ? 1 : null,
+      tp1 ?? null,
+      body.note !== undefined ? body.note.slice(0, 200) : null,
+      id,
+      user.id
+    )
+    .run();
+
+  return c.json({ ok: true, id, stopLossUsd: sl, tp1Usd: tp1 });
+});
+
 trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
@@ -513,10 +682,43 @@ trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
     id: string;
     chain_id: string;
     token_address: string;
+    token_symbol: string;
     amount_usd: number;
     entry_price_usd: number;
+    tx_hash: string | null;
+    status: string;
+    realized_pnl_usd: number;
+    realized_pnl_pct: number;
+    exit_price_usd: number | null;
   }>();
   if (!row) return c.json({ error: 'معامله یافت نشد.' }, 404);
+  if (row.status === 'CLOSED' || row.status === 'CANCELLED') {
+    return c.json({
+      ok: true,
+      id,
+      status: row.status,
+      exitPriceUsd: row.exit_price_usd ?? row.entry_price_usd,
+      realizedPnlUsd: row.realized_pnl_usd,
+      realizedPnlPct: row.realized_pnl_pct,
+    });
+  }
+
+  if (row.status === 'PENDING_SIGN') {
+    await c.env.DB.prepare(
+      `UPDATE dex_trades
+       SET status = 'CANCELLED', realized_pnl_usd = 0, realized_pnl_pct = 0, closed_at = datetime('now')
+       WHERE id = ? AND user_id = ?`
+    ).bind(id, user.id).run();
+    return c.json({
+      ok: true,
+      id,
+      status: 'CANCELLED',
+      cancelled: true,
+      exitPriceUsd: row.entry_price_usd,
+      realizedPnlUsd: 0,
+      realizedPnlPct: 0,
+    });
+  }
 
   let exitPx = Number(body.exitPriceUsd || 0);
   if (exitPx <= 0) {
@@ -533,7 +735,50 @@ trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
      WHERE id = ? AND user_id = ?`
   ).bind(exitPx, Number(pnlUsd.toFixed(2)), Number(pnlPct.toFixed(2)), body.txHash?.trim() || null, id, user.id).run();
 
-  return c.json({ ok: true, id, exitPriceUsd: exitPx, realizedPnlUsd: Number(pnlUsd.toFixed(2)), realizedPnlPct: Number(pnlPct.toFixed(2)) });
+  let updatedPaperBalanceUsd: number | null = null;
+  const isPaper = Boolean(row.tx_hash && row.tx_hash.startsWith('PAPER_'));
+  if (isPaper) {
+    const balRow = await c.env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
+      .bind(user.id)
+      .first<{ paper_balance: string }>()
+      .catch(() => null);
+    const curBal = Number(balRow?.paper_balance ?? 0);
+    const returnUsd = Math.max(0, row.amount_usd + pnlUsd);
+    const nextBal = Number((curBal + returnUsd).toFixed(2));
+    updatedPaperBalanceUsd = nextBal;
+    await c.env.DB.prepare(`UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`)
+      .bind(String(nextBal), user.id)
+      .run()
+      .catch(() => {});
+    await c.env.DB.prepare(
+      `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+       VALUES (?, ?, 'PAPER', 'DEX_CLOSE', ?, ?, ?)`
+    )
+      .bind(randomId('wl'), user.id, Number(pnlUsd.toFixed(2)), nextBal, `بستن موقعیت ${row.token_symbol} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`)
+      .run()
+      .catch(() => {});
+  } else {
+    const isSniper = Boolean(row.tx_hash === null || !row.tx_hash);
+    await recordProfitShareServerFee(c.env.DB, {
+      userId: user.id,
+      tradeId: id,
+      source: isSniper ? 'SNIPER_LIVE' : 'DEX_LIVE',
+      symbol: row.token_symbol,
+      mode: 'LIVE',
+      realizedPnlUsd: Number(pnlUsd.toFixed(2)),
+      tradeAmountUsd: row.amount_usd,
+      note: `بستن معامله DEX/اسنایپر ${row.token_symbol} (${row.chain_id.toUpperCase()})`,
+    }).catch(() => {});
+  }
+
+  return c.json({
+    ok: true,
+    id,
+    exitPriceUsd: exitPx,
+    realizedPnlUsd: Number(pnlUsd.toFixed(2)),
+    realizedPnlPct: Number(pnlPct.toFixed(2)),
+    paperBalanceUsd: updatedPaperBalanceUsd,
+  });
 });
 
 trustWalletRoutes.get('/execution-mode', async (c) => {

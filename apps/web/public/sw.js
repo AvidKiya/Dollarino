@@ -1,5 +1,5 @@
-const CACHE_NAME = 'dollarino-pwa-v9.9.2';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE_NAME = 'dollarino-pwa-v11.6.5';
+const APP_SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -12,9 +12,8 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('message', (event) => {
@@ -29,10 +28,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never serve cached stale trading/dex/trustwallet API responses or extension zip
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/downloads/')) {
+  // Never serve cached stale API responses, downloads, or service worker script itself
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/downloads/') || url.pathname === '/sw.js') {
     event.respondWith(
-      fetch(request).catch(
+      fetch(request, { cache: 'no-store' }).catch(
         () =>
           new Response(JSON.stringify({ ok: false, offline: true, error: 'آفلاین هستید' }), {
             status: 503,
@@ -43,24 +42,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests: network first, fallback to cached shell
-  if (request.mode === 'navigate') {
+  // Navigation requests & images: always Network-First so UI updates and icon refreshes appear immediately
+  if (request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/images/')) {
     event.respondWith(
-      fetch(request)
-        .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put('/index.html', clone)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match('/index.html'))
-    );
-    return;
-  }
-
-  // Static assets: stale-while-revalidate
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkFetch = fetch(request)
+      fetch(request, { cache: 'no-store' })
         .then((res) => {
           if (res.ok) {
             const clone = res.clone();
@@ -68,8 +53,38 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => cached);
-      return cached || networkFetch;
-    })
+        .catch(() => caches.match(request).then((c) => c || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Hashed Vite assets (/assets/*): cache-first safe because filenames contain content hashes
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(request, clone)).catch(() => {});
+          }
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
+  // Other static assets: network-first with cache fallback
+  event.respondWith(
+    fetch(request)
+      .then((res) => {
+        if (res.ok) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(request, clone)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(() => caches.match(request))
   );
 });

@@ -120,8 +120,8 @@ export function QuickWidgetsBar({
       setExtErr(
         msg.includes('404') || msg.includes('Route not found')
           ? isFa
-            ? 'سرور API نیاز به همگام‌سازی نسخه جدید (Deploy Worker v9.7) دارد. پس از انتشار Worker، این دکمه کلید اختصاصی dlr_ext_ شما را می‌سازد.'
-            : 'API Worker needs v9.7 deployment before generating extension keys.'
+            ? 'سرور API نیاز به همگام‌سازی نسخه جدید (Deploy Worker V11.6) دارد. پس از انتشار Worker، این دکمه کلید اختصاصی dlr_ext_ شما را می‌سازد.'
+            : 'API Worker needs V11.6 deployment before generating extension keys.'
           : msg
       );
     } finally {
@@ -303,7 +303,7 @@ export function QuickWidgetsBar({
                       {isFa ? 'افزونه گرافیکی مرورگر دلارینو' : 'Dollarino Browser Extension'}
                     </p>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-white border border-white/25 shrink-0">
-                      v9.7
+                      V11.6
                     </span>
                   </div>
                   <p className="text-[11px] text-white/80 mt-0.5">

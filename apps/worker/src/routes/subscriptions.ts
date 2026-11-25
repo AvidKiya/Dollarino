@@ -19,8 +19,13 @@ import {
 } from '../services/server-fee.js';
 import { invalidateSettingsCache } from '../services/settings-cache.js';
 import {
+  autoDetectUserTransferOnchain,
+  buildExplorerTxUrl,
+  buildInvoiceNumber,
+  getUserBankingInvoices,
   getUserTreasuryDepositOptions,
   MIN_TREASURY_DEPOSIT_USD,
+  settleDebtFirstThenCredit,
   submitTreasuryDeposit,
 } from '../services/treasury.js';
 
@@ -1206,17 +1211,19 @@ subscriptionRoutes.post('/admin/gift-codes', async (c) => {
 
 subscriptionRoutes.get('/server-fees', async (c) => {
   const user = c.get('user');
-  const [summary, settingsRows, treasuryOpts] = await Promise.all([
+  const [summary, settingsRows, treasuryOpts, invoices] = await Promise.all([
     getUserServerFeeSummary(c.env.DB, user.id),
     c.env.DB.prepare(
       `SELECT key, value FROM system_settings WHERE key IN ('usdt_trc20_wallet', 'trust_wallet_evm_receiver', 'trust_wallet_sol_receiver', 'trust_wallet_ton_receiver')`
     ).all<{ key: string; value: string }>().catch(() => ({ results: [] })),
     getUserTreasuryDepositOptions(c.env.DB, user.id).catch(() => null),
+    getUserBankingInvoices(c.env.DB, user.id).catch(() => []),
   ]);
   const receivers: Record<string, string> = {};
   for (const s of settingsRows.results) {
-    if (s.key === 'usdt_trc20_wallet' && s.value.includes('YourTRC20WalletAddress')) continue;
-    receivers[s.key] = s.value;
+    const val = String(s.value || '').trim();
+    if (!val || /YourTRC20WalletAddress|^0xYour/i.test(val)) continue;
+    receivers[s.key] = val;
   }
 
   return c.json({
@@ -1226,6 +1233,7 @@ subscriptionRoutes.get('/server-fees', async (c) => {
     freeProfitableLiveTrades: FREE_PROFITABLE_LIVE_TRADES,
     minTreasuryDepositUsd: MIN_TREASURY_DEPOSIT_USD,
     treasury: treasuryOpts,
+    invoices,
     receivers,
     honestArchitectureNoteFa:
       `دارایی اصلی Trust Wallet شما ۱۰۰٪ غیرامانی (Non-Custodial) است و دلارینو هیچ‌گاه دسترسی برداشت خودکار از کیف‌پول اصلی شما ندارد؛ در معاملات واقعی، ${FREE_PROFITABLE_LIVE_TRADES} معامله سودده اول ۱۰۰٪ رایگان است (کارمزد ۰٪) و پس از آن فقط ${SERVER_PROFIT_FEE_PCT}% کارمزد از سود خالص معاملات موفق ثبت می‌گردد (۹۷٪ سود خالص برای شما).`,
@@ -1236,8 +1244,43 @@ subscriptionRoutes.get('/server-fees', async (c) => {
 
 subscriptionRoutes.get('/treasury/options', async (c) => {
   const user = c.get('user');
-  const opts = await getUserTreasuryDepositOptions(c.env.DB, user.id);
-  return c.json({ ok: true, ...opts });
+  const [opts, invoices] = await Promise.all([
+    getUserTreasuryDepositOptions(c.env.DB, user.id),
+    getUserBankingInvoices(c.env.DB, user.id).catch(() => []),
+  ]);
+  return c.json({ ok: true, ...opts, invoices });
+});
+
+subscriptionRoutes.get('/invoices', async (c) => {
+  const user = c.get('user');
+  const invoices = await getUserBankingInvoices(c.env.DB, user.id).catch(() => []);
+  return c.json({ ok: true, invoices });
+});
+
+subscriptionRoutes.post('/treasury/verify-auto', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    network?: string;
+    asset?: string;
+    minAmountUsd?: number;
+    category?: 'DEPOSIT' | 'FEE_SETTLEMENT' | 'CREDIT_TOPUP';
+  };
+  const res = await autoDetectUserTransferOnchain(c.env.DB, user.id, {
+    network: body.network || 'BEP20',
+    asset: body.asset,
+    minAmountUsd: body.minAmountUsd,
+    category: body.category,
+  });
+  if (!res.ok) {
+    return c.json(res, 400);
+  }
+  const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id).catch(() => null);
+  await notifyAllAdmins(
+    c.env,
+    `🏦 کشف و تایید خودکار تراکنش خزانه ($${Number(res.amountUsd || 0).toFixed(2)})\n` +
+      `کاربر: ${user.username}\nشبکه: ${body.network || 'BEP20'}\nTX: ${res.txHash}`
+  ).catch(() => {});
+  return c.json({ ...res, enforcement });
 });
 
 subscriptionRoutes.post('/treasury/deposit', async (c) => {
@@ -1248,6 +1291,7 @@ subscriptionRoutes.post('/treasury/deposit', async (c) => {
     amountUsd?: number;
     txHash?: string;
     category?: 'DEPOSIT' | 'FEE_SETTLEMENT' | 'CREDIT_TOPUP';
+    senderAddress?: string;
   };
   try {
     const cleanTx = String(body.txHash || '').trim();
@@ -1259,6 +1303,7 @@ subscriptionRoutes.post('/treasury/deposit', async (c) => {
       amountUsd: amt,
       txHash: cleanTx,
       category: body.category,
+      senderAddress: body.senderAddress,
     });
     await notifyAllAdmins(
       c.env,
@@ -1277,7 +1322,9 @@ subscriptionRoutes.post('/treasury/deposit', async (c) => {
 
 subscriptionRoutes.post('/server-fees/settle', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json<{ txHash?: string }>().catch(() => ({} as { txHash?: string }));
+  const body = await c.req
+    .json<{ txHash?: string; network?: string; asset?: string; senderAddress?: string; amountUsd?: number }>()
+    .catch(() => ({} as { txHash?: string; network?: string; asset?: string; senderAddress?: string; amountUsd?: number }));
   const txHash = (body.txHash || '').trim();
   if (!isValidBlockchainTxHash(txHash)) {
     return c.json(
@@ -1307,43 +1354,121 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
   }
 
   const standingBefore = await evaluateUserFeeStanding(c.env.DB, user.id);
+  const net = (body.network || (/^0x[0-9a-fA-F]{64}$/.test(txHash) ? 'BEP20' : 'TRC20')).toUpperCase();
+  const asset = (body.asset || 'USDT').toUpperCase();
+  const invAmt = Math.max(0, Number(body.amountUsd || standingBefore.totalDueUsd || standingBefore.accruedUsd || 0));
   const nextLedgerStatus = receipt === 'CONFIRMED' || standingBefore.lockStatus !== 'LOCKED' ? 'SETTLED_ONCHAIN' : 'PENDING_VERIFY';
 
-  const updated = await c.env.DB.prepare(
-    `UPDATE server_fee_ledger SET status = ?, tx_hash = ? WHERE user_id = ? AND status = 'ACCRUED'`
-  ).bind(nextLedgerStatus, txHash, user.id).run();
+  let settledDebtUsd = Number(standingBefore.totalDueUsd || 0);
+  let addedCreditUsd = 0;
+  let settledCount = 0;
 
   if (nextLedgerStatus === 'SETTLED_ONCHAIN') {
-    await c.env.DB.prepare(
-      `UPDATE users SET fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
-    ).bind(user.id).run().catch(() => {});
+    const resSplit = await settleDebtFirstThenCredit(c.env.DB, user.id, invAmt, txHash, {
+      alsoCreditWalletBalance: false,
+    });
+    settledDebtUsd = resSplit.settledDebtUsd;
+    addedCreditUsd = resSplit.addedCreditUsd;
+    settledCount = resSplit.settledCount;
   } else {
+    const updated = await c.env.DB.prepare(
+      `UPDATE server_fee_ledger SET status = 'PENDING_VERIFY', tx_hash = ? WHERE user_id = ? AND status = 'ACCRUED'`
+    ).bind(txHash, user.id).run();
+    settledCount = updated.meta?.changes ?? 0;
     await c.env.DB.prepare(
       `UPDATE users SET fee_lock_status = 'PENDING_REVIEW' WHERE id = ?`
     ).bind(user.id).run().catch(() => {});
   }
 
+  const depId = randomId('tset');
+  const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+  const settings = await c.env.DB.prepare(
+    `SELECT key, value FROM system_settings WHERE key IN ('treasury_evm_receiver', 'trust_wallet_evm_receiver', 'treasury_trc20_receiver', 'usdt_trc20_wallet', 'treasury_solana_receiver', 'treasury_ton_receiver')`
+  )
+    .all<{ key: string; value: string }>()
+    .catch(() => ({ results: [] }));
+  const smap = new Map(settings.results.map((r) => [r.key, r.value]));
+  const receiverAddress =
+    net === 'TRC20'
+      ? smap.get('treasury_trc20_receiver') || smap.get('usdt_trc20_wallet') || null
+      : net === 'SOLANA'
+        ? smap.get('treasury_solana_receiver') || null
+        : net === 'TON'
+          ? smap.get('treasury_ton_receiver') || null
+          : smap.get('treasury_evm_receiver') || smap.get('trust_wallet_evm_receiver') || null;
+
+  const noteStr =
+    addedCreditUsd > 0 && settledDebtUsd > 0
+      ? `تسویه $${settledDebtUsd.toFixed(2)} بدهی + شارژ $${addedCreditUsd.toFixed(2)} اعتبار کارمزد`
+      : 'تسویه کارمزد ۳٪ سرور دلارینو';
+
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO treasury_deposits (id, user_id, category, asset, network, receiver_address, sender_address, amount_usd, tx_hash, status, verified_onchain, credited_to_wallet, admin_note, confirmed_at)
+     VALUES (?, ?, 'FEE_SETTLEMENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      depId,
+      user.id,
+      asset,
+      net,
+      receiverAddress || '',
+      body.senderAddress?.trim() || null,
+      Number(invAmt.toFixed(4)),
+      txHash,
+      nextLedgerStatus === 'SETTLED_ONCHAIN' ? 'CONFIRMED' : 'PENDING_VERIFY',
+      receipt === 'CONFIRMED' ? 1 : 0,
+      nextLedgerStatus === 'SETTLED_ONCHAIN' ? 1 : 0,
+      noteStr,
+      nextLedgerStatus === 'SETTLED_ONCHAIN' ? nowIso : null
+    )
+    .run()
+    .catch(() => {});
+
   const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);
   await notifyAllAdmins(
     c.env,
-    `💳 ثبت تسویه کارمزد ${SERVER_PROFIT_FEE_PCT}% سرور\nکاربر: ${user.username}\nوضعیت: ${nextLedgerStatus === 'SETTLED_ONCHAIN' ? '✅ تایید و آزاد شد' : '⏳ در انتظار تایید ادمین (حساب قفل بود)'}\nTX: ${txHash}`
+    `💳 ثبت تسویه کارمزد ${SERVER_PROFIT_FEE_PCT}% سرور\nکاربر: ${user.username}\nمبلغ کل: $${invAmt.toFixed(2)} (تسویه بدهی: $${settledDebtUsd.toFixed(2)} | اعتبار مازاد: $${addedCreditUsd.toFixed(2)})\nوضعیت: ${nextLedgerStatus === 'SETTLED_ONCHAIN' ? '✅ تایید و آزاد شد' : '⏳ در انتظار تایید ادمین (حساب قفل بود)'}\nTX: ${txHash}`
   ).catch(() => {});
-  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Server fee settlement (${nextLedgerStatus}) txHash ${txHash}`);
+  await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Server fee settlement (${nextLedgerStatus}) debt=$${settledDebtUsd.toFixed(2)} credit=$${addedCreditUsd.toFixed(2)} tx=${txHash}`);
 
   return c.json({
     ok: true,
     status: nextLedgerStatus,
-    settledCount: updated.meta?.changes ?? 0,
+    settledCount,
+    settledDebtUsd,
+    addedCreditUsd,
     txHash,
     enforcement,
+    invoice: {
+      invoiceNo: buildInvoiceNumber(depId, nowIso),
+      id: depId,
+      kind: 'FEE_SETTLEMENT' as const,
+      titleFa: addedCreditUsd > 0 && settledDebtUsd > 0 ? 'فاکتور تسویه بدهی + شارژ اعتبار' : 'فاکتور تسویه کارمزد ۳٪ دلارینو',
+      titleEn: '3% Profit Fee Settlement Invoice',
+      network: net,
+      asset,
+      amountUsd: Number(invAmt.toFixed(4)),
+      senderAddress: body.senderAddress?.trim() || null,
+      receiverAddress,
+      txHash,
+      explorerUrl: buildExplorerTxUrl(net, txHash),
+      status: nextLedgerStatus === 'SETTLED_ONCHAIN' ? ('CONFIRMED' as const) : ('PENDING_VERIFY' as const),
+      verifiedOnchain: receipt === 'CONFIRMED',
+      settledDebtUsd,
+      addedCreditUsd,
+      note: noteStr,
+      createdAt: nowIso,
+      confirmedAt: nextLedgerStatus === 'SETTLED_ONCHAIN' ? nowIso : null,
+    },
   });
 });
 
 subscriptionRoutes.post('/server-fees/prepay', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json<{ amountUsd?: number; txHash?: string; network?: string }>().catch(
-    () => ({} as { amountUsd?: number; txHash?: string; network?: string })
-  );
+  const body = await c.req
+    .json<{ amountUsd?: number; txHash?: string; network?: string; asset?: string; senderAddress?: string }>()
+    .catch(() => ({} as { amountUsd?: number; txHash?: string; network?: string; asset?: string; senderAddress?: string }));
   const amountUsd = Number(body.amountUsd || 0);
   const txHash = (body.txHash || '').trim();
   if (!Number.isFinite(amountUsd) || amountUsd < MIN_TREASURY_DEPOSIT_USD || amountUsd > 50000) {
@@ -1369,30 +1494,65 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
   }
 
   const autoConfirm = receipt === 'CONFIRMED';
+  const feePreId = randomId('fee_pre');
+  const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const net = (body.network || (/^0x[0-9a-fA-F]{64}$/.test(txHash) ? 'BEP20' : 'TRC20')).toUpperCase();
+  const asset = (body.asset || 'USDT').toUpperCase();
+
+  let settledDebtUsd = 0;
+  let addedCreditUsd = 0;
+  if (autoConfirm) {
+    const split = await settleDebtFirstThenCredit(c.env.DB, user.id, amountUsd, txHash, {
+      alsoCreditWalletBalance: false,
+    });
+    settledDebtUsd = split.settledDebtUsd;
+    addedCreditUsd = split.addedCreditUsd;
+  }
+
+  const prepayNote =
+    settledDebtUsd > 0
+      ? `پرداخت $${amountUsd.toFixed(2)}: تسویه $${settledDebtUsd.toFixed(2)} بدهی + شارژ $${addedCreditUsd.toFixed(2)} اعتبار کارمزد`
+      : `شارژ پیش‌پرداخت اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}% (${amountUsd.toFixed(2)}$)`;
+
   await c.env.DB.prepare(
     `INSERT INTO server_fee_ledger (id, user_id, trade_id, source, symbol, realized_pnl_usd, fee_pct, fee_usd, status, tx_hash, note)
      VALUES (?, ?, ?, 'PREPAY_CREDIT', 'USDT', 0, 0, ?, ?, ?, ?)`
   )
     .bind(
-      randomId('fee_pre'),
+      feePreId,
       user.id,
       `prepay:${txHash}`,
-      Number(amountUsd.toFixed(2)),
+      Number((autoConfirm ? addedCreditUsd : amountUsd).toFixed(2)),
       autoConfirm ? 'SETTLED_PREPAID' : 'PENDING_VERIFY',
       txHash,
-      `شارژ پیش‌پرداخت اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}% (${amountUsd.toFixed(2)}$)`
+      prepayNote
     )
     .run();
 
-  if (autoConfirm) {
-    await c.env.DB.prepare(
-      `UPDATE users SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4), fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
-    ).bind(amountUsd, user.id).run();
-  }
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO treasury_deposits (id, user_id, category, asset, network, receiver_address, sender_address, amount_usd, tx_hash, status, verified_onchain, credited_to_wallet, admin_note, confirmed_at)
+     VALUES (?, ?, 'CREDIT_TOPUP', ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      feePreId,
+      user.id,
+      asset,
+      net,
+      body.senderAddress?.trim() || null,
+      Number(amountUsd.toFixed(4)),
+      txHash,
+      autoConfirm ? 'CONFIRMED' : 'PENDING_VERIFY',
+      autoConfirm ? 1 : 0,
+      autoConfirm ? 1 : 0,
+      prepayNote,
+      autoConfirm ? nowIso : null
+    )
+    .run()
+    .catch(() => {});
 
   await notifyAllAdmins(
     c.env,
-    `🏦 درخواست شارژ اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}%\nکاربر: ${user.username}\nمبلغ: $${amountUsd.toFixed(2)}\nوضعیت: ${autoConfirm ? '✅ تایید خودکار آن‌چین' : '⏳ در انتظار تایید ادمین'}\nTX: ${txHash}`
+    `🏦 درخواست شارژ اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}%\nکاربر: ${user.username}\nمبلغ: $${amountUsd.toFixed(2)}${settledDebtUsd > 0 ? ` (تسویه بدهی: $${settledDebtUsd.toFixed(2)} | اعتبار: $${addedCreditUsd.toFixed(2)})` : ''}\nوضعیت: ${autoConfirm ? '✅ تایید خودکار آن‌چین' : '⏳ در انتظار تایید ادمین'}\nTX: ${txHash}`
   ).catch(() => {});
 
   const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);
@@ -1400,7 +1560,30 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
     ok: true,
     autoConfirmed: autoConfirm,
     status: autoConfirm ? 'CONFIRMED' : 'PENDING_VERIFY',
+    settledDebtUsd,
+    addedCreditUsd,
     enforcement,
+    invoice: {
+      invoiceNo: buildInvoiceNumber(feePreId, nowIso),
+      id: feePreId,
+      kind: 'CREDIT_TOPUP' as const,
+      titleFa: settledDebtUsd > 0 ? 'فاکتور تسویه بدهی و شارژ پیش‌پرداخت' : 'فاکتور شارژ اعتبار پیش‌پرداخت کارمزد',
+      titleEn: 'Prepaid Fee Credit Invoice',
+      network: net,
+      asset,
+      amountUsd: Number(amountUsd.toFixed(4)),
+      senderAddress: body.senderAddress?.trim() || null,
+      receiverAddress: null,
+      txHash,
+      explorerUrl: buildExplorerTxUrl(net, txHash),
+      status: autoConfirm ? ('CONFIRMED' as const) : ('PENDING_VERIFY' as const),
+      verifiedOnchain: autoConfirm,
+      settledDebtUsd,
+      addedCreditUsd,
+      note: prepayNote,
+      createdAt: nowIso,
+      confirmedAt: autoConfirm ? nowIso : null,
+    },
   });
 });
 
@@ -1448,14 +1631,21 @@ subscriptionRoutes.post('/admin/server-fees/:userId/action', async (c) => {
     const prepayRows = await c.env.DB.prepare(
       `SELECT COALESCE(SUM(fee_usd), 0) AS sum_pre FROM server_fee_ledger WHERE user_id = ? AND source = 'PREPAY_CREDIT' AND status = 'PENDING_VERIFY'`
     ).bind(targetUserId).first<{ sum_pre: number }>().catch(() => ({ sum_pre: 0 }));
-    const addCredit = Number(prepayRows?.sum_pre || 0);
+    const prepaySum = Number(prepayRows?.sum_pre || 0);
+
+    if (prepaySum > 0) {
+      await c.env.DB.prepare(
+        `UPDATE server_fee_ledger SET status = 'SETTLED_PREPAID' WHERE user_id = ? AND source = 'PREPAY_CREDIT' AND status = 'PENDING_VERIFY'`
+      ).bind(targetUserId).run();
+      await settleDebtFirstThenCredit(c.env.DB, targetUserId, prepaySum, 'ADMIN_APPROVED');
+    }
 
     await c.env.DB.prepare(
-      `UPDATE server_fee_ledger SET status = CASE WHEN source = 'PREPAY_CREDIT' THEN 'SETTLED_PREPAID' ELSE 'SETTLED_ONCHAIN' END WHERE user_id = ? AND status IN ('PENDING_VERIFY', 'ACCRUED')`
+      `UPDATE server_fee_ledger SET status = 'SETTLED_ONCHAIN' WHERE user_id = ? AND status IN ('PENDING_VERIFY', 'ACCRUED') AND COALESCE(source, '') != 'PREPAY_CREDIT'`
     ).bind(targetUserId).run();
     await c.env.DB.prepare(
-      `UPDATE users SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4), fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
-    ).bind(addCredit, targetUserId).run();
+      `UPDATE users SET fee_lock_status = 'ACTIVE', fee_penalty_usd = 0, fee_grace_deadline = NULL WHERE id = ?`
+    ).bind(targetUserId).run();
   } else if (body.action === 'REJECT_TX') {
     await c.env.DB.prepare(
       `UPDATE server_fee_ledger SET status = CASE WHEN source = 'PREPAY_CREDIT' THEN 'REJECTED' ELSE 'ACCRUED' END WHERE user_id = ? AND status = 'PENDING_VERIFY'`

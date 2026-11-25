@@ -316,7 +316,7 @@ async function fetchGeckoTerminalFallback(query?: string): Promise<DexTokenEnric
     }
 
     const mapped: DexPair[] = [];
-    for (const pool of rows.slice(0, 28)) {
+    for (const pool of rows.slice(0, 48)) {
       const a = pool.attributes;
       if (!a?.address || !a.base_token_price_usd) continue;
       const rawNet = pool.relationships?.network?.data?.id || pool.id.split('_')[0] || 'bsc';
@@ -406,7 +406,7 @@ export async function searchDexPairs(query: string): Promise<DexTokenEnriched[]>
 
   return combined
     .sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))
-    .slice(0, 48);
+    .slice(0, 72);
 }
 
 export async function getDexTokenPools(chainId: string, tokenAddress: string): Promise<DexTokenEnriched[]> {
@@ -415,7 +415,7 @@ export async function getDexTokenPools(chainId: string, tokenAddress: string): P
   if (pairs.length > 0) {
     return pairs
       .sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))
-      .slice(0, 12)
+      .slice(0, 24)
       .map(enrichDexPair);
   }
   return searchDexPairs(tokenAddress);
@@ -451,24 +451,27 @@ export async function fetchDexTrendingOverview(): Promise<{
   const trendingMetas = metasRes.status === 'fulfilled' ? metasRes.value : null;
 
   const byChain = new Map<string, Set<string>>();
-  const collect = (list: DexBoostProfileItem[] | null, cap = 15) => {
+  const collect = (list: DexBoostProfileItem[] | null, cap = 40) => {
     if (!Array.isArray(list)) return;
     for (const item of list.slice(0, cap)) {
       if (!item.chainId || !item.tokenAddress) continue;
       if (!byChain.has(item.chainId)) byChain.set(item.chainId, new Set());
       const set = byChain.get(item.chainId)!;
-      if (set.size < 25) set.add(item.tokenAddress);
+      if (set.size < 30) set.add(item.tokenAddress);
     }
   };
-  collect(topBoosts, 18);
-  collect(latestBoosts, 12);
-  collect(latestProfiles, 10);
+  collect(topBoosts, 45);
+  collect(latestBoosts, 35);
+  collect(latestProfiles, 30);
 
   const pairFetches: Array<Promise<DexPair[] | null>> = [];
   for (const [chainId, addresses] of byChain.entries()) {
-    const list = [...addresses].slice(0, 25);
-    if (list.length) {
-      pairFetches.push(fetchJson<DexPair[]>(`/tokens/v1/${encodeURIComponent(chainId)}/${list.join(',')}`));
+    const all = [...addresses];
+    for (let i = 0; i < all.length; i += 25) {
+      const batch = all.slice(i, i + 25);
+      if (batch.length) {
+        pairFetches.push(fetchJson<DexPair[]>(`/tokens/v1/${encodeURIComponent(chainId)}/${batch.join(',')}`));
+      }
     }
   }
 
@@ -489,37 +492,49 @@ export async function fetchDexTrendingOverview(): Promise<{
   let pairs = [...bestByToken.values()]
     .filter((p) => Number(p.liquidity?.usd || 0) >= 3500)
     .sort((a, b) => (Number(b.boosts?.active || 0) * 100000 + Number(b.volume?.h24 || 0)) - (Number(a.boosts?.active || 0) * 100000 + Number(a.volume?.h24 || 0)))
-    .slice(0, 28)
+    .slice(0, 80)
     .map(enrichDexPair);
 
-  if (pairs.length === 0) {
-    const fallbackSearches = await Promise.allSettled([
-      searchDexPairs('PEPE'),
-      searchDexPairs('SOL/USDC'),
-      searchDexPairs('TON'),
+  // Enrich with additional multi-chain trending pools so users always see a full market list instead of 15 items
+  if (pairs.length < 40) {
+    const [geckoRes, searchRes] = await Promise.allSettled([
+      fetchGeckoTerminalFallback(),
+      Promise.allSettled([searchDexPairs('SOL/USDC'), searchDexPairs('PEPE'), searchDexPairs('AERO'), searchDexPairs('CAKE'), searchDexPairs('TON')]),
     ]);
-    const merged: DexTokenEnriched[] = [];
-    const seen = new Set<string>();
-    for (const r of fallbackSearches) {
-      if (r.status !== 'fulfilled') continue;
-      for (const item of r.value) {
-        const key = `${item.chainId}:${item.pairAddress}`;
-        if (!seen.has(key)) {
+    const seen = new Set(pairs.map((p) => `${p.chainId}:${p.baseToken.address.toLowerCase()}`));
+    if (geckoRes.status === 'fulfilled') {
+      for (const gp of geckoRes.value) {
+        const key = `${gp.chainId}:${gp.baseToken.address.toLowerCase()}`;
+        if (!seen.has(key) && Number(gp.liquidity?.usd || 0) >= 3500) {
           seen.add(key);
-          merged.push(item);
+          pairs.push(gp);
         }
       }
     }
-    pairs = merged.slice(0, 24);
-  }
-
-  if (pairs.length === 0) {
-    pairs = await fetchGeckoTerminalFallback();
+    if (searchRes.status === 'fulfilled') {
+      for (const r of searchRes.value) {
+        if (r.status !== 'fulfilled') continue;
+        for (const item of r.value) {
+          const key = `${item.chainId}:${item.baseToken.address.toLowerCase()}`;
+          if (!seen.has(key) && Number(item.liquidity?.usd || 0) >= 5000) {
+            seen.add(key);
+            pairs.push(item);
+          }
+        }
+      }
+    }
+    pairs = pairs
+      .sort((a, b) => {
+        const scoreA = Number(a.boosts?.active || 0) * 100000 + Number(a.volume?.h24 || 0);
+        const scoreB = Number(b.boosts?.active || 0) * 100000 + Number(b.volume?.h24 || 0);
+        return scoreB - scoreA;
+      })
+      .slice(0, 80);
   }
 
   return {
     pairs,
-    metas: Array.isArray(trendingMetas) ? trendingMetas.slice(0, 10) : [],
+    metas: Array.isArray(trendingMetas) ? trendingMetas.slice(0, 15) : [],
   };
 }
 
@@ -529,6 +544,75 @@ export interface MultiDappRoute {
   badge: string;
   swapUrl: string;
   trustWalletDappUrl: string;
+  isListed?: boolean;
+  listedStatus?: 'DIRECT_POOL' | 'AGGREGATOR' | 'NOT_LISTED' | 'CHART';
+  poolLiquidityUsd?: number;
+}
+
+export function annotateRoutesWithLivePools(routes: MultiDappRoute[], pools: DexTokenEnriched[]): MultiDappRoute[] {
+  const DEX_ALIASES: Record<string, string[]> = {
+    jupiter: ['jupiter', 'raydium', 'orca', 'meteora', 'pumpswap', 'pumpfun'],
+    raydium: ['raydium'],
+    pumpfun: ['pumpfun', 'pumpswap'],
+    pancake: ['pancakeswap', 'pancakeswap_v3', 'pancake'],
+    uniswap: ['uniswap', 'uniswap_v3', 'uniswap_v2', 'uniswap_v4'],
+    aerodrome: ['aerodrome'],
+    camelot: ['camelot'],
+    quickswap: ['quickswap'],
+    stonfi: ['stonfi', 'ston.fi'],
+    dedust: ['dedust'],
+    sunswap: ['sunswap'],
+    velodrome: ['velodrome'],
+    lfj: ['traderjoe', 'lfj'],
+    cetus: ['cetus'],
+    turbos: ['turbos'],
+    lynex: ['lynex'],
+    thruster: ['thruster'],
+    '1inch': ['uniswap', 'pancakeswap', 'aerodrome', 'camelot', 'quickswap', 'sushiswap', 'balancer', 'velodrome', 'curve'],
+    kyber: ['uniswap', 'pancakeswap', 'sushiswap', 'quickswap', 'camelot'],
+    paraswap: ['pancakeswap', 'uniswap', 'thena', 'biswap'],
+  };
+
+  const AGGREGATOR_IDS = new Set(['jupiter', '1inch', 'kyber', 'paraswap']);
+  const maxPoolLiq = pools.reduce((acc, p) => Math.max(acc, Number(p.liquidity?.usd || 0)), 0);
+
+  return routes.map((r) => {
+    if (r.id === 'dexscreener' || r.id === 'birdeye') {
+      return {
+        ...r,
+        isListed: pools.length > 0,
+        listedStatus: 'CHART' as const,
+        poolLiquidityUsd: maxPoolLiq || undefined,
+      };
+    }
+    const aliases = DEX_ALIASES[r.id] || [r.id];
+    const matchingPools = pools.filter((p) => {
+      const dexLower = String(p.dexId || '').toLowerCase();
+      return aliases.some((a) => dexLower.includes(a));
+    });
+    const bestLiq = matchingPools.reduce((acc, p) => Math.max(acc, Number(p.liquidity?.usd || 0)), 0);
+    if (AGGREGATOR_IDS.has(r.id) && pools.length > 0) {
+      return {
+        ...r,
+        isListed: true,
+        listedStatus: 'AGGREGATOR' as const,
+        poolLiquidityUsd: bestLiq || maxPoolLiq,
+      };
+    }
+    if (matchingPools.length > 0) {
+      return {
+        ...r,
+        isListed: true,
+        listedStatus: 'DIRECT_POOL' as const,
+        poolLiquidityUsd: bestLiq,
+      };
+    }
+    return {
+      ...r,
+      isListed: false,
+      listedStatus: 'NOT_LISTED' as const,
+    };
+  });
 }
 
 export function buildMultiDappRoutes(chainId: string, tokenAddress: string, pairUrl?: string): MultiDappRoute[] {

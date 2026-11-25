@@ -188,7 +188,7 @@ export function LandingPage({
       icon: Trophy,
       color: '#f59e0b',
       desc: isFa
-        ? 'هم معاملات تریدرهای تاییدشده سایت را روی Trust Wallet و شبیه‌ساز قابل تنظیم ($50 تا $10M) کپی کنید و هم ۱۰ ولت برتر هوشمند یا هر ولت دلخواه در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین جداگانه، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
+        ? 'هم معاملات تریدرهای تاییدشده سایت را روی Trust Wallet و شبیه‌ساز قابل تنظیم (\u2066$50–$10M\u2069) کپی کنید و هم ۱۰ ولت برتر هوشمند یا هر ولت دلخواه در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین جداگانه، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
         : 'Mirror verified site traders on Trust Wallet & Custom Demo ($50–$10M) AND track Top-10 Smart-Money or custom wallets across Solana, Base, ETH, BSC, TON & TRON with isolated margin boxes, 7-day backtest, Anti-Rug shield, 3-TP + Moonbag, and 24/7 Copy-Vault.',
       bullets: isFa
         ? [
@@ -468,7 +468,7 @@ export function LandingPage({
             <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
               {isFa ? (
                 <>
-                  با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ۵ موتور همزمان (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine/Python، کپی‌ترید و اسنایپر لیستینگ و میم‌کوین) — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷)، شبیه‌ساز دمو قابل تنظیم (۵۰$ تا ۱۰M$)، رادار DexScreener و ربات رسمی تلگرام{' '}
+                  با دلارینو دقیقاً همان‌طور که راحت‌ترید معامله کنید: از ۵ موتور همزمان (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine/Python، کپی‌ترید و اسنایپر لیستینگ و میم‌کوین) — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷)، شبیه‌ساز دمو قابل تنظیم (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>)، رادار DexScreener و ربات رسمی تلگرام{' '}
                   <span dir="ltr" className="inline-block font-bold text-main">
                     @Dollarino_bot
                   </span>
@@ -536,7 +536,7 @@ export function LandingPage({
 
             <div className="flex flex-wrap justify-center lg:justify-start gap-x-5 gap-y-2 text-xs font-bold text-dim pt-1">
               {[
-                isFa ? 'ربات ۲۴ ساعته متصل به Trust Wallet و شبیه‌ساز دمو $50–$10M' : '24/7 Trust Wallet & Custom Demo ($50–$10M)',
+                isFa ? 'ربات ۲۴ ساعته متصل به Trust Wallet و شبیه‌ساز دمو \u2066$50–$10M\u2069' : '24/7 Trust Wallet & Custom Demo ($50–$10M)',
                 isFa ? 'رادار زنده DexScreener + اکستنشن کروم و ویجت موبایل' : 'DexScreener Radar, Extension & Mobile Widgets',
                 isFa ? 'ثبت‌نام و احراز هویت امن شماره تماس در @Dollarino_bot' : 'Phone-Verified Onboarding in @Dollarino_bot',
               ].map((x) => (
@@ -745,7 +745,7 @@ export function LandingPage({
                 {
                   n: '۲',
                   t: isFa ? 'اتصال Trust Wallet (یا شبیه‌ساز رایگان قابل تنظیم)' : 'Connect Trust Wallet (or Free Custom Demo)',
-                  d: isFa ? 'با حداقل ۱۰ دلار واقعی شروع کنید یا رایگان با شبیه‌ساز قابل تنظیم (۵۰$ تا ۱۰M$) تمرین کنید.' : 'Trade real with $10+ in Trust Wallet or practice free with Custom Demo ($50–$10M).',
+                  d: isFa ? 'با حداقل ۱۰ دلار واقعی شروع کنید یا رایگان با شبیه‌ساز قابل تنظیم (\u2066$50–$10M\u2069) تمرین کنید.' : 'Trade real with $10+ in Trust Wallet or practice free with Custom Demo ($50–$10M).',
                 },
                 {
                   n: '۳',
@@ -1061,7 +1061,7 @@ export function LandingPage({
               </h2>
               <p className="text-xs sm:text-sm text-dim leading-relaxed">
                 {isFa
-                  ? `تمام امکانات دلارینو رایگان است: کیف‌پول دمو قابل تنظیم رایگان ($50 تا $10M)، ۵ موتور همزمان + اسنایپر لیستینگ و میم‌کوین، ۲۵+ اندیکاتور رایگان و هوش مصنوعی چندمدلی. نرخ لحظه‌ای هر دلار تتر ایران: ${iranIrt.toLocaleString('en-US')} تومان.`
+                  ? `تمام امکانات دلارینو رایگان است: کیف‌پول دمو قابل تنظیم رایگان (\u2066$50–$10M\u2069)، ۵ موتور همزمان + اسنایپر لیستینگ و میم‌کوین، ۲۵+ اندیکاتور رایگان و هوش مصنوعی چندمدلی. نرخ لحظه‌ای هر دلار تتر ایران: ${iranIrt.toLocaleString('en-US')} تومان.`
                   : 'All Dollarino modules are free: Customizable Paper Wallet ($50–$10M), 5 concurrent engines + Listing & Meme Sniper, 25+ Free Alerts, and Multi-AI. Live trading starts from $10+ USD in your own Trust Wallet.'}
               </p>
               <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
@@ -1080,7 +1080,7 @@ export function LandingPage({
               </div>
               <div className="rounded-2xl p-3.5 bg-emerald-500/10 border border-emerald-500/30 text-xs leading-relaxed">
                 <p className="font-black text-[#059669] dark:text-[#34D399] mb-1">
-                  {isFa ? '🤝 تفاوت بزرگ دلارینو با پلتفرم‌های اشتراکی:' : '🤝 Why Dollarino Fights Harder for Your Profit:'}
+                  {isFa ? 'تفاوت بزرگ دلارینو با پلتفرم‌های اشتراکی:' : 'Why Dollarino Fights Harder for Your Profit:'}
                 </p>
                 <p className="text-main">
                   {isFa
@@ -1358,7 +1358,13 @@ export function LandingPage({
 
                 <div className="pt-1 flex flex-wrap items-center justify-between gap-2.5 border-t hairline">
                   <span className="text-[11px] font-bold text-dim">
-                    {isFa ? 'ابتدا با شبیه‌ساز دمو قابل تنظیم (۵۰$ تا ۱۰M$) رایگان امتحان کنید؛ بدون ریسک و بدون واریز وجه!' : 'Test free on the Custom Demo Simulator ($50–$10M) first — zero deposit required!'}
+                    {isFa ? (
+                      <>
+                        ابتدا با شبیه‌ساز دمو قابل تنظیم (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>) رایگان امتحان کنید؛ بدون ریسک و بدون واریز وجه!
+                      </>
+                    ) : (
+                      'Test free on the Custom Demo Simulator ($50–$10M) first — zero deposit required!'
+                    )}
                   </span>
                   <button
                     type="button"
@@ -1462,8 +1468,8 @@ export function LandingPage({
         <div className="inline-flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 rounded-2xl surface-soft border hairline text-[11px]">
           <span className="font-black text-main">
             {isFa
-              ? `👨‍💻 طراحی و توسعه ۰ تا ۱۰۰: ${founder?.fullNameFa || 'آوید کیا'} (${founder?.fullNameEn || 'Avid Kiya'})`
-              : `👨‍💻 Created & Engineered 0-to-100 by ${founder?.fullNameEn || 'Avid Kiya'}`}
+              ? `طراحی و توسعه ۰ تا ۱۰۰: ${founder?.fullNameFa || 'آوید کیا'} (${founder?.fullNameEn || 'Avid Kiya'})`
+              : `Created & Engineered 0-to-100 by ${founder?.fullNameEn || 'Avid Kiya'}`}
           </span>
           <span className="opacity-40">|</span>
           <a href={founder?.telegramUrl || 'https://t.me/avidkiya'} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-[var(--gold)] hover:underline">

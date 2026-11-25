@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Cpu, Play, Radio, RotateCcw, SlidersHorizontal, Sparkles, Zap } from 'lucide-react';
 import type { Lang } from '../lib/i18n';
 import { AreaChart, ProgressRing } from './DollarinoViz';
+import { SmoothSlider } from './SmoothSlider';
 
 type EngineId = 'ai' | 'dorna' | 'copy';
 type Scope = 'ALL' | 'TOP' | 'SINGLE';
@@ -314,18 +315,14 @@ export function HybridLab({
                       {risk} / 10
                     </span>
                   </div>
-                  <div dir="ltr">
-                    <input type="range" min="1" max="10" value={risk} onChange={(e) => { setRisk(+e.target.value); setPhase('idle'); }} />
-                  </div>
+                  <SmoothSlider min={1} max={10} value={risk} onChange={(val) => { setRisk(val); setPhase('idle'); }} accent="amber" dir="ltr" />
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] text-white/65">{isFa ? 'اهرم معاملاتی' : 'Leverage'}</span>
                     <span dir="ltr" className="font-mono-num text-xs font-black text-[#7e95ff]">{leverage}x</span>
                   </div>
-                  <div dir="ltr">
-                    <input type="range" min="1" max="50" value={leverage} onChange={(e) => { setLeverage(+e.target.value); setPhase('idle'); }} />
-                  </div>
+                  <SmoothSlider min={1} max={50} value={leverage} onChange={(val) => { setLeverage(val); setPhase('idle'); }} dir="ltr" />
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                   <span className="text-[11px] text-white/65">{isFa ? 'سرمایه شبیه‌سازی' : 'Sim Capital'}</span>

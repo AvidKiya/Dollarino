@@ -41,7 +41,7 @@ export async function getSiteTraderAutoConfig(db: D1Database): Promise<SiteTrade
 
   const map = new Map(rows.results.map((r) => [r.key, r.value]));
   return {
-    enabled: (map.get('auto_publish_top_traders') ?? 'true') !== 'false',
+    enabled: map.get('auto_publish_top_traders') === 'true',
     minWinRate: Math.max(0, Math.min(95, Number(map.get('auto_publish_min_win_rate') ?? 52) || 52)),
     maxCount: Math.max(1, Math.min(20, Number(map.get('auto_publish_max_count') ?? 6) || 6)),
   };

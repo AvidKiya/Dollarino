@@ -146,7 +146,11 @@ adminRoutes.get('/overview', async (c) => {
   const settingsMap: Record<string, string> = {};
   for (const s of settings.results) {
     if (s.key === 'telegram_bot_token_enc' || s.key === 'telegram_webhook_secret_auto') continue;
-    settingsMap[s.key] = s.value;
+    if (s.key === 'google_client_secret') {
+      settingsMap[s.key] = s.value ? '********' : '';
+      continue;
+    }
+    settingsMap[s.key] = /YourTRC20WalletAddress|^0xYour/i.test(s.value || '') ? '' : s.value;
   }
 
   const activeSubByUser = new Map<string, { plan_code: string; expires_at: string | null }>();
@@ -463,7 +467,9 @@ adminRoutes.patch('/users/:id', async (c) => {
 adminRoutes.put('/settings', async (c) => {
   const body = await c.req.json<Record<string, string>>();
   for (const [k, v] of Object.entries(body)) {
-    await setCachedSystemSetting(c.env.DB, k, String(v));
+    const strVal = String(v);
+    if (k === 'google_client_secret' && strVal.trim() === '********') continue;
+    await setCachedSystemSetting(c.env.DB, k, strVal);
   }
   invalidateSettingsCache(c.env.DB);
   return c.json({ ok: true });
@@ -2173,7 +2179,7 @@ adminRoutes.get('/database/backup', async (c) => {
 
   const payload = {
     format: 'dollarino-d1-backup-v1',
-    version: '11.5.0',
+    version: '11.6.0',
     exportedAt: new Date().toISOString(),
     exportedBy: actor.username,
     excludeSecrets,

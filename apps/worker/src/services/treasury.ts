@@ -464,6 +464,143 @@ export async function getUserTreasuryDepositOptions(db: D1Database, userId: stri
   };
 }
 
+/**
+ * Core debt-first settlement rule:
+ * Always settles any outstanding server fee debt + penalty first,
+ * and credits every cent of overpayment to the user's prepaid fee credit balance.
+ */
+export async function settleDebtFirstThenCredit(
+  db: D1Database,
+  userId: string,
+  paidAmountUsd: number,
+  txHash: string,
+  opts?: { alsoCreditWalletBalance?: boolean }
+): Promise<{ settledDebtUsd: number; addedCreditUsd: number; settledCount: number }> {
+  const paidAmount = Math.max(0, Number(paidAmountUsd || 0));
+  const [feeAgg, uRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(CASE WHEN status IN ('ACCRUED', 'PENDING_VERIFY') AND COALESCE(source, '') != 'PREPAY_CREDIT' THEN fee_usd ELSE 0 END), 0) AS due_usd
+         FROM server_fee_ledger WHERE user_id = ?`
+      )
+      .bind(userId)
+      .first<{ due_usd: number }>(),
+    db
+      .prepare(`SELECT COALESCE(fee_penalty_usd, 0) AS penalty_usd FROM users WHERE id = ?`)
+      .bind(userId)
+      .first<{ penalty_usd: number }>(),
+  ]);
+
+  const accruedDue = Number(feeAgg?.due_usd || 0);
+  const penaltyDue = Number(uRow?.penalty_usd || 0);
+  const totalDebt = accruedDue + penaltyDue;
+  const walletIncSql = opts?.alsoCreditWalletBalance
+    ? `, wallet_balance_usdt = ROUND(COALESCE(wallet_balance_usdt, 0) + ?, 4)`
+    : '';
+
+  let settledDebtUsd = 0;
+  let addedCreditUsd = 0;
+  let settledCount = 0;
+
+  if (totalDebt > 0 && paidAmount >= totalDebt - 0.01) {
+    settledDebtUsd = Number(totalDebt.toFixed(4));
+    addedCreditUsd = Number(Math.max(0, paidAmount - totalDebt).toFixed(4));
+    const updRes = await db
+      .prepare(
+        `UPDATE server_fee_ledger
+         SET status = 'SETTLED_ONCHAIN', tx_hash = COALESCE(tx_hash, ?)
+         WHERE user_id = ? AND status IN ('ACCRUED', 'PENDING_VERIFY') AND COALESCE(source, '') != 'PREPAY_CREDIT'`
+      )
+      .bind(txHash, userId)
+      .run();
+    settledCount = updRes.meta?.changes ?? 0;
+
+    const uBinds: Array<string | number> = opts?.alsoCreditWalletBalance
+      ? [addedCreditUsd, addedCreditUsd, userId]
+      : [addedCreditUsd, userId];
+    await db
+      .prepare(
+        `UPDATE users
+         SET fee_lock_status = 'ACTIVE',
+             fee_penalty_usd = 0,
+             fee_grace_deadline = NULL,
+             fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4)${walletIncSql}
+         WHERE id = ?`
+      )
+      .bind(...uBinds)
+      .run();
+  } else if (totalDebt > 0 && paidAmount > 0) {
+    // Partial settlement toward open fee debt: penalty first, then oldest accrued ledger entries
+    settledDebtUsd = Number(Math.min(paidAmount, totalDebt).toFixed(4));
+    const remPenalty = Math.max(0, penaltyDue - paidAmount);
+    await db
+      .prepare(`UPDATE users SET fee_penalty_usd = ROUND(?, 4) WHERE id = ?`)
+      .bind(remPenalty, userId)
+      .run();
+
+    let pool = Math.max(0, paidAmount - penaltyDue);
+    if (pool > 0) {
+      const rows = await db
+        .prepare(
+          `SELECT id, fee_usd FROM server_fee_ledger
+           WHERE user_id = ? AND status IN ('ACCRUED', 'PENDING_VERIFY') AND COALESCE(source, '') != 'PREPAY_CREDIT'
+           ORDER BY created_at ASC`
+        )
+        .bind(userId)
+        .all<{ id: string; fee_usd: number }>();
+      for (const r of rows.results) {
+        if (pool + 0.001 >= r.fee_usd) {
+          pool = Math.max(0, pool - r.fee_usd);
+          await db
+            .prepare(`UPDATE server_fee_ledger SET status = 'SETTLED_ONCHAIN', tx_hash = COALESCE(tx_hash, ?) WHERE id = ?`)
+            .bind(txHash, r.id)
+            .run();
+          settledCount++;
+        } else if (pool > 0.01) {
+          // Reduce remaining ledger row proportionally so exact paid amount reduces debt
+          const remRowUsd = Number(Math.max(0, r.fee_usd - pool).toFixed(4));
+          await db
+            .prepare(`UPDATE server_fee_ledger SET fee_usd = ?, note = COALESCE(note, '') || ' [تسویه جزئی با TX ' || ? || ']' WHERE id = ?`)
+            .bind(remRowUsd, txHash.slice(0, 12), r.id)
+            .run();
+          pool = 0;
+          break;
+        }
+      }
+      if (pool > 0.0001) {
+        addedCreditUsd = Number(pool.toFixed(4));
+        const uBinds: Array<string | number> = opts?.alsoCreditWalletBalance
+          ? [addedCreditUsd, addedCreditUsd, userId]
+          : [addedCreditUsd, userId];
+        await db
+          .prepare(
+            `UPDATE users
+             SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4)${walletIncSql}
+             WHERE id = ?`
+          )
+          .bind(...uBinds)
+          .run();
+      }
+    }
+  } else {
+    addedCreditUsd = Number(paidAmount.toFixed(4));
+    const uBinds: Array<string | number> = opts?.alsoCreditWalletBalance
+      ? [addedCreditUsd, addedCreditUsd, userId]
+      : [addedCreditUsd, userId];
+    await db
+      .prepare(
+        `UPDATE users
+         SET fee_lock_status = 'ACTIVE',
+             fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4)${walletIncSql}
+         WHERE id = ?`
+      )
+      .bind(...uBinds)
+      .run();
+  }
+
+  return { settledDebtUsd, addedCreditUsd, settledCount };
+}
+
 export async function applyConfirmedTreasuryCredit(
   db: D1Database,
   depositId: string,
@@ -489,101 +626,10 @@ export async function applyConfirmedTreasuryCredit(
     return { ok: true, settledDebtUsd: 0, addedCreditUsd: 0 };
   }
 
-  const [feeAgg, uRow] = await Promise.all([
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(CASE WHEN status IN ('ACCRUED', 'PENDING_VERIFY') THEN fee_usd ELSE 0 END), 0) AS due_usd
-         FROM server_fee_ledger WHERE user_id = ?`
-      )
-      .bind(dep.user_id)
-      .first<{ due_usd: number }>(),
-    db
-      .prepare(`SELECT COALESCE(fee_penalty_usd, 0) AS penalty_usd FROM users WHERE id = ?`)
-      .bind(dep.user_id)
-      .first<{ penalty_usd: number }>(),
-  ]);
-
-  const accruedDue = Number(feeAgg?.due_usd || 0);
-  const penaltyDue = Number(uRow?.penalty_usd || 0);
-  const totalDebt = accruedDue + penaltyDue;
   const paidAmount = Number(dep.amount_usd || 0);
-
-  let settledDebtUsd = 0;
-  let addedCreditUsd = 0;
-
-  if (totalDebt > 0 && paidAmount >= totalDebt - 0.01) {
-    settledDebtUsd = Number(totalDebt.toFixed(4));
-    addedCreditUsd = Number(Math.max(0, paidAmount - totalDebt).toFixed(4));
-    await db.batch([
-      db
-        .prepare(
-          `UPDATE server_fee_ledger
-           SET status = 'SETTLED_ONCHAIN', tx_hash = COALESCE(tx_hash, ?)
-           WHERE user_id = ? AND status IN ('ACCRUED', 'PENDING_VERIFY')`
-        )
-        .bind(dep.tx_hash, dep.user_id),
-      db
-        .prepare(
-          `UPDATE users
-           SET fee_lock_status = 'ACTIVE',
-               fee_penalty_usd = 0,
-               fee_grace_deadline = NULL,
-               fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4),
-               wallet_balance_usdt = ROUND(COALESCE(wallet_balance_usdt, 0) + ?, 4)
-           WHERE id = ?`
-        )
-        .bind(addedCreditUsd, addedCreditUsd, dep.user_id),
-    ]);
-  } else if (totalDebt > 0) {
-    // Partial settlement toward open fee debt
-    settledDebtUsd = Number(Math.min(paidAmount, totalDebt).toFixed(4));
-    const remPenalty = Math.max(0, penaltyDue - paidAmount);
-    await db
-      .prepare(
-        `UPDATE users SET fee_penalty_usd = ROUND(?, 4) WHERE id = ?`
-      )
-      .bind(remPenalty, dep.user_id)
-      .run();
-    // Settle oldest ACCRUED ledger items covered by remaining paid amount
-    const remForAccrued = Math.max(0, paidAmount - penaltyDue);
-    if (remForAccrued > 0) {
-      const rows = await db
-        .prepare(
-          `SELECT id, fee_usd FROM server_fee_ledger WHERE user_id = ? AND status IN ('ACCRUED', 'PENDING_VERIFY') ORDER BY created_at ASC`
-        )
-        .bind(dep.user_id)
-        .all<{ id: string; fee_usd: number }>();
-      let pool = remForAccrued;
-      for (const r of rows.results) {
-        if (pool + 0.001 >= r.fee_usd) {
-          pool -= r.fee_usd;
-          await db
-            .prepare(`UPDATE server_fee_ledger SET status = 'SETTLED_ONCHAIN', tx_hash = COALESCE(tx_hash, ?) WHERE id = ?`)
-            .bind(dep.tx_hash, r.id)
-            .run();
-        }
-      }
-      if (pool > 0.0001) {
-        addedCreditUsd = Number(pool.toFixed(4));
-        await db
-          .prepare(`UPDATE users SET fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4) WHERE id = ?`)
-          .bind(addedCreditUsd, dep.user_id)
-          .run();
-      }
-    }
-  } else {
-    addedCreditUsd = Number(paidAmount.toFixed(4));
-    await db
-      .prepare(
-        `UPDATE users
-         SET fee_lock_status = 'ACTIVE',
-             fee_prepaid_credit_usd = ROUND(COALESCE(fee_prepaid_credit_usd, 0) + ?, 4),
-             wallet_balance_usdt = ROUND(COALESCE(wallet_balance_usdt, 0) + ?, 4)
-         WHERE id = ?`
-      )
-      .bind(addedCreditUsd, addedCreditUsd, dep.user_id)
-      .run();
-  }
+  const { settledDebtUsd, addedCreditUsd } = await settleDebtFirstThenCredit(db, dep.user_id, paidAmount, dep.tx_hash, {
+    alsoCreditWalletBalance: true,
+  });
 
   await db
     .prepare(
@@ -598,6 +644,233 @@ export async function applyConfirmedTreasuryCredit(
   return { ok: true, settledDebtUsd, addedCreditUsd };
 }
 
+export interface BankingInvoiceItem {
+  invoiceNo: string;
+  id: string;
+  kind: 'TREASURY_DEPOSIT' | 'CREDIT_TOPUP' | 'FEE_SETTLEMENT';
+  titleFa: string;
+  titleEn: string;
+  network: string;
+  asset: string;
+  amountUsd: number;
+  senderAddress: string | null;
+  receiverAddress: string | null;
+  txHash: string | null;
+  explorerUrl: string | null;
+  status: 'CONFIRMED' | 'PENDING_VERIFY' | 'REJECTED';
+  verifiedOnchain: boolean;
+  settledDebtUsd: number;
+  addedCreditUsd: number;
+  note: string | null;
+  createdAt: string;
+  confirmedAt: string | null;
+}
+
+export function buildInvoiceNumber(id: string, createdAt?: string | null): string {
+  const datePart = (createdAt || new Date().toISOString()).slice(0, 10).replace(/-/g, '');
+  const tail = (id || '000000').replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase().padStart(6, '0');
+  return `DLR-${datePart}-${tail}`;
+}
+
+export function buildExplorerTxUrl(network: string, txHash: string | null): string | null {
+  if (!txHash) return null;
+  const spec = TREASURY_NETWORKS.find((n) => n.network === network.toUpperCase());
+  if (spec) return `${spec.explorerPrefix}${encodeURIComponent(txHash)}`;
+  if (/^0x[0-9a-fA-F]{64}$/.test(txHash)) return `https://bscscan.com/tx/${encodeURIComponent(txHash)}`;
+  if (/^[0-9a-fA-F]{64}$/.test(txHash)) return `https://tronscan.org/#/transaction/${encodeURIComponent(txHash)}`;
+  return null;
+}
+
+const EVM_STABLE_CONTRACTS: Record<string, { rpc: string; usdt?: { address: string; decimals: number }; usdc?: { address: string; decimals: number } }> = {
+  BEP20: {
+    rpc: 'https://bsc-dataseed.binance.org',
+    usdt: { address: '0x55d398326f99059ff775485246999027b3197955', decimals: 18 },
+    usdc: { address: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d', decimals: 18 },
+  },
+  ERC20: {
+    rpc: 'https://ethereum-rpc.publicnode.com',
+    usdt: { address: '0xdac17f958d2ee523a2206206994597c13d831ec7', decimals: 6 },
+    usdc: { address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 },
+  },
+  BASE: {
+    rpc: 'https://mainnet.base.org',
+    usdc: { address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 },
+    usdt: { address: '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2', decimals: 6 },
+  },
+  ARBITRUM: {
+    rpc: 'https://arb1.arbitrum.io/rpc',
+    usdt: { address: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', decimals: 6 },
+    usdc: { address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', decimals: 6 },
+  },
+};
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+export async function getUserBankingInvoices(db: D1Database, userId: string): Promise<BankingInvoiceItem[]> {
+  const [depRows, feeRows, settings] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, category, asset, network, receiver_address, sender_address, amount_usd, tx_hash, status, verified_onchain, credited_to_wallet, admin_note, created_at, confirmed_at
+         FROM treasury_deposits
+         WHERE user_id = ?
+         ORDER BY created_at DESC
+         LIMIT 50`
+      )
+      .bind(userId)
+      .all<{
+        id: string;
+        category: string;
+        asset: string;
+        network: string;
+        receiver_address: string;
+        sender_address?: string | null;
+        amount_usd: number;
+        tx_hash: string;
+        status: string;
+        verified_onchain: number;
+        credited_to_wallet: number;
+        admin_note: string | null;
+        created_at: string;
+        confirmed_at: string | null;
+      }>()
+      .catch(() => ({ results: [] })),
+    db
+      .prepare(
+        `SELECT id, source, symbol, fee_usd, status, tx_hash, note, created_at
+         FROM server_fee_ledger
+         WHERE user_id = ? AND tx_hash IS NOT NULL AND tx_hash != ''
+         ORDER BY created_at DESC
+         LIMIT 50`
+      )
+      .bind(userId)
+      .all<{
+        id: string;
+        source: string;
+        symbol: string;
+        fee_usd: number;
+        status: string;
+        tx_hash: string;
+        note: string | null;
+        created_at: string;
+      }>()
+      .catch(() => ({ results: [] })),
+    getTreasurySettingsMap(db),
+  ]);
+
+  const seenHashes = new Set<string>();
+  const invoices: BankingInvoiceItem[] = [];
+
+  for (const d of depRows.results) {
+    if (d.tx_hash) seenHashes.add(d.tx_hash.toLowerCase());
+    const kind: BankingInvoiceItem['kind'] =
+      d.category === 'FEE_SETTLEMENT'
+        ? 'FEE_SETTLEMENT'
+        : d.category === 'CREDIT_TOPUP'
+          ? 'CREDIT_TOPUP'
+          : 'TREASURY_DEPOSIT';
+    const titleFa =
+      kind === 'FEE_SETTLEMENT'
+        ? 'فاکتور تسویه کارمزد ۳٪ دلارینو'
+        : kind === 'CREDIT_TOPUP'
+          ? 'فاکتور شارژ اعتبار پیش‌پرداخت کارمزد'
+          : 'فاکتور واریز به خزانه بانکی دلارینو';
+    const titleEn =
+      kind === 'FEE_SETTLEMENT'
+        ? '3% Profit Fee Settlement Invoice'
+        : kind === 'CREDIT_TOPUP'
+          ? 'Prepaid Fee Credit Invoice'
+          : 'Central Treasury Deposit Invoice';
+
+    const status: BankingInvoiceItem['status'] =
+      d.status === 'CONFIRMED' ? 'CONFIRMED' : d.status === 'REJECTED' ? 'REJECTED' : 'PENDING_VERIFY';
+
+    invoices.push({
+      invoiceNo: buildInvoiceNumber(d.id, d.created_at),
+      id: d.id,
+      kind,
+      titleFa,
+      titleEn,
+      network: d.network,
+      asset: d.asset,
+      amountUsd: Number(d.amount_usd || 0),
+      senderAddress: d.sender_address || null,
+      receiverAddress: d.receiver_address || null,
+      txHash: d.tx_hash || null,
+      explorerUrl: buildExplorerTxUrl(d.network, d.tx_hash || null),
+      status,
+      verifiedOnchain: Boolean(d.verified_onchain) || status === 'CONFIRMED',
+      settledDebtUsd: kind === 'FEE_SETTLEMENT' ? Number(d.amount_usd || 0) : 0,
+      addedCreditUsd: kind !== 'FEE_SETTLEMENT' && status === 'CONFIRMED' ? Number(d.amount_usd || 0) : 0,
+      note: d.admin_note || null,
+      createdAt: d.created_at,
+      confirmedAt: d.confirmed_at || null,
+    });
+  }
+
+  // Group direct fee settlement batches by tx_hash from server_fee_ledger if not already covered by treasury_deposits
+  const feeGroups = new Map<
+    string,
+    { id: string; totalUsd: number; source: string; status: string; note: string | null; createdAt: string }
+  >();
+  for (const f of feeRows.results) {
+    const hashKey = f.tx_hash.toLowerCase();
+    if (seenHashes.has(hashKey)) continue;
+    const prev = feeGroups.get(hashKey);
+    if (prev) {
+      prev.totalUsd += Number(f.fee_usd || 0);
+    } else {
+      feeGroups.set(hashKey, {
+        id: f.id,
+        totalUsd: Number(f.fee_usd || 0),
+        source: f.source,
+        status: f.status,
+        note: f.note,
+        createdAt: f.created_at,
+      });
+    }
+  }
+
+  for (const [hashLower, grp] of feeGroups.entries()) {
+    const originalHash = feeRows.results.find((r) => r.tx_hash.toLowerCase() === hashLower)?.tx_hash || hashLower;
+    const isPrepay = grp.source === 'PREPAY_CREDIT';
+    const isEvm = /^0x[a-fA-F0-9]{64}$/.test(originalHash);
+    const network = isEvm ? 'BEP20' : /^[a-fA-F0-9]{64}$/.test(originalHash) ? 'TRC20' : 'SOLANA';
+    const receiverAddress = isEvm
+      ? settings.treasury_evm_receiver || settings.trust_wallet_evm_receiver || null
+      : settings.treasury_trc20_receiver || settings.usdt_trc20_wallet || null;
+    const status: BankingInvoiceItem['status'] =
+      grp.status === 'SETTLED_ONCHAIN' || grp.status === 'SETTLED_PREPAID'
+        ? 'CONFIRMED'
+        : grp.status === 'REJECTED'
+          ? 'REJECTED'
+          : 'PENDING_VERIFY';
+
+    invoices.push({
+      invoiceNo: buildInvoiceNumber(grp.id, grp.createdAt),
+      id: grp.id,
+      kind: isPrepay ? 'CREDIT_TOPUP' : 'FEE_SETTLEMENT',
+      titleFa: isPrepay ? 'فاکتور شارژ اعتبار پیش‌پرداخت کارمزد' : 'فاکتور تسویه کارمزد ۳٪ دلارینو',
+      titleEn: isPrepay ? 'Prepaid Fee Credit Invoice' : '3% Profit Fee Settlement Invoice',
+      network,
+      asset: 'USDT',
+      amountUsd: Number(grp.totalUsd.toFixed(4)),
+      senderAddress: null,
+      receiverAddress,
+      txHash: originalHash,
+      explorerUrl: buildExplorerTxUrl(network, originalHash),
+      status,
+      verifiedOnchain: status === 'CONFIRMED',
+      settledDebtUsd: !isPrepay ? Number(grp.totalUsd.toFixed(4)) : 0,
+      addedCreditUsd: isPrepay && status === 'CONFIRMED' ? Number(grp.totalUsd.toFixed(4)) : 0,
+      note: grp.note || null,
+      createdAt: grp.createdAt,
+      confirmedAt: status === 'CONFIRMED' ? grp.createdAt : null,
+    });
+  }
+
+  invoices.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  return invoices;
+}
+
 export async function submitTreasuryDeposit(
   db: D1Database,
   userId: string,
@@ -607,11 +880,13 @@ export async function submitTreasuryDeposit(
     amountUsd: number;
     txHash: string;
     category?: TreasuryCategory;
+    senderAddress?: string;
   }
 ) {
   const networkUpper = String(params.network || '').toUpperCase().trim() as TreasuryNetwork;
   const assetUpper = String(params.asset || '').toUpperCase().trim() as TreasuryAsset;
   const txHash = String(params.txHash || '').trim();
+  const senderAddress = params.senderAddress ? String(params.senderAddress).trim().slice(0, 120) : null;
   const category: TreasuryCategory =
     params.category === 'FEE_SETTLEMENT' || params.category === 'CREDIT_TOPUP' ? params.category : 'DEPOSIT';
 
@@ -632,7 +907,7 @@ export async function submitTreasuryDeposit(
     throw new Error(`آدرس خزانه برای شبکه ${spec.network} هنوز توسط مدیریت ثبت نشده است.`);
   }
 
-  const minUsd = category === 'FEE_SETTLEMENT' ? 0.5 : Math.max(10, Number(settings.min_treasury_deposit_usd || 10) || 10);
+  const minUsd = category === 'FEE_SETTLEMENT' ? 0.05 : Math.max(10, Number(settings.min_treasury_deposit_usd || 10) || 10);
   const amountUsd = Number(params.amountUsd);
   if (!Number.isFinite(amountUsd) || amountUsd < minUsd) {
     throw new Error(
@@ -658,11 +933,12 @@ export async function submitTreasuryDeposit(
 
   const depositId = randomId('tdep');
   const verifiedOnchain = receiptState === 'CONFIRMED' ? 1 : 0;
+  const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   await db
     .prepare(
-      `INSERT INTO treasury_deposits (id, user_id, category, asset, network, receiver_address, amount_usd, tx_hash, status, verified_onchain, credited_to_wallet)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+      `INSERT INTO treasury_deposits (id, user_id, category, asset, network, receiver_address, sender_address, amount_usd, tx_hash, status, verified_onchain, credited_to_wallet)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
     )
     .bind(
       depositId,
@@ -671,12 +947,49 @@ export async function submitTreasuryDeposit(
       assetUpper,
       spec.network,
       receiverAddress,
+      senderAddress,
       Number(amountUsd.toFixed(4)),
       txHash,
       verifiedOnchain ? 'CONFIRMED' : 'PENDING_VERIFY',
       verifiedOnchain
     )
     .run();
+
+  const buildInvoiceObj = (
+    status: 'CONFIRMED' | 'PENDING_VERIFY',
+    settledDebtUsd: number,
+    addedCreditUsd: number
+  ): BankingInvoiceItem => ({
+    invoiceNo: buildInvoiceNumber(depositId, nowIso),
+    id: depositId,
+    kind: category === 'FEE_SETTLEMENT' ? 'FEE_SETTLEMENT' : category === 'CREDIT_TOPUP' ? 'CREDIT_TOPUP' : 'TREASURY_DEPOSIT',
+    titleFa:
+      category === 'FEE_SETTLEMENT'
+        ? 'فاکتور تسویه کارمزد ۳٪ دلارینو'
+        : category === 'CREDIT_TOPUP'
+          ? 'فاکتور شارژ اعتبار پیش‌پرداخت کارمزد'
+          : 'فاکتور واریز به خزانه بانکی دلارینو',
+    titleEn:
+      category === 'FEE_SETTLEMENT'
+        ? '3% Profit Fee Settlement Invoice'
+        : category === 'CREDIT_TOPUP'
+          ? 'Prepaid Fee Credit Invoice'
+          : 'Central Treasury Deposit Invoice',
+    network: spec.network,
+    asset: assetUpper,
+    amountUsd: Number(amountUsd.toFixed(4)),
+    senderAddress,
+    receiverAddress,
+    txHash,
+    explorerUrl: buildExplorerTxUrl(spec.network, txHash),
+    status,
+    verifiedOnchain: status === 'CONFIRMED',
+    settledDebtUsd,
+    addedCreditUsd,
+    note: status === 'CONFIRMED' ? 'تایید خودکار آن‌چین روی بلاکچین' : 'در صف بررسی خودکار / ادمین',
+    createdAt: nowIso,
+    confirmedAt: status === 'CONFIRMED' ? nowIso : null,
+  });
 
   if (verifiedOnchain) {
     const applied = await applyConfirmedTreasuryCredit(db, depositId, 'تایید خودکار آن‌چین روی بلاکچین');
@@ -688,6 +1001,7 @@ export async function submitTreasuryDeposit(
       receiverAddress,
       settledDebtUsd: applied.settledDebtUsd,
       addedCreditUsd: applied.addedCreditUsd,
+      invoice: buildInvoiceObj('CONFIRMED', applied.settledDebtUsd, applied.addedCreditUsd),
     };
   }
 
@@ -699,6 +1013,190 @@ export async function submitTreasuryDeposit(
     receiverAddress,
     settledDebtUsd: 0,
     addedCreditUsd: 0,
+    invoice: buildInvoiceObj('PENDING_VERIFY', 0, 0),
+  };
+}
+
+export async function autoDetectUserTransferOnchain(
+  db: D1Database,
+  userId: string,
+  params: {
+    network: string;
+    asset?: string;
+    minAmountUsd?: number;
+    category?: TreasuryCategory;
+  }
+) {
+  const networkUpper = String(params.network || 'BEP20').toUpperCase().trim() as TreasuryNetwork;
+  const spec = TREASURY_NETWORKS.find((n) => n.network === networkUpper);
+  if (!spec) {
+    return { ok: false as const, found: false as const, error: 'شبکه انتخابی معتبر نیست.' };
+  }
+
+  const [settings, userRow] = await Promise.all([
+    getTreasurySettingsMap(db),
+    db
+      .prepare(`SELECT trust_wallet_address, trust_wallet_tron FROM users WHERE id = ? LIMIT 1`)
+      .bind(userId)
+      .first<{ trust_wallet_address: string | null; trust_wallet_tron: string | null }>()
+      .catch(() => null),
+  ]);
+
+  const receiverAddress = resolveNetworkReceiverAddress(spec, settings);
+  if (!receiverAddress) {
+    return { ok: false as const, found: false as const, error: `آدرس خزانه برای شبکه ${spec.network} هنوز ثبت نشده است.` };
+  }
+
+  const minExpected = Math.max(0.4, Number(params.minAmountUsd || (params.category === 'FEE_SETTLEMENT' ? 0.5 : 10)));
+  let detectedHash = '';
+  let detectedAmount = 0;
+  let detectedAsset = (params.asset || 'USDT').toUpperCase();
+  let senderAddr = '';
+
+  if (spec.chainKind === 'EVM') {
+    const evmSender = (userRow?.trust_wallet_address || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(evmSender)) {
+      return {
+        ok: false as const,
+        found: false as const,
+        error: 'برای جستجوی خودکار تراکنش، ابتدا آدرس EVM کیف‌پول Trust Wallet خود را متصل کنید یا TX Hash را وارد نمایید.',
+      };
+    }
+    senderAddr = evmSender;
+    const netCfg = EVM_STABLE_CONTRACTS[spec.network];
+    if (netCfg) {
+      const fromTopic = '0x' + evmSender.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+      const toTopic = '0x' + receiverAddress.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+      try {
+        const blkRes = await fetch(netCfg.rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+          signal: AbortSignal.timeout(4000),
+        });
+        const blkJson = (await blkRes.json()) as { result?: string };
+        const latestHex = blkJson?.result;
+        if (latestHex) {
+          const latest = parseInt(latestHex, 16);
+          const fromBlock = '0x' + Math.max(0, latest - 240).toString(16);
+          const tokensToCheck = [
+            netCfg.usdt ? { sym: 'USDT', ...netCfg.usdt } : null,
+            netCfg.usdc ? { sym: 'USDC', ...netCfg.usdc } : null,
+          ].filter((x): x is { sym: string; address: string; decimals: number } => Boolean(x));
+
+          for (const tk of tokensToCheck) {
+            const logRes = await fetch(netCfg.rpc, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'eth_getLogs',
+                params: [
+                  {
+                    fromBlock,
+                    toBlock: 'latest',
+                    address: tk.address,
+                    topics: [ERC20_TRANSFER_TOPIC, fromTopic, toTopic],
+                  },
+                ],
+              }),
+              signal: AbortSignal.timeout(5000),
+            }).catch(() => null);
+            if (!logRes?.ok) continue;
+            const lj = (await logRes.json()) as {
+              result?: Array<{ transactionHash?: string; data?: string }>;
+            };
+            const logs = Array.isArray(lj.result) ? [...lj.result].reverse() : [];
+            for (const lg of logs) {
+              if (!lg.transactionHash || !lg.data) continue;
+              const amt = Number(BigInt(lg.data)) / Math.pow(10, tk.decimals);
+              if (amt < minExpected - 0.1) continue;
+              const usedBefore = await db
+                .prepare(`SELECT id FROM treasury_deposits WHERE LOWER(tx_hash) = LOWER(?) LIMIT 1`)
+                .bind(lg.transactionHash)
+                .first()
+                .catch(() => null);
+              if (usedBefore) continue;
+              detectedHash = lg.transactionHash;
+              detectedAmount = Number(amt.toFixed(4));
+              detectedAsset = tk.sym;
+              break;
+            }
+            if (detectedHash) break;
+          }
+        }
+      } catch {
+        // RPC unavailable in offline sandbox
+      }
+    }
+  } else if (spec.chainKind === 'TRON') {
+    const tronSender = (userRow?.trust_wallet_tron || '').trim();
+    if (tronSender) senderAddr = tronSender;
+    try {
+      const trRes = await fetch(
+        `https://api.trongrid.io/v1/accounts/${encodeURIComponent(receiverAddress)}/transactions/trc20?limit=25`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (trRes.ok) {
+        const tj = (await trRes.json()) as {
+          data?: Array<{
+            transaction_id?: string;
+            from?: string;
+            to?: string;
+            value?: string;
+            token_info?: { symbol?: string; decimals?: number };
+          }>;
+        };
+        for (const tx of tj.data || []) {
+          if (!tx.transaction_id || !tx.value) continue;
+          if (tronSender && (tx.from || '').toLowerCase() !== tronSender.toLowerCase()) continue;
+          if ((tx.to || '').toLowerCase() !== receiverAddress.toLowerCase()) continue;
+          const dec = Number(tx.token_info?.decimals ?? 6);
+          const amt = Number(tx.value) / Math.pow(10, dec);
+          if (amt < minExpected - 0.1) continue;
+          const usedBefore = await db
+            .prepare(`SELECT id FROM treasury_deposits WHERE LOWER(tx_hash) = LOWER(?) LIMIT 1`)
+            .bind(tx.transaction_id)
+            .first()
+            .catch(() => null);
+          if (usedBefore) continue;
+          detectedHash = tx.transaction_id;
+          detectedAmount = Number(amt.toFixed(4));
+          detectedAsset = tx.token_info?.symbol || 'USDT';
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!detectedHash) {
+    return {
+      ok: false as const,
+      found: false as const,
+      error:
+        'تراکنش تاییدشده جدیدی در بلاک‌های اخیر از آدرس کیف‌پول متصل شما به خزانه یافت نشد. اگر چند ثانیه پیش ارسال کرده‌اید کمی صبر کرده و دوباره بزنید یا TX Hash را مستقیم وارد کنید.',
+    };
+  }
+
+  const submitted = await submitTreasuryDeposit(db, userId, {
+    network: spec.network,
+    asset: detectedAsset,
+    amountUsd: detectedAmount,
+    txHash: detectedHash,
+    category: params.category || 'DEPOSIT',
+    senderAddress: senderAddr || undefined,
+  });
+
+  return {
+    ...submitted,
+    ok: true as const,
+    found: true as const,
+    txHash: detectedHash,
+    amountUsd: detectedAmount,
+    asset: detectedAsset,
   };
 }
 

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dollarino — پایانه هوشمند</title>
+    <title>Dollarino V11.6 — پایانه هوشمند</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -19,7 +19,7 @@
           <div class="brand-info">
             <div class="brand-row">
               <h1>دلارینو</h1>
-              <span class="badge-cobalt">PRO v9.7</span>
+              <span class="badge-cobalt">V11.6</span>
             </div>
             <p id="userMeta" class="brand-sub">آماده اتصال امن به حساب...</p>
           </div>
@@ -87,7 +87,7 @@
 
       <!-- Scrollable Viewport -->
       <div class="viewport">
-        <!-- TAB 1: BOT & OVERVIEW -->
+        <!-- TAB 1: BOT & SIMPLE MODE CONTROLS -->
         <main id="tab-bot" class="tab-panel active">
           <!-- Onboarding Banner when not connected -->
           <section id="welcomeHeroCard" class="hero-cobalt dot-grid-light">
@@ -97,14 +97,13 @@
                   <span class="pulse-dot emerald"></span>
                   <span>ترمینال همراه دلارینو</span>
                 </span>
-                <span class="hero-tag">نسخه ۹.۷</span>
+                <span class="hero-tag">نسخه ۱۱.۶</span>
               </div>
               <div class="welcome-grid">
                 <div>
-                  <h2 class="hero-h2">معامله و کنترل ربات با یک کلیک</h2>
-                  <p class="hero-desc">ربات ۲۴/۷، نرخ لحظه‌ای فیوچرز، رادار Trust Wallet و سود بازتان مستقیماً در مرورگر.</p>
+                  <h2 class="hero-h2">کنترل ۵ موتور و ربات با یک کلیک</h2>
+                  <p class="hero-desc">سوییچ سریع دمو/واقعی، اجرای اتومات یا تایید با من، نرخ زنده تومان و رادار AI DEX در مرورگر.</p>
                 </div>
-                <!-- Vector AI Graphic inspired by BrandGraphics.tsx -->
                 <svg viewBox="0 0 96 72" class="welcome-svg" fill="none" aria-hidden="true">
                   <rect width="96" height="72" rx="16" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.22)" />
                   <line x1="22" y1="32" x2="22" y2="56" stroke="#34d399" stroke-width="2" stroke-linecap="round" />
@@ -137,13 +136,14 @@
                   <span id="botPulseDot" class="pulse-dot"></span>
                   <span id="botStateLabel">آماده به‌کار</span>
                 </div>
-                <span id="botModeLabel" class="hero-tag">PAPER · FUTURES</span>
+                <span id="botModeLabel" class="hero-tag">PAPER · AUTO</span>
               </div>
 
               <div class="hero-balance-row">
                 <div>
                   <span class="hero-sublabel">موجودی قابل معامله</span>
                   <div id="balanceTotal" class="hero-balance tabular" dir="ltr">$0.00</div>
+                  <div id="balanceIrt" class="hero-irt tabular">معادل ~ ۰ تومان</div>
                 </div>
                 <div id="heroSparkWrap" class="hero-spark" aria-hidden="true"></div>
               </div>
@@ -158,10 +158,22 @@
                   <strong id="openCount" class="tabular" dir="ltr">0</strong>
                 </div>
                 <div class="hero-metric-box">
-                  <span>اهرم / حالت</span>
-                  <strong id="heroModeShort" class="tabular">DEMO</strong>
+                  <span>حالت / اهرم</span>
+                  <strong id="heroModeShort" class="tabular">DEMO · 10x</strong>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <!-- Simple-Mode Quick Mode Switches (Demo/Live + Auto/Ask) -->
+          <section id="quickModeBar" class="mode-bar hidden">
+            <div class="mode-seg" role="group" aria-label="حالت حساب">
+              <button id="modeDemoBtn" class="mode-pill-btn active-amber" type="button">دمو آزمایشی</button>
+              <button id="modeLiveBtn" class="mode-pill-btn" type="button">حساب واقعی</button>
+            </div>
+            <div class="mode-seg" role="group" aria-label="نحوه اجرا">
+              <button id="execAutoBtn" class="mode-pill-btn active-emerald" type="button">اتومات ۲۴/۷</button>
+              <button id="execAskBtn" class="mode-pill-btn" type="button">تایید با من</button>
             </div>
           </section>
 
@@ -189,6 +201,36 @@
             </button>
           </section>
 
+          <!-- 5 Concurrent Engines Selector -->
+          <section id="enginesPanel" class="glass-card engine-panel hidden">
+            <div class="engine-panel-head">
+              <span>موتورهای معاملاتی فعال همزمان</span>
+              <span id="activeEnginesCount" class="badge-emerald">0/5 روشن</span>
+            </div>
+            <div class="engine-grid">
+              <button type="button" class="engine-chip" data-engine="STRATEGY">
+                <span class="engine-dot"></span>
+                <span>استراتژی</span>
+              </button>
+              <button type="button" class="engine-chip" data-engine="MY_AI">
+                <span class="engine-dot"></span>
+                <span>هوش من</span>
+              </button>
+              <button type="button" class="engine-chip" data-engine="COPY_TRADE">
+                <span class="engine-dot"></span>
+                <span>کپی‌ترید</span>
+              </button>
+              <button type="button" class="engine-chip" data-engine="LISTING_SNIPER">
+                <span class="engine-dot"></span>
+                <span>اسنایپر</span>
+              </button>
+              <button type="button" class="engine-chip" data-engine="PLATFORM_AI">
+                <span class="engine-dot"></span>
+                <span>AI مرکزی</span>
+              </button>
+            </div>
+          </section>
+
           <!-- Open Positions Card -->
           <section class="glass-card">
             <div class="card-head">
@@ -205,7 +247,11 @@
             </div>
             <div id="positionsList" class="list-box">
               <div class="empty-card">
-                <span class="empty-emoji">⚡</span>
+                <span class="empty-icon">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+                  </svg>
+                </span>
                 <p>برای کنترل ربات و مشاهده معاملات باز، کلید اکستنشن را در تب «اتصال» ثبت کنید.</p>
               </div>
             </div>
@@ -232,14 +278,14 @@
             </div>
             <div class="chip-row">
               <button class="chip market-chip active" data-filter="all">همه بازارها</button>
-              <button class="chip market-chip" data-filter="gainers">صعودی‌ها 🟢</button>
-              <button class="chip market-chip" data-filter="losers">نزولی‌ها 🔴</button>
+              <button class="chip market-chip" data-filter="gainers">صعودی‌ها</button>
+              <button class="chip market-chip" data-filter="losers">نزولی‌ها</button>
             </div>
             <div id="marketsList" class="list-box tall"></div>
           </section>
         </main>
 
-        <!-- TAB 3: DEX RADAR & TRUST WALLET -->
+        <!-- TAB 3: DEX RADAR & AI ANALYZER -->
         <main id="tab-dex" class="tab-panel">
           <section class="glass-card">
             <div class="card-head">
@@ -250,22 +296,23 @@
                     <path d="m21 21-4.3-4.3" />
                   </svg>
                 </span>
-                <span>رادار میم‌کوین و سوآپ Trust Wallet</span>
+                <span>رادار DEX و تحلیل AI</span>
               </div>
-              <span class="badge-emerald">DEX زنده</span>
+              <span class="badge-emerald">آپدیت زنده</span>
             </div>
             <div class="search-row">
               <input id="dexSearchInput" type="text" placeholder="نام توکن، نماد یا آدرس کانترکت..." />
               <button id="dexSearchBtn" class="btn btn-cobalt btn-sm">جستجو</button>
             </div>
             <div class="chip-row">
-              <button class="chip dex-chip active" data-q="">🔥 داغ‌ترین‌ها</button>
+              <button class="chip dex-chip active" data-q="">ترندهای داغ</button>
               <button class="chip dex-chip" data-q="PEPE">PEPE</button>
               <button class="chip dex-chip" data-q="SOL">SOL</button>
               <button class="chip dex-chip" data-q="TON">TON</button>
               <button class="chip dex-chip" data-q="BONK">BONK</button>
               <button class="chip dex-chip" data-q="WIF">WIF</button>
             </div>
+            <div id="dexAiResultBox" class="dex-verdict-box hidden"></div>
             <div id="dexList" class="list-box tall"></div>
           </section>
         </main>
@@ -341,11 +388,19 @@
             </div>
           </section>
 
-          <!-- Referral Partner Club Card (matches ServicesPage/Wallet look) -->
+          <!-- Referral Partner Club Card -->
           <section id="referralBox" class="glass-card referral-card hidden">
             <div class="card-head">
               <div class="head-title">
-                <span class="head-icon amber">🎁</span>
+                <span class="head-icon amber">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 12v10H4V12" />
+                    <path d="M2 7h20v5H2z" />
+                    <path d="M12 22V7" />
+                    <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+                    <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+                  </svg>
+                </span>
                 <span>باشگاه رفرال و درآمد دلاری</span>
               </div>
               <span id="refTierBadge" class="badge-emerald">تا ۲۲٪</span>
@@ -363,7 +418,7 @@
       <footer class="foot glass-panel">
         <div class="foot-status">
           <span id="toastDot" class="toast-dot"></span>
-          <span id="toastText">آماده به کار · Dollarino v9.7</span>
+          <span id="toastText">آماده به کار · Dollarino V11.6</span>
         </div>
         <div class="foot-links">
           <a href="https://t.me/Dollarino_bot" target="_blank" rel="noopener noreferrer" class="link-pill" dir="ltr">@Dollarino_bot</a>

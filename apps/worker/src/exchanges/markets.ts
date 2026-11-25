@@ -341,6 +341,28 @@ async function fetchPublicSpotFallback(): Promise<ExchangeMarketInfo[]> {
   }
 }
 
+export function dedupeMarketsBySymbol(items: ExchangeMarketInfo[]): ExchangeMarketInfo[] {
+  const bySymbol = new Map<string, ExchangeMarketInfo>();
+  for (const item of items) {
+    const key = normalizeCanonicalSymbol(item.symbol || `${item.base}${item.quote}`);
+    if (!key) continue;
+    const prev = bySymbol.get(key);
+    if (!prev) {
+      bySymbol.set(key, { ...item, symbol: key });
+      continue;
+    }
+    const prevPx = Number(prev.lastPrice || 0);
+    const curPx = Number(item.lastPrice || 0);
+    const replace =
+      (prevPx <= 0 && curPx > 0) ||
+      (curPx > 0 && item.volume24h > prev.volume24h);
+    if (replace) {
+      bySymbol.set(key, { ...item, symbol: key });
+    }
+  }
+  return Array.from(bySymbol.values()).sort((a, b) => b.volume24h - a.volume24h);
+}
+
 export async function getExchangeMarkets(
   provider: ExchangeProviderId,
   proxyConfig?: ToobitProxyConfig,
@@ -392,6 +414,8 @@ export async function getExchangeMarkets(
     }));
     list.sort((a, b) => b.volume24h - a.volume24h);
   }
+
+  list = dedupeMarketsBySymbol(list);
 
   if (list.length === 0) {
     list = FALLBACK_MARKETS.map((m) => ({

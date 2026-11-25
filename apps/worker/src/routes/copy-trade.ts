@@ -7,6 +7,7 @@ import {
   baselineWalletTxIfEmpty,
   closeCopyPositionV2,
   discoverTop10SmartTraders,
+  enrichSmartTraderRow,
   ensureUserCopyVault,
   executeSmartCopySignalForRule,
   exportUserCopyVaultKeys,
@@ -80,7 +81,10 @@ copyTradeRoutes.get('/traders', async (c) => {
 
   const [tradersRes, tradesRes, mySubsRes, pendingOwnRes] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT * FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC, followers_count DESC`
+      `SELECT * FROM copy_traders
+       WHERE is_active = 1 AND is_verified = 1
+         AND id NOT IN ('ct_aria_quant', 'ct_parsa_scalp', 'ct_negin_ai')
+       ORDER BY roi_30d_pct DESC, followers_count DESC`
     ).all<CopyTraderRow>().catch(() => ({ results: [] as CopyTraderRow[] })),
     c.env.DB.prepare(
       `SELECT * FROM copy_trader_trades WHERE COALESCE(publish_status, 'PUBLISHED') = 'PUBLISHED' ORDER BY opened_at DESC LIMIT 80`
@@ -325,10 +329,11 @@ copyTradeRoutes.get('/smart-wallets', async (c) => {
       .catch(() => ({ results: [] as CopyFollowRuleRow[] })),
   ]);
 
-  const customFiltered =
+  const customFiltered = (
     chainFilter && chainFilter !== 'ALL'
       ? customRes.results.filter((r) => r.chain_id.toLowerCase() === chainFilter.toLowerCase())
-      : customRes.results;
+      : customRes.results
+  ).map(enrichSmartTraderRow);
 
   return c.json({
     ok: true,

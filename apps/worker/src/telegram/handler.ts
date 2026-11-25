@@ -8,7 +8,15 @@ import {
 import { generateSupportAIReply, getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
 import { ensureUserDefaults, syncTelegramAvatarForUser } from '../auth.js';
 import { encryptVaultJson, generateReferralCode, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
-import { fetchDexTrendingOverview, searchDexPairs, type DexTokenEnriched } from '../dex/screener.js';
+import {
+  annotateRoutesWithLivePools,
+  buildMultiDappRoutes,
+  buildTrustWalletSwapLinks,
+  fetchDexTrendingOverview,
+  getDexTokenPools,
+  searchDexPairs,
+  type DexTokenEnriched,
+} from '../dex/screener.js';
 import { closeCopyPositionV2, discoverTop10SmartTraders, type CopyPositionV2Row } from '../dex/smart-copy.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
 import {
@@ -1084,14 +1092,19 @@ async function showDexTrendingMenu(
   chatId: string | number,
   customTokens?: DexTokenEnriched[],
   queryLabel?: string,
-  editMsgId?: number
+  editMsgId?: number,
+  page = 0
 ) {
   let tokens: DexTokenEnriched[] = customTokens || [];
   if (!customTokens) {
     const overview = await fetchDexTrendingOverview().catch(() => ({ pairs: [] as DexTokenEnriched[], metas: [] }));
     tokens = overview.pairs;
   }
-  const top = tokens.slice(0, 6);
+  const pageSize = 5;
+  const totalPages = Math.max(1, Math.ceil(tokens.length / pageSize));
+  const safePage = Math.max(0, Math.min(totalPages - 1, page));
+  const top = tokens.slice(safePage * pageSize, (safePage + 1) * pageSize);
+
   if (!top.length) {
     const emptyMsg = queryLabel
       ? `🔍 هیچ جفت‌ارزی برای «${queryLabel}» در DexScreener پیدا نشد.\nنام توکن یا آدرس کانترکت (Contract Address) را دوباره ارسال کنید.`
@@ -1106,35 +1119,44 @@ async function showDexTrendingMenu(
   }
 
   const lines = top.map((t, idx) => {
+    const num = safePage * pageSize + idx + 1;
     const price = t.priceUsd ? `$${Number(t.priceUsd) < 0.01 ? Number(t.priceUsd).toPrecision(4) : Number(t.priceUsd).toFixed(4)}` : '—';
     const chg24 = Number(t.priceChange?.h24 ?? 0);
     const chgSign = chg24 >= 0 ? '🟢 +' : '🔴 ';
-    const cexBadge = t.isOnCentralizedHint ? '🌐 موجود در بازارهای اصلی' : '🆕 کشف اولیه DEX On-Chain';
     const safetyBadge = t.safetyScore >= 70 ? '🛡 ایمن' : t.safetyScore >= 45 ? '⚠️ متوسط' : '🚨 پرریسک';
+    const dappHint = `${t.dexId.toUpperCase()} (${t.chainId.toUpperCase()})`;
     return (
-      `${idx + 1}. **${t.baseToken.symbol}** (${t.chainId.toUpperCase()} · ${t.dexId})\n` +
+      `${num}. **${t.baseToken.symbol}** [${dappHint}]\n` +
       `   قیمت: ${price} | ۲۴س: ${chgSign}${chg24.toFixed(1)}%\n` +
-      `   نقدینگی: ${formatUsdCompact(t.liquidity?.usd)} | حجم۲۴س: ${formatUsdCompact(t.volume?.h24)} | ${safetyBadge} (${t.safetyScore}/100)\n` +
-      `   ${cexBadge}`
+      `   نقدینگی: ${formatUsdCompact(t.liquidity?.usd)} | حجم۲۴س: ${formatUsdCompact(t.volume?.h24)} | ${safetyBadge} (${t.safetyScore}/100)`
     );
   });
 
   const kb: InlineKeyboardButton[][] = [];
-  for (const t of top.slice(0, 4)) {
+  for (const t of top) {
+    const cbKey = `${t.chainId}:${t.baseToken.address}`.slice(0, 52);
     kb.push([
-      { text: `🦊 سوآپ ${t.baseToken.symbol} در Trust Wallet`, url: t.trustWallet.trustWalletDappUrl, style: 'success' },
-      { text: `📊 چارت ${t.baseToken.symbol}`, url: t.trustWallet.dexScreenerUrl, style: 'primary' },
+      { text: `⚡ خرید مستقیم ${t.baseToken.symbol}`, callback_data: `tg_dex_buy:${cbKey}`, style: 'success' },
+      { text: `🧠 نظر AI (${t.baseToken.symbol})`, callback_data: `tg_dex_ai:${cbKey}`, style: 'primary' },
+      { text: `🦊 سوآپ`, url: t.trustWallet.trustWalletDappUrl },
     ]);
+  }
+  if (totalPages > 1 && !customTokens) {
+    const navRow: InlineKeyboardButton[] = [];
+    if (safePage > 0) navRow.push({ text: '⬅️ صفحه قبل', callback_data: `tg_dex_page:${safePage - 1}` });
+    navRow.push({ text: `📄 ${safePage + 1}/${totalPages} (${tokens.length} توکن)`, callback_data: `tg_dex_page:${safePage}` });
+    if (safePage < totalPages - 1) navRow.push({ text: 'صفحه بعد ➡️', callback_data: `tg_dex_page:${safePage + 1}` });
+    kb.push(navRow);
   }
   kb.push([
     { text: '🔎 جستجوی توکن با اسم/کانترکت', callback_data: 'tg_dex_search', style: 'primary' },
-    { text: '🔄 بروزرسانی لحظه‌ای', callback_data: 'tg_dex_trending' },
+    { text: '🔄 بروزرسانی زنده', callback_data: 'tg_dex_trending' },
   ]);
   kb.push([{ text: '🦊 مدیریت کیف‌پول Trust Wallet', callback_data: 'tg_tw_menu' }]);
 
   const title = queryLabel
     ? `🔎 **نتایج رادار DexScreener برای «${queryLabel}»**\n`
-    : `🔍 **توکن‌های داغ و ترند زنده DexScreener (On-Chain)**\n(مناسب شکار زودهنگام توکن‌های پرسود مستقیم در Trust Wallet)\n`;
+    : `🔍 **رادار کامل DexScreener (${tokens.length} توکن زنده · صفحه ${safePage + 1}/${totalPages})**\n(تحلیل خرید AI + بررسی DAppهای Trust Wallet + خرید مستقیم با تنظیمات سایت)\n`;
 
   const fullText = `${title}\n${lines.join('\n\n')}`;
   if (editMsgId) await bot.editMessageText(chatId, editMsgId, fullText, kb).catch(() => bot.sendMessage(chatId, fullText, { inlineKeyboard: kb }));
@@ -2289,9 +2311,173 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
-    if (data === 'tg_dex_trending') {
-      await bot.answerCallbackQuery(cq.id, 'در حال دریافت توکن‌های داغ DexScreener... 🔍');
-      await showDexTrendingMenu(bot, chatId, undefined, undefined, msgId);
+    if (data === 'tg_dex_trending' || data.startsWith('tg_dex_page:')) {
+      const page = data.startsWith('tg_dex_page:') ? Math.max(0, Number(data.split(':')[1] || 0)) : 0;
+      await bot.answerCallbackQuery(cq.id, 'در حال دریافت توکن‌های زنده DexScreener... 🔍');
+      await showDexTrendingMenu(bot, chatId, undefined, undefined, msgId, page);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_dex_ai:')) {
+      const rest = data.slice('tg_dex_ai:'.length);
+      const colonIdx = rest.indexOf(':');
+      const chainId = colonIdx > 0 ? rest.slice(0, colonIdx) : 'solana';
+      const tokenAddr = colonIdx > 0 ? rest.slice(colonIdx + 1) : rest;
+      await bot.answerCallbackQuery(cq.id, 'در حال تحلیل هوشمند خرید و بررسی DAppها... 🧠');
+      const pools = await getDexTokenPools(chainId, tokenAddr).catch(() => []);
+      const pair = pools[0];
+      if (!pair) {
+        await bot.sendMessage(chatId, '❌ اطلاعات لحظه‌ای این توکن در DexScreener یافت نشد.');
+        return { ok: true };
+      }
+      const routes = annotateRoutesWithLivePools(buildMultiDappRoutes(chainId, tokenAddr, pair.url), pools);
+      const listed = routes.filter((r) => r.listedStatus === 'DIRECT_POOL' || r.listedStatus === 'AGGREGATOR');
+      const liqUsd = Number(pair.liquidity?.usd || 0);
+      const vol24 = Number(pair.volume?.h24 || 0);
+      const ch1 = Number(pair.priceChange?.h1 || 0);
+      const buys = Number(pair.txns?.h1?.buys || pair.txns?.m5?.buys || 0);
+      const sells = Number(pair.txns?.h1?.sells || pair.txns?.m5?.sells || 0);
+      const buyRatio = buys + sells > 0 ? Math.round((buys / (buys + sells)) * 100) : 50;
+
+      let score = pair.safetyScore * 0.45 + (liqUsd >= 100_000 ? 18 : liqUsd >= 30_000 ? 10 : -15) + (buyRatio >= 55 ? 10 : -8);
+      if (ch1 > 0 && ch1 < 45) score += 10;
+      const conf = Math.round(Math.max(30, Math.min(94, score)));
+      const verdictText =
+        pair.safetyScore < 45 || liqUsd < 8000
+          ? '🚫 عدم خرید / ریسک بالا (پیشنهاد صرف‌نظر)'
+          : conf >= 76 && pair.safetyScore >= 70
+            ? '🟢 پیشنهاد خرید قوی (ورود پله‌ای مجاز)'
+            : conf >= 62 && pair.safetyScore >= 58
+              ? '✅ پیشنهاد خرید کنترل‌شده (با حد ضرر)'
+              : '⏳ صبر و زیر نظر گرفتن (ورود هیجانی ممنوع)';
+
+      const msgText =
+        `🧠 **نتیجه تحلیل AI برای ${pair.baseToken.symbol} (${chainId.toUpperCase()})**\n\n` +
+        `📌 **نتیجه و پیشنهاد: ${verdictText}** (اطمینان ${conf}%)\n` +
+        `💵 قیمت: $${Number(pair.priceUsd || 0) < 0.01 ? Number(pair.priceUsd || 0).toPrecision(4) : Number(pair.priceUsd || 0).toFixed(4)}\n` +
+        `💧 نقدینگی: ${formatUsdCompact(liqUsd)} | 📊 حجم ۲۴س: ${formatUsdCompact(vol24)}\n` +
+        `⚖️ فشار خرید: ${buyRatio}% (${buys} خرید / ${sells} فروش) | 🛡 ایمنی: ${pair.safetyScore}/100\n` +
+        `🦊 **لیست‌شده در برترین DAppهای Trust Wallet (${listed.length} صرافی):** ${listed.length ? listed.map((r) => r.name).join('، ') : 'صرافی مستقیم یافت نشد'}\n` +
+        (pair.riskFlags.length ? `\n⚠️ هشدارها: ${pair.riskFlags.join(' · ')}` : '');
+
+      const cbKey = `${chainId}:${pair.baseToken.address}`.slice(0, 52);
+      await bot.sendMessage(chatId, msgText, {
+        inlineKeyboard: [
+          [
+            { text: `⚡ خرید مستقیم همین توکن`, callback_data: `tg_dex_buy:${cbKey}`, style: 'success' },
+            { text: `🦊 سوآپ در Trust Wallet`, url: pair.trustWallet.trustWalletDappUrl, style: 'primary' },
+          ],
+          [{ text: '🔙 بازگشت به رادار DEX', callback_data: 'tg_dex_trending' }],
+        ],
+      });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_dex_buy:')) {
+      const rest = data.slice('tg_dex_buy:'.length);
+      const colonIdx = rest.indexOf(':');
+      const chainId = colonIdx > 0 ? rest.slice(0, colonIdx) : 'solana';
+      const tokenAddr = colonIdx > 0 ? rest.slice(colonIdx + 1) : rest;
+      const pools = await getDexTokenPools(chainId, tokenAddr).catch(() => []);
+      const pair = pools[0];
+      if (!pair || !pair.priceUsd) {
+        await bot.answerCallbackQuery(cq.id, 'دریافت قیمت توکن ناموفق بود.', true);
+        return { ok: true };
+      }
+
+      await env.DB.prepare(`INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`)
+        .bind(user.id, randomId('wh'))
+        .run()
+        .catch(() => {});
+
+      const botCfg = await env.DB.prepare(
+        `SELECT trading_mode, paper_balance, margin_pct, sniper_budget_usd, sniper_tp_pct, sniper_sl_pct FROM bot_configs WHERE user_id = ? LIMIT 1`
+      )
+        .bind(user.id)
+        .first<{
+          trading_mode: string;
+          paper_balance: number;
+          margin_pct: number;
+          sniper_budget_usd: number;
+          sniper_tp_pct: number;
+          sniper_sl_pct: number;
+        }>()
+        .catch(() => null);
+
+      const mode = botCfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+      const paperBal = Number(botCfg?.paper_balance ?? 10_000);
+      const amountUsd = Math.max(5, Number(botCfg?.sniper_budget_usd || 25));
+      const tpPct = Math.max(5, Number(botCfg?.sniper_tp_pct || 35));
+      const slPct = Math.max(3, Math.min(80, Number(botCfg?.sniper_sl_pct || 15)));
+      const entryPx = Number(pair.priceUsd);
+      const slUsd = Number((entryPx * (1 - slPct / 100)).toPrecision(6));
+      const tp1Usd = Number((entryPx * (1 + tpPct / 100)).toPrecision(6));
+      const qty = amountUsd / entryPx;
+      const twLinks = buildTrustWalletSwapLinks(chainId, tokenAddr);
+
+      if (mode === 'LIVE') {
+        await bot.answerCallbackQuery(cq.id, 'در حالت واقعی نیاز به امضای Trust Wallet دارد.');
+        await bot.sendMessage(
+          chatId,
+          `🦊 **خرید مستقیم در حالت واقعی (LIVE) — ${pair.baseToken.symbol}**\n\n` +
+            `• بودجه از پیش تعیین‌شده: $${amountUsd}\n` +
+            `• TP: +${tpPct}% ($${tp1Usd}) | SL: -${slPct}% ($${slUsd})\n\n` +
+            `برای امضای امن و غیرحضانتی روی دکمه زیر بزنید تا مستقیماً داخل Trust Wallet باز شود (یا از سایت در حالت دمو تمرین کنید):`,
+          {
+            inlineKeyboard: [
+              [{ text: `🦊 امضا و خرید ${pair.baseToken.symbol} در Trust Wallet`, url: twLinks.trustWalletDappUrl, style: 'success' }],
+            ],
+          }
+        );
+        return { ok: true };
+      }
+
+      if (paperBal < amountUsd) {
+        await bot.answerCallbackQuery(cq.id, `موجودی دمو ($${paperBal.toFixed(2)}) کافی نیست.`, true);
+        return { ok: true };
+      }
+
+      const id = randomId('dext');
+      await env.DB.prepare(`UPDATE bot_configs SET paper_balance = MAX(0, paper_balance - ?), updated_at = datetime('now') WHERE user_id = ?`)
+        .bind(amountUsd, user.id)
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO dex_trades (
+          id, user_id, chain_id, dex_id, pair_address, token_address, token_symbol, quote_symbol,
+          direction, amount_usd, token_qty, entry_price_usd, stop_loss_usd, tp1_usd, wallet_address, tx_hash, status, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'BUY', ?, ?, ?, ?, ?, 'PAPER_SIMULATOR', ?, 'OPEN', ?)`
+      ).bind(
+        id,
+        user.id,
+        chainId.toLowerCase(),
+        pair.dexId || 'dex',
+        pair.pairAddress || tokenAddr,
+        tokenAddr,
+        pair.baseToken.symbol.toUpperCase(),
+        pair.quoteToken?.symbol || 'USDT',
+        amountUsd,
+        qty,
+        entryPx,
+        slUsd,
+        tp1Usd,
+        `paper_${id}`,
+        `خرید مستقیم از ربات تلگرام (TP +${tpPct}% / SL -${slPct}%)`
+      ).run();
+
+      await bot.answerCallbackQuery(cq.id, `خرید $${amountUsd} ${pair.baseToken.symbol} ثبت شد ✅`);
+      await bot.sendMessage(
+        chatId,
+        `✅ **خرید مستقیم در سایت و حساب دمو با موفقیت انجام شد!**\n\n` +
+          `🪙 توکن: **${pair.baseToken.symbol}** (${chainId.toUpperCase()})\n` +
+          `💵 مبلغ خرید: $${amountUsd} (بر اساس تنظیمات از پیش تعیین‌شده)\n` +
+          `📈 قیمت ورود: $${entryPx < 0.01 ? entryPx.toPrecision(5) : entryPx.toFixed(4)}\n` +
+          `🎯 TP: +${tpPct}% ($${tp1Usd}) | 🛡 SL: -${slPct}% ($${slUsd})`,
+        {
+          inlineKeyboard: [
+            [{ text: '📈 مشاهده در معاملات باز', callback_data: 'tg_positions', style: 'primary' }],
+          ],
+        }
+      );
       return { ok: true };
     }
 
@@ -2423,8 +2609,18 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
-    if (data === 'tg_copy_smart_v2') {
-      const top10 = await discoverTop10SmartTraders(env, {}).catch(() => []);
+    if (data === 'tg_copy_smart_v2' || data.startsWith('tg_copy_smart_filter:')) {
+      const filterKey = data.startsWith('tg_copy_smart_filter:') ? data.slice('tg_copy_smart_filter:'.length) : 'ALL';
+      let topList = await discoverTop10SmartTraders(env, {}).catch(() => []);
+      if (filterKey === 'HOLDER') {
+        topList = topList.filter((w) => w.trader_category === 'HOLDER');
+      } else if (filterKey === 'DAILY') {
+        topList = [...topList].sort((a, b) => Number(b.roi_24h_pct || 0) - Number(a.roi_24h_pct || 0));
+      } else if (filterKey === 'WEEKLY') {
+        topList = [...topList].sort((a, b) => Number(b.roi_7d_pct || 0) - Number(a.roi_7d_pct || 0));
+      } else if (filterKey === 'LOWEST') {
+        topList = [...topList].sort((a, b) => Number(a.roi_30d_pct || 0) - Number(b.roi_30d_pct || 0));
+      }
       const rules = await env.DB.prepare(
         `SELECT trader_label, allocated_margin_usd, used_margin_usd, execution_mode FROM copy_follow_rules WHERE user_id = ? AND is_active = 1 LIMIT 8`
       )
@@ -2432,31 +2628,54 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         .all<{ trader_label: string; allocated_margin_usd: number; used_margin_usd: number; execution_mode: string }>()
         .catch(() => ({ results: [] }));
 
-      const topLines = top10
-        .slice(0, 10)
-        .map(
-          (w, i) =>
-            `${i + 1}. 🐋 **${w.display_name}** [${w.chain_id.toUpperCase()}]\n   ROI 30D: +${w.roi_30d_pct}% | برد: ${w.win_rate}% | ایمنی: ${w.safety_discipline_score}/100`
-        )
-        .join('\n');
+      const topLines = topList
+        .slice(0, 8)
+        .map((w, i) => {
+          const catFa = w.trader_category === 'HOLDER' ? 'هولدر' : w.trader_category === 'SCALPER' ? 'اسکلپر' : w.trader_category === 'SNIPER' ? 'اسنایپر' : 'سوئینگ';
+          const holdingsStr = (w.wallet_holdings || [])
+            .slice(0, 3)
+            .map((h) => `${h.symbol} ${h.sharePct}%`)
+            .join(' · ');
+          return (
+            `${i + 1}. 🐋 **${w.display_name}** [${w.chain_id.toUpperCase()} · ${catFa}]\n` +
+            `   ۲۴س: +${w.roi_24h_pct ?? 0}% | ۷ر: +${w.roi_7d_pct}% | ۳۰ر: +${w.roi_30d_pct}% | برد: ${w.win_rate}%\n` +
+            (holdingsStr ? `   💼 سبد ولت: ${holdingsStr}` : '')
+          );
+        })
+        .join('\n\n');
       const myLines = rules.results.length
         ? `\n\n📌 **قوانین فعال شما (${rules.results.length}):**\n` +
           rules.results
             .map((r) => `• ${r.trader_label} — باکس: $${r.used_margin_usd.toFixed(0)}/$${r.allocated_margin_usd} (${r.execution_mode})`)
             .join('\n')
-        : '\n\n💡 برای فالو، تعیین مارجین اختصاصی، افزودن ولت دلخواه و تنظیم TP/SL/Trailing وارد هاب کپی‌ترید شوید:';
+        : '\n\n💡 برای فالو، سبد کامل هر ولت، فیلترهای کامل و شروع خودکار کپی وارد هاب کپی‌ترید شوید:';
 
       const publicUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
       const hasHttps = publicUrl.startsWith('https://');
       await bot.answerCallbackQuery(cq.id);
-      await bot.sendMessage(chatId, `🐋 **۱۰ تریدر برتر هوشمند آن‌چین (Smart Money V2)**\n\n${topLines}${myLines}`, {
-        inlineKeyboard: [
-          hasHttps
-            ? [{ text: '⚙️ باز کردن هاب کپی‌ترید پرو V2', web_app: { url: `${publicUrl}/?tab=copy` }, style: 'primary' }]
-            : [{ text: '🌐 ورود به وب اپلیکیشن دلارینو', url: `${publicUrl}/?tab=copy` }],
-          [{ text: '🔙 منوی کپی‌ترید', callback_data: 'tg_copy_list' }],
+      const kbCopy: InlineKeyboardButton[][] = [
+        [
+          { text: '🔥 پرسودترین (۳۰ر)', callback_data: 'tg_copy_smart_filter:ALL', style: filterKey === 'ALL' ? 'success' : undefined },
+          { text: '💎 هولدرها', callback_data: 'tg_copy_smart_filter:HOLDER', style: filterKey === 'HOLDER' ? 'success' : undefined },
         ],
-      });
+        [
+          { text: '⚡ سود ۲۴ ساعته', callback_data: 'tg_copy_smart_filter:DAILY', style: filterKey === 'DAILY' ? 'primary' : undefined },
+          { text: '📆 سود هفتگی', callback_data: 'tg_copy_smart_filter:WEEKLY', style: filterKey === 'WEEKLY' ? 'primary' : undefined },
+          { text: '🛡 کم‌نوسان‌ترین', callback_data: 'tg_copy_smart_filter:LOWEST', style: filterKey === 'LOWEST' ? 'primary' : undefined },
+        ],
+        [
+          hasHttps
+            ? { text: '⚙️ هاب کامل کپی‌ترید در مینی‌اپ', web_app: { url: `${publicUrl}/?tab=copy` }, style: 'primary' }
+            : { text: '🌐 ورود به هاب کپی‌ترید سایت', url: `${publicUrl}/?tab=copy` },
+        ],
+        [{ text: '🔙 منوی کپی‌ترید', callback_data: 'tg_copy_list' }],
+      ];
+      const bodyTxt = `🐋 **تریدرهای هوشمند و سبد ولت‌ها (${topList.length} تریدر تاییدشده)**\n\n${topLines}${myLines}`;
+      if (msgId && data.startsWith('tg_copy_smart_filter:')) {
+        await bot.editMessageText(chatId, msgId, bodyTxt, kbCopy).catch(() => bot.sendMessage(chatId, bodyTxt, { inlineKeyboard: kbCopy }));
+      } else {
+        await bot.sendMessage(chatId, bodyTxt, { inlineKeyboard: kbCopy });
+      }
       return { ok: true };
     }
 
@@ -3455,29 +3674,40 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   ]);
   const MAIN_MENU_PREFIXES = [
     '🧠 چت هوش مصنوعی',
+    '🧠 هوش مصنوعی من',
     '🤖 شروع ربات هوشمند AI',
+    '🤖 شروع / توقف ربات',
+    '🤖 هوش مصنوعی من',
     '🎛 انتخاب ۵ موتور ترید',
+    '🎛 ۵ موتور ترید همزمان',
     '💰 بودجه مجاز و',
+    '💰 حالت دمو/واقعی و بودجه',
     '📊 وضعیت سود و معاملات',
+    '📊 معاملات باز و پورتفوی',
     '🟢 شروع خودکار ربات',
+    '🟢 شروع / توقف ربات',
     '⚡️ شکار فوری AI',
     '🚀 راه‌اندازی ۴ مرحله‌ای ربات',
     '🛡 اتصال Trust Wallet',
     '🛡 مدیریت Trust Wallet',
+    '🛡 Trust Wallet و کارمزد ۳٪',
     '📡 آلرت رایگان TradingView',
-    '💰 کارمزد ۳٪ سود (رایگان)',
-    '💰 کارمزد ۵٪ سود (رایگان)',
+    '💰 کارمزد ۳٪ سود',
+    '💰 کارمزد ۵٪ سود',
     'ربات و هوش مصنوعی من',
     '🏆 کپی‌ترید',
     'حساب کاربری 👤',
     '⚡ رفتن به حالت حرفه‌ای',
+    '⚡ حالت حرفه‌ای',
     '🌱 رفتن به حالت ساده',
     '🔍 رادار DexScreener',
+    '🔍 رادار DEX',
     '🔍 اسکنر DEX',
     'تنظیمات ⚙️',
     '📈 معاملات باز',
     '🎯 استراتژی شکار',
-    '🧩 اکستنشن و ویجت موبایل',
+    '🎯 اسنایپر و استراتژی',
+    '🧩 اکستنشن',
     '💬 پشتیبانی',
     'راهنما 📚',
     '👨‍💻 درباره سازنده',
@@ -3928,7 +4158,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '⚡ رفتن به حالت حرفه‌ای' || text === '🌱 رفتن به حالت ساده') {
+  if (text === '⚡ رفتن به حالت حرفه‌ای' || text === '⚡ حالت حرفه‌ای' || text === '🌱 رفتن به حالت ساده') {
     const nextMode: 'simple' | 'pro' = text.includes('حرفه‌ای') ? 'pro' : 'simple';
     await env.DB.prepare(`UPDATE users SET ui_mode = ? WHERE id = ?`).bind(nextMode, user.id).run();
     user.ui_mode = nextMode;
@@ -3943,7 +4173,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '/myai') {
+  if (text === '/myai' || text === '🤖 هوش مصنوعی من') {
     let ag = await env.DB.prepare(`SELECT name, system_rules_json, is_active_for_trading FROM user_ai_agents WHERE user_id = ?`)
       .bind(user.id)
       .first<{ name: string; system_rules_json: string; is_active_for_trading: number }>()
@@ -3974,35 +4204,73 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🔍 رادار DexScreener و توکن داغ' || text === '🔍 اسکنر DEX' || text === '/dex') {
+  if (text === '🧠 هوش مصنوعی من / چت AI') {
+    await clearState();
+    await bot.sendMessage(
+      chatId,
+      `🧠 **مرکز هوش مصنوعی دلارینو**\n\nچت هوش مصنوعی (همراه با تحلیل عکس چارت) یا آموزش مستقیم «هوش مصنوعی شخصی من» را انتخاب کنید:`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '💬 شروع چت AI + تحلیل عکس چارت', callback_data: 'tg_ai_chat', style: 'primary' },
+            { text: '🤖 هوش مصنوعی شخصی من', callback_data: 'tg_myai', style: 'success' },
+          ],
+        ],
+      }
+    );
+    return { ok: true };
+  }
+
+  if (text === '🔍 رادار DexScreener و توکن داغ' || text === '🔍 رادار DEX & خرید مستقیم' || text === '🔍 اسکنر DEX' || text === '/dex') {
     await showDexTrendingMenu(bot, chatId);
     return { ok: true };
   }
 
-  if (text === '🧩 اکستنشن و ویجت موبایل') {
+  if (text === '🧩 اکستنشن و ویجت موبایل' || text === '🧩 اکستنشن کروم V11.6') {
     await showExtensionWidgetsMenu(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
 
-  if (text === '🛡 اتصال Trust Wallet' || text === '🛡 اتصال Trust Wallet و دمو' || text === '🛡 مدیریت Trust Wallet' || text === '🛡 اتصال Trust Wallet (تراست‌ولت)' || text === '🦊 Trust Wallet و DEX' || text === '🦊 کیف‌پول Trust Wallet' || text === '/wallet') {
+  if (
+    text === '🛡 اتصال Trust Wallet' ||
+    text === '🛡 اتصال Trust Wallet و دمو' ||
+    text === '🛡 مدیریت Trust Wallet' ||
+    text === '🛡 اتصال Trust Wallet (تراست‌ولت)' ||
+    text === '🛡 Trust Wallet و کارمزد ۳٪' ||
+    text === '🦊 Trust Wallet و DEX' ||
+    text === '🦊 کیف‌پول Trust Wallet' ||
+    text === '/wallet'
+  ) {
     await showTrustWalletMenu(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
 
-  if (text === '🎛 انتخاب ۵ موتور ترید' || text === '/engines') {
+  if (text === '🎛 انتخاب ۵ موتور ترید' || text === '🎛 ۵ موتور ترید همزمان' || text === '/engines') {
     await clearState();
     await showEnginesToggleMenu(env, bot, chatId, user.id);
     return { ok: true };
   }
 
-  if (text === '💰 بودجه مجاز و پیشنهاد پویا' || text === '💰 بودجه مجاز و اهرم' || text === '/budget') {
+  if (text === '💰 بودجه مجاز و پیشنهاد پویا' || text === '💰 بودجه مجاز و اهرم' || text === '💰 حالت دمو/واقعی و بودجه' || text === '/budget') {
     await clearState();
     await showTradeQuantitiesMenu(env, bot, chatId, user.id);
     return { ok: true };
   }
 
-  if (text === '🤖 شروع ربات هوشمند AI') {
+  if (text === '🤖 شروع ربات هوشمند AI' || text === '🤖 شروع / توقف ربات') {
     await clearState();
+    if (text === '🤖 شروع / توقف ربات') {
+      const curCfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ bot_state: string }>();
+      const isAlreadyRunning = curCfg?.bot_state === 'RUNNING_PAPER' || curCfg?.bot_state === 'RUNNING_LIVE';
+      if (isAlreadyRunning) {
+        await env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`).bind(user.id).run();
+        await bot.sendMessage(chatId, '🔴 ربات دلارینو با موفقیت متوقف شد. برای شروع مجدد دوباره روی همین دکمه بزنید.', {
+          inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', false, uiMode),
+        });
+        return { ok: true };
+      }
+    }
     const res = await startBotOneClickForTelegram({
       env,
       bot,
@@ -4023,7 +4291,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '📊 وضعیت سود و معاملات') {
+  if (text === '📊 وضعیت سود و معاملات' || text === '📊 معاملات باز و پورتفوی') {
     await showAccountCard(env, bot, chatId, user, tgId, webAppUrl);
     return { ok: true };
   }
@@ -4097,7 +4365,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🏆 کپی‌ترید تاییدشده' || text === '🏆 کپی‌ترید' || text === '/copy') {
+  if (text === '🏆 کپی‌ترید تاییدشده' || text === '🏆 کپی‌ترید' || text === '🏆 کپی‌ترید حرفه‌ای (V2)' || text === '/copy') {
     await syncAutoTopSiteTraders(env.DB).catch(() => {});
     const traders = await env.DB.prepare(
       `SELECT id, display_name, specialty, win_rate, roi_30d_pct, followers_count FROM copy_traders WHERE is_active = 1 AND is_verified = 1 ORDER BY roi_30d_pct DESC LIMIT 6`
@@ -4108,12 +4376,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     const kb: InlineKeyboardButton[][] = traders.results.map((t) => [
       { text: `➕ فالو (${t.display_name})`, callback_data: `tg_copy_follow:${t.id}`, style: 'success' },
     ]);
-    kb.push([{ text: '🐋 ۱۰ تریدر برتر هوشمند & ولت‌ها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' }]);
+    kb.push([{ text: '🐋 تریدرهای هوشمند و سبد ولت‌ها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' }]);
     await bot.sendMessage(chatId, `🏆 کپی‌تریدرهای تاییدشده دلارینو:\n\n${lines}`, { inlineKeyboard: kb });
     return { ok: true };
   }
 
-  if (text === '🎯 استراتژی شکار') {
+  if (text === '🎯 استراتژی شکار' || text === '🎯 اسنایپر و استراتژی') {
     const hasHttps = webAppUrl.startsWith('https://');
     await bot.sendMessage(
       chatId,
@@ -4220,7 +4488,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '📈 معاملات باز' || text === '/positions') {
+  if (text === '📈 معاملات باز' || text === '📈 معاملات باز و پورتفوی' || text === '/positions') {
     const openRows = await env.DB.prepare(
       `SELECT id, symbol, direction, market_type, entry_price, leverage, margin_used, current_stop_loss, tp1 FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 8`
     ).bind(user.id).all<{

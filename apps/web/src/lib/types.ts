@@ -78,6 +78,10 @@ export interface AuthUserInfo {
   id: string;
   email: string;
   username: string;
+  display_name?: string | null;
+  auth_provider?: string | null;
+  profile_completed?: number;
+  totp_enabled?: number;
   role: string;
   telegram_id: string | null;
   telegram_username?: string | null;
@@ -110,6 +114,38 @@ export interface EntitlementSummary {
   subscriptionRequired: boolean;
 }
 
+export interface DexTradePosition {
+  id: string;
+  chain_id: string;
+  dex_id?: string | null;
+  pair_address?: string | null;
+  token_address: string;
+  token_symbol: string;
+  quote_symbol?: string | null;
+  direction?: string;
+  amount_usd: number;
+  token_qty: number;
+  entry_price_usd: number;
+  exit_price_usd?: number | null;
+  live_price_usd: number;
+  stop_loss_usd?: number | null;
+  tp1_usd?: number | null;
+  status: string;
+  mode?: 'PAPER' | 'LIVE';
+  tx_hash?: string | null;
+  note?: string | null;
+  realized_pnl_usd: number;
+  realized_pnl_pct: number;
+  unrealized_pnl_usd: number;
+  unrealized_pnl_pct: number;
+  source_key?: 'SNIPER' | 'DEX';
+  source_label_fa?: string;
+  source_label_en?: string;
+  opened_at: string;
+  closed_at?: string | null;
+  trustWallet?: { trustWalletDappUrl?: string; dexUrl?: string };
+}
+
 export interface OpenTradeRow {
   id: string;
   symbol: string;
@@ -125,12 +161,41 @@ export interface OpenTradeRow {
   tp2?: string | null;
   tp3?: string | null;
   unrealized_pnl?: string;
-  roe_pct?: string;
+  roe_pct?: string | number;
   risk_free_active?: number;
   strategy_key?: string;
   source?: string;
+  source_key?: 'COPY' | 'AI' | 'MANUAL' | 'BOT';
+  source_label_fa?: string;
+  source_label_en?: string;
+  mode?: 'PAPER' | 'LIVE';
   sparkline?: number[];
   opened_at?: string;
+}
+
+export interface PerpDexOrderRow {
+  id: string;
+  user_id: string;
+  venue: string;
+  symbol: string;
+  side: string;
+  leverage: number;
+  margin_usd: number;
+  entry_price: number;
+  tp_price?: number | null;
+  sl_price?: number | null;
+  execution_kind: string;
+  external_order_id?: string | null;
+  status: string;
+  note?: string | null;
+  created_at: string;
+  mode?: 'PAPER' | 'LIVE';
+  live_price_usd?: number;
+  unrealized_pnl_pct?: number;
+  unrealized_pnl_usd?: number;
+  source_key?: 'PERP_DEX';
+  source_label_fa?: string;
+  source_label_en?: string;
 }
 
 export interface ClosedTradeRow {
@@ -437,9 +502,23 @@ export interface DashboardPayload {
     winRate: number;
     totalPnl: number;
     todayPnl?: number;
+    unrealizedPnl?: number;
     profitFactor: number;
   };
   openTrades: OpenTradeRow[];
+  dexTrades?: DexTradePosition[];
+  smartCopyPositions?: Array<
+    CopyPositionV2Item & {
+      mode?: 'PAPER' | 'LIVE';
+      live_price_usd?: number;
+      unrealized_pnl_pct?: number;
+      unrealized_pnl_usd?: number;
+      source_key?: 'SMART_COPY';
+      source_label_fa?: string;
+      source_label_en?: string;
+    }
+  >;
+  perpOrders?: PerpDexOrderRow[];
   closedTrades: ClosedTradeRow[];
   pendingOrders?: PendingOrderRow[];
   recentLogs?: Array<{
@@ -479,6 +558,9 @@ export interface MultiDappRouteItem {
   badge: string;
   swapUrl: string;
   trustWalletDappUrl: string;
+  isListed?: boolean;
+  listedStatus?: 'DIRECT_POOL' | 'AGGREGATOR' | 'NOT_LISTED' | 'CHART';
+  poolLiquidityUsd?: number;
 }
 
 export interface TokenRugSafetyReport {
@@ -499,6 +581,16 @@ export interface TokenRugSafetyReport {
   sourcesUsed: string[];
 }
 
+export interface SmartWalletHoldingItem {
+  symbol: string;
+  name?: string;
+  chainId: string;
+  tokenAddress?: string;
+  sharePct: number;
+  valueUsd: number;
+  change24h?: number;
+}
+
 export interface SmartWalletTraderItem {
   id: string;
   source_type: 'AUTO_TOP10' | 'SITE_PICK' | 'USER_CUSTOM';
@@ -507,6 +599,7 @@ export interface SmartWalletTraderItem {
   chain_id: string;
   display_name: string;
   style_tag: string;
+  roi_24h_pct?: number;
   roi_7d_pct: number;
   roi_30d_pct: number;
   realized_pnl_usd: number;
@@ -518,6 +611,8 @@ export interface SmartWalletTraderItem {
   top_tokens_json: string;
   recent_trades_json: string;
   last_synced_at: string;
+  trader_category?: 'HOLDER' | 'SCALPER' | 'SWING' | 'SNIPER';
+  wallet_holdings?: SmartWalletHoldingItem[];
 }
 
 export interface CopyFollowRuleItem {

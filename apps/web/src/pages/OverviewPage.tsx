@@ -9,18 +9,24 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   Crosshair,
   Edit3,
   Eye,
   EyeOff,
   Flame,
+  Gamepad2,
   Globe,
+  GraduationCap,
   Hand,
   KeyRound,
   Layers,
+  Lock,
   Power,
   Radar,
   RefreshCw,
+  Scale,
+  Settings2,
   ShieldCheck,
   Sparkles,
   Star,
@@ -44,13 +50,13 @@ import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import { pushFloatingToast } from '../lib/toast';
 import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow, TradingEngineChoice } from '../lib/types';
-import { WalletLogo } from '../components/BrandLogos';
+import { ChainLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '../components/DollarinoViz';
 import { QuickWidgetsBar } from '../components/QuickWidgetsBar';
+import { ProDropdown, SlidingSwitch } from '../components/ProDropdown';
 import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { SetupWizardModal } from '../components/SetupWizardModal';
-import { SniperWorkbench } from '../components/SniperWorkbench';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
 import { WeeklyCardPage } from './WeeklyCardPage';
@@ -351,13 +357,61 @@ export function OverviewPage({
         return {
           ...meta,
           rec,
-          descFa: `هر ترید $${rec.perTradeUsd.toFixed(rec.perTradeUsd < 10 ? 1 : 0)} (${rec.marginPct}%) · تا ${rec.maxOpenPositions} معامله · اهرم ${rec.maxLeverage}×`,
+          descFa: `هر ترید \u2066$${rec.perTradeUsd.toFixed(rec.perTradeUsd < 10 ? 1 : 0)}\u2069 (${rec.marginPct}%) · تا ${rec.maxOpenPositions} معامله · اهرم ${rec.maxLeverage}×`,
           descEn: `$${rec.perTradeUsd.toFixed(rec.perTradeUsd < 10 ? 1 : 0)}/trade (${rec.marginPct}%) · max ${rec.maxOpenPositions} pos · ${rec.maxLeverage}× lev`,
         };
       }),
     [activeCapitalRes.effectiveCapitalUsd]
   );
-  const unrealized = data.openTrades.reduce((s, t) => s + Number(t.unrealized_pnl || 0), 0);
+  const openDexTrades = useMemo(
+    () => (data.dexTrades || []).filter((t) => t.status === 'OPEN' || t.status === 'PENDING_SIGN'),
+    [data.dexTrades]
+  );
+  const openSmartCopy = useMemo(
+    () => (data.smartCopyPositions || []).filter((p) => p.status === 'OPEN' || p.status === 'PENDING_TRUST_SIGN'),
+    [data.smartCopyPositions]
+  );
+  const openPerpOrders = useMemo(
+    () => (data.perpOrders || []).filter((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED'),
+    [data.perpOrders]
+  );
+  const totalOpenPositionsCount =
+    data.openTrades.length + openDexTrades.length + openSmartCopy.length + openPerpOrders.length;
+
+  const openPnlBreakdown = useMemo(() => {
+    let profitableCount = 0;
+    let losingCount = 0;
+    let totalUnrealized = 0;
+    for (const t of data.openTrades) {
+      const p = Number(t.unrealized_pnl || 0);
+      totalUnrealized += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    for (const d of openDexTrades) {
+      if (d.status !== 'OPEN') continue;
+      const p = Number(d.unrealized_pnl_usd || 0);
+      totalUnrealized += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    for (const cp of openSmartCopy) {
+      if (cp.status !== 'OPEN') continue;
+      const p = Number(cp.unrealized_pnl_usd ?? cp.pnl_usd ?? 0);
+      totalUnrealized += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    for (const po of openPerpOrders) {
+      const p = Number(po.unrealized_pnl_usd || 0);
+      totalUnrealized += p;
+      if (p > 0) profitableCount++;
+      else if (p < 0) losingCount++;
+    }
+    return { profitableCount, losingCount, totalUnrealized };
+  }, [data.openTrades, openDexTrades, openSmartCopy, openPerpOrders]);
+
+  const unrealized = data.stats.unrealizedPnl ?? openPnlBreakdown.totalUnrealized;
   const todayPnl = Number(data.stats.todayPnl ?? data.stats.totalPnl ?? 0) + unrealized;
   const activeStrategy = data.config.strategy_key || 'dollarino_v01';
   const scanScope = data.config.scan_scope || 'ALL_MARKET';
@@ -389,8 +443,8 @@ export function OverviewPage({
       setRiskModalOpen(false);
       toastMsg(
         isFa
-          ? `✅ حالت ${modeToSave === 'LIVE' ? 'واقعی (Trust Wallet)' : 'دمو آزمایشی'} و قوانین ریسک تایید شدند.`
-          : `✅ ${modeToSave} mode and risk terms confirmed.`
+          ? `حالت ${modeToSave === 'LIVE' ? 'واقعی (Trust Wallet)' : 'دمو آزمایشی'} و قوانین ریسک تایید شدند.`
+          : `${modeToSave} mode and risk terms confirmed.`
       );
       const fn = pendingStartAction;
       setPendingStartAction(null);
@@ -418,7 +472,7 @@ export function OverviewPage({
       const count = res.activeEngine?.activeEngines?.length ?? 0;
       toastMsg(
         isFa
-          ? `${nextOn ? '✅ موتور فعال شد' : '⏸ موتور غیرفعال شد'} (${count} موتور آماده/فعال همزمان)`
+          ? `${nextOn ? 'موتور فعال شد' : 'موتور غیرفعال شد'} (${count} موتور آماده/فعال همزمان)`
           : `${nextOn ? 'Engine enabled' : 'Engine disabled'} (${count} active)`
       );
       await onRefresh();
@@ -448,7 +502,7 @@ export function OverviewPage({
       toastMsg(
         res.message ||
           (isFa
-            ? `موجودی کیف‌پول دمو روی $${finalBal.toLocaleString('en-US')} تنظیم شد ✅`
+            ? `موجودی کیف‌پول دمو روی $${finalBal.toLocaleString('en-US')} تنظیم شد`
             : `Demo balance set to $${finalBal.toLocaleString('en-US')}`)
       );
       await onRefresh();
@@ -491,7 +545,7 @@ export function OverviewPage({
         method: 'POST',
         body: JSON.stringify({ preset }),
       });
-      toastMsg(res.message || (isFa ? 'تنظیمات مدیریت سرمایه اعمال شد ✅' : 'Capital management defaults applied ✅'));
+      toastMsg(res.message || (isFa ? 'تنظیمات مدیریت سرمایه اعمال شد' : 'Capital management defaults applied'));
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Reset failed', true);
@@ -518,12 +572,12 @@ export function OverviewPage({
           method: 'POST',
           body: JSON.stringify({ preset: 'balanced', budgetMode: budgetModeInput, budgetUsd: cleanUsd, budgetPct: cleanPct }),
         });
-        toastMsg(res.message || (isFa ? 'سقف سرمایه و تنظیمات پویای مدیریت سرمایه اعمال شد ✅' : 'Capital cap & dynamic defaults applied ✅'));
+        toastMsg(res.message || (isFa ? 'سقف سرمایه و تنظیمات پویای مدیریت سرمایه اعمال شد' : 'Capital cap & dynamic defaults applied'));
       } else {
         toastMsg(
           isFa
-            ? `سقف سرمایه ربات روی $${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')} ذخیره شد ✅`
-            : `Bot capital cap saved ($${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')}) ✅`
+            ? `سقف سرمایه ربات روی $${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')} ذخیره شد`
+            : `Bot capital cap saved ($${previewDraftCap.effectiveCapitalUsd.toLocaleString('en-US')})`
         );
       }
       setBudgetDrawerOpen(false);
@@ -755,6 +809,92 @@ export function OverviewPage({
     }
   };
 
+  const closeDexPosition = async (tradeId: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/trustwallet/dex-trades/${tradeId}/close`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      toastMsg(isFa ? 'پوزیشن DEX/اسنایپر بسته و به موجودی بازگشت' : 'DEX/Sniper position closed');
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Close failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeSmartCopyPosition = async (posId: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/copy-trade/positions-v2/${posId}/action`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'CLOSE' }),
+      });
+      toastMsg(isFa ? 'پوزیشن کپی‌ترید بسته و تسویه شد' : 'Copy-Trade position closed');
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Close failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closePerpOrderPosition = async (orderId: string) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/dex/perp-orders/${orderId}/close`, {
+        method: 'POST',
+      });
+      toastMsg(isFa ? 'پوزیشن فیوچرز DEX بسته شد' : 'Perp DEX order closed');
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Close failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeBatchPositions = async (scope: 'ALL_PROFITABLE' | 'ALL_LOSING') => {
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; closedCount: number; realizedTotalUsd: number }>(
+        '/api/trading/positions/close-batch',
+        {
+          method: 'POST',
+          body: JSON.stringify({ scope }),
+        }
+      );
+      if (res.closedCount === 0) {
+        toastMsg(
+          scope === 'ALL_PROFITABLE'
+            ? isFa
+              ? 'معامله سوددهی برای بستن وجود ندارد.'
+              : 'No profitable positions to close.'
+            : isFa
+              ? 'معامله ضررده‌ای برای بستن وجود ندارد.'
+              : 'No losing positions to close.'
+        );
+      } else {
+        toastMsg(
+          scope === 'ALL_PROFITABLE'
+            ? isFa
+              ? `${res.closedCount} معامله سودده با مجموع +$${res.realizedTotalUsd.toFixed(2)} برداشت شدند.`
+              : `Closed ${res.closedCount} profitable positions (+$${res.realizedTotalUsd.toFixed(2)}).`
+            : isFa
+              ? `${res.closedCount} معامله ضررده برای حفظ سرمایه بسته شدند.`
+              : `Closed ${res.closedCount} losing positions.`
+        );
+      }
+      await onRefresh();
+    } catch (e) {
+      toastMsg(e instanceof Error ? e.message : 'Batch close failed', true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const cancelPendingOrder = async (orderId: string) => {
     setBusy(true);
     try {
@@ -822,9 +962,7 @@ export function OverviewPage({
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl overflow-hidden ring-1 ring-white/20 bg-[#07152e] shrink-0">
-              <img src="/images/transparent/capital-vault-3d.png" alt="Bot Budget" className="w-full h-full object-cover" />
-            </div>
+            <img src="/images/transparent/capital-vault-3d.png?v=1165" alt="Bot Budget" className="w-10 h-10 object-contain shrink-0" />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 text-xs font-black">
                 <span>
@@ -835,14 +973,25 @@ export function OverviewPage({
                 </span>
                 {activeCapitalRes.isCapped && (
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isGlass ? 'bg-amber-400/20 text-amber-200' : 'bg-amber-500/15 text-[#D97706]'}`}>
-                    {isFa ? `از کل $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}` : `of $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}`}
+                    {isFa ? (
+                      <>
+                        از کل <span dir="ltr" className="inline-block font-num" style={{ unicodeBidi: 'isolate' }}>${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}</span>
+                      </>
+                    ) : (
+                      `of $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}`
+                    )}
                   </span>
                 )}
               </div>
               <p className={`text-[10.5px] font-num ${isGlass ? 'text-white/75' : 'text-dim'}`}>
-                {isFa
-                  ? `درگیر: $${used.toFixed(0)} · باقی‌مانده مجاز: $${rem.toFixed(0)}`
-                  : `In Use: $${used.toFixed(0)} · Remaining: $${rem.toFixed(0)}`}
+                {isFa ? (
+                  <>
+                    درگیر: <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${used.toFixed(0)}</span> · باقی‌مانده مجاز:{' '}
+                    <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${rem.toFixed(0)}</span>
+                  </>
+                ) : (
+                  `In Use: $${used.toFixed(0)} · Remaining: $${rem.toFixed(0)}`
+                )}
               </p>
             </div>
           </div>
@@ -986,8 +1135,9 @@ export function OverviewPage({
               </div>
             )}
 
-            <div className={`rounded-xl p-2.5 text-[11px] font-bold ${isGlass ? 'bg-emerald-400/15 text-emerald-100 border border-emerald-300/25' : 'bg-emerald-500/10 text-[#059669] dark:text-[#34D399] border border-emerald-500/25'}`}>
-              ✨ {isFa ? previewDraftRec.summaryFa : previewDraftRec.summaryEn}
+            <div className={`rounded-xl p-2.5 text-[11px] font-bold flex items-start gap-1.5 ${isGlass ? 'bg-emerald-400/15 text-emerald-100 border border-emerald-300/25' : 'bg-emerald-500/10 text-[#059669] dark:text-[#34D399] border border-emerald-500/25'}`}>
+              <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>{isFa ? previewDraftRec.summaryFa : previewDraftRec.summaryEn}</span>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -1026,14 +1176,14 @@ export function OverviewPage({
       setManualLevInput(String(clamped));
       await patchConfig(
         { max_leverage: clamped, use_signal_leverage: false },
-        isFa ? `اهرم دستی روی ${clamped}× ذخیره شد ✅` : `Manual leverage set to ${clamped}× ✅`
+        isFa ? `اهرم دستی روی ${clamped}× ذخیره شد` : `Manual leverage set to ${clamped}×`
       );
     };
     const applySuggestedLev = async () => {
       setManualLevInput(String(suggestedLev));
       await patchConfig(
         { max_leverage: suggestedLev, use_signal_leverage: true },
-        isFa ? `اهرم پیشنهادی (${suggestedLev}× مطابق مدیریت سرمایه) فعال شد ✅` : `Capital-suggested leverage (${suggestedLev}×) enabled ✅`
+        isFa ? `اهرم پیشنهادی (${suggestedLev}× مطابق مدیریت سرمایه) فعال شد` : `Capital-suggested leverage (${suggestedLev}×) enabled`
       );
     };
 
@@ -1220,11 +1370,21 @@ export function OverviewPage({
                         : 'surface-soft hairline hover:border-[var(--line-strong)]'
                     }`}
                   >
-                    <p className="text-xs font-black text-main">{isFa ? '🎮 حساب دمو آزمایشی (رایگان)' : '🎮 Free Demo Simulator'}</p>
+                    <p className="text-xs font-black text-main flex items-center gap-1.5">
+                      <Gamepad2 className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>{isFa ? 'حساب دمو آزمایشی (رایگان)' : 'Free Demo Simulator'}</span>
+                    </p>
                     <p className="text-[11px] text-dim leading-relaxed">
-                      {isFa
-                        ? `$${Math.round(demoBalDisplay).toLocaleString('en-US')} اعتبار شبیه‌سازی با قیمت واقعی بازار — بدون نیاز به پول واقعی.`
-                        : `$${Math.round(demoBalDisplay).toLocaleString('en-US')} virtual capital on live prices — zero real risk.`}
+                      {isFa ? (
+                        <>
+                          <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>
+                            ${Math.round(demoBalDisplay).toLocaleString('en-US')}
+                          </span>{' '}
+                          اعتبار شبیه‌سازی با قیمت واقعی بازار — بدون نیاز به پول واقعی.
+                        </>
+                      ) : (
+                        `$${Math.round(demoBalDisplay).toLocaleString('en-US')} virtual capital on live prices — zero real risk.`
+                      )}
                     </p>
                   </button>
 
@@ -1237,11 +1397,20 @@ export function OverviewPage({
                         : 'surface-soft hairline hover:border-[var(--line-strong)]'
                     }`}
                   >
-                    <p className="text-xs font-black text-main">{isFa ? '🛡 حساب واقعی (Trust Wallet)' : '🛡 Real Mode (Trust Wallet)'}</p>
+                    <p className="text-xs font-black text-main flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-jade shrink-0" />
+                      <span>{isFa ? 'حساب واقعی (Trust Wallet)' : 'Real Mode (Trust Wallet)'}</span>
+                    </p>
                     <p className="text-[11px] text-dim leading-relaxed">
-                      {isFa
-                        ? `اتصال غیرامانی به کیف‌پول شما (حداقل $10) · ${freeTradesLim} معامله سودده اول ۰٪ کارمزد.`
-                        : `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`}
+                      {isFa ? (
+                        <>
+                          اتصال غیرامانی به کیف‌پول شما (حداقل{' '}
+                          <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>$10</span>
+                          ) · {freeTradesLim} معامله سودده اول ۰٪ کارمزد.
+                        </>
+                      ) : (
+                        `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`
+                      )}
                     </p>
                   </button>
                 </div>
@@ -1289,9 +1458,10 @@ export function OverviewPage({
                   type="button"
                   disabled={!riskChecked || busy}
                   onClick={() => void completePreTradeOnboarding(gateTradingMode)}
-                  className="btn-emerald flex-1 py-3 rounded-xl text-xs font-black disabled:opacity-40"
+                  className="btn-emerald flex-1 py-3 rounded-xl text-xs font-black disabled:opacity-40 inline-flex items-center justify-center gap-1.5"
                 >
-                  {isFa ? '✅ تایید قوانین، ثبت حالت و ادامه' : '✅ Confirm Mode & Risk Terms'}
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isFa ? 'تایید قوانین، ثبت حالت و ادامه' : 'Confirm Mode & Risk Terms'}</span>
                 </button>
                 <button type="button" onClick={() => setRiskModalOpen(false)} className="btn-ghost px-4 py-3 rounded-xl text-xs font-bold">
                   {isFa ? 'انصراف' : 'Cancel'}
@@ -1388,8 +1558,9 @@ export function OverviewPage({
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs sm:text-sm font-black text-main">
-                {isFa ? '🎮 حساب دمو آزمایشی (رایگان)' : '🎮 Free Demo Simulator'}
+              <span className="text-xs sm:text-sm font-black text-main inline-flex items-center gap-1.5">
+                <Gamepad2 className="w-4 h-4 text-amber-400" />
+                <span>{isFa ? 'حساب دمو آزمایشی (رایگان)' : 'Free Demo Simulator'}</span>
               </span>
               {gateTradingMode === 'PAPER' && <CheckCircle2 className="w-4 h-4 text-amber-500" />}
             </div>
@@ -1410,8 +1581,9 @@ export function OverviewPage({
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs sm:text-sm font-black text-main">
-                {isFa ? '🛡 حساب واقعی (Trust Wallet)' : '🛡 Real Mode (Trust Wallet)'}
+              <span className="text-xs sm:text-sm font-black text-main inline-flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-jade" />
+                <span>{isFa ? 'حساب واقعی (Trust Wallet)' : 'Real Mode (Trust Wallet)'}</span>
               </span>
               {gateTradingMode === 'LIVE' && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
             </div>
@@ -1453,9 +1625,10 @@ export function OverviewPage({
               type="button"
               disabled={busy || (!riskChecked && !hasAcceptedRisk)}
               onClick={() => void completePreTradeOnboarding(gateTradingMode)}
-              className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black disabled:opacity-45"
+              className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black disabled:opacity-45 inline-flex items-center gap-1.5"
             >
-              {isFa ? '✅ تایید حالت و قوانین ریسک' : '✅ Confirm Mode & Terms'}
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{isFa ? 'تایید حالت و قوانین ریسک' : 'Confirm Mode & Terms'}</span>
             </button>
           </div>
         </div>
@@ -1465,13 +1638,15 @@ export function OverviewPage({
 
   if (uiMode === 'simple') {
     const activeExLabel =
-      data.config.trading_mode === 'LIVE'
-        ? isFa
-          ? 'پول واقعی (Trust Wallet)'
-          : 'Real Money (Trust Wallet)'
-        : isFa
-          ? 'پول آزمایشی قابل تنظیم ($50–$10M)'
-          : 'Custom Demo ($50–$10M)';
+      data.config.trading_mode === 'LIVE' ? (
+        isFa ? 'پول واقعی (Trust Wallet)' : 'Real Money (Trust Wallet)'
+      ) : isFa ? (
+        <>
+          پول آزمایشی قابل تنظیم (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>)
+        </>
+      ) : (
+        'Custom Demo ($50–$10M)'
+      );
 
     const feeEnf = data.serverFeeSummary?.enforcement;
 
@@ -1489,14 +1664,17 @@ export function OverviewPage({
             }`}
           >
             <div className="space-y-0.5">
-              <p className="font-black text-main">
-                {feeEnf.lockStatus === 'LOCKED'
-                  ? isFa
-                    ? `🔒 ورود جدید واقعی تا تسویه کارمزد ۳٪ ($${feeEnf.totalDueUsd.toFixed(2)}) متوقف است`
-                    : `🔒 New LIVE entries paused until $${feeEnf.totalDueUsd.toFixed(2)} (3% fee) settlement`
-                  : isFa
-                    ? `⏳ مهلت تسویه کارمزد ۳٪: ${feeEnf.hoursRemaining ?? 72} ساعت فرصت دارید ($${feeEnf.totalDueUsd.toFixed(2)})`
-                    : `⏳ 3% fee settlement deadline: ${feeEnf.hoursRemaining ?? 72}h left ($${feeEnf.totalDueUsd.toFixed(2)})`}
+              <p className="font-black text-main flex items-center gap-1.5">
+                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  {feeEnf.lockStatus === 'LOCKED'
+                    ? isFa
+                      ? `ورود جدید واقعی تا تسویه کارمزد ۳٪ ($${feeEnf.totalDueUsd.toFixed(2)}) متوقف است`
+                      : `New LIVE entries paused until $${feeEnf.totalDueUsd.toFixed(2)} (3% fee) settlement`
+                    : isFa
+                      ? `مهلت تسویه کارمزد ۳٪: ${feeEnf.hoursRemaining ?? 72} ساعت فرصت دارید ($${feeEnf.totalDueUsd.toFixed(2)})`
+                      : `3% fee settlement deadline: ${feeEnf.hoursRemaining ?? 72}h left ($${feeEnf.totalDueUsd.toFixed(2)})`}
+                </span>
               </p>
               <p className="text-sub">
                 {isFa
@@ -1507,9 +1685,10 @@ export function OverviewPage({
             <button
               type="button"
               onClick={() => onNavigate('pricing')}
-              className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white font-black shrink-0"
+              className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white font-black shrink-0 inline-flex items-center gap-1.5"
             >
-              {isFa ? '💳 تسویه سریع کارمزد' : '💳 Settle Fee'}
+              <CreditCard className="w-4 h-4" />
+              <span>{isFa ? 'تسویه سریع کارمزد' : 'Settle Fee'}</span>
             </button>
           </div>
         )}
@@ -1549,7 +1728,8 @@ export function OverviewPage({
                   onClick={onOpenAcademy}
                   className="ios-glass-btn h-8 px-3 rounded-full text-[11px] font-black inline-flex items-center gap-1"
                 >
-                  <span>🎓 {isFa ? 'آموزش ساده' : 'Guide'}</span>
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'آموزش ساده' : 'Guide'}</span>
                 </button>
               )}
             </div>
@@ -1655,7 +1835,14 @@ export function OverviewPage({
                       data.config.trading_mode === 'PAPER' ? 'ios-glass-gold-btn' : 'text-white/80 hover:text-white'
                     }`}
                   >
-                    {isFa ? `🎮 کیف‌پول دمو ($${Math.round(demoBalDisplay).toLocaleString('en-US')})` : `🎮 Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`}
+                    {isFa ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Gamepad2 className="w-3.5 h-3.5" />
+                        <span>کیف‌پول دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${Math.round(demoBalDisplay).toLocaleString('en-US')}</span>)</span>
+                      </span>
+                    ) : (
+                      `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`
+                    )}
                   </button>
                   <button
                     type="button"
@@ -1665,9 +1852,14 @@ export function OverviewPage({
                       data.config.trading_mode === 'LIVE' ? 'ios-glass-emerald-btn' : 'text-white/80 hover:text-white'
                     }`}
                   >
-                    {isFa
-                      ? `🛡 پول واقعی ($${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })})`
-                      : `🛡 Real Trust ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`}
+                    {isFa ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>پول واقعی (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })}</span>)</span>
+                      </span>
+                    ) : (
+                      `Real Trust ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`
+                    )}
                   </button>
                 </div>
 
@@ -1736,7 +1928,7 @@ export function OverviewPage({
                         }),
                       });
                       tgNotifyHaptic('success');
-                      toastMsg(isFa ? `عالی! ربات با ${nextEngines.length} موتور فعال روشن شد ✅` : 'Bot started ✅');
+                      toastMsg(isFa ? `عالی! ربات با ${nextEngines.length} موتور فعال روشن شد` : 'Bot started');
                       await onRefresh();
                     } catch (e) {
                       toastMsg(e instanceof Error ? e.message : 'Start failed', true);
@@ -1817,111 +2009,120 @@ export function OverviewPage({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {[
               {
                 engine: 'CENTRAL_AI' as TradingEngineChoice,
                 img: '/images/transparent/ai-brain-3d.png',
-                roundedImg: false,
                 badge: isFa ? 'پیشنهادی' : 'SMART AI',
                 title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino Smart AI',
                 desc: isFa ? 'تحلیل خودکار کل بازار ۲۴ ساعته و شکار امن‌ترین موقعیت‌ها.' : 'Watches the full market 24/7 and picks high-probability entries.',
+                actionLabel: isFa ? 'تنظیمات مدل ←' : 'Model Settings →',
+                onAction: () => {
+                  setSimpleModel('ai');
+                  if (!activeEngines.includes('CENTRAL_AI')) void toggleEngineChoice('CENTRAL_AI', true);
+                },
               },
               {
                 engine: 'STRATEGY' as TradingEngineChoice,
                 img: '/images/transparent/mascot-astronaut.png',
-                roundedImg: false,
                 badge: isFa ? 'آماده و سریع' : 'STRATEGY',
                 title: isFa ? 'استراتژی شکار دُرنا' : 'Dorna Hunter Plan',
                 desc: isFa ? 'بهترین استراتژی‌های تاییدشده دلارینو یا کد شخصی شما.' : 'Pre-tuned Dollarino hunter rules or your custom script.',
+                actionLabel: isFa ? 'بررسی استراتژی ←' : 'View Strategy →',
+                onAction: () => {
+                  setSimpleModel('hunting');
+                  if (!activeEngines.includes('STRATEGY')) void toggleEngineChoice('STRATEGY', true);
+                },
               },
               {
                 engine: 'MY_AI' as TradingEngineChoice,
-                img: '/images/transparent/ai-brain-3d.png',
-                roundedImg: false,
+                img: '/images/transparent/my-ai-brain-3d.png?v=1165',
                 badge: isFa ? 'قابل آموزش' : 'PERSONAL AI',
                 title: isFa ? 'هوش مصنوعی شخصی من' : 'My Personal AI',
                 desc: isFa ? 'با قوانین و سبک معامله خودت به ربات آموزش بده.' : 'Trades exclusively according to rules you teach in chat.',
-                actionLabel: isFa ? 'آموزش هوش من →' : 'Train My AI →',
+                actionLabel: isFa ? 'آموزش هوش من ←' : 'Train My AI →',
                 onAction: () => onNavigate('myai'),
               },
               {
                 engine: 'COPY_TRADE' as TradingEngineChoice,
                 img: '/images/transparent/trophy-copy-3d.png',
-                roundedImg: false,
                 badge: isFa ? 'کپی‌ترید' : 'COPY PROS',
                 title: isFa ? 'کپی از حرفه‌ای‌ها' : 'Verified Copy-Trade',
                 desc: isFa ? 'آینه‌سازی لحظه‌ای معاملات تریدرهای برتر تاییدشده.' : 'Automatically mirror verified top-performing traders.',
-                actionLabel: isFa ? 'انتخاب تریدرهای برتر →' : 'Pick Traders →',
+                actionLabel: isFa ? 'تریدرهای برتر ←' : 'Pick Traders →',
                 onAction: () => {
                   setSimpleModel('copy');
                   if (!activeEngines.includes('COPY_TRADE')) void toggleEngineChoice('COPY_TRADE', true);
+                  sessionStorage.setItem('dollarino_copy_subtab', 'copy');
+                  window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: 'copy' }));
+                  onNavigate('copy');
                 },
               },
               {
                 engine: 'LISTING_SNIPER' as TradingEngineChoice,
-                img: '/images/transparent/sniper-rocket-3d.png',
-                roundedImg: true,
+                img: '/images/transparent/sniper-rocket-3d.png?v=1165',
                 badge: isFa ? 'لیستینگ و میم‌کوین' : 'SNIPER',
                 title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'Listing & Meme Sniper',
                 desc: isFa ? 'رصد لحظه‌ای لیستینگ‌های جدید و میم‌کوین‌های ایمن.' : 'Snipes fresh exchange listings & high-safety DEX gems.',
-                actionLabel: isFa ? '⚙️ میز تنظیم و شکار →' : '⚙️ Sniper Workbench →',
+                actionLabel: isFa ? 'میز تنظیم و شکار ←' : 'Sniper Hub →',
                 onAction: () => {
                   if (!activeEngines.includes('LISTING_SNIPER')) void toggleEngineChoice('LISTING_SNIPER', true);
-                  setTimeout(() => document.getElementById('sniper-workbench')?.scrollIntoView({ behavior: 'smooth' }), 100);
+                  sessionStorage.setItem('dollarino_copy_subtab', 'sniper');
+                  window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: 'sniper' }));
+                  onNavigate('copy');
                 },
               },
-            ].map((item, idx) => {
+            ].map((item) => {
               const on = activeEngines.includes(item.engine);
-              const spanClass = idx < 3 ? 'lg:col-span-2' : 'lg:col-span-3';
               return (
                 <div
                   key={item.engine}
                   onClick={() => void toggleEngineChoice(item.engine)}
-                  className={`${spanClass} cursor-pointer p-4 rounded-3xl border text-start transition flex flex-col justify-between gap-3 ${
+                  className={`cursor-pointer p-4 rounded-3xl border text-start transition flex flex-col justify-between gap-3 h-full ${
                     on
                       ? 'border-[#059669] bg-emerald-500/10 ring-1 ring-[#059669]/35 shadow-sm'
                       : 'surface-soft border-[var(--line)] hover:border-[var(--line-strong)]'
                   }`}
                 >
-                  <div className="flex items-start gap-3">
-                    {item.roundedImg ? (
-                      <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-white/15 shrink-0">
-                        <img src={item.img} alt={item.title} className="w-full h-full object-cover" />
-                      </div>
-                    ) : (
+                  <div className="space-y-2.5 flex-1">
+                    <div className="flex items-start justify-between gap-2">
                       <img src={item.img} alt={item.title} className="w-12 h-12 object-contain shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA] truncate">
-                          {item.badge}
-                        </span>
-                        <span
-                          className={`text-[10px] font-black px-2 py-0.5 rounded-full inline-flex items-center gap-1 shrink-0 ${
-                            on ? 'bg-[#059669] text-white' : 'bg-slate-500/15 text-dim'
-                          }`}
-                        >
-                          {on && <CheckCircle2 className="w-3 h-3" />}
-                          <span>{on ? (isFa ? 'روشن' : 'ON') : isFa ? 'خاموش' : 'OFF'}</span>
-                        </span>
-                      </div>
-                      <p className="text-sm font-black text-main leading-snug">{item.title}</p>
-                      <p className="text-[11.5px] text-dim leading-relaxed">{item.desc}</p>
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA] shrink-0">
+                        {item.badge}
+                      </span>
                     </div>
+                    <p className="text-sm font-black text-main leading-snug">{item.title}</p>
+                    <p className="text-[11.5px] text-dim leading-relaxed">{item.desc}</p>
                   </div>
 
-                  {item.actionLabel && item.onAction && (
-                    <div className="pt-2 border-t hairline flex justify-end" onClick={(ev) => ev.stopPropagation()}>
+                  <div className="space-y-2.5 pt-1">
+                    <div onClick={(ev) => ev.stopPropagation()}>
                       <button
                         type="button"
                         onClick={item.onAction}
-                        className="px-3 py-1 rounded-xl bg-sky-500/12 hover:bg-sky-500/20 text-[#0D47A1] dark:text-[#60A5FA] text-[11px] font-black transition"
+                        className="w-full px-3 py-1.5 rounded-xl bg-sky-500/12 hover:bg-sky-500/20 text-[#0D47A1] dark:text-[#60A5FA] text-[11px] font-black transition text-center"
                       >
                         {item.actionLabel}
                       </button>
                     </div>
-                  )}
+                    <div
+                      className="flex items-center justify-between gap-2 pt-2 border-t hairline"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      <span className={`text-[11px] font-black ${on ? 'text-[#059669] dark:text-[#34D399]' : 'text-dim'}`}>
+                        {on ? (isFa ? 'فعال (هم‌زمان)' : 'Active') : isFa ? 'خاموش' : 'Off'}
+                      </span>
+                      <SlidingSwitch
+                        checked={on}
+                        size="sm"
+                        accent="emerald"
+                        disabled={busy}
+                        ariaLabel={item.title}
+                        onChange={() => void toggleEngineChoice(item.engine)}
+                      />
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -1947,7 +2148,10 @@ export function OverviewPage({
                   {siteTraders.slice(0, 6).map((t) => (
                     <div key={t.id} className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline">
                       <div className="min-w-0">
-                        <p className="text-xs font-black text-main truncate">✅ {t.display_name}</p>
+                        <p className="text-xs font-black text-main truncate flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-jade shrink-0" />
+                          <span className="truncate">{t.display_name}</span>
+                        </p>
                         <p className="text-[11px] text-dim truncate">
                           {isFa ? `موفقیت ${t.win_rate}% · سود ماهانه +${t.roi_30d_pct}%` : `WR ${t.win_rate}% · +${t.roi_30d_pct}%`}
                         </p>
@@ -1963,7 +2167,7 @@ export function OverviewPage({
                               body: JSON.stringify({ traderId: t.id }),
                             });
                             setSiteTraders((prev) => prev.map((x) => (x.id === t.id ? { ...x, is_following: !x.is_following } : x)));
-                            toastMsg(isFa ? `وضعیت فالو برای ${t.display_name} بروزرسانی شد ✅` : `Updated ${t.display_name}`);
+                            toastMsg(isFa ? `وضعیت فالو برای ${t.display_name} بروزرسانی شد` : `Updated ${t.display_name}`);
                             await onRefresh();
                           } catch (e) {
                             toastMsg(e instanceof Error ? e.message : 'Follow failed', true);
@@ -1985,14 +2189,22 @@ export function OverviewPage({
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-black text-main">
-                    {isFa
-                      ? `قدم ۲: مدیریت سرمایه هوشمند ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')})`
-                      : `Step 2: Capital Management ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} Cap)`}
+                    {isFa ? (
+                      <>
+                        قدم ۲: مدیریت سرمایه هوشمند (<span dir="ltr" className="inline-block font-num" style={{ unicodeBidi: 'isolate' }}>${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')}</span>)
+                      </>
+                    ) : (
+                      `Step 2: Capital Management ($${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} Cap)`
+                    )}
                   </p>
                   <span className="text-[11px] text-dim font-bold">
-                    {isFa
-                      ? `اعداد زیر خودکار طبق سرمایه $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} محاسبه شده‌اند`
-                      : `Auto-scaled for $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')}`}
+                    {isFa ? (
+                      <>
+                        اعداد زیر خودکار طبق سرمایه <span dir="ltr" className="inline-block font-num" style={{ unicodeBidi: 'isolate' }}>${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')}</span> محاسبه شده‌اند
+                      </>
+                    ) : (
+                      `Auto-scaled for $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')}`
+                    )}
                   </span>
                 </div>
                 <div className="grid sm:grid-cols-3 gap-2.5">
@@ -2000,10 +2212,11 @@ export function OverviewPage({
                     const active = currentPresetId === p.id;
                     const friendlyTitle =
                       p.id === 'conservative'
-                        ? isFa ? '🛡 خیلی ایمن و آروم' : '🛡 Super Safe'
+                        ? isFa ? 'خیلی ایمن و آروم' : 'Super Safe'
                         : p.id === 'balanced'
-                          ? isFa ? '⚖️ متعادل (پیشنهادی)' : '⚖️ Balanced (Best)'
-                          : isFa ? '⚡ پرسرعت و جسور' : '⚡ Aggressive';
+                          ? isFa ? 'متعادل (پیشنهادی)' : 'Balanced (Best)'
+                          : isFa ? 'پرسرعت و جسور' : 'Aggressive';
+                    const PresetIcon = p.id === 'conservative' ? ShieldCheck : p.id === 'balanced' ? Scale : Zap;
                     return (
                       <button
                         key={p.id}
@@ -2019,7 +2232,7 @@ export function OverviewPage({
                               trailing_stop_pct: p.rec.trailingStopPct,
                               risk_profile_json: { preset: p.id },
                             },
-                            isFa ? `تنظیم مدیریت سرمایه «${friendlyTitle}» اعمال شد: ${p.descFa} ✅` : `${p.titleEn} saved`
+                            isFa ? `تنظیم مدیریت سرمایه «${friendlyTitle}» اعمال شد: ${p.descFa}` : `${p.titleEn} saved`
                           )
                         }
                         className={`p-3.5 rounded-2xl border text-start transition space-y-1 ${
@@ -2027,7 +2240,10 @@ export function OverviewPage({
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-main">{friendlyTitle}</span>
+                          <span className="text-xs font-black text-main inline-flex items-center gap-1.5">
+                            <PresetIcon className="w-3.5 h-3.5 text-[var(--gold)]" />
+                            <span>{friendlyTitle}</span>
+                          </span>
                           {active && <CheckCircle2 className="w-4 h-4 text-[#059669]" />}
                         </div>
                         <p className="text-[11px] text-dim font-num">{isFa ? p.descFa : p.descEn}</p>
@@ -2058,32 +2274,6 @@ export function OverviewPage({
           </div>
         </section>
 
-        {activeEngines.includes('LISTING_SNIPER') && (
-          <SniperWorkbench
-            lang={lang}
-            uiMode="simple"
-            tradingMode={data.config.trading_mode}
-            initialConfig={{
-              enabled: Boolean(data.config.sniper_enabled),
-              targetType: data.config.sniper_target_type || 'BOTH',
-              budgetUsd: data.config.sniper_budget_usd ?? 25,
-              minSafetyScore: data.config.sniper_min_safety_score ?? data.config.sniper_min_safety ?? 75,
-              minLiquidityUsd: data.config.sniper_min_liquidity_usd ?? 25_000,
-              maxPairAgeHours: data.config.sniper_max_pair_age_hours ?? 24,
-              maxTaxPct: data.config.sniper_max_tax_pct ?? 5,
-              tpPct: data.config.sniper_tp_pct ?? 35,
-              slPct: data.config.sniper_sl_pct ?? 15,
-              trailingEnabled: data.config.sniper_trailing_enabled !== 0,
-              trailingPct: data.config.sniper_trailing_pct ?? 8,
-              maxOpenPositions: data.config.sniper_max_open_positions ?? 3,
-              autoExecute: data.config.sniper_auto_execute !== 0,
-              slippagePct: data.config.sniper_slippage_pct ?? 3,
-            }}
-            onRefreshDashboard={onRefresh}
-            onRequireOnboardingGate={() => runWithRiskCheck(async () => {})}
-          />
-        )}
-
         {/* 3. ULTRA-CLEAN OPEN TRADES & HISTORY (PLAIN LANGUAGE WITH TOMAN!) */}
         <section className="panel rounded-[26px] p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2093,7 +2283,9 @@ export function OverviewPage({
                 onClick={() => setSimpleTradesTab('open')}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-black ${simpleTradesTab === 'open' ? 'ios-pill-active' : 'text-dim'}`}
               >
-                {isFa ? `معاملات فعال الان (${data.openTrades.length})` : `Active Now (${data.openTrades.length})`}
+                {isFa
+                  ? `معاملات فعال الان (${totalOpenPositionsCount})`
+                  : `Active Now (${totalOpenPositionsCount})`}
               </button>
               <button
                 type="button"
@@ -2103,7 +2295,27 @@ export function OverviewPage({
                 {isFa ? `معاملات قبلی (${data.closedTrades.length})` : `History (${data.closedTrades.length})`}
               </button>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {simpleTradesTab === 'open' && openPnlBreakdown.profitableCount > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void closeBatchPositions('ALL_PROFITABLE')}
+                  className="px-3 py-1.5 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-[11px] font-black inline-flex items-center gap-1 shadow-xs"
+                >
+                  <span>{isFa ? `برداشت همه سودها (${openPnlBreakdown.profitableCount})` : `Take All Profit (${openPnlBreakdown.profitableCount})`}</span>
+                </button>
+              )}
+              {simpleTradesTab === 'open' && openPnlBreakdown.losingCount > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void closeBatchPositions('ALL_LOSING')}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white border border-rose-500/30 text-[11px] font-black inline-flex items-center gap-1"
+                >
+                  <span>{isFa ? `بستن همه ضررها (${openPnlBreakdown.losingCount})` : `Close All Losing (${openPnlBreakdown.losingCount})`}</span>
+                </button>
+              )}
               <button type="button" onClick={() => void reconcilePositions()} disabled={busy} className="btn-ghost px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1">
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>{isFa ? 'بروزرسانی' : 'Refresh'}</span>
@@ -2141,7 +2353,7 @@ export function OverviewPage({
                 })}
               </div>
             )
-          ) : data.openTrades.length === 0 ? (
+          ) : totalOpenPositionsCount === 0 ? (
             <div className="surface-soft rounded-3xl p-6 text-center flex flex-col items-center gap-3 border hairline">
               <img src="/images/transparent/piggy-wallet-3d.png" alt="Ready" className="w-16 h-16 object-contain" />
               <p className="text-xs sm:text-sm font-black text-main">
@@ -2159,14 +2371,20 @@ export function OverviewPage({
               {data.openTrades.map((pos) => {
                 const pnl = Number(pos.unrealized_pnl || 0);
                 const isProfit = pnl >= 0;
+                const srcLabel = isFa ? pos.source_label_fa || 'ربات خودکار' : pos.source_label_en || 'Auto Bot';
                 return (
                   <div key={pos.id} className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <CoinIcon symbol={pos.symbol} size={34} />
                       <div className="min-w-0">
-                        <p className="font-black text-xs text-main truncate">
-                          {pos.symbol.replace('USDT', '')} · {pos.direction === 'LONG' ? (isFa ? 'خرید خودکار' : 'Auto Buy') : isFa ? 'فروش خودکار' : 'Auto Sell'}
-                        </p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-black text-xs text-main truncate">
+                            {pos.symbol.replace('USDT', '')} · {pos.direction === 'LONG' ? (isFa ? 'خرید' : 'Long') : isFa ? 'فروش' : 'Short'}
+                          </p>
+                          <span className="px-1.5 py-0.5 rounded bg-sky-500/12 text-brand text-[9.5px] font-bold shrink-0">
+                            {srcLabel}
+                          </span>
+                        </div>
                         <p dir="ltr" className={`text-xs font-black font-num ${isProfit ? 'text-[#059669] dark:text-[#34D399]' : 'text-loss'}`}>
                           {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}{' '}
                           <span className="text-[10px] text-dim font-normal">({formatTomanEq(Math.abs(pnl), liveIranIrt)} ت)</span>
@@ -2177,6 +2395,127 @@ export function OverviewPage({
                       type="button"
                       disabled={busy}
                       onClick={() => void closePosition(pos.id)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black shrink-0 ${
+                        isProfit ? 'bg-[#059669] hover:bg-[#047857] text-white' : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
+                      }`}
+                    >
+                      {isProfit ? (isFa ? 'برداشت سود' : 'Take Profit') : isFa ? 'بستن معامله' : 'Close'}
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openDexTrades.map((d) => {
+                const pnl = Number(d.unrealized_pnl_usd || 0);
+                const isProfit = pnl >= 0;
+                const srcLabel = isFa ? d.source_label_fa || 'اسنایپر / DEX' : d.source_label_en || 'DEX / Sniper';
+                return (
+                  <div key={d.id} className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ChainLogo chain={d.chain_id} size={32} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-black text-xs text-main truncate">
+                            {d.token_symbol} · <span className="uppercase text-[10px] text-amber-500">{d.chain_id}</span>
+                          </p>
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-bold shrink-0">
+                            {srcLabel}
+                          </span>
+                        </div>
+                        <p dir="ltr" className={`text-xs font-black font-num ${isProfit ? 'text-[#059669] dark:text-[#34D399]' : 'text-loss'}`}>
+                          {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}{' '}
+                          <span className="text-[10px] text-dim font-normal">({formatTomanEq(Math.abs(pnl), liveIranIrt)} ت)</span>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeDexPosition(d.id)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black shrink-0 ${
+                        d.status === 'PENDING_SIGN'
+                          ? 'bg-amber-500/15 text-amber-500'
+                          : isProfit
+                            ? 'bg-[#059669] hover:bg-[#047857] text-white'
+                            : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
+                      }`}
+                    >
+                      {d.status === 'PENDING_SIGN'
+                        ? isFa
+                          ? 'لغو انتظار'
+                          : 'Cancel'
+                        : isProfit
+                          ? isFa
+                            ? 'برداشت سود'
+                            : 'Take Profit'
+                          : isFa
+                            ? 'بستن معامله'
+                            : 'Close'}
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openSmartCopy.map((cp) => {
+                const pnl = Number(cp.unrealized_pnl_usd ?? cp.pnl_usd ?? 0);
+                const isProfit = pnl >= 0;
+                return (
+                  <div key={cp.id} className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ChainLogo chain={cp.chain_id} size={32} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-black text-xs text-main truncate">{cp.token_symbol}</p>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-jade text-[9.5px] font-bold shrink-0">
+                            {isFa ? cp.source_label_fa || `کپی ${cp.trader_label}` : cp.source_label_en || `Copy ${cp.trader_label}`}
+                          </span>
+                        </div>
+                        <p dir="ltr" className={`text-xs font-black font-num ${isProfit ? 'text-[#059669] dark:text-[#34D399]' : 'text-loss'}`}>
+                          {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}{' '}
+                          <span className="text-[10px] text-dim font-normal">({formatTomanEq(Math.abs(pnl), liveIranIrt)} ت)</span>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeSmartCopyPosition(cp.id)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black shrink-0 ${
+                        isProfit ? 'bg-[#059669] hover:bg-[#047857] text-white' : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
+                      }`}
+                    >
+                      {isProfit ? (isFa ? 'برداشت سود' : 'Take Profit') : isFa ? 'بستن معامله' : 'Close'}
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openPerpOrders.map((po) => {
+                const pnl = Number(po.unrealized_pnl_usd || 0);
+                const isProfit = pnl >= 0;
+                return (
+                  <div key={po.id} className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <CoinIcon symbol={po.symbol} size={32} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-black text-xs text-main truncate">
+                            {po.symbol} {po.leverage}×
+                          </p>
+                          <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-400 text-[9.5px] font-bold shrink-0">
+                            {isFa ? po.source_label_fa || `Perp (${po.venue})` : po.source_label_en || `Perp (${po.venue})`}
+                          </span>
+                        </div>
+                        <p dir="ltr" className={`text-xs font-black font-num ${isProfit ? 'text-[#059669] dark:text-[#34D399]' : 'text-loss'}`}>
+                          {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}{' '}
+                          <span className="text-[10px] text-dim font-normal">({formatTomanEq(Math.abs(pnl), liveIranIrt)} ت)</span>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closePerpOrderPosition(po.id)}
                       className={`px-3.5 py-2 rounded-xl text-xs font-black shrink-0 ${
                         isProfit ? 'bg-[#059669] hover:bg-[#047857] text-white' : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
                       }`}
@@ -2347,7 +2686,13 @@ export function OverviewPage({
                       data.config.trading_mode === 'PAPER' ? 'ios-glass-gold-btn' : 'text-white/75 hover:text-white'
                     }`}
                   >
-                    {isFa ? `دمو ($${Math.round(demoBalDisplay).toLocaleString('en-US')})` : `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`}
+                    {isFa ? (
+                      <>
+                        دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${Math.round(demoBalDisplay).toLocaleString('en-US')}</span>)
+                      </>
+                    ) : (
+                      `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`
+                    )}
                   </button>
                   <button
                     type="button"
@@ -2357,9 +2702,13 @@ export function OverviewPage({
                       data.config.trading_mode === 'LIVE' ? 'ios-glass-emerald-btn' : 'text-white/75 hover:text-white'
                     }`}
                   >
-                    {isFa
-                      ? `تراست‌ولت واقعی ($${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })})`
-                      : `Trust Live ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`}
+                    {isFa ? (
+                      <>
+                        تراست‌ولت واقعی (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${liveBalDisplay.toLocaleString('en-US', { minimumFractionDigits: liveBalDisplay < 10 ? 2 : 0, maximumFractionDigits: 2 })}</span>)
+                      </>
+                    ) : (
+                      `Trust Live ($${liveBalDisplay.toLocaleString('en-US', { maximumFractionDigits: 2 })})`
+                    )}
                   </button>
                 </div>
 
@@ -2529,42 +2878,40 @@ export function OverviewPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <select
+            <ProDropdown
               value={activeStrategy}
               disabled={busy}
-              onChange={(e) =>
+              align="end"
+              menuMinWidthClass="min-w-[240px]"
+              options={ALL_STRATEGIES.map((s) => ({
+                value: s.key,
+                label: isFa ? s.labelFa : s.labelEn,
+              }))}
+              onChange={(nextKey) =>
                 void patchConfig(
                   {
-                    strategy_key: e.target.value,
+                    strategy_key: nextKey,
                     ai_gate_enabled:
-                      e.target.value === 'ai_autonomous_agent' || e.target.value === 'my_custom_ai' ? 1 : 0,
+                      nextKey === 'ai_autonomous_agent' || nextKey === 'my_custom_ai' ? 1 : 0,
                   },
                   isFa ? 'استراتژی فعال تغییر کرد' : 'Strategy updated'
                 )
               }
-              className="field py-2 px-3 text-xs font-bold w-auto"
-            >
-              {ALL_STRATEGIES.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {isFa ? s.labelFa : s.labelEn}
-                </option>
-              ))}
-            </select>
+            />
 
-            <select
-              value={data.config.entry_timeframe || '15m'}
+            <ProDropdown
+              value={(data.config.entry_timeframe || '15m') as Timeframe}
               disabled={busy}
-              onChange={(e) =>
-                void patchConfig({ entry_timeframe: e.target.value as Timeframe }, isFa ? `تایم‌فریم روی ${e.target.value} تنظیم شد` : 'Timeframe updated')
+              align="end"
+              menuMinWidthClass="min-w-[130px]"
+              options={(['1m', '5m', '15m', '1h', '4h'] as Timeframe[]).map((tf) => ({
+                value: tf,
+                label: `TF: ${tf}`,
+              }))}
+              onChange={(nextTf) =>
+                void patchConfig({ entry_timeframe: nextTf }, isFa ? `تایم‌فریم روی ${nextTf} تنظیم شد` : 'Timeframe updated')
               }
-              className="field py-2 px-3 text-xs font-bold w-auto"
-            >
-              {(['1m', '5m', '15m', '1h', '4h'] as Timeframe[]).map((tf) => (
-                <option key={tf} value={tf}>
-                  TF: {tf}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
 
@@ -2587,7 +2934,7 @@ export function OverviewPage({
               id: 'myai' as const,
               engine: 'MY_AI' as const,
               active: activeEngines.includes('MY_AI'),
-              img: '/images/transparent/ai-brain-3d.png',
+              img: '/images/transparent/my-ai-brain-3d.png?v=1165',
               roundedImg: false,
               code: isFa ? 'هوش شخصی' : 'PERSONAL AI',
               title: isFa ? 'هوش مصنوعی شخصی من' : 'Raw Personal AI',
@@ -2628,8 +2975,8 @@ export function OverviewPage({
               id: 'sniper' as const,
               engine: 'LISTING_SNIPER' as const,
               active: activeEngines.includes('LISTING_SNIPER'),
-              img: '/images/transparent/sniper-rocket-3d.png',
-              roundedImg: true,
+              img: '/images/transparent/sniper-rocket-3d.png?v=1165',
+              roundedImg: false,
               code: isFa ? 'شکار لیستینگ' : 'SNIPER',
               title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'New Listing & Meme Sniper',
               desc: isFa ? 'شکار خودکار ارزهای تازه‌لیست‌شده صرافی‌ها و میم‌کوین‌های انفجاری ایمن DEX.' : 'Auto-snipes fresh CEX listings & safe booming DEX meme tokens.',
@@ -2641,27 +2988,32 @@ export function OverviewPage({
             <div
               key={e.id}
               onClick={e.onClick}
-              className={`cursor-pointer panel panel-hover rounded-[24px] p-4 sm:p-5 flex flex-col justify-between gap-3 relative ${
-                e.active ? 'ring-2 ring-[#059669] bg-emerald-500/8' : ''
+              className={`cursor-pointer panel panel-hover rounded-[24px] p-4 sm:p-5 flex flex-col justify-between gap-3 relative transition ${
+                e.active ? 'border-[#059669]/60 ring-1 ring-[#059669]/35 bg-emerald-500/[0.06] shadow-sm' : ''
               }`}
             >
               <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-start justify-between gap-2">
                   {e.roundedImg ? (
-                    <div className="w-11 h-11 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-white/15 shrink-0">
+                    <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[#07152e] ring-1 ring-white/15 shrink-0">
                       <img src={e.img} alt={e.title} className="w-full h-full object-cover" />
                     </div>
                   ) : (
-                    <img src={e.img} alt={e.title} className="w-11 h-11 object-contain shrink-0" />
+                    <img src={e.img} alt={e.title} className="w-12 h-12 object-contain shrink-0" />
                   )}
-                  <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0" style={{ background: `${e.color}1c`, color: e.color }}>
-                    {e.code}
-                  </span>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full" style={{ background: `${e.color}1c`, color: e.color }}>
+                      {e.code}
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full surface-soft border hairline text-dim font-num">
+                      {isFa ? `نرخ برد ${e.win}%` : `${e.win}% WR`}
+                    </span>
+                  </div>
                 </div>
                 <h3 className="font-display font-bold text-sm sm:text-base text-main">{e.title}</h3>
                 <p className="text-xs text-dim leading-relaxed">{e.desc}</p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {e.id === 'myai' && (
                   <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
                     <button
@@ -2688,10 +3040,14 @@ export function OverviewPage({
                   <div className="flex flex-wrap gap-1.5" onClick={(ev) => ev.stopPropagation()}>
                     <button
                       type="button"
-                      onClick={() => document.getElementById('sniper-workbench')?.scrollIntoView({ behavior: 'smooth' })}
+                      onClick={() => {
+                        sessionStorage.setItem('dollarino_copy_subtab', 'sniper');
+                        window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: 'sniper' }));
+                        onNavigate('copy');
+                      }}
                       className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-[#F97316] text-[10px] font-black hover:bg-amber-500/25"
                     >
-                      {isFa ? 'تنظیمات و اسکن شکارچی ↓' : 'Sniper Workbench ↓'}
+                      {isFa ? 'ورود به میز اسنایپر ↗' : 'Open Sniper Hub ↗'}
                     </button>
                   </div>
                 )}
@@ -2713,42 +3069,26 @@ export function OverviewPage({
                     </button>
                   </div>
                 )}
-                <div className="flex items-center justify-between text-xs font-black pt-2 border-t hairline" style={{ color: e.color }}>
-                  <span className="inline-flex items-center gap-1">
-                    {e.active && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    <span>{e.active ? (isFa ? 'روشن (هم‌زمان)' : 'ON (Concurrent)') : isFa ? 'خاموش (کلیک = روشن)' : 'OFF (Tap ON)'}</span>
+                <div
+                  className="flex items-center justify-between gap-2 pt-2.5 border-t hairline"
+                  onClick={(ev) => ev.stopPropagation()}
+                >
+                  <span className={`text-[11px] font-black ${e.active ? 'text-[#059669] dark:text-[#34D399]' : 'text-dim'}`}>
+                    {e.active ? (isFa ? 'فعال (هم‌زمان)' : 'Active (Concurrent)') : isFa ? 'خاموش' : 'Off'}
                   </span>
-                  <span>{e.win}% {isFa ? 'نرخ برد' : 'WR'}</span>
+                  <SlidingSwitch
+                    checked={e.active}
+                    size="md"
+                    accent="emerald"
+                    disabled={busy}
+                    ariaLabel={e.title}
+                    onChange={() => e.onClick()}
+                  />
                 </div>
               </div>
             </div>
           ))}
         </div>
-
-        {/* Dedicated Unified CEX New Listing & Booming Meme Sniper Workbench */}
-        <SniperWorkbench
-          lang={lang}
-          uiMode="pro"
-          tradingMode={data.config.trading_mode}
-          initialConfig={{
-            enabled: Boolean(data.config.sniper_enabled),
-            targetType: data.config.sniper_target_type || 'BOTH',
-            budgetUsd: data.config.sniper_budget_usd ?? 25,
-            minSafetyScore: data.config.sniper_min_safety_score ?? data.config.sniper_min_safety ?? 75,
-            minLiquidityUsd: data.config.sniper_min_liquidity_usd ?? 25_000,
-            maxPairAgeHours: data.config.sniper_max_pair_age_hours ?? 24,
-            maxTaxPct: data.config.sniper_max_tax_pct ?? 5,
-            tpPct: data.config.sniper_tp_pct ?? 35,
-            slPct: data.config.sniper_sl_pct ?? 15,
-            trailingEnabled: data.config.sniper_trailing_enabled !== 0,
-            trailingPct: data.config.sniper_trailing_pct ?? 8,
-            maxOpenPositions: data.config.sniper_max_open_positions ?? 3,
-            autoExecute: data.config.sniper_auto_execute !== 0,
-            slippagePct: data.config.sniper_slippage_pct ?? 3,
-          }}
-          onRefreshDashboard={onRefresh}
-          onRequireOnboardingGate={() => runWithRiskCheck(async () => {})}
-        />
 
         {/* Compact Live AI Core Bar & Instant Market Scan */}
         <div className="panel rounded-[22px] p-4 border border-blue-500/20 bg-gradient-to-br from-blue-600/8 via-transparent to-emerald-500/8 space-y-3">
@@ -3009,9 +3349,29 @@ export function OverviewPage({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
               <Zap className="w-4 h-4 text-jade" />
-              <span>{isFa ? `معاملات باز (${data.openTrades.length})` : `Open Positions (${data.openTrades.length})`}</span>
+              <span>{isFa ? `معاملات باز (${totalOpenPositionsCount})` : `Open Positions (${totalOpenPositionsCount})`}</span>
             </h3>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {openPnlBreakdown.profitableCount > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void closeBatchPositions('ALL_PROFITABLE')}
+                  className="px-3 py-1.5 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-[11px] font-black inline-flex items-center gap-1 shadow-xs"
+                >
+                  <span>{isFa ? `برداشت همه سودها (${openPnlBreakdown.profitableCount})` : `Take All Profit (${openPnlBreakdown.profitableCount})`}</span>
+                </button>
+              )}
+              {openPnlBreakdown.losingCount > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void closeBatchPositions('ALL_LOSING')}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white border border-rose-500/30 text-[11px] font-black inline-flex items-center gap-1"
+                >
+                  <span>{isFa ? `بستن همه ضررها (${openPnlBreakdown.losingCount})` : `Close All Losing (${openPnlBreakdown.losingCount})`}</span>
+                </button>
+              )}
               <button
                 type="button"
                 disabled={busy}
@@ -3027,7 +3387,7 @@ export function OverviewPage({
             </div>
           </div>
 
-          {data.openTrades.length === 0 ? (
+          {totalOpenPositionsCount === 0 ? (
             <div className="rounded-2xl border border-dashed hairline py-10 text-center text-xs text-dim space-y-2">
               <p className="font-bold text-main">
                 {isRunning
@@ -3045,16 +3405,20 @@ export function OverviewPage({
               {data.openTrades.map((pos) => {
                 const uPnl = Number(pos.unrealized_pnl || 0);
                 const up = uPnl >= 0;
+                const srcLabel = isFa ? pos.source_label_fa || 'ربات استراتژی' : pos.source_label_en || 'Strategy Bot';
                 return (
                   <div key={pos.id} className="rounded-2xl border hairline bg-[var(--soft)] p-3.5 flex flex-wrap items-center gap-3">
                     <CoinIcon symbol={pos.symbol} size={32} />
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button type="button" onClick={() => { onSelectTerminalSymbol(pos.symbol); onNavigate('terminal'); }} className="font-bold text-sm text-main hover:underline">
                           {pos.symbol}
                         </button>
                         <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ${pos.direction === 'LONG' ? 'bg-jade/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
                           {pos.direction} {pos.leverage}×
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-sky-500/12 text-brand">
+                          {srcLabel}
                         </span>
                       </div>
                       <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
@@ -3095,6 +3459,135 @@ export function OverviewPage({
                       type="button"
                       disabled={busy}
                       onClick={() => void closePosition(pos.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white text-xs font-black transition inline-flex items-center gap-1"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'بستن' : 'Close'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openDexTrades.map((d) => {
+                const uPnl = Number(d.unrealized_pnl_usd || 0);
+                const up = uPnl >= 0;
+                const srcLabel = isFa ? d.source_label_fa || 'DEX / اسنایپر' : d.source_label_en || 'DEX / Sniper';
+                return (
+                  <div key={d.id} className="rounded-2xl border hairline bg-[var(--soft)] p-3.5 flex flex-wrap items-center gap-3">
+                    <ChainLogo chain={d.chain_id} size={30} />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sessionStorage.setItem('dollarino_copy_subtab', 'sniper');
+                            window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: 'sniper' }));
+                            onNavigate('copy');
+                          }}
+                          className="font-bold text-sm text-main hover:underline"
+                        >
+                          {d.token_symbol}
+                        </button>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-black bg-amber-500/15 text-amber-400 uppercase">
+                          {d.chain_id} · {srcLabel}
+                        </span>
+                      </div>
+                      <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
+                        Size ${Number(d.amount_usd).toFixed(2)} · Entry ${Number(d.entry_price_usd).toPrecision(4)} · Live ${Number(d.live_price_usd).toPrecision(4)}
+                      </p>
+                    </div>
+
+                    <div className="ms-auto text-end">
+                      <p dir="ltr" className={`font-num font-bold text-sm tabular ${up ? 'text-jade' : 'text-loss'}`}>
+                        {up ? `+$${uPnl.toFixed(2)}` : `-$${Math.abs(uPnl).toFixed(2)}`}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeDexPosition(d.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white text-xs font-black transition inline-flex items-center gap-1"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>{d.status === 'PENDING_SIGN' ? (isFa ? 'لغو' : 'Cancel') : isFa ? 'بستن' : 'Close'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openSmartCopy.map((cp) => {
+                const uPnl = Number(cp.unrealized_pnl_usd ?? cp.pnl_usd ?? 0);
+                const up = uPnl >= 0;
+                return (
+                  <div key={cp.id} className="rounded-2xl border hairline bg-[var(--soft)] p-3.5 flex flex-wrap items-center gap-3">
+                    <ChainLogo chain={cp.chain_id} size={30} />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button type="button" onClick={() => onNavigate('copy')} className="font-bold text-sm text-main hover:underline">
+                          {cp.token_symbol}
+                        </button>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-black bg-emerald-500/15 text-jade">
+                          {isFa ? cp.source_label_fa || `کپی‌ترید (${cp.trader_label})` : cp.source_label_en || `Copy (${cp.trader_label})`}
+                        </span>
+                      </div>
+                      <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
+                        Size ${Number(cp.margin_usd).toFixed(2)} · Entry ${Number(cp.entry_price_usd).toPrecision(4)} · Live ${Number(cp.live_price_usd ?? cp.current_price_usd).toPrecision(4)}
+                      </p>
+                    </div>
+
+                    <div className="ms-auto text-end">
+                      <p dir="ltr" className={`font-num font-bold text-sm tabular ${up ? 'text-jade' : 'text-loss'}`}>
+                        {up ? `+$${uPnl.toFixed(2)}` : `-$${Math.abs(uPnl).toFixed(2)}`}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closeSmartCopyPosition(cp.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white text-xs font-black transition inline-flex items-center gap-1"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'بستن' : 'Close'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {openPerpOrders.map((po) => {
+                const uPnl = Number(po.unrealized_pnl_usd || 0);
+                const up = uPnl >= 0;
+                return (
+                  <div key={po.id} className="rounded-2xl border hairline bg-[var(--soft)] p-3.5 flex flex-wrap items-center gap-3">
+                    <CoinIcon symbol={po.symbol} size={30} />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button type="button" onClick={() => onNavigate('markets')} className="font-bold text-sm text-main hover:underline">
+                          {po.symbol}
+                        </button>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ${/SELL|SHORT/i.test(po.side) ? 'bg-rose-500/15 text-loss' : 'bg-jade/15 text-jade'}`}>
+                          {po.side} {po.leverage}×
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-violet-500/15 text-violet-400">
+                          {isFa ? po.source_label_fa || `Perp DEX (${po.venue})` : po.source_label_en || `Perp DEX (${po.venue})`}
+                        </span>
+                      </div>
+                      <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
+                        Margin ${Number(po.margin_usd).toFixed(2)} · Entry ${Number(po.entry_price).toFixed(2)}
+                      </p>
+                    </div>
+
+                    <div className="ms-auto text-end">
+                      <p dir="ltr" className={`font-num font-bold text-sm tabular ${up ? 'text-jade' : 'text-loss'}`}>
+                        {up ? `+$${uPnl.toFixed(2)}` : `-$${Math.abs(uPnl).toFixed(2)}`}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void closePerpOrderPosition(po.id)}
                       className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-loss hover:text-white text-xs font-black transition inline-flex items-center gap-1"
                     >
                       <XCircle className="w-3.5 h-3.5" />
