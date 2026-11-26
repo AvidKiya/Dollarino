@@ -19,18 +19,97 @@ import {
   verifyTotpCode,
 } from './crypto.js';
 import { buildClientFingerprints, enforceRateLimit, getClientIp } from './security.js';
+import { getAllCachedSystemSettings } from './services/settings-cache.js';
 import { TelegramBotClient } from './telegram/client.js';
-import { resolveTelegramBotToken } from './telegram/token.js';
+import { publishSystemLogEvent } from './telegram/publisher.js';
+import { resolveOwnerTelegramId, resolveTelegramBotToken } from './telegram/token.js';
 
 const USER_PROFILE_COLUMNS = `
   id, email, username, display_name, auth_provider, role, is_blocked, telegram_id, telegram_username, telegram_first_name, telegram_link_code,
   wallet_balance_usdt, avatar_url, COALESCE(avatar_custom, 0) as avatar_custom, phone_number, phone_verified,
   COALESCE(has_custom_password, 0) as has_custom_password, COALESCE(profile_completed, 1) as profile_completed,
+  COALESCE(must_change_credentials, 0) as must_change_credentials,
   COALESCE(totp_enabled, 0) as totp_enabled, display_bio,
   COALESCE(referral_code, 'DLR' || UPPER(SUBSTR(REPLACE(id, '_', ''), -5))) as referral_code,
   trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified,
   ui_mode, mobile_widgets_json, extension_api_key, risk_terms_accepted_at, created_at
 `;
+
+export interface AuthProviderToggles {
+  passwordLoginEnabled: boolean;
+  publicSignupEnabled: boolean;
+  walletAuthEnabled: boolean;
+  telegramAuthEnabled: boolean;
+  googleAuthEnabled: boolean;
+  telegramOnlySignup: boolean;
+  requireTelegramPhoneKyc: boolean;
+  botUsername: string;
+  officialChannel: string;
+  officialChannelInvite: string;
+  signalsChannel: string;
+  signalsChannelInvite: string;
+  resultsChannel: string;
+  resultsChannelInvite: string;
+  communityGroupInvite: string;
+  newsChannel: string;
+  newsChannelInvite: string;
+  telegramSupport: string;
+}
+
+function buildPublicChannelUrl(target: string, explicitInvite: string): string {
+  const inv = (explicitInvite || '').trim();
+  if (inv && /^https?:\/\//i.test(inv)) return inv;
+  const t = (target || '').trim();
+  if (!t) return '';
+  if (/^https?:\/\/t\.me\//i.test(t)) return t;
+  if (t.startsWith('@') && t.length > 1) return `https://t.me/${t.slice(1)}`;
+  return '';
+}
+
+export async function resolveAuthProviderToggles(db: D1Database): Promise<AuthProviderToggles> {
+  const s = await getAllCachedSystemSettings(db);
+  const g = (k: string, fb = '') => (s.get(k) ?? fb).trim();
+  const telegramOnly = g('telegram_only_signup', 'false') === 'true';
+  const legacyDirectSignup = g('allow_direct_email_signup', 'false') === 'true';
+  const publicSignup = (g('auth_public_signup_enabled', 'false') === 'true' || legacyDirectSignup) && !telegramOnly;
+
+  const officialChannel = g('official_channel', '');
+  const signalsChannel = g('signals_channel_id', '');
+  const resultsChannel = g('results_channel_id', '');
+  const newsChannel = g('news_channel_id', '');
+  const communityGroup = g('community_group_id', '');
+
+  return {
+    passwordLoginEnabled: g('auth_password_login_enabled', 'true') !== 'false',
+    publicSignupEnabled: publicSignup,
+    walletAuthEnabled: g('auth_wallet_enabled', 'false') === 'true',
+    telegramAuthEnabled: g('auth_telegram_enabled', 'false') === 'true' || telegramOnly,
+    googleAuthEnabled: g('auth_google_enabled', 'false') === 'true',
+    telegramOnlySignup: telegramOnly,
+    requireTelegramPhoneKyc: g('require_telegram_phone_kyc', 'false') === 'true',
+    botUsername: g('bot_username', '').replace(/^@/, ''),
+    officialChannel,
+    officialChannelInvite: buildPublicChannelUrl(officialChannel, g('official_channel_invite', '')),
+    signalsChannel,
+    signalsChannelInvite: buildPublicChannelUrl(signalsChannel, g('signals_channel_invite', '')),
+    resultsChannel,
+    resultsChannelInvite: buildPublicChannelUrl(resultsChannel, g('results_channel_invite', '')),
+    communityGroupInvite: buildPublicChannelUrl(communityGroup, g('community_group_invite', '')),
+    newsChannel,
+    newsChannelInvite: buildPublicChannelUrl(newsChannel, g('news_channel_invite', '')),
+    telegramSupport: g('telegram_support', ''),
+  };
+}
+
+const SETUP_BYPASS_PATHS = new Set([
+  '/api/auth/me',
+  '/api/auth/session',
+  '/api/auth/logout',
+  '/api/auth/check-username',
+  '/api/auth/2fa/setup',
+  '/api/auth/complete-admin-setup',
+  '/api/auth/ui-preferences',
+]);
 
 function verifyWalletPersonalSign(message: string, signatureHex: string, expectedEvmAddress: string): boolean {
   if (!message || !/^0x[a-fA-F0-9]{40}$/.test(expectedEvmAddress.trim())) return false;
@@ -125,7 +204,7 @@ export type AppVariables = {
 
 const AUTH_USER_CACHE = new WeakMap<object, Map<string, { ts: number; user: AuthUser }>>();
 const AUTH_EXT_CACHE = new WeakMap<object, Map<string, { ts: number; user: AuthUser }>>();
-const AUTH_CACHE_TTL_MS = 15_000;
+const AUTH_CACHE_TTL_MS = 45_000;
 
 export function invalidateAuthUserCache(db: D1Database, userId?: string): void {
   const userMap = AUTH_USER_CACHE.get(db as unknown as object);
@@ -202,7 +281,12 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
     return c.json({ error: 'Authentication required' }, 401);
   }
   const payload = await verifyJwt(token, c.env.SESSION_JWT_SECRET);
-  if (!payload || typeof payload.sub !== 'string' || payload.purpose === '2fa_challenge') {
+  if (
+    !payload ||
+    typeof payload.sub !== 'string' ||
+    payload.purpose === '2fa_challenge' ||
+    payload.purpose === 'secondary_password_challenge'
+  ) {
     console.warn('[auth] 401 invalid jwt');
     return c.json({ error: 'Invalid or expired session' }, 401);
   }
@@ -210,19 +294,20 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
   const allowPollCache =
     (c.req.path === '/api/trading/live-ticks' && c.req.query('poll') === '1') ||
     (c.req.path === '/api/trading/dashboard' && c.req.query('lite') === '1') ||
-    c.req.header('X-Dollarino-Poll') === '1';
+    c.req.header('X-Dollarino-Poll') === '1' ||
+    (c.req.method === 'GET' && !c.req.path.startsWith('/api/auth/') && !c.req.path.startsWith('/api/admin/'));
 
   const now = Date.now();
   let userMap = AUTH_USER_CACHE.get(c.env.DB as unknown as object);
   const cachedUser = allowPollCache ? userMap?.get(payload.sub) : undefined;
-  if (cachedUser && now - cachedUser.ts < AUTH_CACHE_TTL_MS) {
+  if (cachedUser && now - cachedUser.ts < AUTH_CACHE_TTL_MS && !cachedUser.user.mustChangeCredentials) {
     c.set('user', cachedUser.user);
     await next();
     return;
   }
 
   const row = await c.env.DB.prepare(
-    'SELECT id, email, username, role, is_blocked, telegram_id FROM users WHERE id = ?'
+    'SELECT id, email, username, role, is_blocked, telegram_id, COALESCE(must_change_credentials, 0) as must_change_credentials FROM users WHERE id = ?'
   ).bind(payload.sub).first<{
     id: string;
     email: string;
@@ -230,6 +315,7 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
     role: string;
     is_blocked: number;
     telegram_id: string | null;
+    must_change_credentials: number;
   }>();
 
   if (!row) return c.json({ error: 'User not found' }, 401);
@@ -238,12 +324,24 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
     return c.json({ error: 'Account is suspended' }, 403);
   }
 
+  const mustChange = Number(row.must_change_credentials ?? 0) === 1;
+  if (mustChange && !SETUP_BYPASS_PATHS.has(c.req.path)) {
+    return c.json(
+      {
+        error: 'برای امنیت پلتفرم، ابتدا نام کاربری و رمز عبور جدید را تعیین کرده و تایید دو مرحله‌ای Google Authenticator را فعال نمایید.',
+        code: 'ADMIN_CREDENTIAL_CHANGE_REQUIRED',
+      },
+      403
+    );
+  }
+
   const authUser: AuthUser = {
     id: row.id,
     email: row.email,
     username: row.username,
     role: (row.role as AuthUser['role']) || 'user',
     telegramId: row.telegram_id,
+    mustChangeCredentials: mustChange,
   };
   if (!userMap) {
     userMap = new Map();
@@ -279,8 +377,8 @@ export async function resolveEffectiveReferralCode(
     .prepare(
       `SELECT id, COALESCE(NULLIF(TRIM(referral_code), ''), 'DLR' || UPPER(SUBSTR(REPLACE(id, '_', ''), -5))) AS ref_code
        FROM users
-       WHERE id != ? AND LOWER(role) IN ('owner', 'admin')
-       ORDER BY CASE WHEN LOWER(role) = 'owner' THEN 0 ELSE 1 END, created_at ASC
+       WHERE id != ? AND LOWER(role) IN ('owner', 'admin') AND COALESCE(must_change_credentials, 0) = 0
+       ORDER BY CASE WHEN LOWER(role) = 'owner' THEN 0 ELSE 1 END, created_at DESC
        LIMIT 1`
     )
     .bind(newUserId)
@@ -355,9 +453,6 @@ export async function resetPrivilegedUserAccountToFreshState(db: D1Database, use
          display_bio = NULL,
          avatar_url = NULL,
          avatar_custom = 0,
-         totp_enabled = 0,
-         totp_secret = NULL,
-         totp_verified_at = NULL,
          ui_mode = 'simple',
          mobile_widgets_json = NULL,
          last_active_at = datetime('now')
@@ -443,7 +538,17 @@ async function attachReferralIfProvided(
 
 async function issueAuthSessionOr2fa(
   c: Context<{ Bindings: Env; Variables: AppVariables }>,
-  userRow: { id: string; email: string; username: string; role: string; telegram_id: string | null; display_name?: string | null; totp_enabled?: number; totp_secret?: string | null }
+  userRow: {
+    id: string;
+    email: string;
+    username: string;
+    role: string;
+    telegram_id: string | null;
+    display_name?: string | null;
+    totp_enabled?: number;
+    totp_secret?: string | null;
+    secondary_password_hash?: string | null;
+  }
 ) {
   if (Number(userRow.totp_enabled ?? 0) === 1 && userRow.totp_secret) {
     const tempToken = await signJwt(
@@ -458,6 +563,30 @@ async function issueAuthSessionOr2fa(
     );
     return {
       requires2fa: true as const,
+      twoFactorMode: 'TOTP' as const,
+      challengeType: 'TOTP' as const,
+      tempToken,
+      challengeToken: tempToken,
+      username: userRow.username,
+      displayName: userRow.display_name || userRow.username,
+    };
+  }
+
+  if (userRow.secondary_password_hash) {
+    const tempToken = await signJwt(
+      {
+        sub: userRow.id,
+        email: userRow.email,
+        role: userRow.role,
+        purpose: 'secondary_password_challenge',
+        issuedAt: Date.now(),
+      },
+      c.env.SESSION_JWT_SECRET
+    );
+    return {
+      requires2fa: true as const,
+      twoFactorMode: 'SECONDARY_PASSWORD' as const,
+      challengeType: 'SECONDARY_PASSWORD' as const,
       tempToken,
       challengeToken: tempToken,
       username: userRow.username,
@@ -539,18 +668,26 @@ authRoutes.post('/register', async (c) => {
     );
   }
 
-  const tgOnlyRows = await c.env.DB.prepare(
-    `SELECT key, value FROM system_settings WHERE key IN ('telegram_only_signup', 'allow_direct_email_signup')`
-  ).all<{ key: string; value: string }>().catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
-  const signupCfg: Record<string, string> = {};
-  for (const r of tgOnlyRows.results ?? []) signupCfg[r.key] = r.value;
-  const telegramOnlySignup = (signupCfg.telegram_only_signup ?? 'true') !== 'false' || signupCfg.allow_direct_email_signup === 'false';
-  if (telegramOnlySignup) {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
+  if (!toggles.publicSignupEnabled) {
+    if (toggles.telegramOnlySignup) {
+      const botUser = toggles.botUsername;
+      const botUrl = botUser ? `https://t.me/${botUser}?start=web_auth` : '';
+      return c.json(
+        {
+          error: botUser
+            ? `ثبت‌نام مستقیم با ایمیل غیرفعال شده است. ثبت‌نام و احراز هویت فقط از طریق ربات تلگرام @${botUser} انجام می‌شود.`
+            : 'ثبت‌نام مستقیم با ایمیل غیرفعال شده است. ثبت‌نام از طریق ربات متصل تلگرام انجام می‌شود.',
+          code: 'TELEGRAM_SIGNUP_REQUIRED',
+          botUrl,
+        },
+        403
+      );
+    }
     return c.json(
       {
-        error: 'ثبت‌نام مستقیم با ایمیل غیرفعال شده است. برای جلوگیری از حساب‌های جعلی، ثبت‌نام و احراز هویت فقط از طریق ربات تلگرام @Dollarino_bot و اشتراک‌گذاری شماره تماس اکانت تلگرام انجام می‌شود.',
-        code: 'TELEGRAM_SIGNUP_REQUIRED',
-        botUrl: 'https://t.me/Dollarino_bot?start=web_auth',
+        error: 'ثبت‌نام مستقیم در حال حاضر توسط مدیریت غیرفعال است.',
+        code: 'PUBLIC_SIGNUP_DISABLED',
       },
       403
     );
@@ -571,9 +708,8 @@ authRoutes.post('/register', async (c) => {
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)').bind(email, username).first();
   if (existing) return c.json({ error: 'Email or username already registered' }, 409);
 
-  // First registered user on a fresh instance automatically receives owner role
-  const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
-  const role = (countRow?.cnt ?? 0) === 0 ? 'owner' : 'user';
+  // Public registration NEVER grants owner/admin role — strictly standard 'user'
+  const role = 'user';
 
   const id = randomId('usr');
   const myReferralCode = generateReferralCode();
@@ -704,17 +840,37 @@ authRoutes.post('/bootstrap-owner', async (c) => {
 });
 
 authRoutes.get('/providers', async (c) => {
-  const google = await resolveGoogleOAuthConfig(c.env);
-  const gEnabled = Boolean(google.clientId && google.clientSecret);
-  const defaultAdminReferralCode = await resolveEffectiveReferralCode(c.env.DB, null, '');
+  const [toggles, google, botToken, defaultAdminReferralCode] = await Promise.all([
+    resolveAuthProviderToggles(c.env.DB),
+    resolveGoogleOAuthConfig(c.env),
+    resolveTelegramBotToken(c.env),
+    resolveEffectiveReferralCode(c.env.DB, null, ''),
+  ]);
+  const googleConfigured = Boolean(google.clientId && google.clientSecret);
+  const googleEnabled = toggles.googleAuthEnabled && googleConfigured;
   return c.json({
     ok: true,
-    walletAuthEnabled: true,
-    telegramAuthEnabled: true,
-    telegramBotUsername: 'Dollarino_bot',
-    googleEnabled: gEnabled,
-    googleConfigured: gEnabled,
-    googleClientId: google.clientId || null,
+    passwordLoginEnabled: toggles.passwordLoginEnabled,
+    publicSignupEnabled: toggles.publicSignupEnabled,
+    walletAuthEnabled: toggles.walletAuthEnabled,
+    telegramAuthEnabled: toggles.telegramAuthEnabled,
+    telegramBotConfigured: Boolean(botToken),
+    telegramBotUsername: toggles.botUsername,
+    officialChannel: toggles.officialChannel,
+    officialChannelInvite: toggles.officialChannelInvite,
+    signalsChannel: toggles.signalsChannel,
+    signalsChannelInvite: toggles.signalsChannelInvite,
+    resultsChannel: toggles.resultsChannel,
+    resultsChannelInvite: toggles.resultsChannelInvite,
+    communityGroupInvite: toggles.communityGroupInvite,
+    newsChannel: toggles.newsChannel,
+    newsChannelInvite: toggles.newsChannelInvite,
+    telegramSupport: toggles.telegramSupport,
+    requireTelegramPhoneKyc: toggles.requireTelegramPhoneKyc,
+    googleAuthEnabled: toggles.googleAuthEnabled,
+    googleEnabled,
+    googleConfigured,
+    googleClientId: googleConfigured ? google.clientId : null,
     defaultAdminReferralCode,
   });
 });
@@ -739,8 +895,8 @@ authRoutes.post('/login', async (c) => {
   }
 
   const row = await c.env.DB.prepare(
-    `SELECT id, email, username, display_name, password_hash, role, is_blocked, telegram_id,
-            COALESCE(totp_enabled, 0) as totp_enabled, totp_secret
+    `SELECT id, email, username, display_name, password_hash, secondary_password_hash, role, is_blocked, telegram_id,
+            COALESCE(totp_enabled, 0) as totp_enabled, totp_secret, COALESCE(must_change_credentials, 0) as must_change_credentials
      FROM users
      WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)
      LIMIT 1`
@@ -752,11 +908,13 @@ authRoutes.post('/login', async (c) => {
       username: string;
       display_name: string | null;
       password_hash: string;
+      secondary_password_hash: string | null;
       role: string;
       is_blocked: number;
       telegram_id: string | null;
       totp_enabled: number;
       totp_secret: string | null;
+      must_change_credentials: number;
     }>();
 
   if (!row || !(await verifyPassword(password, row.password_hash))) {
@@ -764,6 +922,10 @@ authRoutes.post('/login', async (c) => {
   }
   if (row.is_blocked) {
     return c.json({ error: 'Account is suspended by admin' }, 403);
+  }
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
+  if (!toggles.passwordLoginEnabled && row.role !== 'owner' && row.role !== 'admin') {
+    return c.json({ error: 'ورود با رمز عبور برای کاربران فعلاً غیرفعال است.' }, 403);
   }
 
   await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
@@ -807,7 +969,12 @@ authRoutes.get('/session', async (c) => {
     if (!token) return c.json({ authenticated: false, user: null });
 
     const payload = await verifyJwt(token, c.env.SESSION_JWT_SECRET);
-    if (!payload || typeof payload.sub !== 'string' || payload.purpose === '2fa_challenge') {
+    if (
+      !payload ||
+      typeof payload.sub !== 'string' ||
+      payload.purpose === '2fa_challenge' ||
+      payload.purpose === 'secondary_password_challenge'
+    ) {
       return c.json({ authenticated: false, user: null });
     }
     userId = payload.sub;
@@ -1036,11 +1203,12 @@ authRoutes.post('/telegram-link-code', requireAuth, async (c) => {
     `UPDATE users SET telegram_link_code = ?, telegram_link_expires_at = ? WHERE id = ?`
   ).bind(code, expiresAt, u.id).run();
 
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
   return c.json({
     code,
     expiresAt,
     command: `/link ${code}`,
-    deepLinkUrl: `https://t.me/Dollarino_bot?start=${code}`,
+    deepLinkUrl: toggles.botUsername ? `https://t.me/${toggles.botUsername}?start=${code}` : '',
   });
 });
 
@@ -1167,10 +1335,15 @@ authRoutes.post('/telegram-webapp', async (c) => {
   }
 
   const tgId = String(verified.user.id);
-  const ownerId = c.env.OWNER_TELEGRAM_ID || '944021185';
+  const [ownerId, toggles] = await Promise.all([
+    resolveOwnerTelegramId(c.env),
+    resolveAuthProviderToggles(c.env.DB),
+  ]);
+  const isConfiguredOwner = Boolean(ownerId && tgId === ownerId);
+
   let row = await c.env.DB.prepare(
     `SELECT id, email, username, display_name, role, is_blocked, telegram_id, avatar_url, phone_verified,
-            COALESCE(totp_enabled, 0) as totp_enabled, totp_secret
+            COALESCE(totp_enabled, 0) as totp_enabled, totp_secret, secondary_password_hash
      FROM users WHERE telegram_id = ?`
   ).bind(tgId).first<{
     id: string;
@@ -1184,11 +1357,19 @@ authRoutes.post('/telegram-webapp', async (c) => {
     phone_verified?: number;
     totp_enabled: number;
     totp_secret: string | null;
+    secondary_password_hash?: string | null;
   }>();
+
+  if (!toggles.telegramAuthEnabled && !isConfiguredOwner && row?.role !== 'owner' && row?.role !== 'admin') {
+    return c.json(
+      { error: 'ورود و ثبت‌نام از طریق تلگرام هنوز توسط مدیر سایت فعال نشده است.', code: 'TELEGRAM_AUTH_DISABLED' },
+      403
+    );
+  }
 
   if (!row) {
     const id = randomId('usr');
-    const role = tgId === ownerId ? 'owner' : 'user';
+    const role = isConfiguredOwner ? 'owner' : 'user';
     const username = verified.user.username || verified.user.first_name || `tg_${tgId}`;
     const email = `tg_${tgId}@telegram.dollarino.local`;
     const pwd = await hashPassword(randomId('tg_pwd'));
@@ -1211,8 +1392,8 @@ authRoutes.post('/telegram-webapp', async (c) => {
         tgId,
         verified.user.username ?? null,
         verified.user.first_name ?? null,
-        tgId === ownerId ? 1 : 0,
-        tgId === ownerId ? 1 : 0,
+        isConfiguredOwner ? 1 : 0,
+        isConfiguredOwner ? 1 : 0,
         myRefCode,
         effectiveRefCode,
         fp.ipHash,
@@ -1224,24 +1405,36 @@ authRoutes.post('/telegram-webapp', async (c) => {
     if (effectiveRefCode) {
       await attachReferralIfProvided(c.env, id, effectiveRefCode, clientIp, fp);
     }
-    row = { id, email, username, display_name: verified.user.first_name || username, role, is_blocked: 0, telegram_id: tgId, avatar_url: null, phone_verified: tgId === ownerId ? 1 : 0, totp_enabled: 0, totp_secret: null };
+    row = {
+      id,
+      email,
+      username,
+      display_name: verified.user.first_name || username,
+      role,
+      is_blocked: 0,
+      telegram_id: tgId,
+      avatar_url: null,
+      phone_verified: isConfiguredOwner ? 1 : 0,
+      totp_enabled: 0,
+      totp_secret: null,
+      secondary_password_hash: null,
+    };
   }
 
   if (row.is_blocked) {
     return c.json({ error: 'Account is suspended by admin' }, 403);
   }
 
-  const kycSettingRow = await c.env.DB.prepare(
-    `SELECT value FROM system_settings WHERE key = 'require_telegram_phone_kyc' LIMIT 1`
-  ).first<{ value: string }>().catch(() => null);
-  const kycRequired = (kycSettingRow?.value ?? 'true') !== 'false';
+  const kycRequired = toggles.requireTelegramPhoneKyc;
+  const botHandle = toggles.botUsername ? `@${toggles.botUsername}` : 'ربات تلگرام پلتفرم';
+  const botStartUrl = toggles.botUsername ? `https://t.me/${toggles.botUsername}?start=web_auth` : '';
 
   if (kycRequired && Number(row.phone_verified ?? 0) !== 1 && row.role !== 'owner' && row.role !== 'admin') {
     return c.json(
       {
-        error: 'برای فعال‌سازی حساب و ورود به مینی‌اپ، ابتدا داخل ربات @Dollarino_bot شماره تماس اکانت تلگرام خود را به اشتراک بگذارید.',
+        error: `برای فعال‌سازی حساب و ورود به مینی‌اپ، ابتدا داخل ${botHandle} شماره تماس اکانت تلگرام خود را به اشتراک بگذارید.`,
         code: 'PHONE_KYC_REQUIRED',
-        botUrl: 'https://t.me/Dollarino_bot?start=web_auth',
+        botUrl: botStartUrl,
       },
       403
     );
@@ -1256,8 +1449,9 @@ authRoutes.post('/telegram-webapp', async (c) => {
   return c.json(authRes);
 });
 
-// One-click Magic Login from @Dollarino_bot (`/?tg_login=...`)
+// One-click Magic Login from Telegram Bot (`/?tg_login=...`)
 authRoutes.post('/telegram-magic-login', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
   const body = await c.req.json<{ token?: string }>().catch(() => ({} as { token?: string }));
   const magic = (body.token ?? '').trim();
   if (!magic) {
@@ -1265,7 +1459,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
   }
   const row = await c.env.DB.prepare(
     `SELECT id, email, username, display_name, role, is_blocked, telegram_id, avatar_url, web_magic_expires_at,
-            COALESCE(totp_enabled, 0) as totp_enabled, totp_secret
+            COALESCE(totp_enabled, 0) as totp_enabled, totp_secret, secondary_password_hash
      FROM users WHERE web_magic_token = ? LIMIT 1`
   ).bind(magic).first<{
     id: string;
@@ -1279,8 +1473,12 @@ authRoutes.post('/telegram-magic-login', async (c) => {
     web_magic_expires_at: string | null;
     totp_enabled: number;
     totp_secret: string | null;
+    secondary_password_hash?: string | null;
   }>();
 
+  if (!toggles.telegramAuthEnabled && row?.role !== 'owner' && row?.role !== 'admin') {
+    return c.json({ error: 'ورود و ثبت‌نام از طریق تلگرام هنوز توسط مدیر فعال نشده است.', code: 'TELEGRAM_AUTH_DISABLED' }, 403);
+  }
   if (!row) {
     return c.json({ error: 'لینک ورود نامعتبر است یا قبلاً استفاده شده است' }, 401);
   }
@@ -1306,6 +1504,7 @@ authRoutes.post('/telegram-magic-login', async (c) => {
 
 // Telegram Login Widget verification (BotFather -> Login Widget) for phone-verified users
 authRoutes.post('/telegram-login-widget', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
   const botToken = await resolveTelegramBotToken(c.env);
   if (!botToken) {
     return c.json({ error: 'TELEGRAM_BOT_TOKEN not configured on server' }, 503);
@@ -1320,7 +1519,7 @@ authRoutes.post('/telegram-login-widget', async (c) => {
 
   const tgId = String(verified.user.id);
   const row = await c.env.DB.prepare(
-    `SELECT ${USER_PROFILE_COLUMNS}, totp_secret FROM users WHERE telegram_id = ? LIMIT 1`
+    `SELECT ${USER_PROFILE_COLUMNS}, totp_secret, secondary_password_hash FROM users WHERE telegram_id = ? LIMIT 1`
   ).bind(tgId).first<{
     id: string;
     email: string;
@@ -1333,19 +1532,23 @@ authRoutes.post('/telegram-login-widget', async (c) => {
     avatar_url?: string | null;
     totp_enabled?: number;
     totp_secret?: string | null;
+    secondary_password_hash?: string | null;
   }>();
 
-  const kycRow = await c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'require_telegram_phone_kyc' LIMIT 1`)
-    .first<{ value: string }>()
-    .catch(() => null);
-  const kycRequired = (kycRow?.value ?? 'true') !== 'false';
+  if (!toggles.telegramAuthEnabled && row?.role !== 'owner' && row?.role !== 'admin') {
+    return c.json({ error: 'ورود با تلگرام هنوز توسط مدیر فعال نشده است.', code: 'TELEGRAM_AUTH_DISABLED' }, 403);
+  }
+
+  const kycRequired = toggles.requireTelegramPhoneKyc;
+  const botHandle = toggles.botUsername ? `@${toggles.botUsername}` : 'ربات تلگرام';
+  const botStartUrl = toggles.botUsername ? `https://t.me/${toggles.botUsername}?start=web_auth` : '';
 
   if (!row || (kycRequired && Number(row.phone_verified || 0) !== 1 && row.role !== 'owner' && row.role !== 'admin')) {
     return c.json(
       {
-        error: 'برای اولین ورود و احراز هویت شماره تماس، ابتدا ربات @Dollarino_bot را استارت کرده و شماره تماس اکانت خود را به اشتراک بگذارید.',
+        error: `برای اولین ورود و احراز هویت شماره تماس، ابتدا ${botHandle} را استارت کرده و شماره تماس اکانت خود را به اشتراک بگذارید.`,
         code: 'PHONE_KYC_REQUIRED',
-        botUrl: 'https://t.me/Dollarino_bot?start=web_auth',
+        botUrl: botStartUrl,
       },
       403
     );
@@ -1369,6 +1572,7 @@ authRoutes.post('/telegram-login-widget', async (c) => {
     telegram_id: row.telegram_id,
     totp_enabled: row.totp_enabled,
     totp_secret: row.totp_secret,
+    secondary_password_hash: row.secondary_password_hash,
   });
   return c.json(authRes);
 });
@@ -1529,6 +1733,13 @@ authRoutes.delete('/account', requireAuth, async (c) => {
 // ==================== 1) Wallet Registration & Login (Trust Wallet / EVM EIP-191) ====================
 
 authRoutes.post('/wallet/nonce', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
+  if (!toggles.walletAuthEnabled) {
+    return c.json(
+      { error: 'ورود و ثبت‌نام با کیف‌پول هنوز توسط مدیر سایت فعال نشده است.', code: 'WALLET_AUTH_DISABLED' },
+      403
+    );
+  }
   const clientIp = getClientIp(c.req.raw);
   const rl = await enforceRateLimit(c.env, `wnonce:${clientIp}`, 25, 300);
   if (!rl.allowed) return c.json({ error: `لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
@@ -1560,6 +1771,13 @@ authRoutes.post('/wallet/nonce', async (c) => {
 });
 
 authRoutes.post('/wallet/verify', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
+  if (!toggles.walletAuthEnabled) {
+    return c.json(
+      { error: 'ورود و ثبت‌نام با کیف‌پول هنوز توسط مدیر سایت فعال نشده است.', code: 'WALLET_AUTH_DISABLED' },
+      403
+    );
+  }
   const clientIp = getClientIp(c.req.raw);
   const rl = await enforceRateLimit(c.env, `wverify:${clientIp}`, 20, 300);
   if (!rl.allowed) return c.json({ error: `لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
@@ -1633,8 +1851,8 @@ authRoutes.post('/wallet/verify', async (c) => {
   let isNewAccount = false;
   if (!row) {
     isNewAccount = true;
-    const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
-    const role = (countRow?.cnt ?? 0) === 0 ? 'owner' : 'user';
+    // Public wallet registration NEVER grants owner/admin role
+    const role = 'user';
     const id = randomId('usr');
     const shortTag = address.slice(2, 8).toLowerCase();
     const email = `wallet_${shortTag}_${id.slice(-4)}@wallet.dollarino.local`;
@@ -1737,8 +1955,8 @@ async function findOrCreateGoogleUser(
   let isNewAccount = false;
   if (!row) {
     isNewAccount = true;
-    const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
-    const role = (countRow?.cnt ?? 0) === 0 ? 'owner' : 'user';
+    // Public Google registration NEVER grants owner/admin role
+    const role = 'user';
     const id = randomId('usr');
     const localSlug = (cleanEmail.split('@')[0] || 'trader').replace(/[^a-zA-Z0-9_]/g, '').slice(0, 14) || 'google';
     const username = `${localSlug}_${id.slice(-4)}`;
@@ -1800,6 +2018,13 @@ async function findOrCreateGoogleUser(
 }
 
 authRoutes.post('/google', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
+  if (!toggles.googleAuthEnabled) {
+    return c.json(
+      { error: 'ورود و ثبت‌نام با گوگل هنوز توسط مدیر سایت فعال نشده است.', code: 'GOOGLE_AUTH_DISABLED' },
+      403
+    );
+  }
   const clientIp = getClientIp(c.req.raw);
   const rl = await enforceRateLimit(c.env, `gg:${clientIp}`, 20, 300);
   if (!rl.allowed) return c.json({ error: `لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
@@ -1871,9 +2096,13 @@ authRoutes.post('/google', async (c) => {
 });
 
 authRoutes.get('/google/start', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
   const gCfg = await resolveGoogleOAuthConfig(c.env);
   const url = new URL(c.req.url);
   const origin = `${url.protocol}//${url.host}`;
+  if (!toggles.googleAuthEnabled) {
+    return c.redirect(`${origin}/?auth_error=google_auth_disabled`);
+  }
   if (!gCfg.clientId) {
     return c.redirect(`${origin}/?auth_error=google_not_configured`);
   }
@@ -1891,12 +2120,16 @@ authRoutes.get('/google/start', async (c) => {
 });
 
 authRoutes.get('/google/callback', async (c) => {
+  const toggles = await resolveAuthProviderToggles(c.env.DB);
   const url = new URL(c.req.url);
   const origin = `${url.protocol}//${url.host}`;
   const code = (c.req.query('code') || '').trim();
   const state = (c.req.query('state') || '').trim();
   const errParam = (c.req.query('error') || '').trim();
 
+  if (!toggles.googleAuthEnabled) {
+    return c.redirect(`${origin}/?auth_error=google_auth_disabled`);
+  }
   if (errParam || !code) {
     return c.redirect(`${origin}/?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`);
   }
@@ -2078,6 +2311,197 @@ authRoutes.post('/complete-profile', requireAuth, async (c) => {
   return c.json({ ok: true, token, user: fullUser });
 });
 
+function normalizeTotpDigits(raw?: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/\s+/g, '');
+}
+
+async function verifyTotpForRequest(
+  c: { req: { url: string; header: (name: string) => string | undefined } },
+  secretBase32: string,
+  rawCode: string,
+  clientTimestampMs?: unknown
+): Promise<boolean> {
+  const clean = normalizeTotpDigits(rawCode);
+  if (!/^\d{6}$/.test(clean)) return false;
+
+  // Always check authoritative server clock first with ±2 step tolerance (±60s)
+  if (await verifyTotpCode(secretBase32, clean, 2)) {
+    return true;
+  }
+
+  // In local / sandbox previews (no Cloudflare edge cf-ray header), container OS clock may differ from real-world phone clock.
+  // Production Cloudflare edge always injects cf-ray, so clientTimestampMs is strictly ignored in production.
+  const hasCfEdge = Boolean(c.req.header('cf-ray'));
+  if (!hasCfEdge) {
+    let urlHost = '';
+    try {
+      urlHost = new URL(c.req.url).hostname.toLowerCase();
+    } catch {
+      urlHost = '';
+    }
+    const isLocalPreview =
+      urlHost === '127.0.0.1' ||
+      urlHost === 'localhost' ||
+      urlHost === '::1' ||
+      urlHost.endsWith('.e2b.app');
+    const tsNum = typeof clientTimestampMs === 'number' ? clientTimestampMs : Number(clientTimestampMs);
+    if (isLocalPreview && Number.isFinite(tsNum) && tsNum > 1_577_836_800_000 && tsNum < 2_208_988_800_000) {
+      if (await verifyTotpCode(secretBase32, clean, 2, tsNum)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// ==================== 3B) Mandatory Initial Admin Credential Change + TOTP 2FA Migration ====================
+
+authRoutes.post('/complete-admin-setup', requireAuth, async (c) => {
+  const u = c.get('user');
+  if (u.role !== 'owner' && u.role !== 'admin') {
+    return c.json({ error: 'Only admin/owner accounts can perform admin security setup.' }, 403);
+  }
+
+  const body = await c.req
+    .json<{
+      username?: string;
+      newUsername?: string;
+      password?: string;
+      newPassword?: string;
+      email?: string;
+      newEmail?: string;
+      displayName?: string;
+      totpCode?: string;
+      code?: string;
+      clientTimestampMs?: number;
+    }>()
+    .catch(
+      () =>
+        ({} as {
+          username?: string;
+          newUsername?: string;
+          password?: string;
+          newPassword?: string;
+          email?: string;
+          newEmail?: string;
+          displayName?: string;
+          totpCode?: string;
+          code?: string;
+          clientTimestampMs?: number;
+        })
+    );
+
+  const username = (body.username || body.newUsername || '').trim();
+  const password = body.password || body.newPassword || '';
+  const email = (body.email || body.newEmail || '').trim().toLowerCase();
+  const displayName = (body.displayName || '').trim() || username;
+  const totpCode = normalizeTotpDigits(body.totpCode || body.code);
+
+  if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) {
+    return c.json({ error: 'نام کاربری جدید باید ۳ تا ۳۲ کاراکتر انگلیسی، عدد یا _ . - باشد.' }, 400);
+  }
+  if (username.toLowerCase() === 'admin') {
+    return c.json({ error: 'نام کاربری جدید نمی‌تواند همچنان admin باقی بماند؛ لطفاً نام کاربری اختصاصی انتخاب کنید.' }, 400);
+  }
+  if (password.length < 6) {
+    return c.json({ error: 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد.' }, 400);
+  }
+  if (password === 'admin' || password === 'admin123') {
+    return c.json({ error: 'رمز عبور جدید نمی‌تواند برابر با رمز پیش‌فرض اولیه باشد.' }, 400);
+  }
+  if (!/^\d{6}$/.test(totpCode)) {
+    return c.json({ error: 'کد ۶ رقمی Google Authenticator جهت تبدیل رمز دوم ثابت به 2FA الزامی است.' }, 400);
+  }
+
+  const takenUsername = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ? LIMIT 1`
+  )
+    .bind(username, u.id)
+    .first();
+  if (takenUsername) {
+    return c.json({ error: 'این نام کاربری قبلاً استفاده شده است.' }, 409);
+  }
+
+  const row = await c.env.DB.prepare(`SELECT email, totp_secret FROM users WHERE id = ? LIMIT 1`)
+    .bind(u.id)
+    .first<{ email: string; totp_secret: string | null }>();
+  if (!row) return c.json({ error: 'User not found' }, 404);
+  if (!row.totp_secret) {
+    return c.json({ error: 'ابتدا کلید QR کد Google Authenticator را دریافت و اسکن کنید.' }, 400);
+  }
+
+  const validTotp = await verifyTotpForRequest(c, row.totp_secret, totpCode, body.clientTimestampMs);
+  if (!validTotp) {
+    return c.json({ error: 'کد ۶ رقمی Google Authenticator صحیح نیست. لطفاً ساعت دستگاه را بررسی و دوباره تلاش کنید.' }, 401);
+  }
+
+  let nextEmail = row.email;
+  if (email) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.endsWith('.local')) {
+      return c.json({ error: 'فرمت ایمیل معتبر نیست.' }, 400);
+    }
+    const takenEmail = await c.env.DB.prepare(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ? LIMIT 1`
+    )
+      .bind(email, u.id)
+      .first();
+    if (takenEmail) {
+      return c.json({ error: 'این ایمیل قبلاً ثبت شده است.' }, 409);
+    }
+    nextEmail = email;
+  } else if (nextEmail === 'admin@dollarino.local') {
+    nextEmail = `${username.toLowerCase()}@admin.dollarino.local`;
+  }
+
+  const passwordHash = await hashPassword(password);
+  await c.env.DB.prepare(
+    `UPDATE users
+     SET username = ?,
+         display_name = ?,
+         email = ?,
+         password_hash = ?,
+         has_custom_password = 1,
+         secondary_password_hash = NULL,
+         must_change_credentials = 0,
+         totp_enabled = 1,
+         totp_verified_at = datetime('now'),
+         profile_completed = 1,
+         last_active_at = datetime('now')
+     WHERE id = ?`
+  )
+    .bind(username, displayName, nextEmail, passwordHash, u.id)
+    .run();
+
+  invalidateAuthUserCache(c.env.DB, u.id);
+
+  await publishSystemLogEvent(c.env, {
+    category: 'SECURITY',
+    level: 'INFO',
+    source: 'AdminSetupGate',
+    title: 'تکمیل ایمن‌سازی نخستین مدیر کل',
+    details: `نام کاربری پیش‌فرض admin پاکسازی شد؛ حساب جدید: ${username} (${nextEmail}) · 2FA فعال شد.`,
+    userId: u.id,
+  }).catch(() => {});
+
+  const isHttps = isHttpsRequest(c);
+  const token = await signJwt({ sub: u.id, email: nextEmail, role: u.role }, c.env.SESSION_JWT_SECRET);
+  setCookie(c, 'dollarino_session', token, {
+    httpOnly: true,
+    sameSite: isHttps ? 'None' : 'Lax',
+    secure: isHttps,
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  });
+
+  const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(u.id).first();
+  return c.json({ ok: true, token, mustChangeCredentials: false, user: fullUser });
+});
+
 // ==================== 4) Google Authenticator TOTP 2FA Security ====================
 
 authRoutes.get('/2fa/status', requireAuth, async (c) => {
@@ -2096,18 +2520,28 @@ authRoutes.get('/2fa/status', requireAuth, async (c) => {
 
 authRoutes.post('/2fa/setup', requireAuth, async (c) => {
   const u = c.get('user');
+  const body = await c.req.json<{ force?: boolean }>().catch(() => ({} as { force?: boolean }));
+  const forceRegenerate = Boolean(body.force) || c.req.query('force') === '1';
+
   const row = await c.env.DB.prepare(
-    `SELECT username, email, COALESCE(totp_enabled, 0) as totp_enabled FROM users WHERE id = ? LIMIT 1`
+    `SELECT username, email, COALESCE(totp_enabled, 0) as totp_enabled, totp_secret FROM users WHERE id = ? LIMIT 1`
   )
     .bind(u.id)
-    .first<{ username: string; email: string; totp_enabled: number }>();
+    .first<{ username: string; email: string; totp_enabled: number; totp_secret: string | null }>();
   if (!row) return c.json({ error: 'User not found' }, 404);
   if (row.totp_enabled === 1) {
     return c.json({ error: 'احراز هویت دوعاملی هم‌اکنون فعال است.' }, 400);
   }
 
-  const secret = generateTotpSecret(20);
-  await c.env.DB.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).bind(secret, u.id).run();
+  // Keep existing unverified setup secret across StrictMode / reloads unless explicitly forced,
+  // preventing race conditions where two concurrent requests overwrite the DB secret differently from the displayed QR.
+  let secret = row.totp_secret && row.totp_secret.trim().length >= 16 && !forceRegenerate
+    ? row.totp_secret.trim()
+    : '';
+  if (!secret) {
+    secret = generateTotpSecret(20);
+    await c.env.DB.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).bind(secret, u.id).run();
+  }
   const label = row.username || row.email;
   const otpauthUri = buildTotpOtpAuthUri(label, secret, 'Dollarino');
 
@@ -2116,8 +2550,10 @@ authRoutes.post('/2fa/setup', requireAuth, async (c) => {
 
 authRoutes.post('/2fa/enable', requireAuth, async (c) => {
   const u = c.get('user');
-  const body = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
-  const code = (body.code || '').replace(/\s+/g, '');
+  const body = await c.req
+    .json<{ code?: string; clientTimestampMs?: number }>()
+    .catch(() => ({} as { code?: string; clientTimestampMs?: number }));
+  const code = normalizeTotpDigits(body.code);
   if (!/^\d{6}$/.test(code)) {
     return c.json({ error: 'لطفاً کد ۶ رقمی Google Authenticator را وارد کنید.' }, 400);
   }
@@ -2129,7 +2565,7 @@ authRoutes.post('/2fa/enable', requireAuth, async (c) => {
     return c.json({ error: 'ابتدا کلید راه‌اندازی 2FA را ایجاد کنید.' }, 400);
   }
 
-  const valid = await verifyTotpCode(row.totp_secret, code, 1);
+  const valid = await verifyTotpForRequest(c, row.totp_secret, code, body.clientTimestampMs);
   if (!valid) {
     return c.json({ error: 'کد ۶ رقمی واردشده صحیح یا به‌روز نیست. ساعت دستگاه خود را بررسی و دوباره تلاش کنید.' }, 401);
   }
@@ -2158,7 +2594,7 @@ authRoutes.post('/2fa/disable', requireAuth, async (c) => {
     return c.json({ error: 'احراز هویت دوعاملی فعال نیست.' }, 400);
   }
 
-  const valid = await verifyTotpCode(row.totp_secret, code, 1);
+  const valid = await verifyTotpForRequest(c, row.totp_secret, code, (body as { clientTimestampMs?: number }).clientTimestampMs);
   if (!valid) {
     return c.json({ error: 'کد ۶ رقمی اشتباه است.' }, 401);
   }
@@ -2172,31 +2608,31 @@ authRoutes.post('/2fa/disable', requireAuth, async (c) => {
   return c.json({ ok: true, enabled: false, user: fullUser });
 });
 
-authRoutes.post('/2fa/verify-login', async (c) => {
+async function handleSecondFactorVerification(c: Context<{ Bindings: Env; Variables: AppVariables }>) {
   const clientIp = getClientIp(c.req.raw);
   const rl = await enforceRateLimit(c.env, `2fa:${clientIp}`, 20, 300);
   if (!rl.allowed) return c.json({ error: `تلاش بیش از حد. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
 
   const body = await c.req
-    .json<{ tempToken?: string; challengeToken?: string; code?: string }>()
-    .catch(() => ({} as { tempToken?: string; challengeToken?: string; code?: string }));
+    .json<{ tempToken?: string; challengeToken?: string; code?: string; secondaryPassword?: string; clientTimestampMs?: number }>()
+    .catch(() => ({} as { tempToken?: string; challengeToken?: string; code?: string; secondaryPassword?: string; clientTimestampMs?: number }));
   const tempToken = (body.tempToken || body.challengeToken || '').trim();
-  const code = (body.code || '').replace(/\s+/g, '');
-  if (!tempToken || !/^\d{6}$/.test(code)) {
-    return c.json({ error: 'توکن موقت و کد ۶ رقمی الزامی است.' }, 400);
-  }
+  const payload = tempToken ? await verifyJwt(tempToken, c.env.SESSION_JWT_SECRET) : null;
 
-  const payload = await verifyJwt(tempToken, c.env.SESSION_JWT_SECRET);
-  if (!payload || typeof payload.sub !== 'string' || payload.purpose !== '2fa_challenge') {
-    return c.json({ error: 'نشست تایید دوعاملی منقضی شده است؛ لطفاً دوباره وارد شوید.' }, 401);
+  if (
+    !payload ||
+    typeof payload.sub !== 'string' ||
+    (payload.purpose !== '2fa_challenge' && payload.purpose !== 'secondary_password_challenge')
+  ) {
+    return c.json({ error: 'نشست تایید مرحله دوم منقضی شده است؛ لطفاً دوباره وارد شوید.' }, 401);
   }
   const issuedAt = Number(payload.issuedAt || 0);
   if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > 5 * 60_000) {
-    return c.json({ error: 'زمان ۵ دقیقه‌ای تایید دوعاملی به پایان رسید؛ لطفاً مجدداً وارد شوید.' }, 401);
+    return c.json({ error: 'زمان ۵ دقیقه‌ای تایید مرحله دوم به پایان رسید؛ لطفاً مجدداً وارد شوید.' }, 401);
   }
 
   const row = await c.env.DB.prepare(
-    `SELECT id, email, username, role, is_blocked, telegram_id, totp_secret, totp_enabled
+    `SELECT id, email, username, role, is_blocked, telegram_id, totp_secret, totp_enabled, secondary_password_hash
      FROM users WHERE id = ? LIMIT 1`
   )
     .bind(payload.sub)
@@ -2209,14 +2645,30 @@ authRoutes.post('/2fa/verify-login', async (c) => {
       telegram_id: string | null;
       totp_secret: string | null;
       totp_enabled: number;
+      secondary_password_hash: string | null;
     }>();
 
   if (!row || row.is_blocked) return c.json({ error: 'Account unavailable' }, 403);
-  if (row.totp_enabled !== 1 || !row.totp_secret) return c.json({ error: '2FA not enabled' }, 400);
 
-  const valid = await verifyTotpCode(row.totp_secret, code, 1);
-  if (!valid) {
-    return c.json({ error: 'کد تایید Google Authenticator نادرست است.' }, 401);
+  if (payload.purpose === 'secondary_password_challenge') {
+    const secPwd = (body.secondaryPassword ?? body.code ?? '').trim();
+    if (!secPwd || !row.secondary_password_hash) {
+      return c.json({ error: 'رمز دوم ورود الزامی است.' }, 400);
+    }
+    const validSec = await verifyPassword(secPwd, row.secondary_password_hash);
+    if (!validSec) {
+      return c.json({ error: 'رمز دوم امنیتی صحیح نیست.' }, 401);
+    }
+  } else {
+    const code = normalizeTotpDigits(body.code);
+    if (!/^\d{6}$/.test(code)) {
+      return c.json({ error: 'کد ۶ رقمی Google Authenticator الزامی است.' }, 400);
+    }
+    if (row.totp_enabled !== 1 || !row.totp_secret) return c.json({ error: '2FA not enabled' }, 400);
+    const valid = await verifyTotpForRequest(c, row.totp_secret, code, body.clientTimestampMs);
+    if (!valid) {
+      return c.json({ error: 'کد تایید Google Authenticator نادرست است.' }, 401);
+    }
   }
 
   await c.env.DB.prepare(`UPDATE users SET last_active_at = datetime('now') WHERE id = ?`).bind(row.id).run();
@@ -2229,7 +2681,13 @@ authRoutes.post('/2fa/verify-login', async (c) => {
     path: '/',
     maxAge: 60 * 60 * 24 * 7,
   });
-  const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(row.id).first();
-  return c.json({ ok: true, token, user: fullUser });
-});
+  const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`)
+    .bind(row.id)
+    .first<{ must_change_credentials?: number }>();
+  const mustChangeCredentials = Boolean(Number(fullUser?.must_change_credentials ?? 0) === 1);
+  return c.json({ ok: true, token, mustChangeCredentials, user: fullUser });
+}
+
+authRoutes.post('/2fa/verify-login', handleSecondFactorVerification);
+authRoutes.post('/verify-secondary-password', handleSecondFactorVerification);
 

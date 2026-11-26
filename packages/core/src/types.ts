@@ -7,7 +7,7 @@ export type ExecutionMode = 'AUTO' | 'MANUAL_CONFIRM';
 export type MarginMode = 'ISOLATED' | 'CROSS';
 export type ExchangeProviderId = 'paper' | 'toobit' | 'bitunix' | 'kcex' | 'hyperliquid';
 export type AIProviderId = 'deepseek' | 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
-export type Timeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '1d';
+export type Timeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '2h' | '4h' | '1d' | '1w';
 
 export interface Candle {
   timestamp: number;

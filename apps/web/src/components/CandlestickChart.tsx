@@ -7,10 +7,13 @@ import type {
   CustomChartBox,
   CustomChartLabel,
   CustomChartLine,
+  CustomChartPolyline,
   CustomChartTable,
   CustomFillZone,
   CustomHLine,
   CustomPlotSeries,
+  PineConsoleLog,
+  PineInputMeta,
 } from '@dollarino/core';
 
 export interface ChartLevels {
@@ -54,6 +57,9 @@ export interface CustomStrategyChartOverlay {
   id?: string;
   title: string;
   language?: 'pine' | 'python' | 'visual';
+  pineVersion?: 4 | 5 | 6;
+  scriptKind?: 'indicator' | 'strategy' | 'library';
+  overlay?: boolean;
   plots: CustomPlotSeries[];
   markers: Array<{
     time: number;
@@ -70,6 +76,10 @@ export interface CustomStrategyChartOverlay {
   lines?: CustomChartLine[];
   boxes?: CustomChartBox[];
   tables?: CustomChartTable[];
+  polylines?: CustomChartPolyline[];
+  logs?: PineConsoleLog[];
+  inputs?: PineInputMeta[];
+  alertsTriggered?: Array<{ time: number; message: string }>;
 }
 
 function toLwLineStyle(style?: 'solid' | 'dashed' | 'dotted'): LineStyle {
@@ -503,6 +513,43 @@ export function CandlestickChart({
         );
       }
 
+      // 4.5. Polylines (polyline.new & linefill.new)
+      for (const pl of customOverlays.polylines || []) {
+        const coords: Array<{ x: number; y: number }> = [];
+        for (const pt of pl.points) {
+          const x = resolveX(pt.time, w);
+          const y = series.priceToCoordinate(pt.price);
+          if (x !== null && y !== null) coords.push({ x, y });
+        }
+        if (coords.length < 2) continue;
+        let d = `M ${coords[0]!.x.toFixed(1)} ${coords[0]!.y.toFixed(1)}`;
+        if (pl.curved && coords.length >= 3) {
+          for (let i = 1; i < coords.length - 1; i++) {
+            const xc = (coords[i]!.x + coords[i + 1]!.x) / 2;
+            const yc = (coords[i]!.y + coords[i + 1]!.y) / 2;
+            d += ` Q ${coords[i]!.x.toFixed(1)} ${coords[i]!.y.toFixed(1)} ${xc.toFixed(1)} ${yc.toFixed(1)}`;
+          }
+          const last = coords[coords.length - 1]!;
+          d += ` L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
+        } else {
+          for (let i = 1; i < coords.length; i++) {
+            d += ` L ${coords[i]!.x.toFixed(1)} ${coords[i]!.y.toFixed(1)}`;
+          }
+        }
+        if (pl.closed) d += ' Z';
+        frag.appendChild(
+          mk('path', {
+            d,
+            fill: pl.fillColor || (pl.closed ? 'rgba(56,225,255,0.12)' : 'none'),
+            stroke: (pl.width ?? 2) > 0 ? pl.color || '#38e1ff' : 'none',
+            'stroke-width': pl.width ?? 2,
+            'stroke-dasharray': svgDash(pl.style),
+            'stroke-linejoin': 'round',
+            'stroke-linecap': 'round',
+          })
+        );
+      }
+
       // 5. Floating Labels (label.new)
       for (const lbl of customOverlays.labels || []) {
         const x = resolveX(lbl.time, w);
@@ -623,6 +670,7 @@ export function CandlestickChart({
         (customOverlays.lines?.length || 0) > 0 ||
         (customOverlays.labels?.length || 0) > 0 ||
         (customOverlays.fills?.length || 0) > 0 ||
+        (customOverlays.polylines?.length || 0) > 0 ||
         (customOverlays.tables?.length || 0) > 0)
   );
 

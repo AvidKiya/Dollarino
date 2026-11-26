@@ -75,6 +75,9 @@ export function AuthPage({
   const [mode, setMode] = useState<'register' | 'login'>(initialMode);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [regUsername, setRegUsername] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
   const [referralCode, setReferralCode] = useState(() =>
     typeof window !== 'undefined' ? (new URLSearchParams(window.location.search).get('ref') || '').trim().toUpperCase() : ''
   );
@@ -84,15 +87,32 @@ export function AuthPage({
   const [error, setError] = useState<string | null>(null);
   const [twDappDeepLink, setTwDappDeepLink] = useState<string | null>(null);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
+  const [providersLoaded, setProvidersLoaded] = useState(false);
   const [providers, setProviders] = useState<{
+    passwordLoginEnabled: boolean;
+    publicSignupEnabled: boolean;
+    walletAuthEnabled: boolean;
+    telegramAuthEnabled: boolean;
+    googleAuthEnabled: boolean;
     googleConfigured: boolean;
     googleClientId?: string | null;
+    botUsername?: string;
+    telegramBotUrl?: string;
     defaultAdminReferralCode?: string | null;
   }>({
+    passwordLoginEnabled: true,
+    publicSignupEnabled: false,
+    walletAuthEnabled: false,
+    telegramAuthEnabled: false,
+    googleAuthEnabled: false,
     googleConfigured: false,
+    botUsername: '',
+    telegramBotUrl: '',
   });
   const [challengeToken, setChallengeToken] = useState<string | null>(initial2faToken);
+  const [challengeType, setChallengeType] = useState<'TOTP' | 'SECONDARY_PASSWORD'>('TOTP');
   const [totpCode, setTotpCode] = useState('');
+  const [secondaryPwd, setSecondaryPwd] = useState('');
   const [verifying2fa, setVerifying2fa] = useState(false);
   const autoTwSignupTriggeredRef = useRef(false);
 
@@ -115,25 +135,52 @@ export function AuthPage({
       .then((r) => setApiReady(Boolean(r.ok)))
       .catch(() => setApiReady(false));
     apiFetch<{
+      passwordLoginEnabled?: boolean;
+      publicSignupEnabled?: boolean;
+      walletAuthEnabled?: boolean;
+      telegramAuthEnabled?: boolean;
+      googleAuthEnabled?: boolean;
       googleConfigured?: boolean;
       googleEnabled?: boolean;
       googleClientId?: string | null;
+      botUsername?: string;
+      telegramBotUrl?: string;
       defaultAdminReferralCode?: string | null;
     }>('/api/auth/providers')
-      .then((p) =>
-        setProviders({
+      .then((p) => {
+        const next = {
+          passwordLoginEnabled: p.passwordLoginEnabled !== false,
+          publicSignupEnabled: Boolean(p.publicSignupEnabled),
+          walletAuthEnabled: Boolean(p.walletAuthEnabled),
+          telegramAuthEnabled: Boolean(p.telegramAuthEnabled),
+          googleAuthEnabled: Boolean(p.googleAuthEnabled),
           googleConfigured: Boolean(p.googleConfigured ?? p.googleEnabled),
           googleClientId: p.googleClientId ?? null,
+          botUsername: (p.botUsername || '').replace(/^@/, ''),
+          telegramBotUrl: p.telegramBotUrl || '',
           defaultAdminReferralCode: p.defaultAdminReferralCode ?? null,
-        })
-      )
-      .catch(() => {});
+        };
+        setProviders(next);
+        setProvidersLoaded(true);
+        const anyPublicAuth =
+          next.publicSignupEnabled || next.walletAuthEnabled || next.telegramAuthEnabled || next.googleAuthEnabled;
+        if (!anyPublicAuth) {
+          setMode('login');
+        }
+      })
+      .catch(() => setProvidersLoaded(true));
   }, []);
 
   const cleanRef = referralCode.trim().replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
-  const telegramBotUrl = cleanRef
-    ? `https://t.me/Dollarino_bot?start=${encodeURIComponent(`web_auth__REF_${cleanRef}`)}`
-    : 'https://t.me/Dollarino_bot?start=web_auth';
+  const cleanBotUsername = (providers.botUsername || '').replace(/^@/, '');
+  const telegramBotUrl = cleanBotUsername
+    ? cleanRef
+      ? `https://t.me/${cleanBotUsername}?start=${encodeURIComponent(`web_auth__REF_${cleanRef}`)}`
+      : `https://t.me/${cleanBotUsername}?start=web_auth`
+    : providers.telegramBotUrl || '';
+  const hasAnyExternalMethod =
+    providers.walletAuthEnabled || providers.googleAuthEnabled || (providers.telegramAuthEnabled && Boolean(telegramBotUrl));
+  const hasAnySignupMethod = providers.publicSignupEnabled || hasAnyExternalMethod;
 
   const handleWalletAuth = useCallback(async () => {
     setError(null);
@@ -180,6 +227,7 @@ export function AuthPage({
       const res = await apiFetch<{
         token?: string;
         requires2fa?: boolean;
+        challengeType?: 'TOTP' | 'SECONDARY_PASSWORD';
         challengeToken?: string;
       }>('/api/auth/wallet/verify', {
         method: 'POST',
@@ -195,6 +243,7 @@ export function AuthPage({
       });
 
       if (res.requires2fa && res.challengeToken) {
+        setChallengeType(res.challengeType || 'TOTP');
         setChallengeToken(res.challengeToken);
         return;
       }
@@ -228,11 +277,19 @@ export function AuthPage({
 
   const handleGoogleAuth = () => {
     setError(null);
+    if (!providers.googleAuthEnabled) {
+      setError(
+        isFa
+          ? 'ورود با Google هنوز توسط مدیر سایت فعال نشده است.'
+          : 'Google Sign-In is not enabled by the administrator yet.'
+      );
+      return;
+    }
     if (!providers.googleConfigured) {
       setError(
         isFa
-          ? 'ورود با Google هنوز توسط مدیریت در تنظیمات سرور پیکربندی نشده است. از کیف‌پول دیجیتال یا ربات تلگرام استفاده کنید.'
-          : 'Google OAuth is not configured by the administrator yet. Please sign up via Web3 Wallet or Telegram Bot.'
+          ? 'کلیدهای Google OAuth هنوز در پنل مدیریت تنظیم نشده است.'
+          : 'Google OAuth credentials are not configured in Admin Panel yet.'
       );
       return;
     }
@@ -258,12 +315,13 @@ export function AuthPage({
       if (cleanId.length < 2) {
         throw new Error(isFa ? 'لطفاً ایمیل یا نام کاربری خود را وارد کنید.' : 'Enter your email or username.');
       }
-      if (password.length < 6) {
-        throw new Error(isFa ? 'رمز عبور باید حداقل ۶ کاراکتر باشد.' : 'Password must be at least 6 characters.');
+      if (password.length < 1) {
+        throw new Error(isFa ? 'رمز عبور را وارد کنید.' : 'Enter your password.');
       }
       const res = await apiFetch<{
         token?: string;
         requires2fa?: boolean;
+        challengeType?: 'TOTP' | 'SECONDARY_PASSWORD';
         challengeToken?: string;
       }>('/api/auth/login', {
         method: 'POST',
@@ -271,6 +329,7 @@ export function AuthPage({
       });
 
       if (res.requires2fa && res.challengeToken) {
+        setChallengeType(res.challengeType || 'TOTP');
         setChallengeToken(res.challengeToken);
         return;
       }
@@ -285,22 +344,69 @@ export function AuthPage({
     }
   };
 
+  const submitEmailRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      if (regUsername.trim().length < 2) {
+        throw new Error(isFa ? 'نام کاربری باید حداقل ۲ کاراکتر باشد.' : 'Username must be at least 2 characters.');
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(regEmail.trim())) {
+        throw new Error(isFa ? 'فرمت ایمیل معتبر نیست.' : 'Invalid email format.');
+      }
+      if (regPassword.length < 6) {
+        throw new Error(isFa ? 'رمز عبور باید حداقل ۶ کاراکتر باشد.' : 'Password must be at least 6 characters.');
+      }
+      const res = await apiFetch<{ token?: string }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: regUsername.trim(),
+          email: regEmail.trim(),
+          password: regPassword,
+          referralCode: cleanRef || undefined,
+        }),
+      });
+      if (res.token) {
+        setStoredToken(res.token);
+        await onSuccess();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const submit2faVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!challengeToken) return;
     setVerifying2fa(true);
     setError(null);
     try {
+      const payload =
+        challengeType === 'SECONDARY_PASSWORD'
+          ? { challengeToken, secondaryPassword: secondaryPwd.trim() }
+          : { challengeToken, code: totpCode.trim(), clientTimestampMs: Date.now() };
       const res = await apiFetch<{ ok: boolean; token: string }>('/api/auth/2fa/verify-login', {
         method: 'POST',
-        body: JSON.stringify({ challengeToken, code: totpCode.trim() }),
+        body: JSON.stringify(payload),
       });
       setStoredToken(res.token);
       setChallengeToken(null);
       setTotpCode('');
+      setSecondaryPwd('');
       await onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : isFa ? 'کد تایید نامعتبر است' : 'Invalid 2FA code');
+      setError(
+        err instanceof Error
+          ? err.message
+          : isFa
+            ? challengeType === 'SECONDARY_PASSWORD'
+              ? 'رمز دوم امنیتی نامعتبر است'
+              : 'کد تایید نامعتبر است'
+            : 'Invalid verification credential'
+      );
     } finally {
       setVerifying2fa(false);
     }
@@ -339,12 +445,20 @@ export function AuthPage({
                 <h1 className="font-display font-bold text-xl text-main">Dollarino</h1>
                 <p className="text-xs text-dim">
                   {challengeToken
-                    ? isFa
-                      ? 'احراز هویت دوعاملی Google Authenticator'
-                      : 'Two-Factor Authentication'
-                    : isFa
-                      ? 'ثبت‌نام و ورود چندمسیره (کیف‌پول، گوگل، تلگرام)'
-                      : 'Wallet, Google & Telegram Onboarding'}
+                    ? challengeType === 'SECONDARY_PASSWORD'
+                      ? isFa
+                        ? 'ورود مرحله دوم اولیه حساب مدیر'
+                        : 'Initial Admin Second-Step Verification'
+                      : isFa
+                        ? 'احراز هویت دوعاملی Google Authenticator'
+                        : 'Two-Factor Authentication'
+                    : hasAnySignupMethod
+                      ? isFa
+                        ? 'ثبت‌نام و ورود امن چندمسیره'
+                        : 'Multi-Method Secure Access'
+                      : isFa
+                        ? 'ورود به پنل مدیریت و حساب کاربری'
+                        : 'Account & Admin Sign-In'}
                 </p>
               </div>
             </div>
@@ -374,44 +488,95 @@ export function AuthPage({
 
           {challengeToken ? (
             <form onSubmit={submit2faVerify} className="space-y-4">
-              <div className="surface-soft rounded-2xl p-4 border hairline space-y-2">
-                <div className="flex items-center gap-2 text-sm font-black text-main">
-                  <Smartphone className="w-4 h-4 text-jade" />
-                  <span>{isFa ? 'کد ۶ رقمی تایید دوعاملی را وارد کنید' : 'Enter 6-Digit Authenticator Code'}</span>
-                </div>
-                <p className="text-[11px] text-dim leading-relaxed">
-                  {isFa
-                    ? 'برنامه Google Authenticator (یا Authy) را باز کرده و کد ۶ رقمی حساب دلارینو را وارد نمایید.'
-                    : 'Open Google Authenticator and enter the 6-digit verification code for your Dollarino account.'}
-                </p>
-              </div>
+              {challengeType === 'SECONDARY_PASSWORD' ? (
+                <>
+                  <div className="surface-soft rounded-2xl p-4 border hairline space-y-2">
+                    <div className="flex items-center gap-2 text-sm font-black text-main">
+                      <KeyRound className="w-4 h-4 text-brand" />
+                      <span>{isFa ? 'رمز دوم اولیه مدیر را وارد کنید' : 'Enter Initial Secondary Password'}</span>
+                    </div>
+                    <p className="text-[11px] text-dim leading-relaxed">
+                      {isFa
+                        ? 'پس از ورود اولیه با رمز دوم ثابت، سیستم از شما می‌خواهد نام کاربری و رمز جدید انتخاب کرده و رمز دوم را به Google Authenticator تبدیل نمایید.'
+                        : 'After verifying this initial secondary password, you will set your custom credentials and migrate permanently to Google Authenticator 2FA.'}
+                    </p>
+                  </div>
 
-              <input
-                type="text"
-                inputMode="numeric"
-                autoFocus
-                maxLength={6}
-                dir="ltr"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000"
-                className="field text-center text-2xl font-mono-num tracking-[0.45em] py-3"
-              />
+                  <div className="relative" dir="ltr">
+                    <Lock className="w-4 h-4 text-dim absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="password"
+                      autoFocus
+                      required
+                      dir="ltr"
+                      value={secondaryPwd}
+                      onChange={(e) => setSecondaryPwd(e.target.value)}
+                      placeholder={isFa ? 'رمز دوم ورود اولیه (مثال: admin123)' : 'Initial secondary password'}
+                      className="field pl-10 pr-3.5 text-sm font-mono-num text-left py-3"
+                    />
+                  </div>
 
-              <button
-                type="submit"
-                disabled={verifying2fa || totpCode.trim().length !== 6}
-                className="btn-gold w-full py-3.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {verifying2fa && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>{isFa ? 'تایید و ورود امن به حساب' : 'Verify & Sign In'}</span>
-              </button>
+                  <button
+                    type="submit"
+                    disabled={verifying2fa || secondaryPwd.trim().length < 1}
+                    className="btn-gold w-full py-3.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {verifying2fa && <Loader2 className="w-4 h-4 animate-spin" />}
+                    <span>{isFa ? 'تایید رمز دوم و ادامه تنظیمات امنیتی' : 'Verify & Continue Setup'}</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="surface-soft rounded-2xl p-4 border hairline space-y-2">
+                    <div className="flex items-center gap-2 text-sm font-black text-main">
+                      <Smartphone className="w-4 h-4 text-jade" />
+                      <span>{isFa ? 'کد ۶ رقمی تایید دوعاملی را وارد کنید' : 'Enter 6-Digit Authenticator Code'}</span>
+                    </div>
+                    <p className="text-[11px] text-dim leading-relaxed">
+                      {isFa
+                        ? 'برنامه Google Authenticator (یا Authy) را باز کرده و کد ۶ رقمی حساب دلارینو را وارد نمایید.'
+                        : 'Open Google Authenticator and enter the 6-digit verification code for your Dollarino account.'}
+                    </p>
+                  </div>
+
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoFocus
+                    maxLength={6}
+                    dir="ltr"
+                    value={totpCode}
+                    onChange={(e) =>
+                      setTotpCode(
+                        e.target.value
+                          .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+                          .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+                          .replace(/\D/g, '')
+                          .slice(0, 6)
+                      )
+                    }
+                    placeholder="000000"
+                    className="field text-center text-2xl font-mono-num tracking-[0.45em] py-3"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={verifying2fa || totpCode.trim().length !== 6}
+                    className="btn-gold w-full py-3.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {verifying2fa && <Loader2 className="w-4 h-4 animate-spin" />}
+                    <span>{isFa ? 'تایید و ورود امن به حساب' : 'Verify & Sign In'}</span>
+                  </button>
+                </>
+              )}
 
               <button
                 type="button"
                 onClick={() => {
                   setChallengeToken(null);
+                  setChallengeType('TOTP');
                   setTotpCode('');
+                  setSecondaryPwd('');
                   setError(null);
                 }}
                 className="w-full py-2 text-[11px] font-bold text-dim hover:text-main"
@@ -425,142 +590,218 @@ export function AuthPage({
                 <button
                   type="button"
                   onClick={() => {
-                    setMode('register');
-                    setError(null);
-                  }}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition ${mode === 'register' ? 'btn-gold' : 'text-dim hover:text-main'}`}
-                >
-                  {isFa ? 'ثبت‌نام سریع (۳ روش)' : 'Quick Sign Up (3 Ways)'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
                     setMode('login');
                     setError(null);
                   }}
                   className={`py-2.5 rounded-xl text-xs font-bold transition ${mode === 'login' ? 'btn-gold' : 'text-dim hover:text-main'}`}
                 >
-                  {isFa ? 'ورود با نام کاربری / ایمیل' : 'Username / Email Login'}
+                  {isFa ? 'ورود به حساب' : 'Sign In'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('register');
+                    setError(null);
+                  }}
+                  className={`py-2.5 rounded-xl text-xs font-bold transition ${mode === 'register' ? 'btn-gold' : 'text-dim hover:text-main'}`}
+                >
+                  {isFa ? 'ثبت‌نام کاربر جدید' : 'Create Account'}
                 </button>
               </div>
 
               {mode === 'register' ? (
                 <div className="space-y-3.5">
-                  <div className="surface-soft rounded-2xl p-3.5 border hairline text-[11px] text-sub leading-relaxed flex items-start gap-2">
-                    <ShieldCheck className="w-4 h-4 text-jade shrink-0 mt-0.5" />
-                    <span>
-                      {isFa
-                        ? 'ثبت‌نام مستقیم و تاییدشده فقط از طریق یکی از ۳ روش زیر انجام می‌شود؛ سپس نام، نام کاربری یکتا و رمز عبور دلخواه خود را تعیین می‌کنید.'
-                        : 'Sign up seamlessly via Web3 Wallet, Google, or Telegram Bot, then pick your unique username and personal password.'}
-                    </span>
-                  </div>
-
-                  {/* Method 1: Web3 / Trust Wallet */}
-                  <button
-                    type="button"
-                    onClick={() => void handleWalletAuth()}
-                    disabled={walletLoading}
-                    className="w-full rounded-2xl p-3.5 bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-500/35 text-start flex items-center justify-between gap-3 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-500/20 grid place-items-center shrink-0">
-                        <WalletLogo wallet="trustwallet" size={24} />
+                  {!hasAnySignupMethod && providersLoaded ? (
+                    <div className="surface-soft rounded-2xl p-4 border hairline text-xs text-sub leading-relaxed space-y-2">
+                      <div className="flex items-center gap-2 font-black text-main">
+                        <ShieldCheck className="w-4 h-4 text-brand shrink-0" />
+                        <span>{isFa ? 'ثبت‌نام عمومی هنوز فعال نشده است' : 'Public Registration Is Disabled'}</span>
                       </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-black text-main flex items-center gap-1.5">
-                          <span>{isFa ? 'ثبت‌نام با کیف‌پول دیجیتال (Trust Wallet / Web3)' : 'Continue with Web3 / Trust Wallet'}</span>
+                      <p className="text-[11px] text-dim">
+                        {isFa
+                          ? 'در تنظیمات اولیه و خام سیستم، روش‌های ورود کاربران (ایمیل، کیف‌پول دیجیتال، تلگرام و گوگل) غیرفعال هستند. مدیر سایت می‌تواند از داخل پنل مدیریت روش‌های دلخواه را روشن و پیکربندی کند.'
+                          : 'On a clean setup, public user signup methods (Email, Wallet, Telegram, Google) start disabled until enabled and configured in the Admin Panel.'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode('login');
+                          setError(null);
+                        }}
+                        className="btn-gold w-full py-2.5 rounded-xl text-xs font-black"
+                      >
+                        {isFa ? 'ورود با نام کاربری و رمز عبور' : 'Sign In with Username / Password'}
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="surface-soft rounded-2xl p-3.5 border hairline text-[11px] text-sub leading-relaxed flex items-start gap-2">
+                        <ShieldCheck className="w-4 h-4 text-jade shrink-0 mt-0.5" />
+                        <span>
+                          {isFa
+                            ? 'از بین روش‌های فعال‌شده توسط مدیریت زیر یکی را برای ایجاد حساب جدید انتخاب کنید:'
+                            : 'Choose one of the active onboarding methods enabled by the administrator:'}
+                        </span>
+                      </div>
+
+                      {providers.walletAuthEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => void handleWalletAuth()}
+                          disabled={walletLoading}
+                          className="w-full rounded-2xl p-3.5 bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-500/35 text-start flex items-center justify-between gap-3 transition"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 grid place-items-center shrink-0">
+                              <WalletLogo wallet="trustwallet" size={24} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-black text-main flex items-center gap-1.5">
+                                <span>{isFa ? 'ثبت‌نام با کیف‌پول دیجیتال (Trust Wallet / Web3)' : 'Continue with Web3 / Trust Wallet'}</span>
+                              </div>
+                              <p className="text-[11px] text-dim truncate">
+                                {isFa ? 'امضای رایگان EIP-191 بدون کارمزد شبکه و اتصال خودکار' : 'Free EIP-191 cryptographic signature — 0 gas'}
+                              </p>
+                            </div>
+                          </div>
+                          {walletLoading ? <Loader2 className="w-4 h-4 animate-spin text-jade shrink-0" /> : <Wallet className="w-4 h-4 text-jade shrink-0" />}
+                        </button>
+                      )}
+
+                      {providers.googleAuthEnabled && (
+                        <button
+                          type="button"
+                          onClick={handleGoogleAuth}
+                          disabled={googleLoading}
+                          className={`w-full rounded-2xl p-3.5 border text-start flex items-center justify-between gap-3 transition ${
+                            providers.googleConfigured
+                              ? 'bg-white/10 hover:bg-white/15 border-white/25'
+                              : 'surface-soft border-white/10 opacity-80'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-white grid place-items-center shrink-0 shadow-sm">
+                              <GoogleColorLogo size={20} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-black text-main flex items-center gap-1.5">
+                                <span>{isFa ? 'ثبت‌نام / ورود با حساب Google' : 'Continue with Google'}</span>
+                                {!providers.googleConfigured && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/20 text-[#F59E0B] font-bold">
+                                    {isFa ? 'در انتظار کلید OAuth' : 'Needs OAuth Key'}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-dim truncate">
+                                {isFa ? 'تایید آنی هویت با جیمیل شخصی شما' : 'Instant verified sign-in via your Gmail'}
+                              </p>
+                            </div>
+                          </div>
+                          {googleLoading ? <Loader2 className="w-4 h-4 animate-spin text-main shrink-0" /> : <ExternalLink className="w-4 h-4 text-dim shrink-0" />}
+                        </button>
+                      )}
+
+                      {providers.telegramAuthEnabled && telegramBotUrl && (
+                        <a
+                          href={telegramBotUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="w-full rounded-2xl p-3.5 bg-sky-500/12 hover:bg-sky-500/20 border border-sky-500/35 text-start flex items-center justify-between gap-3 transition"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-sky-500/20 grid place-items-center shrink-0">
+                              <Send className="w-5 h-5 text-sky-400" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-black text-main flex items-center gap-1.5 flex-wrap">
+                                <span>
+                                  {isFa ? (
+                                    <>
+                                      ثبت‌نام / ورود با ربات تلگرام{' '}
+                                      {cleanBotUsername && <span dir="ltr" className="font-mono-num text-sky-400">@{cleanBotUsername}</span>}
+                                    </>
+                                  ) : (
+                                    `Continue with Telegram${cleanBotUsername ? ` (@${cleanBotUsername})` : ''}`
+                                  )}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-dim truncate">
+                                {isFa ? 'ورود تک‌لمسی امن بدون رمز و دریافت اعلان لحظه‌ای' : 'Instant 1-tap login & live Telegram trade alerts'}
+                              </p>
+                            </div>
+                          </div>
+                          <ExternalLink className="w-4 h-4 text-sky-400 shrink-0" />
+                        </a>
+                      )}
+
+                      {providers.publicSignupEnabled && (
+                        <form onSubmit={submitEmailRegister} className="space-y-2.5 pt-2 border-t hairline">
+                          <div className="text-[11px] font-bold text-dim">
+                            {isFa ? 'ثبت‌نام مستقیم با ایمیل و نام کاربری:' : 'Direct Email & Username Registration:'}
+                          </div>
+                          <div className="relative" dir="ltr">
+                            <User className="w-4 h-4 text-dim absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              required
+                              minLength={2}
+                              dir="ltr"
+                              value={regUsername}
+                              onChange={(e) => setRegUsername(e.target.value)}
+                              placeholder={isFa ? 'نام کاربری دلخواه' : 'Username'}
+                              className="field pl-10 pr-3.5 text-xs text-left"
+                            />
+                          </div>
+                          <input
+                            type="email"
+                            required
+                            dir="ltr"
+                            value={regEmail}
+                            onChange={(e) => setRegEmail(e.target.value)}
+                            placeholder="name@example.com"
+                            className="field px-3.5 text-xs text-left"
+                          />
+                          <div className="relative" dir="ltr">
+                            <Lock className="w-4 h-4 text-dim absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="password"
+                              required
+                              minLength={6}
+                              dir="ltr"
+                              value={regPassword}
+                              onChange={(e) => setRegPassword(e.target.value)}
+                              placeholder={isFa ? 'رمز عبور (حداقل ۶ کاراکتر)' : 'Password (min 6 chars)'}
+                              className="field pl-10 pr-3.5 text-xs text-left"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={loading}
+                            className="btn-gold w-full py-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2"
+                          >
+                            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                            <span>{isFa ? 'ایجاد حساب کاربری' : 'Create Account'}</span>
+                          </button>
+                        </form>
+                      )}
+
+                      <div className="space-y-1.5 pt-1">
+                        <label className="text-[11px] font-bold text-dim block">
+                          {isFa ? 'کد معرف یا دعوت (اختیاری):' : 'Referral Code (optional):'}
+                        </label>
+                        <div className="relative" dir="ltr">
+                          <ShieldCheck className="w-4 h-4 text-jade absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            dir="ltr"
+                            value={referralCode}
+                            onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                            placeholder={providers.defaultAdminReferralCode || 'REFERRAL'}
+                            className="field pl-10 pr-3.5 text-xs font-mono-num text-left"
+                          />
                         </div>
-                        <p className="text-[11px] text-dim truncate">
-                          {isFa ? 'امضای رایگان EIP-191 بدون کارمزد شبکه و اتصال خودکار' : 'Free EIP-191 cryptographic signature — 0 gas'}
-                        </p>
                       </div>
-                    </div>
-                    {walletLoading ? <Loader2 className="w-4 h-4 animate-spin text-jade shrink-0" /> : <Wallet className="w-4 h-4 text-jade shrink-0" />}
-                  </button>
-
-                  {/* Method 2: Google Account */}
-                  <button
-                    type="button"
-                    onClick={handleGoogleAuth}
-                    disabled={googleLoading}
-                    className={`w-full rounded-2xl p-3.5 border text-start flex items-center justify-between gap-3 transition ${
-                      providers.googleConfigured
-                        ? 'bg-white/10 hover:bg-white/15 border-white/25'
-                        : 'surface-soft border-white/10 opacity-80'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-white grid place-items-center shrink-0 shadow-sm">
-                        <GoogleColorLogo size={20} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-black text-main flex items-center gap-1.5">
-                          <span>{isFa ? 'ثبت‌نام / ورود با حساب Google' : 'Continue with Google'}</span>
-                          {!providers.googleConfigured && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-500/20 text-[#F59E0B] font-bold">
-                              {isFa ? 'در انتظار کلید OAuth' : 'Needs OAuth Key'}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-dim truncate">
-                          {isFa ? 'تایید آنی هویت با جیمیل شخصی شما' : 'Instant verified sign-in via your Gmail'}
-                        </p>
-                      </div>
-                    </div>
-                    {googleLoading ? <Loader2 className="w-4 h-4 animate-spin text-main shrink-0" /> : <ExternalLink className="w-4 h-4 text-dim shrink-0" />}
-                  </button>
-
-                  {/* Method 3: Telegram Bot */}
-                  <a
-                    href={telegramBotUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full rounded-2xl p-3.5 bg-sky-500/12 hover:bg-sky-500/20 border border-sky-500/35 text-start flex items-center justify-between gap-3 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-sky-500/20 grid place-items-center shrink-0">
-                        <Send className="w-5 h-5 text-sky-400" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-black text-main flex items-center gap-1.5 flex-wrap">
-                          <span>
-                            {isFa ? (
-                              <>
-                                ثبت‌نام / ورود با ربات تلگرام <span dir="ltr" className="font-mono-num text-sky-400">@Dollarino_bot</span>
-                              </>
-                            ) : (
-                              'Continue with @Dollarino_bot Telegram'
-                            )}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-dim truncate">
-                          {isFa ? 'ورود تک‌لمسی امن بدون رمز و دریافت اعلان لحظه‌ای' : 'Instant 1-tap login & live Telegram trade alerts'}
-                        </p>
-                      </div>
-                    </div>
-                    <ExternalLink className="w-4 h-4 text-sky-400 shrink-0" />
-                  </a>
-
-                  <div className="space-y-1.5 pt-1">
-                    <label className="text-[11px] font-bold text-dim block">
-                      {isFa ? 'کد معرف یا دعوت (اختیاری):' : 'Referral Code (optional):'}
-                    </label>
-                    <div className="relative" dir="ltr">
-                      <ShieldCheck className="w-4 h-4 text-jade absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      <input
-                        dir="ltr"
-                        value={referralCode}
-                        onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                        placeholder={providers.defaultAdminReferralCode || 'DLRXHSOW'}
-                        className="field pl-10 pr-3.5 text-xs font-mono-num text-left"
-                      />
-                    </div>
-                    <p className="text-[10px] text-dim">
-                      {isFa
-                        ? `در صورت خالی ماندن، به‌صورت خودکار کد معرف مدیر${providers.defaultAdminReferralCode ? ` (${providers.defaultAdminReferralCode})` : ''} ثبت می‌شود.`
-                        : `If left empty, the admin referral code${providers.defaultAdminReferralCode ? ` (${providers.defaultAdminReferralCode})` : ''} is applied automatically.`}
-                    </p>
-                  </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 <form onSubmit={submitPasswordLogin} className="space-y-3.5">
@@ -568,8 +809,8 @@ export function AuthPage({
                     <KeyRound className="w-4 h-4 text-brand shrink-0 mt-0.5" />
                     <span>
                       {isFa
-                        ? 'با ایمیل یا نام کاربری اختصاصی و رمز عبوری که در تکمیل ثبت‌نام تنظیم کرده‌اید وارد شوید:'
-                        : 'Sign in with your username or email and personal password:'}
+                        ? 'با ایمیل یا نام کاربری و رمز عبور خود وارد شوید:'
+                        : 'Sign in with your username or email and password:'}
                     </span>
                   </div>
 
@@ -581,7 +822,7 @@ export function AuthPage({
                       dir="ltr"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
-                      placeholder={isFa ? 'نام کاربری یا ایمیل (e.g. trader_pro)' : 'Username or email'}
+                      placeholder={isFa ? 'نام کاربری یا ایمیل (e.g. admin)' : 'Username or email'}
                       className="field pl-10 pr-3.5 text-xs text-left"
                     />
                   </div>
@@ -591,7 +832,6 @@ export function AuthPage({
                     <input
                       type="password"
                       required
-                      minLength={6}
                       dir="ltr"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -605,42 +845,52 @@ export function AuthPage({
                     <span>{isFa ? 'ورود به میز کار دلارینو' : 'Enter Workspace'}</span>
                   </button>
 
-                  <div className="relative py-1 flex items-center justify-center">
-                    <div className="border-t hairline w-full" />
-                    <span className="px-2.5 text-[10px] font-bold text-dim bg-[var(--panel)] shrink-0">
-                      {isFa ? 'یا ورود یک‌کلیکی با' : 'OR QUICK SIGN IN WITH'}
-                    </span>
-                    <div className="border-t hairline w-full" />
-                  </div>
+                  {hasAnyExternalMethod && (
+                    <>
+                      <div className="relative py-1 flex items-center justify-center">
+                        <div className="border-t hairline w-full" />
+                        <span className="px-2.5 text-[10px] font-bold text-dim bg-[var(--panel)] shrink-0">
+                          {isFa ? 'یا ورود سریع با' : 'OR QUICK SIGN IN WITH'}
+                        </span>
+                        <div className="border-t hairline w-full" />
+                      </div>
 
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleWalletAuth()}
-                      disabled={walletLoading}
-                      className="py-2.5 px-2 rounded-xl surface-soft hover:bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
-                    >
-                      <WalletLogo wallet="trustwallet" size={16} />
-                      <span>{isFa ? 'کیف‌پول' : 'Wallet'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleGoogleAuth}
-                      className="py-2.5 px-2 rounded-xl surface-soft hover:bg-white/15 border border-white/20 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
-                    >
-                      <GoogleColorLogo size={15} />
-                      <span>Google</span>
-                    </button>
-                    <a
-                      href={telegramBotUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="py-2.5 px-2 rounded-xl surface-soft hover:bg-sky-500/15 border border-sky-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
-                    >
-                      <Send className="w-3.5 h-3.5 text-sky-400" />
-                      <span>{isFa ? 'تلگرام' : 'Telegram'}</span>
-                    </a>
-                  </div>
+                      <div className="flex flex-wrap gap-2">
+                        {providers.walletAuthEnabled && (
+                          <button
+                            type="button"
+                            onClick={() => void handleWalletAuth()}
+                            disabled={walletLoading}
+                            className="flex-1 min-w-[96px] py-2.5 px-2 rounded-xl surface-soft hover:bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
+                          >
+                            <WalletLogo wallet="trustwallet" size={16} />
+                            <span>{isFa ? 'کیف‌پول' : 'Wallet'}</span>
+                          </button>
+                        )}
+                        {providers.googleAuthEnabled && (
+                          <button
+                            type="button"
+                            onClick={handleGoogleAuth}
+                            className="flex-1 min-w-[96px] py-2.5 px-2 rounded-xl surface-soft hover:bg-white/15 border border-white/20 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
+                          >
+                            <GoogleColorLogo size={15} />
+                            <span>Google</span>
+                          </button>
+                        )}
+                        {providers.telegramAuthEnabled && telegramBotUrl && (
+                          <a
+                            href={telegramBotUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 min-w-[96px] py-2.5 px-2 rounded-xl surface-soft hover:bg-sky-500/15 border border-sky-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
+                          >
+                            <Send className="w-3.5 h-3.5 text-sky-400" />
+                            <span>{isFa ? 'تلگرام' : 'Telegram'}</span>
+                          </a>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </form>
               )}
             </>
@@ -648,7 +898,9 @@ export function AuthPage({
 
           <p className="text-[10px] text-dim flex items-center justify-center gap-1.5 pt-1 border-t hairline">
             <Bot className="w-3.5 h-3.5 text-brand shrink-0" />
-            <span dir="ltr">@Dollarino_bot · @Dollarino_official</span>
+            <span dir="ltr">
+              {cleanBotUsername ? `@${cleanBotUsername} · Dollarino` : 'Dollarino Quant Platform'}
+            </span>
           </p>
         </div>
       </div>

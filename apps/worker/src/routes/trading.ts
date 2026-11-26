@@ -70,7 +70,7 @@ import {
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS, normalizeCanonicalSymbol } from '../exchanges/markets.js';
-import { publishProfitCardToTelegram, publishSignalClosedCard } from '../telegram/publisher.js';
+import { publishProfitCardToTelegram, publishSignalClosedCard, publishSystemLogEvent } from '../telegram/publisher.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
 import { checkLiveFeeEnforcement, getUserServerFeeSummary, recordProfitShareServerFee } from '../services/server-fee.js';
 import { getTrustWalletLiveTotalUsd } from './trustwallet.js';
@@ -103,14 +103,53 @@ const LIVE_TICKS_POLL_CACHE = new WeakMap<
   object,
   Map<string, { ts: number; hasPositions: boolean; payload: Record<string, unknown> }>
 >();
+const DASHBOARD_LITE_META_CACHE = new WeakMap<
+  object,
+  Map<
+    string,
+    {
+      ts: number;
+      mode: string;
+      pendingOrders: unknown[];
+      closedTrades: unknown[];
+      recentSignals: unknown[];
+      stats: {
+        total_trades: number;
+        wins: number;
+        total_pnl: number;
+        gross_wins: number;
+        gross_losses: number;
+        today_pnl: number;
+        last_24h_pnl: number;
+        last_7d_pnl: number;
+      } | null;
+      walletDeposited: number;
+      ledgerRows: unknown[];
+      aiRow: { provider: string; model: string } | null;
+      recentAiDecisions: unknown[];
+      entitlement: unknown;
+      platformAI: unknown;
+      activeEngine: unknown;
+      serverFeeSummary: unknown;
+      riskTermsAcceptedAt: string | null;
+      sniperEvents: unknown[];
+    }
+  >
+>();
 const TICKER_QUOTE_CACHE = new Map<string, { ts: number; price: number }>();
 const DEX_QUOTE_CACHE = new Map<string, { ts: number; price: number }>();
 
 export function invalidateLiveTicksCache(db: D1Database, userId?: string): void {
   const map = LIVE_TICKS_POLL_CACHE.get(db as unknown as object);
-  if (!map) return;
-  if (userId) map.delete(userId);
-  else map.clear();
+  if (map) {
+    if (userId) map.delete(userId);
+    else map.clear();
+  }
+  const dashMap = DASHBOARD_LITE_META_CACHE.get(db as unknown as object);
+  if (dashMap) {
+    if (userId) dashMap.delete(userId);
+    else dashMap.clear();
+  }
 }
 
 async function getCachedTickerPrice(
@@ -161,7 +200,7 @@ async function buildLivePositionsSnapshot(
   const totalEq = effectiveMode === 'LIVE' ? rawTotalEq : rawTotalEq || Number(cfg?.paper_balance ?? 10000);
   const totalEqDenom = Math.max(1, totalEq);
 
-  const [openTradesRaw, dexTradesRaw, smartCopyRaw, perpOrdersRaw] = await Promise.all([
+  const [openTradesRaw, dexTradesQueryRes, smartCopyQueryRes, perpOrdersQueryRes] = await Promise.all([
     env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC`)
       .bind(userId, effectiveMode)
       .all<{
@@ -189,13 +228,9 @@ async function buildLivePositionsSnapshot(
         opened_at: string;
       }>(),
     env.DB.prepare(
-      effectiveMode === 'PAPER'
-        ? includeClosed
-          ? `SELECT * FROM dex_trades WHERE user_id = ? AND tx_hash LIKE 'PAPER_%' ORDER BY opened_at DESC LIMIT 40`
-          : `SELECT * FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') AND tx_hash LIKE 'PAPER_%' ORDER BY opened_at DESC LIMIT 30`
-        : includeClosed
-          ? `SELECT * FROM dex_trades WHERE user_id = ? AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%') ORDER BY opened_at DESC LIMIT 40`
-          : `SELECT * FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%') ORDER BY opened_at DESC LIMIT 30`
+      includeClosed
+        ? `SELECT * FROM dex_trades WHERE user_id = ? ORDER BY opened_at DESC LIMIT 60`
+        : `SELECT * FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') ORDER BY opened_at DESC LIMIT 40`
     )
       .bind(userId)
       .all<{
@@ -223,25 +258,17 @@ async function buildLivePositionsSnapshot(
       }>()
       .catch(() => ({ results: [] })),
     env.DB.prepare(
-      effectiveMode === 'PAPER'
-        ? includeClosed
-          ? `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND execution_mode = 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 40`
-          : `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND status IN ('OPEN', 'PENDING_TRUST_SIGN') AND execution_mode = 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 30`
-        : includeClosed
-          ? `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND execution_mode != 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 40`
-          : `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND status IN ('OPEN', 'PENDING_TRUST_SIGN') AND execution_mode != 'PAPER_SIMULATOR' ORDER BY opened_at DESC LIMIT 30`
+      includeClosed
+        ? `SELECT * FROM copy_positions_v2 WHERE user_id = ? ORDER BY opened_at DESC LIMIT 60`
+        : `SELECT * FROM copy_positions_v2 WHERE user_id = ? AND status IN ('OPEN', 'PENDING_TRUST_SIGN') ORDER BY opened_at DESC LIMIT 40`
     )
       .bind(userId)
       .all<CopyPositionV2Row>()
       .catch(() => ({ results: [] })),
     env.DB.prepare(
-      effectiveMode === 'PAPER'
-        ? includeClosed
-          ? `SELECT * FROM perp_dex_orders WHERE user_id = ? AND execution_kind IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 30`
-          : `SELECT * FROM perp_dex_orders WHERE user_id = ? AND status NOT IN ('CLOSED', 'CANCELLED') AND execution_kind IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 20`
-        : includeClosed
-          ? `SELECT * FROM perp_dex_orders WHERE user_id = ? AND execution_kind NOT IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 30`
-          : `SELECT * FROM perp_dex_orders WHERE user_id = ? AND status NOT IN ('CLOSED', 'CANCELLED') AND execution_kind NOT IN ('PAPER', 'PAPER_SIMULATOR') ORDER BY created_at DESC LIMIT 20`
+      includeClosed
+        ? `SELECT * FROM perp_dex_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 40`
+        : `SELECT * FROM perp_dex_orders WHERE user_id = ? AND status NOT IN ('CLOSED', 'CANCELLED') ORDER BY created_at DESC LIMIT 30`
     )
       .bind(userId)
       .all<{
@@ -263,6 +290,26 @@ async function buildLivePositionsSnapshot(
       }>()
       .catch(() => ({ results: [] })),
   ]);
+
+  const dexTradesRaw = {
+    results: dexTradesQueryRes.results
+      .filter((d) => (effectiveMode === 'PAPER' ? (d.tx_hash || '').startsWith('PAPER_') : !(d.tx_hash || '').startsWith('PAPER_')))
+      .slice(0, includeClosed ? 40 : 30),
+  };
+  const smartCopyRaw = {
+    results: smartCopyQueryRes.results
+      .filter((p) => (effectiveMode === 'PAPER' ? p.execution_mode === 'PAPER_SIMULATOR' : p.execution_mode !== 'PAPER_SIMULATOR'))
+      .slice(0, includeClosed ? 40 : 30),
+  };
+  const perpOrdersRaw = {
+    results: perpOrdersQueryRes.results
+      .filter((o) =>
+        effectiveMode === 'PAPER'
+          ? o.execution_kind === 'PAPER' || o.execution_kind === 'PAPER_SIMULATOR'
+          : o.execution_kind !== 'PAPER' && o.execution_kind !== 'PAPER_SIMULATOR'
+      )
+      .slice(0, includeClosed ? 30 : 20),
+  };
 
   let totalUnrealizedPnl = 0;
 
@@ -702,6 +749,13 @@ tradingRoutes.get('/dashboard', async (c) => {
       usePollCache: isLitePoll,
     });
 
+  const nowDash = Date.now();
+  let dashMetaMap = DASHBOARD_LITE_META_CACHE.get(c.env.DB as unknown as object);
+  const cachedDashMeta = isLitePoll ? dashMetaMap?.get(user.id) : undefined;
+  const useCachedDashMeta = Boolean(
+    cachedDashMeta && cachedDashMeta.mode === effectiveMode && nowDash - cachedDashMeta.ts < 60_000
+  );
+
   const [
     positionsSnap,
     pendingOrders,
@@ -719,41 +773,49 @@ tradingRoutes.get('/dashboard', async (c) => {
   ] = await Promise.all([
     buildLivePositionsSnapshot(c.env, user.id, effectiveMode, cfg ?? null, adapter, Number(balance.total ?? 0), {
       lite: isLitePoll,
-      includeClosed: true,
+      includeClosed: !isLitePoll,
     }),
-    c.env.DB.prepare(`SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC`).bind(user.id).all(),
-    c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? ORDER BY closed_at DESC LIMIT 60`).bind(user.id, effectiveMode).all(),
-    c.env.DB.prepare(
-      `SELECT * FROM (
-         SELECT * FROM signals WHERE user_id = ? ORDER BY created_at DESC LIMIT 24
-       )
-       UNION ALL
-       SELECT * FROM (
-         SELECT * FROM signals WHERE user_id IS NULL ORDER BY created_at DESC LIMIT 24
-       )
-       ORDER BY created_at DESC LIMIT 24`
-    ).bind(user.id).all(),
-    c.env.DB.prepare(
-      `SELECT
-        COUNT(*) as total_trades,
-        COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN 1 ELSE 0 END), 0) as wins,
-        COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as total_pnl,
-        COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as gross_wins,
-        COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) < 0 THEN ABS(CAST(realized_pnl AS REAL)) ELSE 0 END), 0) as gross_losses,
-        COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as today_pnl,
-        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-24 hours') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_24h_pnl,
-        COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-7 days') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_7d_pnl
-       FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
-    ).bind(user.id, effectiveMode).first<{
-      total_trades: number;
-      wins: number;
-      total_pnl: number;
-      gross_wins: number;
-      gross_losses: number;
-      today_pnl: number;
-      last_24h_pnl: number;
-      last_7d_pnl: number;
-    }>(),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.pendingOrders })
+      : c.env.DB.prepare(`SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' ORDER BY created_at DESC`).bind(user.id).all(),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.closedTrades })
+      : c.env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ? ORDER BY closed_at DESC LIMIT 60`).bind(user.id, effectiveMode).all(),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.recentSignals })
+      : c.env.DB.prepare(
+          `SELECT * FROM (
+             SELECT * FROM signals WHERE user_id = ? ORDER BY created_at DESC LIMIT 24
+           )
+           UNION ALL
+           SELECT * FROM (
+             SELECT * FROM signals WHERE user_id IS NULL ORDER BY created_at DESC LIMIT 24
+           )
+           ORDER BY created_at DESC LIMIT 24`
+        ).bind(user.id).all(),
+    useCachedDashMeta
+      ? Promise.resolve(cachedDashMeta!.stats)
+      : c.env.DB.prepare(
+          `SELECT
+            COUNT(*) as total_trades,
+            COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN 1 ELSE 0 END), 0) as wins,
+            COALESCE(SUM(CAST(realized_pnl AS REAL)), 0) as total_pnl,
+            COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) > 0 THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as gross_wins,
+            COALESCE(SUM(CASE WHEN CAST(realized_pnl AS REAL) < 0 THEN ABS(CAST(realized_pnl AS REAL)) ELSE 0 END), 0) as gross_losses,
+            COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as today_pnl,
+            COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-24 hours') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_24h_pnl,
+            COALESCE(SUM(CASE WHEN closed_at >= datetime('now', '-7 days') THEN CAST(realized_pnl AS REAL) ELSE 0 END), 0) as last_7d_pnl
+           FROM trades WHERE user_id = ? AND status = 'CLOSED' AND mode = ?`
+        ).bind(user.id, effectiveMode).first<{
+          total_trades: number;
+          wins: number;
+          total_pnl: number;
+          gross_wins: number;
+          gross_losses: number;
+          today_pnl: number;
+          last_24h_pnl: number;
+          last_7d_pnl: number;
+        }>(),
     isLitePoll
       ? Promise.resolve({ results: [] as Array<{ symbol: string; realized_pnl: string; closed_at: string }> })
       : c.env.DB.prepare(
@@ -762,21 +824,29 @@ tradingRoutes.get('/dashboard', async (c) => {
            WHERE user_id = ? AND status = 'CLOSED' AND mode = ? AND closed_at IS NOT NULL
            ORDER BY closed_at DESC LIMIT 240`
         ).bind(user.id, effectiveMode).all<{ symbol: string; realized_pnl: string; closed_at: string }>().catch(() => ({ results: [] })),
-    c.env.DB.prepare(
-      `SELECT COALESCE(SUM(CASE WHEN event_type IN ('DEPOSIT','TOPUP') THEN amount_usd ELSE 0 END), 0) as deposited
-       FROM wallet_ledger WHERE user_id = ? AND mode = ?`
-    ).bind(user.id, effectiveMode).first<{ deposited: number }>().catch(() => ({ deposited: 0 })),
-    c.env.DB.prepare(
-      `SELECT * FROM wallet_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
-    ).bind(user.id).all().catch(() => ({ results: [] })),
-    c.env.DB.prepare(`SELECT provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`)
-      .bind(user.id).first<{ provider: string; model: string }>(),
-    c.env.DB.prepare(
-      `SELECT id, level, symbol, message, details_json, created_at FROM audit_logs WHERE user_id = ? AND category IN ('AI_AGENT', 'SIGNAL', 'ORDER', 'SYSTEM') ORDER BY created_at DESC LIMIT 12`
-    ).bind(user.id).all().catch(() => ({ results: [] })),
-    resolveUserEntitlement(c.env.DB, user),
-    getPlatformAISummary(c.env),
-    getActiveEngineState(c.env.DB, user.id),
+    useCachedDashMeta
+      ? Promise.resolve({ deposited: cachedDashMeta!.walletDeposited })
+      : c.env.DB.prepare(
+          `SELECT COALESCE(SUM(CASE WHEN event_type IN ('DEPOSIT','TOPUP') THEN amount_usd ELSE 0 END), 0) as deposited
+           FROM wallet_ledger WHERE user_id = ? AND mode = ?`
+        ).bind(user.id, effectiveMode).first<{ deposited: number }>().catch(() => ({ deposited: 0 })),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.ledgerRows })
+      : c.env.DB.prepare(
+          `SELECT * FROM wallet_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`
+        ).bind(user.id).all().catch(() => ({ results: [] })),
+    useCachedDashMeta
+      ? Promise.resolve(cachedDashMeta!.aiRow)
+      : c.env.DB.prepare(`SELECT provider, model FROM ai_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`)
+          .bind(user.id).first<{ provider: string; model: string }>(),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.recentAiDecisions })
+      : c.env.DB.prepare(
+          `SELECT id, level, symbol, message, details_json, created_at FROM audit_logs WHERE user_id = ? AND category IN ('AI_AGENT', 'SIGNAL', 'ORDER', 'SYSTEM') ORDER BY created_at DESC LIMIT 12`
+        ).bind(user.id).all().catch(() => ({ results: [] })),
+    useCachedDashMeta ? Promise.resolve(cachedDashMeta!.entitlement as Awaited<ReturnType<typeof resolveUserEntitlement>>) : resolveUserEntitlement(c.env.DB, user),
+    useCachedDashMeta ? Promise.resolve(cachedDashMeta!.platformAI as Awaited<ReturnType<typeof getPlatformAISummary>>) : getPlatformAISummary(c.env),
+    useCachedDashMeta ? Promise.resolve(cachedDashMeta!.activeEngine as Awaited<ReturnType<typeof getActiveEngineState>>) : getActiveEngineState(c.env.DB, user.id),
   ]);
 
   const rawTotalEq = Math.max(0, Number(balance.total ?? 0));
@@ -944,17 +1014,49 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   const totalDeposited = (walletRow?.deposited ?? 0) > 0 ? walletRow!.deposited : (effectiveMode === 'LIVE' ? totalEq : 10000);
   const totalPnl = stats?.total_pnl ?? 0;
-  const tfSecs: Record<string, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400 };
+  const tfSecs: Record<string, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400, '1w': 604800 };
   const cyclePeriod = tfSecs[cfg?.entry_timeframe ?? '15m'] ?? 900;
   const nextCycleInSec = cyclePeriod - (Math.floor(Date.now() / 1000) % cyclePeriod);
 
   const [iranRate, serverFeeSummary, uRiskRow, sniperEventsRows, capitalSummary] = await Promise.all([
     fetchIranUsdtRate().catch(() => null),
-    getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
-    c.env.DB.prepare(`SELECT risk_terms_accepted_at FROM users WHERE id = ?`).bind(user.id).first<{ risk_terms_accepted_at: string | null }>().catch(() => null),
-    c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 12`).all().catch(() => ({ results: [] })),
+    useCachedDashMeta
+      ? Promise.resolve(cachedDashMeta!.serverFeeSummary as Awaited<ReturnType<typeof getUserServerFeeSummary>> | null)
+      : getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
+    useCachedDashMeta
+      ? Promise.resolve({ risk_terms_accepted_at: cachedDashMeta!.riskTermsAcceptedAt })
+      : c.env.DB.prepare(`SELECT risk_terms_accepted_at FROM users WHERE id = ?`).bind(user.id).first<{ risk_terms_accepted_at: string | null }>().catch(() => null),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.sniperEvents })
+      : c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 12`).all().catch(() => ({ results: [] })),
     resolveUserCapitalSummary(c.env.DB, user.id, cfg ?? null, balance, prefetchedCapital).catch(() => null),
   ]);
+
+  if (!useCachedDashMeta) {
+    if (!dashMetaMap) {
+      dashMetaMap = new Map();
+      DASHBOARD_LITE_META_CACHE.set(c.env.DB as unknown as object, dashMetaMap);
+    }
+    if (dashMetaMap.size > 300) dashMetaMap.clear();
+    dashMetaMap.set(user.id, {
+      ts: nowDash,
+      mode: effectiveMode,
+      pendingOrders: pendingOrders.results,
+      closedTrades: closedTrades.results,
+      recentSignals: recentSignals.results,
+      stats: stats ?? null,
+      walletDeposited: Number(walletRow?.deposited ?? 0),
+      ledgerRows: ledgerRows.results,
+      aiRow: aiRow ?? null,
+      recentAiDecisions: recentAiDecisions.results,
+      entitlement,
+      platformAI,
+      activeEngine,
+      serverFeeSummary,
+      riskTermsAcceptedAt: uRiskRow?.risk_terms_accepted_at ?? null,
+      sniperEvents: sniperEventsRows.results,
+    });
+  }
 
   if (capitalSummary) {
     riskProfile.allocatedAmount = Math.round(
@@ -1049,6 +1151,7 @@ tradingRoutes.post('/wallet/topup', async (c) => {
   ).bind(randomId('wl'), user.id, cfg?.trading_mode ?? 'PAPER', amount, nextBal, body.note ?? 'Instant Simulation Credit Top-Up').run();
 
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Wallet topped up +$${amount.toFixed(2)} (Balance: $${nextBal.toFixed(2)})`);
+  invalidateLiveTicksCache(c.env.DB, user.id);
   return c.json({ ok: true, balanceAfter: nextBal });
 });
 
@@ -1075,6 +1178,7 @@ tradingRoutes.post('/accept-risk-terms', async (c) => {
     .catch(() => null);
 
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'کاربر متن پذیرش ریسک و قوانین معاملات را تایید کرد.');
+  invalidateLiveTicksCache(c.env.DB, user.id);
   return c.json({
     ok: true,
     riskTermsAcceptedAt: nowIso,
@@ -1093,6 +1197,7 @@ tradingRoutes.post('/engines', async (c) => {
     customStrategyId: typeof body.customStrategyId === 'string' ? body.customStrategyId : null,
     auditSource: 'multi_engine_selector',
   });
+  invalidateLiveTicksCache(c.env.DB, user.id);
   return c.json({ ok: true, activeEngine: state });
 });
 
@@ -1105,6 +1210,7 @@ tradingRoutes.post('/engines/toggle', async (c) => {
     strategyKey: typeof body.strategyKey === 'string' ? body.strategyKey : undefined,
     auditSource: 'engine_toggle',
   });
+  invalidateLiveTicksCache(c.env.DB, user.id);
   return c.json({ ok: true, activeEngine: state });
 });
 
@@ -1989,6 +2095,14 @@ tradingRoutes.post('/bot/start', async (c) => {
     'INFO',
     `ربات اتوترید روشن شد · موتورهای فعال: [${resolvedEngines.join(', ')}]`
   );
+  await publishSystemLogEvent(c.env, {
+    category: 'BOT_ACTIVITY',
+    level: 'INFO',
+    source: 'TradingBot',
+    title: `روشن شدن ربات تریدر (${nextState})`,
+    userId: user.id,
+    details: `کاربر ${user.username} | حالت اجرا: ${resolvedExecMode} | صرافی: ${activeExProvider} | موتورها: [${resolvedEngines.join(', ')}]`,
+  }).catch(() => {});
 
   const id = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
   const stub = c.env.TRADING_BOT_DO.get(id);
@@ -2270,6 +2384,14 @@ tradingRoutes.post('/bot/stop', async (c) => {
   }
 
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', 'Bot stopped by user');
+  await publishSystemLogEvent(c.env, {
+    category: 'BOT_ACTIVITY',
+    level: 'INFO',
+    source: 'TradingBot',
+    title: 'توقف ربات تریدر توسط کاربر',
+    userId: user.id,
+    details: `کاربر ${user.username} | پوزیشن‌های بسته‌شده: ${closedOnStop} | سود/زیان: $${(sessionStats?.pnl ?? stopPnl).toFixed(2)}`,
+  }).catch(() => {});
   return c.json({
     ok: true,
     bot_state: 'STOPPED',
@@ -2362,6 +2484,14 @@ tradingRoutes.post('/bot/kill-switch', async (c) => {
   }
 
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'WARN', `EMERGENCY KILL SWITCH activated — closed ${closedCount} positions`);
+  await publishSystemLogEvent(c.env, {
+    category: 'BOT_ACTIVITY',
+    level: 'WARN',
+    source: 'KillSwitch',
+    title: 'فعال‌سازی توقف اضطراری (Kill Switch)',
+    userId: user.id,
+    details: `کاربر ${user.username} دستور بستن فوری ${closedCount} معامله باز را صادر کرد.`,
+  }).catch(() => {});
   return c.json({ ok: true, closedCount });
 });
 
@@ -2484,7 +2614,7 @@ tradingRoutes.get('/live-ticks', async (c) => {
   let pollMap = LIVE_TICKS_POLL_CACHE.get(c.env.DB as unknown as object);
   if (isPoll) {
     const cached = pollMap?.get(user.id);
-    const ttlMs = cached?.hasPositions ? 4_000 : 15_000;
+    const ttlMs = cached?.hasPositions ? 8_000 : 30_000;
     if (cached && now - cached.ts < ttlMs) {
       return c.json({ ...cached.payload, serverTime: new Date().toISOString() });
     }
@@ -2938,12 +3068,12 @@ tradingRoutes.get('/market/overview', async (c) => {
   const user = c.get('user');
   const symbol = (c.req.query('symbol') || 'BTCUSDT').toUpperCase();
   const timeframe = (c.req.query('timeframe') || '15m') as Timeframe;
-  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1w', '1w': '1w' };
   const htfTf = htfMap[timeframe] ?? '4h';
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
 
   const [candles, candles4h, market24h, orderBook, cfg] = await Promise.all([
-    adapter.getKlines(symbol, timeframe, 450),
+    adapter.getKlines(symbol, timeframe, 500),
     adapter.getKlines(symbol, htfTf, 200),
     adapter.getMarket24h(symbol),
     adapter.getOrderBook(symbol, 15),
@@ -2955,6 +3085,9 @@ tradingRoutes.get('/market/overview', async (c) => {
     id: string;
     title: string;
     language: CustomStrategyLanguage;
+    pineVersion?: 4 | 5 | 6;
+    scriptKind?: 'indicator' | 'strategy' | 'library';
+    overlay?: boolean;
     plots: unknown[];
     markers: unknown[];
     hlines?: unknown[];
@@ -2965,6 +3098,10 @@ tradingRoutes.get('/market/overview', async (c) => {
     lines?: unknown[];
     boxes?: unknown[];
     tables?: unknown[];
+    polylines?: unknown[];
+    logs?: unknown[];
+    inputs?: unknown[];
+    alertsTriggered?: unknown[];
     latestSignal: unknown;
   } | null = null;
 
@@ -2980,6 +3117,9 @@ tradingRoutes.get('/market/overview', async (c) => {
           id: customRow.id,
           title: customRow.name || ev.title,
           language: customRow.language,
+          pineVersion: ev.pineVersion,
+          scriptKind: ev.scriptKind,
+          overlay: ev.overlay,
           plots: ev.plots,
           markers: ev.markers,
           hlines: ev.hlines,
@@ -2990,6 +3130,10 @@ tradingRoutes.get('/market/overview', async (c) => {
           lines: ev.lines,
           boxes: ev.boxes,
           tables: ev.tables,
+          polylines: ev.polylines,
+          logs: ev.logs,
+          inputs: ev.inputs,
+          alertsTriggered: ev.alertsTriggered,
           latestSignal: ev.latestSignal,
         };
       }
@@ -3134,7 +3278,7 @@ tradingRoutes.post('/scanner', async (c) => {
   }>().catch(() => ({} as { strategyKey?: StrategyKey; timeframe?: Timeframe; symbols?: string[]; limit?: number }));
   const strategyKey = body.strategyKey === 'ai_autonomous_agent' ? 'signal_mixer' : (body.strategyKey || 'signal_mixer');
   const tf = body.timeframe || '15m';
-  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1w', '1w': '1w' };
   const htfTf = htfMap[tf] ?? '1h';
 
   const [activeRow, cfgRow] = await Promise.all([
@@ -3256,7 +3400,7 @@ tradingRoutes.post('/ai-agent/run', async (c) => {
 
   const symbol = normalizeCanonicalSymbol(body.symbol || cfg.symbol);
   const timeframe = (body.timeframe || cfg.entry_timeframe || '15m') as Timeframe;
-  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1d' };
+  const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1w', '1w': '1w' };
   const higherTimeframe = htfMap[timeframe] ?? '1h';
 
   const { adapter } = await resolveUserExchangeAdapter(
@@ -3328,6 +3472,14 @@ tradingRoutes.post('/ai-agent/run', async (c) => {
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'AI Trader failed';
     await logAudit(c.env.DB, user.id, 'AI_AGENT', 'ERROR', `AI Trader error on ${symbol}: ${errMsg}`, symbol);
+    await publishSystemLogEvent(c.env, {
+      category: 'ERROR',
+      level: 'ERROR',
+      source: 'AITrader',
+      title: `خطای موتور AI روی ${symbol}`,
+      userId: user.id,
+      details: errMsg,
+    }).catch(() => {});
     return c.json({ ok: false, error: errMsg }, 400);
   }
 
@@ -3981,16 +4133,18 @@ tradingRoutes.post('/strategies/evaluate', async (c) => {
     code?: string;
     symbol?: string;
     timeframe?: Timeframe;
-  }>().catch(() => ({} as { language?: CustomStrategyLanguage; code?: string; symbol?: string; timeframe?: Timeframe }));
+    limit?: number;
+  }>().catch(() => ({} as { language?: CustomStrategyLanguage; code?: string; symbol?: string; timeframe?: Timeframe; limit?: number }));
 
   const langMode: CustomStrategyLanguage =
     body.language === 'python' || body.language === 'visual' ? body.language : 'pine';
   const code = String(body.code || '');
   const symbol = normalizeCanonicalSymbol(body.symbol || 'BTCUSDT');
   const tf = (body.timeframe || '15m') as Timeframe;
+  const limit = Math.min(500, Math.max(120, Number(body.limit || 500)));
 
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
-  const candles = await adapter.getKlines(symbol, tf, 360);
+  const candles = await adapter.getKlines(symbol, tf, limit);
   const res = evaluateCustomStrategy(langMode, code, candles, tf);
 
   let backtestSummary = null;
@@ -4020,6 +4174,8 @@ tradingRoutes.post('/strategies/evaluate', async (c) => {
     valid: res.valid,
     title: res.title,
     language: res.language,
+    pineVersion: res.pineVersion,
+    scriptKind: res.scriptKind,
     overlay: res.overlay,
     errors: res.errors,
     warnings: res.warnings,
@@ -4033,6 +4189,10 @@ tradingRoutes.post('/strategies/evaluate', async (c) => {
     lines: res.lines ?? [],
     boxes: res.boxes ?? [],
     tables: res.tables ?? [],
+    polylines: res.polylines ?? [],
+    logs: res.logs ?? [],
+    inputs: res.inputs ?? [],
+    alertsTriggered: res.alertsTriggered ?? [],
     latestSignal: res.latestSignal,
     candles,
     backtestSummary,
@@ -4198,7 +4358,6 @@ tradingRoutes.post('/ai-scan-now', async (c) => {
             tp1: String(decision.tp1),
             tp2: String(decision.tp2),
             tp3: String(decision.tp3),
-            channelHandle: '@Dollarino_official',
             engineKey: 'ai_autonomous_agent',
             engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
             reason: decision.thesis,

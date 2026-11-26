@@ -83,6 +83,7 @@ describe('Dollarino V11.6 Overhaul: DEX AI Verdict, Direct Buy, Live Pool Routes
         await db.prepare(stmt).run();
       }
     }
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'true')`).run();
   });
 
   afterAll(async () => {

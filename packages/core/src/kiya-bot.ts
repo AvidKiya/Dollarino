@@ -412,6 +412,7 @@ function tfMs(tf: Timeframe | string): number {
     '2h': 7_200_000,
     '4h': 14_400_000,
     '1d': 86_400_000,
+    '1w': 604_800_000,
   };
   return m[tf] ?? 900_000;
 }

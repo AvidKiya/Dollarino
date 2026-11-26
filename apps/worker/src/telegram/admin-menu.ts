@@ -3,9 +3,10 @@ import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from '../engine/market-int
 import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { formatIranDateTime, formatToman, mainMenuKeyboard, settingsKeyboard } from './formatter.js';
-import { publishChannelNews, resolveChannelAndBotConfig } from './publisher.js';
+import { publishChannelNews, publishDatabaseReport, publishTransactionEvent, resolveChannelAndBotConfig } from './publisher.js';
 import { invalidateAuthUserCache } from '../auth.js';
 import { invalidateSettingsCache } from '../services/settings-cache.js';
+import { resolveOwnerTelegramId } from './token.js';
 
 export interface AdminPerms {
   users?: boolean;
@@ -381,8 +382,11 @@ export async function handleAdminCallback(
 
   if (data.startsWith('adm:u_block:')) {
     const uid = data.slice('adm:u_block:'.length);
-    const uRow = await env.DB.prepare(`SELECT is_blocked, role, telegram_id FROM users WHERE id = ?`).bind(uid).first<{ is_blocked: number; role: string; telegram_id: string | null }>();
-    if (uRow?.role === 'owner' || uRow?.telegram_id === (env.OWNER_TELEGRAM_ID || '944021185')) {
+    const [uRow, ownerId] = await Promise.all([
+      env.DB.prepare(`SELECT is_blocked, role, telegram_id FROM users WHERE id = ?`).bind(uid).first<{ is_blocked: number; role: string; telegram_id: string | null }>(),
+      resolveOwnerTelegramId(env),
+    ]);
+    if (uRow?.role === 'owner' || (ownerId && uRow?.telegram_id === ownerId)) {
       await bot.answerCallbackQuery(cqId, 'امکان مسدودسازی مدیر اصلی وجود ندارد!', true);
       return true;
     }
@@ -690,8 +694,8 @@ export async function handleAdminCallback(
       env.DB.prepare(`SELECT code, price_usd FROM subscription_plans WHERE price_usd > 0`).all<{ code: string; price_usd: number }>(),
       getSystemSetting(env.DB, 'default_margin_pct', '10'),
       getSystemSetting(env.DB, 'default_max_leverage', '20'),
-      getSystemSetting(env.DB, 'official_channel', '@Dollarino_official'),
-      getSystemSetting(env.DB, 'telegram_support', '@Dollarino_bot'),
+      getSystemSetting(env.DB, 'official_channel', 'تنظیم نشده'),
+      getSystemSetting(env.DB, 'telegram_support', 'تنظیم نشده'),
       getSystemSetting(env.DB, 'usdt_trc20_wallet', 'تنظیم نشده'),
       getSystemSetting(env.DB, 'trust_wallet_evm_receiver', 'تنظیم نشده'),
       getSystemSetting(env.DB, 'usdt_to_toman_rate', '70000'),
@@ -910,7 +914,7 @@ export async function handleAdminCallback(
   // 8. Admin Management (Super Admin ONLY)
   if (data === 'adm:admins') {
     if (!actor.isSuperAdmin) {
-      await bot.answerCallbackQuery(cqId, '⛔️ فقط مدیر اصلی (944021185) به مدیریت ادمین‌ها دسترسی دارد.', true);
+      await bot.answerCallbackQuery(cqId, '⛔️ فقط مدیر اصلی سیستم به مدیریت ادمین‌ها دسترسی دارد.', true);
       return true;
     }
     const admins = await env.DB.prepare(
@@ -1067,7 +1071,7 @@ export async function handleAdminCallback(
     return true;
   }
 
-  // Channel @Dollarino_official Status & News Publishing inside Admin Bot
+  // Channel Ecosystem Status & News Publishing inside Admin Bot
   if (data === 'adm:channel') {
     if (!hasPerm(actor, 'broadcast') && !hasPerm(actor, 'settings')) {
       await bot.answerCallbackQuery(cqId, 'عدم دسترسی به مدیریت کانال', true);
@@ -1083,32 +1087,43 @@ export async function handleAdminCallback(
       getSystemSetting(env.DB, 'always_on_ai_broadcast_enabled', 'true'),
     ]);
 
+    const fmt = (val: string, en: boolean) => (val ? `${en ? '🟢' : '⏸'} ${val}` : '⚪️ تنظیم‌نشده');
+
     const text =
-      `📡 مرکز فرماندهی کانال و انتشار خودکار AI دلارینو\n\n` +
-      `• کانال رسمی: ${cfg.channelHandle}\n` +
-      `• ربات رسمی: @${cfg.botUsername}\n` +
-      `• سیگنال دائمی (حتی با ربات خاموش): ${alwaysOnSig === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
-      `• انتشار خودکار اخبار/تحلیل/اخطار/تبلیغ AI: ${alwaysOnIntel === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
-      `• ارسال سیگنال در کانال: ${autoBroadcast === 'true' ? '🟢 روشن' : '🔴 خاموش'}\n` +
-      `• وضعیت دسترسی ربات: ${privOnly === 'true' ? '🔒 فقط مدیران' : '🌐 عمومی'}\n` +
-      `• سیگنال‌های کانال: ${sigCnt?.cnt ?? 0} | اخبار و تحلیل‌ها: ${newsCnt?.cnt ?? 0}`;
+      `📡 ساختار رسمی DOLLARINO (۱ چنل اصلی + ۷ بخش + ۱ ربات)\n\n` +
+      `🤖 ربات رسمی: ${cfg.botUsername ? '@' + cfg.botUsername : '⚪️ تنظیم‌نشده'}\n` +
+      `🌟 چنل رسمی و اصلی: ${fmt(cfg.officialChannel, cfg.officialEnabled)}\n` +
+      `01. سیگنال دلارینو: ${fmt(cfg.signalsChannelId, cfg.signalsEnabled)}\n` +
+      `02. نتایج سیگنال دلارینو: ${fmt(cfg.resultsChannelId, cfg.resultsEnabled)}\n` +
+      `03. گروه کاربران دلارینو: ${fmt(cfg.communityGroupId, cfg.communityEnabled)}\n` +
+      `04. لاگ‌های دلارینو (خصوصی): ${fmt(cfg.logsChannelId, cfg.logsEnabled)}\n` +
+      `05. دیتابیس دلارینو (خصوصی): ${fmt(cfg.databaseChannelId, cfg.databaseEnabled)}\n` +
+      `06. تراکنش‌های دلارینو (خصوصی): ${fmt(cfg.transactionsChannelId, cfg.transactionsEnabled)}\n` +
+      `07. اخبار دلارینو: ${fmt(cfg.newsChannelId, cfg.newsEnabled)}\n\n` +
+      `• سیگنال دائمی ۲۴/۷: ${alwaysOnSig === 'true' ? '🟢 روشن' : '🔴 خاموش'} | انتشار خودکار: ${autoBroadcast === 'true' ? '🟢' : '🔴'}\n` +
+      `• اخبار/تبلیغات AI: ${alwaysOnIntel === 'true' ? '🟢 روشن' : '🔴 خاموش'} | دسترسی: ${privOnly === 'true' ? '🔒 ادمین' : '🌐 عمومی'}\n` +
+      `• پست‌های ثبت‌شده: ${sigCnt?.cnt ?? 0} سیگنال | ${newsCnt?.cnt ?? 0} خبر/اطلاعیه`;
 
     await render(text, [
       [
-        { text: '⚡️ سیگنال فوری AI', callback_data: 'adm:chan_ai:SIG', style: 'success' },
-        { text: '📊 تحلیل فوری AI', callback_data: 'adm:chan_ai:ANALYSIS', style: 'primary' },
+        { text: '⚡️ سیگنال فوری AI (01)', callback_data: 'adm:chan_ai:SIG', style: 'success' },
+        { text: '📰 خبر فوری AI (07)', callback_data: 'adm:chan_ai:NEWS', style: 'primary' },
       ],
       [
-        { text: '📰 خبر فوری AI', callback_data: 'adm:chan_ai:NEWS', style: 'primary' },
-        { text: '🚀 تبلیغ و معرفی AI', callback_data: 'adm:chan_ai:PROMO', style: 'success' },
+        { text: '🌟 اطلاعیه به چنل رسمی', callback_data: 'adm:chan_news:ANNOUNCEMENT', style: 'primary' },
+        { text: '🎁 تبلیغ/قرعه‌کشی (اصلی)', callback_data: 'adm:chan_ai:PROMO', style: 'success' },
       ],
       [
-        { text: '⚠️ اخطار نوسان AI', callback_data: 'adm:chan_ai:ALERT' },
-        { text: '✍️ ارسال دستی خبر', callback_data: 'adm:chan_news:NEWS' },
+        { text: '🗄 گزارش دیتابیس (05)', callback_data: 'adm:chan_db_report' },
+        { text: '💳 گزارش تسویه‌ها (06)', callback_data: 'adm:chan_tx_digest' },
+      ],
+      [
+        { text: '📊 تحلیل بازار AI (07)', callback_data: 'adm:chan_ai:ANALYSIS' },
+        { text: '✍️ ارسال دستی خبر (07)', callback_data: 'adm:chan_news:NEWS' },
       ],
       [
         { text: alwaysOnSig === 'true' ? '🟢 سیگنال دائمی: روشن' : '🔴 سیگنال دائمی: خاموش', callback_data: 'adm:chan_toggle_sig' },
-        { text: alwaysOnIntel === 'true' ? '🟢 هوش‌مصنوعی کانال: روشن' : '🔴 هوش‌مصنوعی کانال: خاموش', callback_data: 'adm:chan_toggle_intel' },
+        { text: alwaysOnIntel === 'true' ? '🟢 هوش‌مصنوعی: روشن' : '🔴 هوش‌مصنوعی: خاموش', callback_data: 'adm:chan_toggle_intel' },
       ],
       [
         { text: autoBroadcast === 'true' ? '🔴 توقف کانال' : '🟢 روشن‌کردن کانال', callback_data: 'adm:chan_toggle_auto' },
@@ -1117,6 +1132,61 @@ export async function handleAdminCallback(
       [{ text: '🔙 بازگشت به پنل مدیریت', callback_data: 'adm:home' }],
     ]);
     await bot.answerCallbackQuery(cqId);
+    return true;
+  }
+
+  if (data === 'adm:chan_db_report') {
+    if (!hasPerm(actor, 'settings') && !hasPerm(actor, 'stats')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی', true);
+      return true;
+    }
+    await bot.answerCallbackQuery(cqId, '⏳ در حال ارسال گزارش به 05. دیتابیس دلارینو...');
+    const rep = await publishDatabaseReport(env, {
+      eventType: 'MANUAL_SNAPSHOT',
+      actorUsername: actor.username,
+      attachBackupJson: true,
+    });
+    await bot.sendMessage(
+      chatId,
+      rep.ok
+        ? `✅ گزارش وضعیت دیتابیس + اسنپ‌شات JSON به کانال 05. دیتابیس دلارینو ارسال شد (${rep.sizeKb ?? 0} KB).`
+        : `⚠️ ارسال گزارش دیتابیس انجام نشد: ${rep.skipped ? 'کانال 05 تنظیم نشده است' : rep.error || 'خطای ارسال'}`
+    );
+    return true;
+  }
+
+  if (data === 'adm:chan_tx_digest') {
+    if (!hasPerm(actor, 'finance') && !hasPerm(actor, 'settings')) {
+      await bot.answerCallbackQuery(cqId, 'عدم دسترسی', true);
+      return true;
+    }
+    await bot.answerCallbackQuery(cqId, '⏳ در حال بررسی موعد تسویه و ارسال به 06. تراکنش‌ها...');
+    const rows = await env.DB.prepare(
+      `SELECT u.username, COALESCE(u.fee_lock_status, 'ACTIVE') AS lock_status,
+              u.fee_grace_deadline, COALESCE(u.fee_penalty_usd, 0) AS penalty_usd,
+              COALESCE(SUM(CASE WHEN l.status = 'ACCRUED' THEN l.fee_usd ELSE 0 END), 0) AS accrued_usd
+       FROM users u LEFT JOIN server_fee_ledger l ON l.user_id = u.id
+       GROUP BY u.id
+       HAVING accrued_usd > 0 OR penalty_usd > 0 OR lock_status != 'ACTIVE'
+       ORDER BY (accrued_usd + penalty_usd) DESC LIMIT 20`
+    ).all<{ username: string; lock_status: string; fee_grace_deadline: string | null; penalty_usd: number; accrued_usd: number }>().catch(() => ({ results: [] }));
+    const total = rows.results.reduce((s, r) => s + Number(r.accrued_usd || 0) + Number(r.penalty_usd || 0), 0);
+    const details = rows.results.length
+      ? rows.results.map((r, i) => `${i + 1}. \`${r.username}\` · $${(Number(r.accrued_usd) + Number(r.penalty_usd)).toFixed(2)} (${r.lock_status})`).join('\n')
+      : '✅ همه حساب‌ها تسویه شده‌اند و بدهی بازی وجود ندارد.';
+    const res = await publishTransactionEvent(env, {
+      eventType: 'SETTLEMENT_DIGEST',
+      status: rows.results.length > 0 ? 'DUE' : 'INFO',
+      title: 'گزارش دستی موعد تسویه کاربران',
+      amountUsd: total,
+      details,
+    });
+    await bot.sendMessage(
+      chatId,
+      res.ok
+        ? `✅ گزارش موعد تسویه (${rows.results.length} پرونده · جمع $${total.toFixed(2)}) به کانال 06. تراکنش‌های دلارینو ارسال شد.`
+        : `⚠️ ارسال گزارش تراکنش انجام نشد: ${res.skipped ? 'کانال 06 تنظیم نشده است' : res.error || 'خطا'}`
+    );
     return true;
   }
 
@@ -1478,9 +1548,9 @@ export async function handleAdminStepInput(
   }
 
   if (state.step === 'ADM_CHAN_NEWS') {
-    const category = (['NEWS', 'ANALYSIS', 'SIGNAL_UPDATE', 'ANNOUNCEMENT'].includes(state.targetKey || '')
+    const category = (['NEWS', 'ANALYSIS', 'SIGNAL_UPDATE', 'ANNOUNCEMENT', 'PROMO', 'LOTTERY', 'ADVICE'].includes(state.targetKey || '')
       ? state.targetKey
-      : 'NEWS') as 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT';
+      : 'NEWS') as 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT' | 'PROMO' | 'LOTTERY' | 'ADVICE';
     await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(actor.id).run();
     const lines = text.trim().split('\n');
     const title = (lines[0] || 'اطلاعیه دلارینو').slice(0, 120);

@@ -82,6 +82,7 @@ export interface AuthUserInfo {
   auth_provider?: string | null;
   profile_completed?: number;
   totp_enabled?: number;
+  must_change_credentials?: number | boolean;
   role: string;
   telegram_id: string | null;
   telegram_username?: string | null;

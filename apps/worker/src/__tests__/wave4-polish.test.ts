@@ -135,6 +135,7 @@ describe('Dollarino Wave 1-4 Completion: Banners, Admin Health, Perp DEX, AI Con
         await db.prepare(stmt).run();
       }
     }
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'true')`).run();
 
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;

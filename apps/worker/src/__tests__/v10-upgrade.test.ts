@@ -7,6 +7,7 @@ import { evaluateIndicatorAlertRule, TRADINGVIEW_INDICATOR_CATALOG } from '@doll
 import type { Env } from '../env.js';
 import worker from '../index.js';
 import { recordProfitShareServerFee } from '../services/server-fee.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { evaluateTradingViewFreeAlerts } from '../routes/webhooks.js';
 
 let mf: Miniflare;
@@ -118,6 +119,7 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
         await db.prepare(stmt).run();
       }
     }
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'true')`).run();
   });
 
   afterAll(async () => {
@@ -394,8 +396,15 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
     );
     expect(chStatus.status).toBe(200);
     const stJson = (await chStatus.json()) as { ok: boolean; channels: Record<string, { target: string; enabled: boolean }> };
-    expect(Object.keys(stJson.channels).length).toBe(6);
+    expect(Object.keys(stJson.channels).length).toBeGreaterThanOrEqual(8);
+    expect(stJson.channels.official).toBeTruthy();
+    expect(stJson.channels.signals).toBeTruthy();
+    expect(stJson.channels.results).toBeTruthy();
     expect(stJson.channels.community).toBeTruthy();
+    expect(stJson.channels.logs).toBeTruthy();
+    expect(stJson.channels.database).toBeTruthy();
+    expect(stJson.channels.transactions).toBeTruthy();
+    expect(stJson.channels.news).toBeTruthy();
 
     const chTest = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/admin/channels/test', {
@@ -657,7 +666,8 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
 
   it('V10.2 enforces non-withdrawable referral fee-credits gated by unique wallet, >=$10 balance, and real LIVE trading', async () => {
     const env = makeEnv();
-    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false'), ('allow_direct_email_signup', 'true');`);
+    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false'), ('allow_direct_email_signup', 'true'), ('auth_public_signup_enabled', 'true');`);
+    invalidateSettingsCache(db);
 
     // 1. Register Referrer & connect Trust Wallet A
     const refReg = await worker.fetch(

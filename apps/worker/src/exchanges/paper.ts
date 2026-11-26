@@ -26,6 +26,7 @@ function tfToMs(tf: Timeframe): number {
     '2h': 7_200_000,
     '4h': 14_400_000,
     '1d': 86_400_000,
+    '1w': 604_800_000,
   };
   return m[tf] ?? 900_000;
 }
@@ -320,7 +321,7 @@ export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 2
       if (tkJson.data?.[0]?.symbol?.toUpperCase() === clean) {
         const bgTfMap: Record<string, string> = {
           '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m',
-          '30m': '30m', '1h': '1H', '2h': '2H', '4h': '4H', '1d': '1D',
+          '30m': '30m', '1h': '1H', '2h': '2H', '4h': '4H', '1d': '1D', '1w': '1W',
         };
         const gran = bgTfMap[tf] ?? '15m';
         const klRes = await fetch(

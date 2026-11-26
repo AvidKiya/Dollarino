@@ -12,7 +12,7 @@ import {
 import type { AuthUser, Env } from '../env.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
 import { invalidateLiveTicksCache } from './trading.js';
-import { getCachedSystemSetting } from '../services/settings-cache.js';
+import { getBatchSystemSettings, getCachedSystemSetting } from '../services/settings-cache.js';
 
 export const trustWalletRoutes = new Hono<{ Bindings: Env; Variables: { user: AuthUser } }>();
 
@@ -203,15 +203,18 @@ trustWalletRoutes.get('/status', async (c) => {
       phone_verified: number;
     }>(),
     c.env.DB.prepare(`SELECT * FROM dex_trades WHERE user_id = ? ORDER BY opened_at DESC LIMIT 60`).bind(user.id).all<Record<string, unknown>>(),
-    c.env.DB.prepare(
-      `SELECT key, value FROM system_settings WHERE key IN ('usdt_trc20_wallet', 'trust_wallet_evm_receiver', 'trust_wallet_sol_receiver', 'trust_wallet_ton_receiver')`
-    ).all<{ key: string; value: string }>(),
+    getBatchSystemSettings(c.env.DB, [
+      'usdt_trc20_wallet',
+      'trust_wallet_evm_receiver',
+      'trust_wallet_sol_receiver',
+      'trust_wallet_ton_receiver',
+    ]),
   ]);
 
   const receivers: Record<string, string> = {};
-  for (const r of settingsRows.results) {
-    const v = String(r.value || '').trim();
-    receivers[r.key] = /YourTRC20WalletAddress|^0xYour/i.test(v) ? '' : v;
+  for (const [k, rawVal] of settingsRows.entries()) {
+    const v = String(rawVal || '').trim();
+    receivers[k] = /YourTRC20WalletAddress|^0xYour/i.test(v) ? '' : v;
   }
 
   const publicUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
@@ -877,7 +880,7 @@ export async function getTrustWalletLiveTotalUsd(
 ): Promise<TrustWalletLiveSummary> {
   const now = Date.now();
   let cacheMap = TRUST_LIVE_USD_CACHE.get(db as unknown as object);
-  if (opts?.useFullCache && !opts?.forceRefresh) {
+  if (!opts?.forceRefresh) {
     const cached = cacheMap?.get(userId);
     if (cached && now - cached.ts < TRUST_LIVE_CACHE_TTL_MS) {
       return cached.data;

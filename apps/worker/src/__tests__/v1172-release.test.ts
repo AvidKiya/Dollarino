@@ -9,6 +9,7 @@ import type { Env } from '../env.js';
 import worker from '../index.js';
 import { enforceRateLimit } from '../security.js';
 import { evaluateUserFeeStanding, recordProfitShareServerFee } from '../services/server-fee.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { handleTelegramUpdate } from '../telegram/handler.js';
 
 let mf: Miniflare;
@@ -324,10 +325,27 @@ describe('Dollarino V11.7.2 Release — Admin Reset/Exemption, Auto Admin Referr
     expect(await resolveEffectiveReferralCode(db, '', 'usr_brand_new')).toBe('DLROWNER72');
     expect(await resolveEffectiveReferralCode(db, 'dlrfriend', 'usr_brand_new')).toBe('DLRFRIEND');
 
-    // Telegram /start without REF_ provisions user with profile_completed=0 and attaches owner referral
+    // Telegram /start without REF_ provisions user with profile_completed=0 and attaches owner referral once Telegram auth is enabled
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 })) as typeof fetch;
     try {
+      // While auth_telegram_enabled='false', unknown users are NOT provisioned via bot /start
+      await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
+        update_id: 900,
+        message: {
+          message_id: 900,
+          chat: { id: 55667788, type: 'private' },
+          from: { id: 55667788, username: 'fresh_tg_user', first_name: 'FreshTG' },
+          text: '/start',
+        },
+      });
+      const blockedTgUser = await db
+        .prepare(`SELECT id FROM users WHERE telegram_id = '55667788'`)
+        .first<{ id: string }>();
+      expect(blockedTgUser).toBeNull();
+
+      await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'true')`).run();
+      invalidateSettingsCache(db);
       await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
         update_id: 901,
         message: {

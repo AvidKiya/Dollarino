@@ -2,16 +2,16 @@ import { resolveEngineDisplayLabel } from '@dollarino/core';
 import type { FuturesBalance } from '../exchanges/base.js';
 import type { InlineKeyboardButton, ReplyKeyboardButton } from './client.js';
 
-export const OFFICIAL_CHANNEL_HANDLE = '@Dollarino_official';
-export const OFFICIAL_BOT_HANDLE = '@Dollarino_bot';
-export const SIGNALS_CHANNEL_INVITE = 'https://t.me/+Wd-fTw0Q9XkzNGE0';
-export const RESULTS_CHANNEL_INVITE = 'https://t.me/+ZgVdmJ3eIPo5NDQ0';
+export const OFFICIAL_CHANNEL_HANDLE = '';
+export const OFFICIAL_BOT_HANDLE = '';
+export const SIGNALS_CHANNEL_INVITE = '';
+export const RESULTS_CHANNEL_INVITE = '';
 export const CREATOR_ATTRIBUTION_FA =
   '👨‍💻 طراح و سازنده پروژه دلارینو: **آوید کیا (Avid Kiya)**\n' +
   '• تلگرام: @avidkiya (https://t.me/avidkiya)\n' +
   '• اینستاگرام و توییتر (X): @avid_kiya (https://instagram.com/avid_kiya)';
 export const ANTI_SCAM_WARNING_FA =
-  '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای پشتیبانی یا دریافت وجه ندارد. ثبت‌نام، ورود و پشتیبانی رسمی فقط از طریق ربات @Dollarino_bot و پشتیبانی آنلاین داخل سایت انجام می‌شود.';
+  '⚠️ هشدار امنیتی: دلارینو هیچ اکانت پیوی شخصی برای پشتیبانی یا دریافت وجه ندارد. ثبت‌نام، ورود و پشتیبانی رسمی فقط از طریق ربات متصل تلگرام و پشتیبانی آنلاین داخل سایت انجام می‌شود.';
 
 export function formatIranDateTime(isoInput?: string | null): string {
   if (!isoInput) return '—';
@@ -166,6 +166,10 @@ export function miniAppInlineKeyboard(
       { text: '🛡 Trust Wallet و دمو', callback_data: 'tg_acc:trust' },
       { text: '🛠 ابزارها و اکستنشن', callback_data: 'tg_acc:tools' },
     ]);
+    rows.push([
+      { text: '📡 کانال‌ها و گروه رسمی', callback_data: 'tg_ecosystem_links' },
+      { text: '🌐 ورود سریع به سایت', callback_data: 'tg_web_login' },
+    ]);
     if (hasHttps) {
       rows.push([
         { text: '🚀 باز کردن مینی‌اپ سایت', web_app: { url: fullUrl }, style: 'success' },
@@ -254,6 +258,13 @@ export function miniAppInlineKeyboard(
   return rows;
 }
 
+function isPublicTelegramButtonUrl(url: string): boolean {
+  const u = (url || '').trim();
+  if (!/^https?:\/\//i.test(u)) return false;
+  if (/^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:|\/|$)/i.test(u)) return false;
+  return true;
+}
+
 export function channelSignalInlineButtons(params: {
   signalId: string;
   botUsername: string;
@@ -261,13 +272,15 @@ export function channelSignalInlineButtons(params: {
   forChannel: boolean;
   resultsChannelInvite?: string;
 }): InlineKeyboardButton[][] {
-  const cleanBot = params.botUsername.replace(/^@/, '') || 'Dollarino_bot';
+  const cleanBot = params.botUsername.replace(/^@/, '');
   const baseWeb = params.webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
-  const resultsUrl = params.resultsChannelInvite || RESULTS_CHANNEL_INVITE;
+  const resultsUrl = (params.resultsChannelInvite || '').trim();
+  const webOk = isPublicTelegramButtonUrl(baseWeb);
 
   if (params.forChannel) {
-    return [
-      [
+    const row1: InlineKeyboardButton[] = [];
+    if (cleanBot) {
+      row1.push(
         {
           text: '🤖 ترید در ربات',
           url: `https://t.me/${cleanBot}?start=sig_${params.signalId}`,
@@ -277,19 +290,23 @@ export function channelSignalInlineButtons(params: {
           text: '⚡️ تایید و اجرا',
           url: `https://t.me/${cleanBot}?start=exec_${params.signalId}`,
           style: 'primary',
-        },
-      ],
-      [
-        {
-          text: '🏆 نتیجه سیگنال‌ها',
-          url: resultsUrl,
-        },
-        {
-          text: '📊 مشاهده در سایت',
-          url: `${baseWeb}/?signal=${params.signalId}`,
-        },
-      ],
-    ];
+        }
+      );
+    }
+    const row2: InlineKeyboardButton[] = [];
+    if (isPublicTelegramButtonUrl(resultsUrl)) {
+      row2.push({
+        text: '🏆 نتایج سیگنال دلارینو',
+        url: resultsUrl,
+      });
+    }
+    if (webOk) {
+      row2.push({
+        text: '📊 مشاهده در سایت',
+        url: `${baseWeb}/?signal=${params.signalId}`,
+      });
+    }
+    return [row1, row2].filter((r) => r.length > 0);
   }
 
   return [
@@ -305,12 +322,16 @@ export function channelSignalInlineButtons(params: {
         style: 'primary',
       },
     ],
-    [
-      {
-        text: '📊 تحلیل و جزئیات در مینی‌اپ',
-        web_app: { url: `${baseWeb}/?signal=${params.signalId}` },
-      },
-    ],
+    ...(baseWeb.startsWith('https://')
+      ? [
+          [
+            {
+              text: '📊 تحلیل و جزئیات در مینی‌اپ',
+              web_app: { url: `${baseWeb}/?signal=${params.signalId}` },
+            },
+          ],
+        ]
+      : []),
   ];
 }
 
@@ -321,38 +342,61 @@ export function channelNewsInlineButtons(params: {
   customButtonUrl?: string;
   signalsChannelInvite?: string;
   resultsChannelInvite?: string;
+  officialChannelInvite?: string;
+  newsChannelInvite?: string;
 }): InlineKeyboardButton[][] {
-  const cleanBot = params.botUsername.replace(/^@/, '') || 'Dollarino_bot';
+  const cleanBot = params.botUsername.replace(/^@/, '');
   const baseWeb = params.webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
-  const rows: InlineKeyboardButton[][] = [
-    [
-      {
-        text: '🤖 ربات @Dollarino_bot',
-        url: `https://t.me/${cleanBot}`,
-        style: 'primary',
-      },
-      {
-        text: '🚀 پنل هوشمند دلارینو',
-        url: baseWeb,
-        style: 'success',
-      },
-    ],
-    [
-      {
-        text: '📡 کانال سیگنال‌ها',
-        url: params.signalsChannelInvite || SIGNALS_CHANNEL_INVITE,
-      },
-      {
-        text: '🏆 نتیجه سیگنال‌ها',
-        url: params.resultsChannelInvite || RESULTS_CHANNEL_INVITE,
-      },
-    ],
-  ];
-  if (params.customButtonLabel && params.customButtonUrl) {
+  const firstRow: InlineKeyboardButton[] = [];
+  if (cleanBot) {
+    firstRow.push({
+      text: `🤖 ربات @${cleanBot}`,
+      url: `https://t.me/${cleanBot}`,
+      style: 'primary',
+    });
+  }
+  if (isPublicTelegramButtonUrl(baseWeb)) {
+    firstRow.push({
+      text: '🚀 پنل هوشمند دلارینو',
+      url: baseWeb,
+      style: 'success',
+    });
+  }
+  const secondRow: InlineKeyboardButton[] = [];
+  if (isPublicTelegramButtonUrl(params.signalsChannelInvite || '')) {
+    secondRow.push({
+      text: '📡 سیگنال دلارینو',
+      url: params.signalsChannelInvite!.trim(),
+    });
+  }
+  if (isPublicTelegramButtonUrl(params.resultsChannelInvite || '')) {
+    secondRow.push({
+      text: '🏆 نتایج سیگنال',
+      url: params.resultsChannelInvite!.trim(),
+    });
+  }
+  const thirdRow: InlineKeyboardButton[] = [];
+  if (isPublicTelegramButtonUrl(params.officialChannelInvite || '')) {
+    thirdRow.push({
+      text: '🌟 چنل رسمی دلارینو',
+      url: params.officialChannelInvite!.trim(),
+    });
+  }
+  if (isPublicTelegramButtonUrl(params.newsChannelInvite || '')) {
+    thirdRow.push({
+      text: '📰 اخبار دلارینو',
+      url: params.newsChannelInvite!.trim(),
+    });
+  }
+  const rows: InlineKeyboardButton[][] = [];
+  if (firstRow.length > 0) rows.push(firstRow);
+  if (secondRow.length > 0) rows.push(secondRow);
+  if (thirdRow.length > 0) rows.push(thirdRow);
+  if (params.customButtonLabel && isPublicTelegramButtonUrl(params.customButtonUrl || '')) {
     rows.unshift([
       {
         text: params.customButtonLabel,
-        url: params.customButtonUrl,
+        url: params.customButtonUrl!.trim(),
       },
     ]);
   }
@@ -416,8 +460,8 @@ export function formatBalanceCard(provider: string, bal: FuturesBalance, irtRate
     `Used: ${bal.used} ${bal.currency}\n` +
     `Total: ${bal.total} ${bal.currency}\n` +
     `🇮🇷 معادل لحظه‌ای: **${toman} تومان** (${rial} ریال)\n` +
-    `📌 نرخ تتر ایران: ${Math.round(irtRate).toLocaleString('en-US')} تومان\n\n` +
-    `🆔 ${OFFICIAL_CHANNEL_HANDLE}`
+    `📌 نرخ تتر ایران: ${Math.round(irtRate).toLocaleString('en-US')} تومان` +
+    (OFFICIAL_CHANNEL_HANDLE ? `\n\n🆔 ${OFFICIAL_CHANNEL_HANDLE}` : '')
   );
 }
 
@@ -450,8 +494,8 @@ export function formatTradeOpenedCard(params: {
     `🟢 TP1 (${params.tp1Pct}% + ریسک‌فری): ${params.tp1}\n` +
     (params.tp2 ? `🟡 TP2 (${params.tp2Pct}% + SL→TP1): ${params.tp2}\n` : '') +
     (params.tp3 ? `🟠 TP3 (${params.tp3Pct}%): ${params.tp3}\n` : '') +
-    `🕒 زمان ورود: ${formatIranDateTime(new Date().toISOString())}\n` +
-    `🆔 ${OFFICIAL_CHANNEL_HANDLE}`
+    `🕒 زمان ورود: ${formatIranDateTime(new Date().toISOString())}` +
+    (OFFICIAL_CHANNEL_HANDLE ? `\n🆔 ${OFFICIAL_CHANNEL_HANDLE}` : '')
   );
 }
 
@@ -509,8 +553,8 @@ export function formatTradeClosedCard(params: {
     `${trailSummary}\n` +
     `📌 نتیجه: ${params.reason}\n\n` +
     `استراتژی:\n` +
-    `• لوریج: ${params.leverage ?? 1}x | SL اولیه: ${params.stopLoss ?? '—'} | TP1: ${params.tp1 ?? '—'}\n` +
-    `🆔 ${OFFICIAL_CHANNEL_HANDLE}`
+    `• لوریج: ${params.leverage ?? 1}x | SL اولیه: ${params.stopLoss ?? '—'} | TP1: ${params.tp1 ?? '—'}` +
+    (OFFICIAL_CHANNEL_HANDLE ? `\n🆔 ${OFFICIAL_CHANNEL_HANDLE}` : '')
   );
 }
 

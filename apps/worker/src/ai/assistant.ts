@@ -824,7 +824,7 @@ async function buildBuiltInLiveAIResponse(
           `• **Exclusive Trust Wallet Connection:** Connect your non-custodial **Trust Wallet** across EVM, Solana, TON & TRON, or test risk-free with our **$10,000 Trust Wallet Simulator**.\n` +
           `• **Manual vs Full 24/7 Auto-Trade:** Pick **Manual 1-Click Confirmation** inside Trust Wallet, or enable **Full 24/7 Autonomous Auto-Trade** via Trade-Only Perp Agent Key + budget-capped 24/7 Copy-Vault.\n` +
           `• **4 Trading Engines:** Central Multi-AI, My Personal AI, Hunting Strategy (Dorna V1 / Pine Script), and Smart Copy-Trade V2.\n` +
-          `• **Telegram Bot:** \`@Dollarino_bot\` & Official Channel \`@Dollarino_official\`.\n` +
+          `• **Telegram Integration:** Connect the admin-configured Telegram Bot & Signal Channel from your profile.\n` +
           `• **Creator:** ${DOLLARINO_CREATOR_INFO.nameEn} (${DOLLARINO_CREATOR_INFO.telegram})`
       : `🤖 **راهنمای کامل امکانات دلارینو (مبتنی بر Trust Wallet):**\n\n` +
           `• **اتصال انحصاری Trust Wallet + شبیه‌ساز دمو:** اتصال امن به کیف‌پول **Trust Wallet** (شبکه‌های ETH، BSC، Base، Arbitrum، Solana، TON و TRON) یا تست بدون ریسک با **شبیه‌ساز ۱۰,۰۰۰ دلاری مشابه تراست‌ولت**.\n` +

@@ -12,7 +12,7 @@ import {
 import { resolveAIEnsemble, callBYOAI, runAutonomousAITrader } from '../ai/providers.js';
 import type { Env } from '../env.js';
 import {
-  getAllCachedSystemSettings,
+  getBatchSystemSettings,
   setCachedSystemSetting,
 } from '../services/settings-cache.js';
 import { fetchPublicKlines, fetchPublicMarket24h } from '../exchanges/paper.js';
@@ -20,6 +20,7 @@ import { buildToobitRequest, type ToobitProxyConfig } from '../exchanges/proxy.j
 import {
   publishChannelNews,
   publishSignalBroadcast,
+  publishSystemLogEvent,
   resolveChannelAndBotConfig,
 } from '../telegram/publisher.js';
 
@@ -52,27 +53,11 @@ async function setSetting(db: D1Database, key: string, value: string): Promise<v
 }
 
 async function getSettingsMap(db: D1Database, keys: string[]): Promise<Record<string, string>> {
-  const cached = await getAllCachedSystemSettings(db);
   const map: Record<string, string> = {};
-  const freshKeys: string[] = [];
-  for (const k of keys) {
-    if (k.startsWith('intel_last_') || k.startsWith('intel_sig_last_') || k.endsWith('_cursor')) {
-      freshKeys.push(k);
-    } else {
-      const val = cached.get(k);
-      if (val !== undefined) map[k] = val;
-    }
-  }
-  if (freshKeys.length > 0) {
-    const placeholders = freshKeys.map(() => '?').join(', ');
-    const rows = await db
-      .prepare(`SELECT key, value FROM system_settings WHERE key IN (${placeholders})`)
-      .bind(...freshKeys)
-      .all<{ key: string; value: string }>()
-      .catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
-    for (const r of rows.results ?? []) {
-      map[r.key] = r.value;
-    }
+  if (!keys.length) return map;
+  const rows = await getBatchSystemSettings(db, keys);
+  for (const [k, v] of rows.entries()) {
+    map[k] = v;
   }
   return map;
 }
@@ -110,7 +95,7 @@ export async function runAlwaysOnSignalRadar(
   subscribersNotified?: number;
   reason?: string;
 }> {
-  if (opts?.fromCron && !opts?.force && Date.now() - memLastSignalCheckMs < 14 * 60_000) {
+  if (opts?.fromCron && !opts?.force && Date.now() - memLastSignalCheckMs < 14.5 * 60_000) {
     return { scanned: 0, published: false, reason: 'scan_cooldown' };
   }
   const settings = await getSettingsMap(env.DB, [
@@ -118,7 +103,6 @@ export async function runAlwaysOnSignalRadar(
     'intel_last_scan_at',
     'intel_last_signal_at',
     'intel_scan_cursor',
-    ...WATCH_COINS.map((s) => `intel_sig_last_${s}`),
   ]);
   const enabled = (settings['always_on_signals_enabled'] ?? 'true') === 'true';
   if (!enabled && !opts?.force) {
@@ -150,6 +134,9 @@ export async function runAlwaysOnSignalRadar(
     batch.push(WATCH_COINS[(cursor + i) % WATCH_COINS.length]!);
   }
   await setSetting(env.DB, 'intel_scan_cursor', String((cursor + 6) % WATCH_COINS.length));
+  const symSettings = opts?.force
+    ? {}
+    : await getSettingsMap(env.DB, batch.map((s) => `intel_sig_last_${s}`));
 
   const computeSignalRR = (entryStr: string, slStr: string, tp1Str?: string, tp2Str?: string): number => {
     const entry = Number(entryStr);
@@ -196,7 +183,7 @@ export async function runAlwaysOnSignalRadar(
 
   for (const sym of batch) {
     if (!opts?.force) {
-      const symCooldown = minsFromIso(settings[`intel_sig_last_${sym}`]);
+      const symCooldown = minsFromIso(symSettings[`intel_sig_last_${sym}`]);
       if (symCooldown < 180) continue;
     }
 
@@ -317,7 +304,23 @@ export async function runAlwaysOnSignalRadar(
             engineKey: 'ai_autonomous_agent',
             engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
           };
+        } else {
+          await publishSystemLogEvent(env, {
+            category: 'AI_DECISION',
+            level: 'INFO',
+            source: 'AlwaysOnRadar',
+            title: `رد ستاپ AI روی ${targetSym} (${decision.action})`,
+            details: `اعتماد: ${decision.confidence}% | R:R یا روند HTF تایید نشد | تحلیل: ${decision.thesis?.slice(0, 220) || '—'}`,
+          }).catch(() => {});
         }
+      } else if (decision) {
+        await publishSystemLogEvent(env, {
+          category: 'AI_DECISION',
+          level: 'INFO',
+          source: 'AlwaysOnRadar',
+          title: `تصمیم AI روی ${targetSym}: عدم ورود (${decision.action})`,
+          details: `اعتماد: ${decision.confidence}% | توضیح: ${decision.thesis?.slice(0, 240) || decision.error || 'شرایط ایده آل نبود'}`,
+        }).catch(() => {});
       }
     }
   }
@@ -457,12 +460,31 @@ export async function runAlwaysOnAiIntel(
   channelMessageId?: number;
   reason?: string;
 }> {
-  if (opts?.fromCron && !opts?.forceKind && Date.now() - memLastAiIntelCheckMs < 4.5 * 60_000) {
+  const minCheckIntervalMins = opts?.fromCron ? 15 : 5;
+  if (opts?.fromCron && !opts?.forceKind && Date.now() - memLastAiIntelCheckMs < 14.5 * 60_000) {
     return { published: false, reason: 'check_cooldown' };
   }
-  const aiSettings = await getSettingsMap(env.DB, [
+  const baseSettings = await getSettingsMap(env.DB, [
     'always_on_ai_broadcast_enabled',
     'intel_last_ai_check_at',
+  ]);
+  const enabled = (baseSettings['always_on_ai_broadcast_enabled'] ?? 'true') === 'true';
+  if (!enabled && !opts?.forceKind) {
+    memLastAiIntelCheckMs = Date.now();
+    return { published: false, reason: 'disabled' };
+  }
+
+  if (!opts?.forceKind) {
+    const minsCheck = minsFromIso(baseSettings['intel_last_ai_check_at']);
+    if (minsCheck < minCheckIntervalMins) {
+      memLastAiIntelCheckMs = Date.now();
+      return { published: false, reason: 'check_cooldown' };
+    }
+  }
+  memLastAiIntelCheckMs = Date.now();
+  await setSetting(env.DB, 'intel_last_ai_check_at', new Date().toISOString());
+
+  const aiSettings = await getSettingsMap(env.DB, [
     'intel_last_alert_at',
     'intel_last_news_at',
     'intel_last_analysis_at',
@@ -471,22 +493,6 @@ export async function runAlwaysOnAiIntel(
     'intel_last_promo_at',
     'intel_promo_cursor',
   ]);
-  const enabled = (aiSettings['always_on_ai_broadcast_enabled'] ?? 'true') === 'true';
-  if (!enabled && !opts?.forceKind) {
-    memLastAiIntelCheckMs = Date.now();
-    return { published: false, reason: 'disabled' };
-  }
-
-  // Check at most once every 5 minutes so 30-min news & alerts trigger smoothly without wasting API quota
-  if (!opts?.forceKind) {
-    const minsCheck = minsFromIso(aiSettings['intel_last_ai_check_at']);
-    if (minsCheck < 5) {
-      memLastAiIntelCheckMs = Date.now();
-      return { published: false, reason: 'check_cooldown' };
-    }
-  }
-  memLastAiIntelCheckMs = Date.now();
-  await setSetting(env.DB, 'intel_last_ai_check_at', new Date().toISOString());
 
   const cfg = await resolveChannelAndBotConfig(env);
   const snap = await gatherMarketSnapshot(env);

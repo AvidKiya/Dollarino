@@ -1,6 +1,6 @@
 import { decryptVaultJson, encryptVaultJson, maskSecret, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
-import { invalidateSettingsCache } from '../services/settings-cache.js';
+import { getCachedSystemSetting, invalidateSettingsCache } from '../services/settings-cache.js';
 import { TelegramBotClient } from './client.js';
 
 export const DEFAULT_TG_COMMANDS = [
@@ -19,13 +19,41 @@ export const DEFAULT_TG_COMMANDS = [
   { command: 'copy', description: 'کپی‌ترید تاییدشده دلارینو' },
   { command: 'card', description: 'صدور و دریافت تصویر کارت سود دلارینو' },
   { command: 'settings', description: 'تنظیمات بازار (اسپات/فیوچرز) و جهت' },
+  { command: 'channels', description: 'کانال‌ها و گروه رسمی اکوسیستم دلارینو' },
   { command: 'support', description: 'پشتیبانی هوشمند ۲۴/۷ و گفتگو با مدیران' },
   { command: 'rules', description: 'قوانین گروه و سپر ضداسکم دلارینو' },
   { command: 'about', description: 'معرفی دلارینو، شفافیت ضدپانزی و سازنده' },
   { command: 'help', description: 'راهنمای کامل و امنیت حساب' },
 ];
 
+const TG_TOKEN_CACHE = new WeakMap<object, { ts: number; token: string; hasDbToken: boolean }>();
+const TG_WH_SECRET_CACHE = new WeakMap<object, { ts: number; secret: string | undefined }>();
+const TG_CACHE_TTL_MS = 300_000;
+
+export function invalidateTelegramTokenCache(db?: D1Database): void {
+  if (db) {
+    TG_TOKEN_CACHE.delete(db as unknown as object);
+    TG_WH_SECRET_CACHE.delete(db as unknown as object);
+  }
+}
+
+export async function resolveOwnerTelegramId(env: Env): Promise<string> {
+  const fromDb = await getCachedSystemSetting(env.DB, 'owner_telegram_id', '').catch(() => '');
+  if (fromDb && fromDb.trim()) return fromDb.trim();
+  return (env.OWNER_TELEGRAM_ID || '').trim();
+}
+
+export async function resolveTelegramBotUsername(env: Env): Promise<string> {
+  const fromDb = await getCachedSystemSetting(env.DB, 'bot_username', '').catch(() => '');
+  return (fromDb || '').trim().replace(/^@/, '');
+}
+
 export async function resolveTelegramBotToken(env: Env): Promise<string> {
+  const now = Date.now();
+  const cached = TG_TOKEN_CACHE.get(env.DB as unknown as object);
+  if (cached && now - cached.ts < TG_CACHE_TTL_MS) {
+    return cached.hasDbToken ? cached.token : (env.TELEGRAM_BOT_TOKEN || '').trim();
+  }
   try {
     const row = await env.DB.prepare(
       `SELECT value FROM system_settings WHERE key = 'telegram_bot_token_enc' LIMIT 1`
@@ -35,12 +63,15 @@ export async function resolveTelegramBotToken(env: Env): Promise<string> {
     if (row?.value && env.MASTER_ENCRYPTION_KEY) {
       const dec = await decryptVaultJson<{ botToken?: string }>(row.value, env.MASTER_ENCRYPTION_KEY).catch(() => null);
       if (dec?.botToken && dec.botToken.trim().length > 15) {
-        return dec.botToken.trim();
+        const val = dec.botToken.trim();
+        TG_TOKEN_CACHE.set(env.DB as unknown as object, { ts: now, token: val, hasDbToken: true });
+        return val;
       }
     }
   } catch {
     // Fall back to worker secret
   }
+  TG_TOKEN_CACHE.set(env.DB as unknown as object, { ts: now, token: '', hasDbToken: false });
   return (env.TELEGRAM_BOT_TOKEN || '').trim();
 }
 
@@ -48,12 +79,19 @@ export async function resolveTelegramWebhookSecret(env: Env): Promise<string | u
   if (env.TELEGRAM_WEBHOOK_SECRET?.trim()) {
     return env.TELEGRAM_WEBHOOK_SECRET.trim();
   }
+  const now = Date.now();
+  const cached = TG_WH_SECRET_CACHE.get(env.DB as unknown as object);
+  if (cached && now - cached.ts < TG_CACHE_TTL_MS) {
+    return cached.secret;
+  }
   const row = await env.DB.prepare(
     `SELECT value FROM system_settings WHERE key = 'telegram_webhook_secret_auto' LIMIT 1`
   )
     .first<{ value: string }>()
     .catch(() => null);
-  return row?.value?.trim() || undefined;
+  const val = row?.value?.trim() || undefined;
+  TG_WH_SECRET_CACHE.set(env.DB as unknown as object, { ts: now, secret: val });
+  return val;
 }
 
 export async function getTelegramBotTokenStatus(env: Env): Promise<{
@@ -94,12 +132,13 @@ export async function getTelegramBotTokenStatus(env: Env): Promise<{
     configured: Boolean(token),
     source,
     masked: token ? maskSecret(token) : '',
-    botUsername: (botUserRow?.value || 'Dollarino_bot').replace(/^@/, ''),
+    botUsername: (botUserRow?.value || '').replace(/^@/, ''),
   };
 }
 
 export async function clearDbTelegramBotToken(env: Env): Promise<void> {
   await env.DB.prepare(`DELETE FROM system_settings WHERE key = 'telegram_bot_token_enc'`).run().catch(() => {});
+  invalidateTelegramTokenCache(env.DB);
 }
 
 export async function saveAndConfigureTelegramBot(
@@ -189,8 +228,24 @@ export async function saveAndConfigureTelegramBot(
       .bind(me.username)
       .run()
       .catch(() => {});
+    const cleanHandle = `@${me.username.replace(/^@/, '')}`;
+    await env.DB.prepare(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('telegram_support', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = CASE WHEN TRIM(COALESCE(value, '')) = '' THEN excluded.value ELSE value END, updated_at = datetime('now')`
+    )
+      .bind(cleanHandle)
+      .run()
+      .catch(() => {});
+    await env.DB.prepare(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('support_handle', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = CASE WHEN TRIM(COALESCE(value, '')) = '' THEN excluded.value ELSE value END, updated_at = datetime('now')`
+    )
+      .bind(cleanHandle)
+      .run()
+      .catch(() => {});
   }
   invalidateSettingsCache(env.DB);
+  invalidateTelegramTokenCache(env.DB);
 
   let webhookSecret = await resolveTelegramWebhookSecret(env);
   if (!webhookSecret) {

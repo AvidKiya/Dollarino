@@ -41,15 +41,17 @@ export async function getSiteTraderAutoConfig(db: D1Database): Promise<SiteTrade
   };
 }
 
+const SYNC_THROTTLE_CACHE = new WeakMap<object, number>();
+
 export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promise<SiteTopTraderCandidate[]> {
-  const [usersRes, cexStatsRes, dexStatsRes, copyRowsRes] = await Promise.all([
+  const [usersRes, cexStatsRes, cexOpenRes, dexStatsRes, dexOpenRes, copyRowsRes] = await Promise.all([
     db
       .prepare(
         `SELECT u.id, u.username, u.telegram_id, u.telegram_username, u.avatar_url, u.trust_wallet_address, u.last_active_at,
                 COALESCE(bc.trading_mode, 'PAPER') AS trading_mode
          FROM users u
          LEFT JOIN bot_configs bc ON bc.user_id = u.id
-         WHERE COALESCE(u.is_blocked, 0) = 0
+         WHERE u.is_blocked = 0
          ORDER BY u.last_active_at DESC
          LIMIT 200`
       )
@@ -67,21 +69,19 @@ export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promis
     db
       .prepare(
         `SELECT user_id,
-                SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS closed_cnt,
-                SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open_cnt,
-                SUM(CASE WHEN status = 'CLOSED' AND CAST(COALESCE(realized_pnl, '0') AS REAL) > 0 THEN 1 ELSE 0 END) AS win_cnt,
-                SUM(CASE WHEN status = 'CLOSED' THEN CAST(COALESCE(realized_pnl, '0') AS REAL) ELSE 0 END) AS net_pnl,
-                SUM(CASE WHEN status = 'CLOSED' AND CAST(COALESCE(realized_pnl, '0') AS REAL) < 0 THEN ABS(CAST(realized_pnl AS REAL)) ELSE 0 END) AS gross_loss,
+                COUNT(*) AS closed_cnt,
+                SUM(CASE WHEN CAST(COALESCE(realized_pnl, '0') AS REAL) > 0 THEN 1 ELSE 0 END) AS win_cnt,
+                SUM(CAST(COALESCE(realized_pnl, '0') AS REAL)) AS net_pnl,
+                SUM(CASE WHEN CAST(COALESCE(realized_pnl, '0') AS REAL) < 0 THEN ABS(CAST(realized_pnl AS REAL)) ELSE 0 END) AS gross_loss,
                 AVG(CASE WHEN CAST(COALESCE(margin_used, '0') AS REAL) > 0 THEN CAST(margin_used AS REAL) ELSE 25 END) AS avg_margin,
-                MAX(COALESCE(closed_at, opened_at)) AS last_trade_at
+                MAX(closed_at) AS last_trade_at
          FROM trades
-         WHERE COALESCE(closed_at, opened_at) >= datetime('now', '-90 days')
+         WHERE status = 'CLOSED' AND closed_at >= datetime('now', '-90 days')
          GROUP BY user_id`
       )
       .all<{
         user_id: string;
         closed_cnt: number;
-        open_cnt: number;
         win_cnt: number;
         net_pnl: number;
         gross_loss: number;
@@ -90,27 +90,33 @@ export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promis
       }>()
       .catch(() => ({ results: [] })),
     db
+      .prepare(`SELECT user_id, COUNT(*) AS open_cnt FROM trades WHERE status = 'OPEN' GROUP BY user_id`)
+      .all<{ user_id: string; open_cnt: number }>()
+      .catch(() => ({ results: [] })),
+    db
       .prepare(
         `SELECT user_id,
-                SUM(CASE WHEN status = 'CLOSED' THEN 1 ELSE 0 END) AS closed_cnt,
-                SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS open_cnt,
-                SUM(CASE WHEN status = 'CLOSED' AND COALESCE(realized_pnl_usd, 0) > 0 THEN 1 ELSE 0 END) AS win_cnt,
-                SUM(CASE WHEN status = 'CLOSED' THEN COALESCE(realized_pnl_usd, 0) ELSE 0 END) AS net_pnl,
-                SUM(CASE WHEN status = 'CLOSED' AND COALESCE(realized_pnl_usd, 0) < 0 THEN ABS(realized_pnl_usd) ELSE 0 END) AS gross_loss,
-                MAX(COALESCE(closed_at, opened_at)) AS last_trade_at
+                COUNT(*) AS closed_cnt,
+                SUM(CASE WHEN COALESCE(realized_pnl_usd, 0) > 0 THEN 1 ELSE 0 END) AS win_cnt,
+                SUM(COALESCE(realized_pnl_usd, 0)) AS net_pnl,
+                SUM(CASE WHEN COALESCE(realized_pnl_usd, 0) < 0 THEN ABS(realized_pnl_usd) ELSE 0 END) AS gross_loss,
+                MAX(closed_at) AS last_trade_at
          FROM dex_trades
-         WHERE COALESCE(closed_at, opened_at) >= datetime('now', '-90 days')
+         WHERE status = 'CLOSED' AND closed_at >= datetime('now', '-90 days')
          GROUP BY user_id`
       )
       .all<{
         user_id: string;
         closed_cnt: number;
-        open_cnt: number;
         win_cnt: number;
         net_pnl: number;
         gross_loss: number;
         last_trade_at: string | null;
       }>()
+      .catch(() => ({ results: [] })),
+    db
+      .prepare(`SELECT user_id, COUNT(*) AS open_cnt FROM dex_trades WHERE status = 'OPEN' GROUP BY user_id`)
+      .all<{ user_id: string; open_cnt: number }>()
       .catch(() => ({ results: [] })),
     db
       .prepare(`SELECT id, user_id, is_active, is_verified, followers_count FROM copy_traders WHERE user_id IS NOT NULL`)
@@ -119,7 +125,9 @@ export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promis
   ]);
 
   const cexMap = new Map(cexStatsRes.results.map((r) => [r.user_id, r]));
+  const cexOpenMap = new Map(cexOpenRes.results.map((r) => [r.user_id, r.open_cnt]));
   const dexMap = new Map(dexStatsRes.results.map((r) => [r.user_id, r]));
+  const dexOpenMap = new Map(dexOpenRes.results.map((r) => [r.user_id, r.open_cnt]));
   const copyMap = new Map(copyRowsRes.results.map((r) => [r.user_id, r]));
 
   const candidates: SiteTopTraderCandidate[] = [];
@@ -132,7 +140,7 @@ export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promis
     const cexClosed = Number(cex?.closed_cnt ?? 0);
     const dexClosed = Number(dex?.closed_cnt ?? 0);
     const closedTrades = cexClosed + dexClosed;
-    const openTrades = Number(cex?.open_cnt ?? 0) + Number(dex?.open_cnt ?? 0);
+    const openTrades = Number(cexOpenMap.get(u.id) ?? 0) + Number(dexOpenMap.get(u.id) ?? 0);
 
     // Include users who have at least 1 trade OR are already published as copy traders
     if (closedTrades + openTrades === 0 && !copyRow) continue;
@@ -331,6 +339,13 @@ export async function syncAutoTopSiteTraders(db: D1Database, force = false): Pro
   autoEnabled: boolean;
 }> {
   const cfg = await getSiteTraderAutoConfig(db);
+  if (!force) {
+    const lastSync = SYNC_THROTTLE_CACHE.get(db as unknown as object) ?? 0;
+    if (Date.now() - lastSync < 30 * 60_000) {
+      return { synced: 0, autoEnabled: cfg.enabled };
+    }
+  }
+  SYNC_THROTTLE_CACHE.set(db as unknown as object, Date.now());
   if (!cfg.enabled && !force) {
     const hasPublishedSiteTrader = await db
       .prepare(`SELECT 1 FROM copy_traders WHERE user_id IS NOT NULL LIMIT 1`)

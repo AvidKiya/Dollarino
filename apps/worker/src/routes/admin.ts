@@ -5,14 +5,19 @@ import {
   testAllPlatformAIEngines,
 } from '../ai/providers.js';
 import { invalidateAuthUserCache, requireAuth, resetPrivilegedUserAccountToFreshState, type AppVariables } from '../auth.js';
-import { encryptVaultJson, maskSecret, randomId } from '../crypto.js';
+import { encryptVaultJson, generateReferralCode, hashPassword, maskSecret, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { fetchPublicMarket24h } from '../exchanges/paper.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import {
+  normalizeTelegramTarget,
   promptCopyTraderPublish,
   publishChannelNews,
+  publishDatabaseReport,
+  publishOfficialAnnouncement,
   publishSignalBroadcast,
+  publishSystemLogEvent,
+  publishTransactionEvent,
   resolveChannelAndBotConfig,
 } from '../telegram/publisher.js';
 import { confirmAndMirrorCopyTrade } from '../engine/copy-mirror.js';
@@ -33,6 +38,7 @@ import {
 import {
   clearDbTelegramBotToken,
   getTelegramBotTokenStatus,
+  resolveOwnerTelegramId,
   resolveTelegramBotToken,
   saveAndConfigureTelegramBot,
 } from '../telegram/token.js';
@@ -50,9 +56,10 @@ import {
 } from '../services/settings-cache.js';
 import { DOLLARINO_VERSION } from '../version.js';
 
-function isSystemOwner(user: { role?: string; telegramId?: string | null }, env: Env): boolean {
-  const ownerTg = env.OWNER_TELEGRAM_ID || '944021185';
-  return user.role === 'owner' || Boolean(user.telegramId && user.telegramId === ownerTg);
+async function isSystemOwner(user: { role?: string; telegramId?: string | null }, env: Env): Promise<boolean> {
+  if (user.role === 'owner') return true;
+  const ownerTg = await resolveOwnerTelegramId(env);
+  return Boolean(ownerTg && user.telegramId && user.telegramId === ownerTg);
 }
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -60,8 +67,8 @@ adminRoutes.use('*', requireAuth);
 
 adminRoutes.use('*', async (c, next) => {
   const u = c.get('user');
-  const ownerTg = c.env.OWNER_TELEGRAM_ID || '944021185';
-  const isOwnerOrAdmin = u.role === 'owner' || u.role === 'admin' || (u.telegramId && u.telegramId === ownerTg);
+  const ownerTg = await resolveOwnerTelegramId(c.env);
+  const isOwnerOrAdmin = u.role === 'owner' || u.role === 'admin' || Boolean(ownerTg && u.telegramId && u.telegramId === ownerTg);
   if (!isOwnerOrAdmin) return c.json({ error: 'Admin access required' }, 403);
   await next();
 });
@@ -467,18 +474,77 @@ adminRoutes.patch('/users/:id', async (c) => {
 });
 
 adminRoutes.put('/settings', async (c) => {
+  const actor = c.get('user');
   const body = await c.req.json<Record<string, unknown>>();
   const entriesSource: Record<string, unknown> =
     body && typeof body.settings === 'object' && body.settings !== null && !Array.isArray(body.settings)
       ? (body.settings as Record<string, unknown>)
       : body;
+
+  if (Object.prototype.hasOwnProperty.call(entriesSource, 'owner_telegram_id')) {
+    const rawOwnerId = String(entriesSource.owner_telegram_id ?? '').trim();
+    if (rawOwnerId && !/^\d{5,16}$/.test(rawOwnerId)) {
+      return c.json({ error: 'آیدی عددی تلگرام مالک باید شامل ۵ تا ۱۶ رقم باشد.' }, 400);
+    }
+    if (rawOwnerId && actor.role === 'owner') {
+      const existingOther = await c.env.DB.prepare(
+        `SELECT id FROM users WHERE telegram_id = ? AND id != ? LIMIT 1`
+      )
+        .bind(rawOwnerId, actor.id)
+        .first();
+      if (!existingOther) {
+        await c.env.DB.prepare(`UPDATE users SET telegram_id = ? WHERE id = ?`)
+          .bind(rawOwnerId, actor.id)
+          .run()
+          .catch(() => {});
+        invalidateAuthUserCache(c.env.DB, actor.id);
+      }
+    }
+  }
+
+  const channelTargetKeys = new Set([
+    'official_channel',
+    'signals_channel_id',
+    'results_channel_id',
+    'community_group_id',
+    'logs_channel_id',
+    'database_channel_id',
+    'transactions_channel_id',
+    'news_channel_id',
+    'education_channel_id',
+    'alerts_channel_id',
+  ]);
+  const updatedChannelKeys: string[] = [];
+
   for (const [k, v] of Object.entries(entriesSource)) {
     if (v === undefined || v === null || typeof v === 'object') continue;
-    const strVal = String(v);
+    let strVal = String(v);
     if (k === 'google_client_secret' && (strVal.trim() === '********' || strVal.trim() === '')) continue;
+    if (channelTargetKeys.has(k)) {
+      const trimmed = strVal.trim();
+      if (!trimmed) {
+        strVal = '';
+      } else if (/^https?:\/\/t\.me\/\+/i.test(trimmed)) {
+        // Admin pasted an invite link in a channel target field; preserve as-is unless numeric/username
+        strVal = trimmed;
+      } else {
+        strVal = normalizeTelegramTarget(trimmed);
+      }
+      updatedChannelKeys.push(k);
+    }
     await setCachedSystemSetting(c.env.DB, k, strVal);
   }
   invalidateSettingsCache(c.env.DB);
+  if (updatedChannelKeys.length > 0) {
+    await publishSystemLogEvent(c.env, {
+      category: 'SYSTEM',
+      level: 'INFO',
+      source: 'AdminPanel',
+      title: 'به‌روزرسانی تنظیمات کانال‌های اکوسیستم',
+      userId: actor.id,
+      details: `کلیدهای تغییریافته توسط ${actor.username}: ${updatedChannelKeys.join(', ')}`,
+    }).catch(() => {});
+  }
   return c.json({ ok: true });
 });
 
@@ -489,8 +555,14 @@ adminRoutes.post('/signal-controls', async (c) => {
     publishSignalsToBotUsers?: boolean;
     alwaysOnSignals?: boolean;
     alwaysOnAiBroadcast?: boolean;
+    signalsAlsoOfficial?: boolean;
+    channelOfficialEnabled?: boolean;
     channelSignalsEnabled?: boolean;
     channelResultsEnabled?: boolean;
+    channelCommunityEnabled?: boolean;
+    channelLogsEnabled?: boolean;
+    channelDatabaseEnabled?: boolean;
+    channelTransactionsEnabled?: boolean;
     channelNewsEnabled?: boolean;
     channelEducationEnabled?: boolean;
     channelAlertsEnabled?: boolean;
@@ -502,8 +574,14 @@ adminRoutes.post('/signal-controls', async (c) => {
     ['publish_signals_to_bot_users', body.publishSignalsToBotUsers],
     ['always_on_signals_enabled', body.alwaysOnSignals],
     ['always_on_ai_broadcast_enabled', body.alwaysOnAiBroadcast],
+    ['signals_also_official', body.signalsAlsoOfficial],
+    ['channel_official_enabled', body.channelOfficialEnabled],
     ['channel_signals_enabled', body.channelSignalsEnabled],
     ['channel_results_enabled', body.channelResultsEnabled],
+    ['channel_community_enabled', body.channelCommunityEnabled],
+    ['channel_logs_enabled', body.channelLogsEnabled],
+    ['channel_database_enabled', body.channelDatabaseEnabled],
+    ['channel_transactions_enabled', body.channelTransactionsEnabled],
     ['channel_news_enabled', body.channelNewsEnabled],
     ['channel_education_enabled', body.channelEducationEnabled],
     ['channel_alerts_enabled', body.channelAlertsEnabled],
@@ -526,8 +604,13 @@ adminRoutes.post('/signal-controls', async (c) => {
     controls: {
       publishSignalsToChannels: cfg.signalsToChannelsEnabled,
       publishSignalsToBotUsers: cfg.signalsToBotEnabled,
+      channelOfficialEnabled: cfg.officialEnabled,
       channelSignalsEnabled: cfg.signalsEnabled,
       channelResultsEnabled: cfg.resultsEnabled,
+      channelCommunityEnabled: cfg.communityEnabled,
+      channelLogsEnabled: cfg.logsEnabled,
+      channelDatabaseEnabled: cfg.databaseEnabled,
+      channelTransactionsEnabled: cfg.transactionsEnabled,
       channelNewsEnabled: cfg.newsEnabled,
       channelEducationEnabled: cfg.educationEnabled,
       channelAlertsEnabled: cfg.alertsEnabled,
@@ -1191,63 +1274,62 @@ adminRoutes.patch('/support/:ticketId/status', async (c) => {
 // =========================================================================
 
 adminRoutes.get('/telegram/channel-status', async (c) => {
-  const [cfg, botToken, tokenStatus, autoSig, autoNews, autoPubSig] = await Promise.all([
+  const [cfg, botToken, tokenStatus, autoSig, autoNews, sigAlsoOfficialRow, dbIntervalRow] = await Promise.all([
     resolveChannelAndBotConfig(c.env),
     resolveTelegramBotToken(c.env),
     getTelegramBotTokenStatus(c.env),
     c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'always_on_signals_enabled' LIMIT 1`).first<{ value: string }>().catch(() => null),
     c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'always_on_ai_broadcast_enabled' LIMIT 1`).first<{ value: string }>().catch(() => null),
-    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'auto_publish_signals_to_channel' LIMIT 1`).first<{ value: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'signals_also_official' LIMIT 1`).first<{ value: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'database_report_interval_hours' LIMIT 1`).first<{ value: string }>().catch(() => null),
   ]);
+
+  const channelsPayload = {
+    official: { target: cfg.officialChannel, invite: cfg.officialChannelInvite, enabled: cfg.officialEnabled },
+    signals: { target: cfg.signalsChannelId, effectiveTarget: cfg.signalsChannelId || cfg.officialChannel, invite: cfg.signalsChannelInvite, enabled: cfg.signalsEnabled },
+    results: { target: cfg.resultsChannelId, invite: cfg.resultsChannelInvite, enabled: cfg.resultsEnabled },
+    community: { target: cfg.communityGroupId, invite: cfg.communityGroupInvite, enabled: cfg.communityEnabled },
+    logs: { target: cfg.logsChannelId, enabled: cfg.logsEnabled },
+    database: { target: cfg.databaseChannelId, enabled: cfg.databaseEnabled },
+    transactions: { target: cfg.transactionsChannelId, enabled: cfg.transactionsEnabled },
+    news: { target: cfg.newsChannelId, effectiveTarget: cfg.newsChannelId || cfg.officialChannel, invite: cfg.newsChannelInvite, enabled: cfg.newsEnabled },
+    education: { target: cfg.educationChannelId || cfg.officialChannel, enabled: cfg.educationEnabled },
+    alerts: { target: cfg.alertsChannelId || cfg.officialChannel, enabled: cfg.alertsEnabled },
+  };
+  const automationPayload = {
+    alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
+    alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
+    autoPublishSignalsToChannel: cfg.signalsToChannelsEnabled,
+    publishSignalsToChannels: cfg.signalsToChannelsEnabled,
+    publishSignalsToBotUsers: cfg.signalsToBotEnabled,
+    signalsAlsoOfficial: (sigAlsoOfficialRow?.value ?? 'false') === 'true',
+    databaseReportIntervalHours: Number(dbIntervalRow?.value || 6) || 6,
+  };
+
   if (!botToken) {
     return c.json({
       ok: false,
-      channelHandle: cfg.channelHandle,
+      channelHandle: cfg.officialChannel,
       tokenStatus,
-      channels: {
-        signals: { target: cfg.signalsChannelId || cfg.channelHandle, enabled: cfg.signalsEnabled },
-        results: { target: cfg.resultsChannelId || cfg.channelHandle, enabled: cfg.resultsEnabled },
-        news: { target: cfg.newsChannelId || cfg.channelHandle, enabled: cfg.newsEnabled },
-        education: { target: cfg.educationChannelId || cfg.channelHandle, enabled: cfg.educationEnabled },
-        alerts: { target: cfg.alertsChannelId || cfg.channelHandle, enabled: cfg.alertsEnabled },
-        community: { target: cfg.communityGroupId, invite: cfg.communityGroupInvite },
-      },
-      automation: {
-        alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
-        alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
-        autoPublishSignalsToChannel: cfg.signalsToChannelsEnabled,
-        publishSignalsToChannels: cfg.signalsToChannelsEnabled,
-        publishSignalsToBotUsers: cfg.signalsToBotEnabled,
-      },
+      channels: channelsPayload,
+      automation: automationPayload,
       error: 'توکن ربات تلگرام هنوز تنظیم نشده است. می‌توانید همین‌جا از پنل ادمین توکن ربات را وارد و ذخیره کنید.',
     });
   }
   const tg = new TelegramBotClient(botToken);
+  const primaryCheckTarget = cfg.officialChannel || cfg.signalsChannelId;
   const [status, webhookInfo] = await Promise.all([
-    tg.checkChannelAdminReadiness(cfg.signalsChannelId || cfg.channelHandle),
+    primaryCheckTarget ? tg.checkChannelAdminReadiness(primaryCheckTarget) : Promise.resolve({ ok: true, botUsername: cfg.botUsername, channelTitle: '', status: 'configured' }),
     tg.getWebhookInfo().catch(() => null),
   ]);
   return c.json({
     ...status,
-    channelHandle: cfg.channelHandle,
-    botUsername: status.botUsername || cfg.botUsername,
+    channelHandle: cfg.officialChannel,
+    botUsername: ('botUsername' in status && status.botUsername) || cfg.botUsername,
     tokenStatus,
     webhookInfo,
-    automation: {
-      alwaysOnSignals: (autoSig?.value ?? 'true') !== 'false',
-      alwaysOnAiBroadcast: (autoNews?.value ?? 'true') !== 'false',
-      autoPublishSignalsToChannel: cfg.signalsToChannelsEnabled,
-      publishSignalsToChannels: cfg.signalsToChannelsEnabled,
-      publishSignalsToBotUsers: cfg.signalsToBotEnabled,
-    },
-    channels: {
-      signals: { target: cfg.signalsChannelId || cfg.channelHandle, enabled: cfg.signalsEnabled },
-      results: { target: cfg.resultsChannelId || cfg.channelHandle, enabled: cfg.resultsEnabled },
-      news: { target: cfg.newsChannelId || cfg.channelHandle, enabled: cfg.newsEnabled },
-      education: { target: cfg.educationChannelId || cfg.channelHandle, enabled: cfg.educationEnabled },
-      alerts: { target: cfg.alertsChannelId || cfg.channelHandle, enabled: cfg.alertsEnabled },
-      community: { target: cfg.communityGroupId, invite: cfg.communityGroupInvite },
-    },
+    automation: automationPayload,
+    channels: channelsPayload,
   });
 });
 
@@ -1274,8 +1356,9 @@ adminRoutes.post('/telegram/bot-token', async (c) => {
 });
 
 adminRoutes.post('/channels/test', async (c) => {
+  const actor = c.get('user');
   const body = (await c.req.json().catch(() => ({}))) as {
-    channelKey?: 'signals' | 'results' | 'news' | 'education' | 'alerts' | 'community';
+    channelKey?: 'official' | 'signals' | 'results' | 'community' | 'logs' | 'database' | 'transactions' | 'news' | 'education' | 'alerts';
     customTarget?: string;
   };
   const botToken = await resolveTelegramBotToken(c.env);
@@ -1283,16 +1366,60 @@ adminRoutes.post('/channels/test', async (c) => {
     return c.json({ ok: false, error: 'توکن ربات تلگرام هنوز تنظیم نشده است. ابتدا توکن ربات را در بخش بالای کانال‌ها ست کنید.' }, 400);
   }
   const cfg = await resolveChannelAndBotConfig(c.env);
-  const labels: Record<string, { title: string; target: string }> = {
-    signals: { title: '📡 کانال سیگنال‌های معاملاتی', target: cfg.signalsChannelId || cfg.channelHandle },
-    results: { title: '🏆 کانال نتایج و کارت سود', target: cfg.resultsChannelId || cfg.channelHandle },
-    news: { title: '📰 کانال اخبار فوری کریپتو', target: cfg.newsChannelId || cfg.channelHandle },
-    education: { title: '🎓 کانال آموزش و راهنمای مبتدی‌ها', target: cfg.educationChannelId || cfg.channelHandle },
-    alerts: { title: '🚨 کانال رادار نهنگ‌ها و آلرت TradingView', target: cfg.alertsChannelId || cfg.channelHandle },
-    community: { title: '👥 گروه کامیونیتی و پشتیبانی دلارینو', target: cfg.communityGroupId },
+  const labels: Record<string, { title: string; target: string; desc: string }> = {
+    official: {
+      title: '🌟 چنل رسمی و اصلی دلارینو (عمومی)',
+      target: cfg.officialChannel,
+      desc: 'آپدیت‌های قطعی پروژه، اطلاعیه‌ها، تبلیغات، قرعه‌کشی و توصیه‌های رسمی',
+    },
+    signals: {
+      title: '01. سیگنال دلارینو (عمومی)',
+      target: cfg.signalsChannelId || cfg.officialChannel,
+      desc: 'انتشار سیگنال‌های معاملاتی و فرصت‌های شناسایی‌شده توسط موتورهای پروژه',
+    },
+    results: {
+      title: '02. نتایج سیگنال دلارینو (عمومی)',
+      target: cfg.resultsChannelId || cfg.officialChannel,
+      desc: 'نتیجه سیگنال‌ها، سود و زیان، کارت سود، درصد موفقیت و عملکرد سیستم',
+    },
+    community: {
+      title: '03. گروه کاربران دلارینو (گروه)',
+      target: cfg.communityGroupId,
+      desc: 'ارتباط کاربران، پرسش و پاسخ و تبادل تجربه',
+    },
+    logs: {
+      title: '04. لاگ‌های دلارینو (خصوصی)',
+      target: cfg.logsChannelId,
+      desc: 'گزارش فعالیت ربات، خطاها، تصمیمات هوش مصنوعی و رویدادهای سیستمی',
+    },
+    database: {
+      title: '05. دیتابیس دلارینو (خصوصی)',
+      target: cfg.databaseChannelId,
+      desc: 'گزارش داده‌ها، وضعیت ذخیره‌سازی و اطلاعات مدیریتی سیستم',
+    },
+    transactions: {
+      title: '06. تراکنش‌های دلارینو (خصوصی)',
+      target: cfg.transactionsChannelId,
+      desc: 'موعد تسویه کاربران، فاکتورها و تراکنش‌های مالی',
+    },
+    news: {
+      title: '07. اخبار دلارینو (عمومی)',
+      target: cfg.newsChannelId || cfg.officialChannel,
+      desc: 'اخبار کریپتو و بازار',
+    },
+    education: {
+      title: '🎓 کانال آموزش دلارینو',
+      target: cfg.educationChannelId || cfg.officialChannel,
+      desc: 'آموزش‌های ساده و گام‌به‌گام',
+    },
+    alerts: {
+      title: '🚨 کانال آلرت و رادار دلارینو',
+      target: cfg.alertsChannelId || cfg.signalsChannelId || cfg.officialChannel,
+      desc: 'هشدارهای نوسان و نهنگ‌ها',
+    },
   };
-  const key = body.channelKey && labels[body.channelKey] ? body.channelKey : 'signals';
-  const rawTarget = (body.customTarget || labels[key]!.target || '').trim();
+  const key = body.channelKey && labels[body.channelKey] ? body.channelKey : 'official';
+  const rawTarget = normalizeTelegramTarget(body.customTarget || labels[key]!.target || '');
   if (!rawTarget) {
     return c.json({ ok: false, error: 'آیدی عددی (-100...) یا یوزرنیم (@channel) هنوز وارد نشده است.' }, 400);
   }
@@ -1302,12 +1429,18 @@ adminRoutes.post('/channels/test', async (c) => {
     const readiness = await tg.checkChannelAdminReadiness(rawTarget);
     const res = await tg.sendMessage(
       target,
-      `✅ تست اتصال دلارینو موفق بود!\n📌 بخش: ${labels[key]!.title}\n🆔 مقصد: \`${rawTarget}\`\n🛡 Trust Wallet Only · ۳ معامله سودده اول ۰٪ · سپس ۳٪ کارمزد سود واقعی`
+      `✅ **تست اتصال اکوسیستم رسمی DOLLARINO موفق بود!**\n` +
+        `📌 بخش: **${labels[key]!.title}**\n` +
+        `📝 کاربرد: ${labels[key]!.desc}\n` +
+        `🆔 مقصد: \`${rawTarget}\`\n` +
+        `👤 درخواست‌کننده: \`${actor.username}\``
     );
     return c.json({
       ok: true,
       target: rawTarget,
       chatTitle: readiness.channelTitle,
+      adminReady: readiness.ok,
+      warning: readiness.ok ? undefined : readiness.error,
       messageId: res.message_id,
     });
   } catch (err) {
@@ -1316,11 +1449,141 @@ adminRoutes.post('/channels/test', async (c) => {
       {
         ok: false,
         target: rawTarget,
-        error: `${errMsg} — نکته: برای کانال یا گروه خصوصی، ربات را ادمین کنید و آیدی عددی (-100...) را وارد نمایید.`,
+        error: `${errMsg} — نکته: ربات را در کانال یا گروه ادمین کنید؛ برای بخش‌های خصوصی (04، 05، 06) آیدی عددی (-100...) را وارد نمایید.`,
       },
       400
     );
   }
+});
+
+adminRoutes.post('/channels/verify-all', async (c) => {
+  const botToken = await resolveTelegramBotToken(c.env);
+  if (!botToken) {
+    return c.json({ ok: false, error: 'توکن ربات تلگرام هنوز تنظیم نشده است.' }, 400);
+  }
+  const cfg = await resolveChannelAndBotConfig(c.env);
+  const tg = new TelegramBotClient(botToken);
+  const entries = [
+    { key: 'official', label: '🌟 چنل رسمی و اصلی دلارینو', target: cfg.officialChannel, enabled: cfg.officialEnabled },
+    { key: 'signals', label: '01. سیگنال دلارینو', target: cfg.signalsChannelId, enabled: cfg.signalsEnabled },
+    { key: 'results', label: '02. نتایج سیگنال دلارینو', target: cfg.resultsChannelId, enabled: cfg.resultsEnabled },
+    { key: 'community', label: '03. گروه کاربران دلارینو', target: cfg.communityGroupId, enabled: cfg.communityEnabled },
+    { key: 'logs', label: '04. لاگ‌های دلارینو (خصوصی)', target: cfg.logsChannelId, enabled: cfg.logsEnabled },
+    { key: 'database', label: '05. دیتابیس دلارینو (خصوصی)', target: cfg.databaseChannelId, enabled: cfg.databaseEnabled },
+    { key: 'transactions', label: '06. تراکنش‌های دلارینو (خصوصی)', target: cfg.transactionsChannelId, enabled: cfg.transactionsEnabled },
+    { key: 'news', label: '07. اخبار دلارینو', target: cfg.newsChannelId, enabled: cfg.newsEnabled },
+  ];
+  const results = await Promise.all(
+    entries.map(async (item) => {
+      if (!item.target) {
+        return { ...item, configured: false, ok: false, status: 'NOT_CONFIGURED' };
+      }
+      const check = await tg.checkChannelAdminReadiness(item.target);
+      return {
+        ...item,
+        configured: true,
+        ok: check.ok,
+        chatTitle: check.channelTitle,
+        chatType: check.chatType,
+        memberStatus: check.status,
+        canPostMessages: check.canPostMessages,
+        error: check.error,
+      };
+    })
+  );
+  return c.json({
+    ok: true,
+    botUsername: cfg.botUsername,
+    results,
+  });
+});
+
+adminRoutes.post('/channels/send-db-report', async (c) => {
+  const actor = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as { attachBackupJson?: boolean; note?: string };
+  const res = await publishDatabaseReport(c.env, {
+    eventType: 'MANUAL_SNAPSHOT',
+    actorUsername: actor.username,
+    note: body.note,
+    attachBackupJson: body.attachBackupJson !== false,
+  });
+  if (res.skipped) {
+    return c.json({ ok: false, error: 'کانال خصوصی 05. دیتابیس دلارینو هنوز تنظیم یا فعال نشده است.' }, 400);
+  }
+  return c.json(res, res.ok ? 200 : 400);
+});
+
+adminRoutes.post('/channels/send-settlement-digest', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT u.id, u.username, COALESCE(u.fee_lock_status, 'ACTIVE') AS lock_status,
+            u.fee_grace_deadline,
+            COALESCE(u.fee_penalty_usd, 0) AS penalty_usd,
+            COALESCE(SUM(CASE WHEN l.status = 'ACCRUED' THEN l.fee_usd ELSE 0 END), 0) AS accrued_usd
+     FROM users u
+     LEFT JOIN server_fee_ledger l ON l.user_id = u.id
+     GROUP BY u.id
+     HAVING accrued_usd > 0 OR penalty_usd > 0 OR lock_status != 'ACTIVE'
+     ORDER BY (accrued_usd + penalty_usd) DESC
+     LIMIT 30`
+  )
+    .all<{
+      id: string;
+      username: string;
+      lock_status: string;
+      fee_grace_deadline: string | null;
+      penalty_usd: number;
+      accrued_usd: number;
+    }>()
+    .catch(() => ({ results: [] }));
+
+  const totalDue = rows.results.reduce((acc, r) => acc + Number(r.accrued_usd || 0) + Number(r.penalty_usd || 0), 0);
+  const lines = rows.results.length
+    ? rows.results
+        .map(
+          (r, i) =>
+            `${i + 1}. \`${r.username}\` · بدهی: **$${(Number(r.accrued_usd) + Number(r.penalty_usd)).toFixed(2)}** · وضعیت: ${r.lock_status}${r.fee_grace_deadline ? ` · سررسید: ${r.fee_grace_deadline}` : ''}`
+        )
+        .join('\n')
+    : '✅ در حال حاضر هیچ کاربر دارای بدهی باز یا موعد تسویه سررسیدشده وجود ندارد.';
+
+  const res = await publishTransactionEvent(c.env, {
+    eventType: 'SETTLEMENT_DIGEST',
+    status: rows.results.length > 0 ? 'DUE' : 'INFO',
+    title: 'گزارش موعد تسویه و کارمزد ۳٪ کاربران',
+    amountUsd: totalDue,
+    details: `تعداد پرونده‌های فعال: ${rows.results.length}\n\n${lines}`,
+  });
+  if (res.skipped) {
+    return c.json({ ok: false, error: 'کانال خصوصی 06. تراکنش‌های دلارینو هنوز تنظیم یا فعال نشده است.' }, 400);
+  }
+  return c.json({ ...res, accountsCount: rows.results.length, totalDueUsd: totalDue }, res.ok ? 200 : 400);
+});
+
+adminRoutes.post('/channel/publish-official', async (c) => {
+  const actor = c.get('user');
+  const body = await c.req.json<{
+    kind?: 'PROJECT_UPDATE' | 'ANNOUNCEMENT' | 'PROMO' | 'LOTTERY' | 'ADVICE';
+    title: string;
+    body: string;
+    mediaUrl?: string;
+    buttonLabel?: string;
+    buttonUrl?: string;
+    notifyBotUsers?: boolean;
+  }>();
+  if (!body.title?.trim() || !body.body?.trim()) {
+    return c.json({ error: 'عنوان و متن اطلاعیه رسمی الزامی است.' }, 400);
+  }
+  const res = await publishOfficialAnnouncement(c.env, {
+    kind: body.kind || 'PROJECT_UPDATE',
+    title: body.title,
+    body: body.body,
+    mediaUrl: body.mediaUrl?.trim(),
+    buttonLabel: body.buttonLabel?.trim(),
+    buttonUrl: body.buttonUrl?.trim(),
+    notifyBotUsers: body.notifyBotUsers === true,
+    createdBy: actor.id,
+  });
+  return c.json({ ok: !res.error, ...res });
 });
 
 adminRoutes.post('/automation/run-now', async (c) => {
@@ -1402,12 +1665,13 @@ adminRoutes.get('/channel/news', async (c) => {
 adminRoutes.post('/channel/publish-news', async (c) => {
   const actor = c.get('user');
   const body = await c.req.json<{
-    category?: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT';
+    category?: 'NEWS' | 'ANALYSIS' | 'SIGNAL_UPDATE' | 'ANNOUNCEMENT' | 'ALERT' | 'EDUCATION' | 'PROMO' | 'LOTTERY' | 'ADVICE';
     title: string;
     body: string;
     mediaUrl?: string;
     buttonLabel?: string;
     buttonUrl?: string;
+    notifyBotUsers?: boolean;
   }>();
 
   if (!body.title?.trim() || !body.body?.trim()) {
@@ -1421,6 +1685,7 @@ adminRoutes.post('/channel/publish-news', async (c) => {
     mediaUrl: body.mediaUrl?.trim(),
     buttonLabel: body.buttonLabel?.trim(),
     buttonUrl: body.buttonUrl?.trim(),
+    notifyBotUsers: body.notifyBotUsers === true,
     createdBy: actor.id,
   });
 
@@ -1504,9 +1769,11 @@ adminRoutes.post('/referrals/withdrawals/:id/decide', async (c) => {
     txHash?: string;
     adminNote?: string;
   };
-  const wd = await c.env.DB.prepare(`SELECT * FROM referral_withdrawals WHERE id = ?`)
+  const wd = await c.env.DB.prepare(
+    `SELECT rw.*, u.username FROM referral_withdrawals rw LEFT JOIN users u ON u.id = rw.user_id WHERE rw.id = ?`
+  )
     .bind(id)
-    .first<{ id: string; user_id: string; amount_usd: number; status: string }>();
+    .first<{ id: string; user_id: string; amount_usd: number; status: string; username: string | null; network?: string | null; wallet_address?: string | null }>();
   if (!wd) return c.json({ error: 'Withdrawal request not found' }, 404);
   if (wd.status !== 'PENDING') return c.json({ error: 'Withdrawal already processed' }, 409);
 
@@ -1518,6 +1785,17 @@ adminRoutes.post('/referrals/withdrawals/:id/decide', async (c) => {
     )
       .bind(body.txHash?.trim() || null, body.adminNote?.trim() || 'Paid', id)
       .run();
+    await publishTransactionEvent(c.env, {
+      eventType: 'REFERRAL_WITHDRAWAL',
+      status: 'CONFIRMED',
+      title: 'تایید و پرداخت برداشت رفرال',
+      username: wd.username || wd.user_id,
+      userId: wd.user_id,
+      amountUsd: Number(wd.amount_usd || 0),
+      network: wd.network || 'USDT',
+      txHash: body.txHash?.trim() || null,
+      details: body.adminNote?.trim() || `مقصد: ${wd.wallet_address || '—'}`,
+    }).catch(() => {});
   } else {
     await c.env.DB.prepare(
       `UPDATE referral_withdrawals
@@ -1532,6 +1810,16 @@ adminRoutes.post('/referrals/withdrawals/:id/decide', async (c) => {
     )
       .bind(wd.amount_usd, wd.user_id)
       .run();
+    await publishTransactionEvent(c.env, {
+      eventType: 'REFERRAL_WITHDRAWAL',
+      status: 'REJECTED',
+      title: 'رد درخواست برداشت رفرال و بازگشت موجودی',
+      username: wd.username || wd.user_id,
+      userId: wd.user_id,
+      amountUsd: Number(wd.amount_usd || 0),
+      network: wd.network || 'USDT',
+      details: body.adminNote?.trim() || 'رد توسط مدیریت',
+    }).catch(() => {});
   }
   return c.json({ ok: true });
 });
@@ -1742,6 +2030,7 @@ adminRoutes.get('/system-health', async (c) => {
       productionChecks: {
         jwtSecretOk: jwtSec.length >= 24 && !jwtSec.includes('dev-secret'),
         encryptionKeyOk: encKey.length >= 32,
+        ownerTelegramIdConfigured: Boolean(await resolveOwnerTelegramId(c.env)),
         telegramBotConfigured: Boolean(await resolveTelegramBotToken(c.env)),
         aiEngineConfigured: Boolean(c.env.HILINKUP_API_KEY?.trim()) || (activeAiEngines?.cnt ?? 0) > 0,
         feeReceiverWalletConfigured: feeWalletOk,
@@ -1870,8 +2159,36 @@ adminRoutes.post('/treasury/deposits/:id/decide', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { approve?: boolean; note?: string };
   const approve = body.approve !== false;
   try {
+    const depMeta = await c.env.DB.prepare(
+      `SELECT td.user_id, td.amount_usd, td.network, td.asset, td.tx_hash, td.category, u.username
+       FROM treasury_deposits td LEFT JOIN users u ON u.id = td.user_id WHERE td.id = ? LIMIT 1`
+    )
+      .bind(id)
+      .first<{
+        user_id: string;
+        amount_usd: number;
+        network: string;
+        asset: string;
+        tx_hash: string;
+        category: string;
+        username: string | null;
+      }>()
+      .catch(() => null);
+
     if (approve) {
       const creditRes = await applyConfirmedTreasuryCredit(c.env.DB, id, body.note || `تایید شده توسط ${actor.username}`);
+      await publishTransactionEvent(c.env, {
+        eventType: 'TREASURY_DEPOSIT',
+        status: 'CONFIRMED',
+        title: 'تایید واریز خزانه و شارژ حساب',
+        username: depMeta?.username || depMeta?.user_id || id,
+        userId: depMeta?.user_id,
+        amountUsd: Number(depMeta?.amount_usd || 0),
+        network: depMeta?.network,
+        asset: depMeta?.asset,
+        txHash: depMeta?.tx_hash,
+        details: `تایید شده توسط ${actor.username} | تسویه بدهی: $${Number(creditRes.settledDebtUsd || 0).toFixed(2)} | اعتبار اضافه‌شده: $${Number(creditRes.addedCreditUsd || 0).toFixed(2)}`,
+      }).catch(() => {});
       const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
       return c.json({
         ok: true,
@@ -1886,6 +2203,18 @@ adminRoutes.post('/treasury/deposits/:id/decide', async (c) => {
       )
         .bind(body.note || 'رد شده توسط مدیریت', id)
         .run();
+      await publishTransactionEvent(c.env, {
+        eventType: 'TREASURY_DEPOSIT',
+        status: 'REJECTED',
+        title: 'رد واریز خزانه توسط مدیر',
+        username: depMeta?.username || depMeta?.user_id || id,
+        userId: depMeta?.user_id,
+        amountUsd: Number(depMeta?.amount_usd || 0),
+        network: depMeta?.network,
+        asset: depMeta?.asset,
+        txHash: depMeta?.tx_hash,
+        details: body.note || `رد شده توسط ${actor.username}`,
+      }).catch(() => {});
       const summary = await getAdminTreasurySummary(c.env.DB, c.env.MASTER_ENCRYPTION_KEY);
       return c.json({ ok: true, status: 'REJECTED', summary });
     }
@@ -1900,7 +2229,7 @@ adminRoutes.post('/treasury/deposits/:id/decide', async (c) => {
 
 adminRoutes.post('/users/:id/fee-credit', async (c) => {
   const actor = c.get('user');
-  if (!isSystemOwner(actor, c.env)) {
+  if (!(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی سیستم اجازه اعطای اعتبار کارمزد دارد.' }, 403);
   }
   const targetId = c.req.param('id');
@@ -1938,7 +2267,7 @@ adminRoutes.post('/users/:id/fee-credit', async (c) => {
 
 adminRoutes.post('/users/:id/reset-fee-debt', async (c) => {
   const actor = c.get('user');
-  if (!isSystemOwner(actor, c.env)) {
+  if (!(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی سیستم اجازه بخشش بدهی کارمزد را دارد.' }, 403);
   }
   const targetId = c.req.param('id');
@@ -1967,7 +2296,7 @@ adminRoutes.delete('/users/:id', async (c) => {
 
   const isTargetPrivileged = target.role === 'owner' || target.role === 'admin';
   if (isTargetPrivileged) {
-    if (actor.id !== targetId && !isSystemOwner(actor, c.env)) {
+    if (actor.id !== targetId && !(await isSystemOwner(actor, c.env))) {
       return c.json({ error: 'فقط مالک اصلی یا خود مدیر مجاز به صفرسازی حساب مدیریتی است.' }, 403);
     }
     await resetPrivilegedUserAccountToFreshState(c.env.DB, targetId);
@@ -1987,7 +2316,7 @@ adminRoutes.delete('/users/:id', async (c) => {
     });
   }
 
-  if (!isSystemOwner(actor, c.env)) {
+  if (!(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی سیستم اجازه حذف کاربر را دارد.' }, 403);
   }
 
@@ -2045,7 +2374,7 @@ adminRoutes.post('/users/:id/reset-account', async (c) => {
     .first<{ id: string; role: string; username: string }>()
     .catch(() => null);
   if (!target) return c.json({ error: 'کاربر یافت نشد.' }, 404);
-  if (actor.id !== targetId && !isSystemOwner(actor, c.env)) {
+  if (actor.id !== targetId && !(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی یا خود کاربر مجاز به صفرسازی حساب است.' }, 403);
   }
   await resetPrivilegedUserAccountToFreshState(c.env.DB, targetId);
@@ -2200,7 +2529,7 @@ adminRoutes.get('/database/stats', async (c) => {
 
   return c.json({
     ok: true,
-    isOwner: isSystemOwner(actor, c.env),
+    isOwner: await isSystemOwner(actor, c.env),
     tableCount: tables.length,
     indexCount: idxRow?.cnt ?? 0,
     totalRows,
@@ -2212,7 +2541,7 @@ adminRoutes.get('/database/stats', async (c) => {
 
 adminRoutes.get('/database/backup', async (c) => {
   const actor = c.get('user');
-  if (!isSystemOwner(actor, c.env)) {
+  if (!(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی سیستم (Owner) اجازه گرفتن بکاپ کامل دیتابیس را دارد.' }, 403);
   }
   const excludeSecrets = c.req.query('excludeSecrets') === '1';
@@ -2237,6 +2566,12 @@ adminRoutes.get('/database/backup', async (c) => {
     `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
      VALUES (?, ?, 'DATABASE_BACKUP_EXPORT', 'database', 'd1', ?)`
   ).bind(randomId('aud'), actor.id, JSON.stringify({ tables: tables.length, totalRows, excludeSecrets })).run().catch(() => {});
+
+  await publishDatabaseReport(c.env, {
+    eventType: 'BACKUP_EXPORT',
+    actorUsername: actor.username,
+    note: `بکاپ کامل ${tables.length} جدول با مجموع ${totalRows} رکورد تهیه شد (${excludeSecrets ? 'بدون کلیدهای محرمانه' : 'کامل'}).`,
+  }).catch(() => {});
 
   const payload = {
     format: 'dollarino-d1-backup-v1',
@@ -2264,7 +2599,7 @@ adminRoutes.get('/database/backup', async (c) => {
 
 adminRoutes.post('/database/restore', async (c) => {
   const actor = c.get('user');
-  if (!isSystemOwner(actor, c.env)) {
+  if (!(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی سیستم (Owner) اجازه بازگردانی دیتابیس را دارد.' }, 403);
   }
   const body = (await c.req.json().catch(() => null)) as {
@@ -2372,6 +2707,12 @@ adminRoutes.post('/database/restore', async (c) => {
      VALUES (?, ?, 'DATABASE_RESTORE', 'database', 'd1', ?)`
   ).bind(randomId('aud'), actor.id, JSON.stringify({ mode, insertedRows, tablesCount: restoredTables.length })).run().catch(() => {});
 
+  await publishDatabaseReport(c.env, {
+    eventType: 'RESTORE',
+    actorUsername: actor.username,
+    note: `حالت بازگردانی: ${mode} | رکوردهای بازگردانی‌شده: ${insertedRows} | جدول‌ها: ${restoredTables.length}`,
+  }).catch(() => {});
+
   return c.json({
     ok: true,
     mode,
@@ -2383,7 +2724,7 @@ adminRoutes.post('/database/restore', async (c) => {
 
 adminRoutes.post('/database/wipe', async (c) => {
   const actor = c.get('user');
-  if (!isSystemOwner(actor, c.env)) {
+  if (!(await isSystemOwner(actor, c.env))) {
     return c.json({ error: 'فقط مالک اصلی سیستم (Owner) اجازه پاکسازی یا ریست دیتابیس را دارد.' }, 403);
   }
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -2414,6 +2755,7 @@ adminRoutes.post('/database/wipe', async (c) => {
     ).run().catch(() => {});
   } else {
     const preserve = body.preserveOwnerAndSettings !== false;
+    const ownerTg = (await resolveOwnerTelegramId(c.env)) || '__NONE__';
     const allTables = await discoverAllUserTables(c.env.DB);
     const deleteOrder = [...allTables].reverse();
     for (const tbl of deleteOrder) {
@@ -2422,7 +2764,6 @@ adminRoutes.post('/database/wipe', async (c) => {
       if (preserve && tbl === 'platform_ai_engines') continue;
       if (preserve && tbl === 'subscription_plans') continue;
       if (preserve && tbl === 'users') {
-        const ownerTg = c.env.OWNER_TELEGRAM_ID || '944021185';
         const res = await c.env.DB.prepare(
           `DELETE FROM users WHERE id != ? AND role != 'owner' AND COALESCE(telegram_id, '') != ?`
         ).bind(actor.id, ownerTg).run().catch(() => null);
@@ -2433,7 +2774,6 @@ adminRoutes.post('/database/wipe', async (c) => {
         continue;
       }
       if (preserve && tbl === 'bot_configs') {
-        const ownerTg = c.env.OWNER_TELEGRAM_ID || '944021185';
         const res = await c.env.DB.prepare(
           `DELETE FROM bot_configs WHERE user_id != ? AND user_id NOT IN (SELECT id FROM users WHERE role = 'owner' OR COALESCE(telegram_id, '') = ?)`
         ).bind(actor.id, ownerTg).run().catch(() => null);
@@ -2449,6 +2789,50 @@ adminRoutes.post('/database/wipe', async (c) => {
         affectedTables.push(tbl);
       }
     }
+    if (!preserve) {
+      const [pwdHash, secHash] = await Promise.all([hashPassword('admin'), hashPassword('admin123')]);
+      const freshOwnerId = 'usr_admin_bootstrap';
+      await c.env.DB.prepare(
+        `INSERT INTO users (
+           id, email, username, display_name, auth_provider, password_hash, secondary_password_hash,
+           role, profile_completed, has_custom_password, must_change_credentials, totp_enabled, referral_code
+         ) VALUES (?, 'admin@dollarino.local', 'admin', 'مدیر سیستم', 'password', ?, ?, 'owner', 1, 1, 1, 0, ?)`
+      )
+        .bind(freshOwnerId, pwdHash, secHash, generateReferralCode())
+        .run();
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO bot_configs (user_id, bot_state, trading_mode) VALUES (?, 'STOPPED', 'PAPER')`
+      )
+        .bind(freshOwnerId)
+        .run()
+        .catch(() => {});
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO exchange_connections (
+           id, user_id, provider, label, is_testnet, is_active, api_key_masked, encrypted_credentials, last_test_status
+         ) VALUES ('ex_admin_bootstrap_paper', ?, 'paper', 'Paper Simulator (Live Quotes)', 1, 1, 'PAPER-MODE', '{}', 'OK')`
+      )
+        .bind(freshOwnerId)
+        .run()
+        .catch(() => {});
+      for (const [sk, sv] of [
+        ['auth_password_login_enabled', 'true'],
+        ['auth_public_signup_enabled', 'false'],
+        ['auth_wallet_enabled', 'false'],
+        ['auth_telegram_enabled', 'false'],
+        ['auth_google_enabled', 'false'],
+        ['allow_direct_email_signup', 'false'],
+        ['telegram_only_signup', 'false'],
+        ['require_telegram_phone_kyc', 'false'],
+      ]) {
+        await c.env.DB.prepare(
+          `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+        )
+          .bind(sk, sv)
+          .run()
+          .catch(() => {});
+      }
+    }
   }
 
   invalidateSettingsCache(c.env.DB);
@@ -2457,6 +2841,20 @@ adminRoutes.post('/database/wipe', async (c) => {
     `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
      VALUES (?, ?, 'DATABASE_WIPE', 'database', 'd1', ?)`
   ).bind(randomId('aud'), actor.id, JSON.stringify({ mode, preserveOwnerAndSettings: body.preserveOwnerAndSettings !== false, deletedRows })).run().catch(() => {});
+
+  await publishDatabaseReport(c.env, {
+    eventType: 'WIPE',
+    actorUsername: actor.username,
+    note: `عملیات ${mode} اجرا شد | رکوردهای پاک‌شده: ${deletedRows} | جدول‌ها: ${affectedTables.length}`,
+  }).catch(() => {});
+  await publishSystemLogEvent(c.env, {
+    category: 'SECURITY',
+    level: 'WARN',
+    source: 'DatabaseManager',
+    title: `پاک‌سازی / ریست دیتابیس (${mode})`,
+    userId: actor.id,
+    details: `مدیر ${actor.username} عملیات ${mode} را با حذف ${deletedRows} رکورد اجرا کرد.`,
+  }).catch(() => {});
 
   return c.json({
     ok: true,
@@ -2539,6 +2937,15 @@ adminRoutes.post('/users/:id/bot-stop', async (c) => {
     `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
      VALUES (?, ?, 'ADMIN_STOP_USER_BOT', 'user', ?, '{}')`
   ).bind(randomId('aud'), actor.id, targetUserId).run().catch(() => {});
+
+  await publishSystemLogEvent(c.env, {
+    category: 'SYSTEM',
+    level: 'WARN',
+    source: 'AdminConsole',
+    title: 'توقف اجباری ربات کاربر توسط مدیر',
+    details: `مدیر سیستم (${actor.username || actor.id}) ربات کاربر را متوقف کرد.`,
+    userId: targetUserId,
+  }).catch(() => {});
 
   return c.json({ ok: true, userId: targetUserId, bot_state: 'STOPPED' });
 });

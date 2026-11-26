@@ -27,4 +27,5 @@ export interface AuthUser {
   username: string;
   role: 'owner' | 'admin' | 'user';
   telegramId: string | null;
+  mustChangeCredentials?: boolean;
 }

@@ -5,9 +5,9 @@ import { logAudit } from '../engine/executor.js';
 import type { AuthUser, Env } from '../env.js';
 import { enforceRateLimit, maskUsernameForReferral } from '../security.js';
 import { TelegramBotClient } from '../telegram/client.js';
-import { resolveTelegramBotToken } from '../telegram/token.js';
+import { resolveOwnerTelegramId, resolveTelegramBotToken, resolveTelegramBotUsername } from '../telegram/token.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE } from '../telegram/formatter.js';
-import { notifyAllAdmins, notifyAllAdminsPhoto } from '../telegram/publisher.js';
+import { notifyAllAdmins, notifyAllAdminsPhoto, publishTransactionEvent } from '../telegram/publisher.js';
 import {
   evaluateUserFeeStanding,
   FREE_PROFITABLE_LIVE_TRADES,
@@ -530,7 +530,8 @@ subscriptionRoutes.get('/me', async (c) => {
     paymentConfig.iran_card_number = '';
   }
   if (!paymentConfig.telegram_support || /Dollarino_admin/i.test(paymentConfig.telegram_support)) {
-    paymentConfig.telegram_support = OFFICIAL_BOT_HANDLE;
+    const botUser = (paymentConfig.bot_username || '').replace(/^@/, '');
+    paymentConfig.telegram_support = botUser ? `@${botUser}` : OFFICIAL_BOT_HANDLE;
   }
   if (!paymentConfig.anti_scam_notice_fa) {
     paymentConfig.anti_scam_notice_fa = ANTI_SCAM_WARNING_FA;
@@ -648,6 +649,18 @@ subscriptionRoutes.post('/checkout', async (c) => {
       c.env,
       `✅ اشتراک کاربر ${user.username} (${user.email}) برای پلن ${plan.name_fa} به صورت خودکار از طریق شبکه بلاک‌چین تایید و فعال شد!\nTXID: ${ref}`
     ).catch(() => {});
+    await publishTransactionEvent(c.env, {
+      eventType: 'ORDER',
+      status: 'CONFIRMED',
+      title: `تایید خودکار سفارش ${plan.name_fa}`,
+      username: user.username,
+      userId: user.id,
+      amountUsd: Number(plan.price_usd || 0),
+      network: method,
+      txHash: ref,
+      invoiceNo: `#${id}`,
+      details: `سفارش #${id} از طریق بلاکچین به صورت خودکار تایید و فعال شد.`,
+    }).catch(() => {});
 
     return c.json({ ok: true, orderId: id, status: 'ACTIVE', autoVerified: true }, 201);
   }
@@ -700,19 +713,33 @@ subscriptionRoutes.post('/checkout', async (c) => {
   } else {
     await notifyAllAdmins(c.env, note, reviewKeyboard).catch(() => {});
   }
+  await publishTransactionEvent(c.env, {
+    eventType: 'ORDER',
+    status: 'PENDING',
+    title: `سفارش جدید (${plan.name_fa})`,
+    username: user.username,
+    userId: user.id,
+    amountUsd: Number(plan.price_usd || 0),
+    network: method,
+    txHash: userRef || null,
+    invoiceNo: `#${id}`,
+    details: body.payerNote?.trim() || undefined,
+    imageDataUrl: receiptImage,
+    inlineKeyboard: reviewKeyboard.inlineKeyboard,
+  }).catch(() => {});
 
   return c.json({ ok: true, orderId: id, status: 'PENDING_REVIEW', autoVerified: false }, 201);
 });
 
 // Admin subscription management routes
-function isAdmin(c: { get: (k: 'user') => AuthUser; env: Env }): boolean {
+async function isAdmin(c: { get: (k: 'user') => AuthUser; env: Env }): Promise<boolean> {
   const u = c.get('user');
-  const ownerTg = c.env.OWNER_TELEGRAM_ID || '944021185';
-  return u.role === 'owner' || u.role === 'admin' || Boolean(u.telegramId && u.telegramId === ownerTg);
+  const ownerTg = await resolveOwnerTelegramId(c.env);
+  return u.role === 'owner' || u.role === 'admin' || Boolean(ownerTg && u.telegramId && u.telegramId === ownerTg);
 }
 
 subscriptionRoutes.get('/admin/orders', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const rows = await c.env.DB.prepare(
     `SELECT us.*, u.email, u.username, sp.name_fa, sp.name_en, sp.duration_days
      FROM user_subscriptions us
@@ -725,7 +752,7 @@ subscriptionRoutes.get('/admin/orders', async (c) => {
 });
 
 subscriptionRoutes.post('/admin/orders/:id/review', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const actor = c.get('user');
   const id = c.req.param('id');
   const body = await c.req.json<{ decision: 'APPROVE' | 'REJECT'; adminNote?: string }>();
@@ -752,19 +779,37 @@ subscriptionRoutes.post('/admin/orders/:id/review', async (c) => {
     ).bind(days, actor.id, body.adminNote || 'Approved', id).run();
     await rewardReferrerIfEligible(c.env, order.user_id, order.id, Number(order.amount_usd || 0)).catch(() => {});
     await logAudit(c.env.DB, order.user_id, 'SYSTEM', 'INFO', `Subscription ${order.plan_code} approved for ${days} days`);
+    await publishTransactionEvent(c.env, {
+      eventType: 'ORDER',
+      status: 'CONFIRMED',
+      title: `تایید سفارش ${order.plan_code}`,
+      userId: order.user_id,
+      amountUsd: Number(order.amount_usd || 0),
+      invoiceNo: `#${id}`,
+      details: `تایید شده توسط ${actor.username} به مدت ${days} روز`,
+    }).catch(() => {});
   } else {
     await c.env.DB.prepare(
       `UPDATE user_subscriptions
        SET status = 'REJECTED', reviewed_by = ?, reviewed_at = datetime('now'), admin_note = ?
        WHERE id = ?`
     ).bind(actor.id, body.adminNote || 'Rejected', id).run();
+    await publishTransactionEvent(c.env, {
+      eventType: 'ORDER',
+      status: 'REJECTED',
+      title: `رد سفارش ${order.plan_code}`,
+      userId: order.user_id,
+      amountUsd: Number(order.amount_usd || 0),
+      invoiceNo: `#${id}`,
+      details: body.adminNote || `رد شده توسط ${actor.username}`,
+    }).catch(() => {});
   }
 
   return c.json({ ok: true });
 });
 
 subscriptionRoutes.post('/admin/grant', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const actor = c.get('user');
   const body = await c.req.json<{ emailOrUserId: string; planCode?: string; days?: number; note?: string }>();
   const target = (body.emailOrUserId || '').trim();
@@ -786,7 +831,7 @@ subscriptionRoutes.post('/admin/grant', async (c) => {
 });
 
 subscriptionRoutes.patch('/admin/config', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const body = await c.req.json<{
     subscriptionRequired?: boolean;
     usdtTrc20Wallet?: string;
@@ -800,7 +845,7 @@ subscriptionRoutes.patch('/admin/config', async (c) => {
   }>();
 
   const cleanSupport = body.telegramSupport?.trim();
-  const safeSupport = cleanSupport && /Dollarino_admin/i.test(cleanSupport) ? OFFICIAL_BOT_HANDLE : cleanSupport;
+  const safeSupport = cleanSupport && /Dollarino_admin/i.test(cleanSupport) ? '' : cleanSupport;
 
   const kvPairs: Array<[string, string | undefined]> = [
     ['subscription_required', body.subscriptionRequired !== undefined ? String(body.subscriptionRequired) : undefined],
@@ -924,7 +969,8 @@ subscriptionRoutes.get('/referrals', async (c) => {
 
   const webUrl = (c.env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/+$/, '');
   const inviteUrl = `${webUrl}/?ref=${encodeURIComponent(code)}`;
-  const telegramInviteUrl = `https://t.me/Dollarino_bot?start=REF_${encodeURIComponent(code)}`;
+  const botUsername = await resolveTelegramBotUsername(c.env);
+  const telegramInviteUrl = botUsername ? `https://t.me/${botUsername}?start=REF_${encodeURIComponent(code)}` : '';
 
   const sanitizedRefs = refs.results.map((r) => {
     const liveBalanceUsd = Number(r.friend_wallet_bal || 0);
@@ -1102,8 +1148,10 @@ subscriptionRoutes.post('/referrals/withdraw', async (c) => {
     .first<{ pv: number }>()
     .catch(() => null);
   if (!uRow?.pv) {
+    const botUsername = await resolveTelegramBotUsername(c.env);
+    const botLabel = botUsername ? `@${botUsername}` : 'ربات متصل تلگرام';
     return c.json(
-      { error: 'برای برداشت نقدی USDT ابتدا باید شماره تماس تلگرام خود را از طریق ربات @Dollarino_bot احراز (KYC) کنید.' },
+      { error: `برای برداشت نقدی USDT ابتدا باید شماره تماس تلگرام خود را از طریق ربات ${botLabel} احراز (KYC) کنید.` },
       403
     );
   }
@@ -1147,6 +1195,18 @@ subscriptionRoutes.post('/referrals/withdraw', async (c) => {
     c.env,
     `💸 درخواست برداشت کمیسیون رفرال\nکاربر: ${user.username} (${user.email})\nمبلغ: $${amt.toFixed(2)} USDT\nشبکه: ${network}\nآدرس: ${wallet}\nشناسه: ${wid}`
   ).catch(() => {});
+  await publishTransactionEvent(c.env, {
+    eventType: 'REFERRAL_WITHDRAWAL',
+    status: 'PENDING',
+    title: 'درخواست برداشت کمیسیون رفرال',
+    username: user.username,
+    userId: user.id,
+    amountUsd: amt,
+    asset: 'USDT',
+    network,
+    invoiceNo: wid,
+    details: `آدرس مقصد: ${wallet}`,
+  }).catch(() => {});
 
   return c.json({ ok: true, withdrawalId: wid, status: 'PENDING' }, 201);
 });
@@ -1196,7 +1256,7 @@ subscriptionRoutes.post('/redeem-gift', async (c) => {
 });
 
 subscriptionRoutes.post('/admin/gift-codes', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const actor = c.get('user');
   const body = await c.req.json<{ code?: string; planCode?: string; durationDays?: number; maxUses?: number }>();
   const code = (body.code || `DLR${Math.random().toString(36).slice(2, 8)}`).trim().toUpperCase();
@@ -1280,6 +1340,18 @@ subscriptionRoutes.post('/treasury/verify-auto', async (c) => {
     `🏦 کشف و تایید خودکار تراکنش خزانه ($${Number(res.amountUsd || 0).toFixed(2)})\n` +
       `کاربر: ${user.username}\nشبکه: ${body.network || 'BEP20'}\nTX: ${res.txHash}`
   ).catch(() => {});
+  await publishTransactionEvent(c.env, {
+    eventType: 'TREASURY_DEPOSIT',
+    status: 'CONFIRMED',
+    title: 'کشف و تایید خودکار واریز خزانه',
+    username: user.username,
+    userId: user.id,
+    amountUsd: Number(res.amountUsd || 0),
+    network: body.network || 'BEP20',
+    asset: body.asset || 'USDT',
+    txHash: res.txHash || null,
+    details: `وضعیت حساب پس از واریز: ${enforcement?.lockStatus || 'ACTIVE'}`,
+  }).catch(() => {});
   return c.json({ ...res, enforcement });
 });
 
@@ -1312,6 +1384,18 @@ subscriptionRoutes.post('/treasury/deposit', async (c) => {
           result.status === 'CONFIRMED' ? '✅ تایید خودکار آن‌چین و شارژ شد' : '⏳ در انتظار تایید ادمین'
         }\nTX: ${cleanTx}`
     ).catch(() => {});
+    await publishTransactionEvent(c.env, {
+      eventType: 'TREASURY_DEPOSIT',
+      status: result.status === 'CONFIRMED' ? 'CONFIRMED' : 'PENDING',
+      title: 'واریز به خزانه مرکزی دلارینو',
+      username: user.username,
+      userId: user.id,
+      amountUsd: amt,
+      network: net,
+      asset: body.asset || 'USDT',
+      txHash: cleanTx,
+      details: body.senderAddress ? `مبدا: ${body.senderAddress}` : undefined,
+    }).catch(() => {});
     return c.json(result, 201);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1430,6 +1514,19 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
     c.env,
     `💳 ثبت تسویه کارمزد ${SERVER_PROFIT_FEE_PCT}% سرور\nکاربر: ${user.username}\nمبلغ کل: $${invAmt.toFixed(2)} (تسویه بدهی: $${settledDebtUsd.toFixed(2)} | اعتبار مازاد: $${addedCreditUsd.toFixed(2)})\nوضعیت: ${nextLedgerStatus === 'SETTLED_ONCHAIN' ? '✅ تایید و آزاد شد' : '⏳ در انتظار تایید ادمین (حساب قفل بود)'}\nTX: ${txHash}`
   ).catch(() => {});
+  await publishTransactionEvent(c.env, {
+    eventType: 'SERVER_FEE',
+    status: nextLedgerStatus === 'SETTLED_ONCHAIN' ? 'CONFIRMED' : 'PENDING',
+    title: `تسویه کارمزد ${SERVER_PROFIT_FEE_PCT}٪ سرور`,
+    username: user.username,
+    userId: user.id,
+    amountUsd: invAmt,
+    asset,
+    network: net,
+    txHash,
+    invoiceNo: buildInvoiceNumber(depId, nowIso),
+    details: `تسویه بدهی: $${settledDebtUsd.toFixed(2)} | شارژ اعتبار مازاد: $${addedCreditUsd.toFixed(2)} | وضعیت حساب: ${enforcement.lockStatus}`,
+  }).catch(() => {});
   await logAudit(c.env.DB, user.id, 'SYSTEM', 'INFO', `Server fee settlement (${nextLedgerStatus}) debt=$${settledDebtUsd.toFixed(2)} credit=$${addedCreditUsd.toFixed(2)} tx=${txHash}`);
 
   return c.json({
@@ -1554,6 +1651,19 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
     c.env,
     `🏦 درخواست شارژ اعتبار کارمزد ${SERVER_PROFIT_FEE_PCT}%\nکاربر: ${user.username}\nمبلغ: $${amountUsd.toFixed(2)}${settledDebtUsd > 0 ? ` (تسویه بدهی: $${settledDebtUsd.toFixed(2)} | اعتبار: $${addedCreditUsd.toFixed(2)})` : ''}\nوضعیت: ${autoConfirm ? '✅ تایید خودکار آن‌چین' : '⏳ در انتظار تایید ادمین'}\nTX: ${txHash}`
   ).catch(() => {});
+  await publishTransactionEvent(c.env, {
+    eventType: 'INVOICE',
+    status: autoConfirm ? 'CONFIRMED' : 'PENDING',
+    title: 'شارژ پیش‌پرداخت کارمزد ۳٪ سرور',
+    username: user.username,
+    userId: user.id,
+    amountUsd,
+    asset,
+    network: net,
+    txHash,
+    invoiceNo: buildInvoiceNumber(feePreId, nowIso),
+    details: settledDebtUsd > 0 ? `تسویه بدهی: $${settledDebtUsd.toFixed(2)} | شارژ اعتبار: $${addedCreditUsd.toFixed(2)}` : undefined,
+  }).catch(() => {});
 
   const enforcement = await evaluateUserFeeStanding(c.env.DB, user.id);
   return c.json({
@@ -1588,7 +1698,7 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
 });
 
 subscriptionRoutes.get('/admin/server-fees', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const [policy, accounts, pendingEntries] = await Promise.all([
     getFeePolicyConfig(c.env.DB),
     c.env.DB.prepare(
@@ -1620,7 +1730,7 @@ subscriptionRoutes.get('/admin/server-fees', async (c) => {
 });
 
 subscriptionRoutes.post('/admin/server-fees/:userId/action', async (c) => {
-  if (!isAdmin(c)) return c.json({ error: 'Admin access required' }, 403);
+  if (!(await isAdmin(c))) return c.json({ error: 'Admin access required' }, 403);
   const targetUserId = c.req.param('userId');
   const body = await c.req.json<{
     action: 'APPROVE_SETTLEMENT' | 'REJECT_TX' | 'APPLY_PENALTY' | 'LOCK' | 'UNLOCK' | 'GRANT_CREDIT';
@@ -1677,6 +1787,22 @@ subscriptionRoutes.post('/admin/server-fees/:userId/action', async (c) => {
   }
 
   const standing = await evaluateUserFeeStanding(c.env.DB, targetUserId);
+  const targetMeta = await c.env.DB.prepare(`SELECT username FROM users WHERE id = ?`).bind(targetUserId).first<{ username: string }>().catch(() => null);
+  await publishTransactionEvent(c.env, {
+    eventType: 'SERVER_FEE',
+    status:
+      body.action === 'APPROVE_SETTLEMENT' || body.action === 'UNLOCK' || body.action === 'GRANT_CREDIT'
+        ? 'CONFIRMED'
+        : body.action === 'REJECT_TX'
+          ? 'REJECTED'
+          : 'LOCKED',
+    title: `عملیات مدیریتی کارمزد (${body.action})`,
+    username: targetMeta?.username || targetUserId,
+    userId: targetUserId,
+    amountUsd: typeof body.amountUsd === 'number' ? body.amountUsd : Number(standing.totalDueUsd || 0),
+    dueAt: standing.graceDeadline || null,
+    details: `وضعیت حساب پس از عملیات: ${standing.lockStatus} | بدهی باقیمانده: $${Number(standing.totalDueUsd || 0).toFixed(2)}`,
+  }).catch(() => {});
   return c.json({ ok: true, standing });
 });
 

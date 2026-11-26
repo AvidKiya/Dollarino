@@ -105,6 +105,30 @@ export interface CustomChartTable {
   cells: CustomChartTableCell[];
 }
 
+export interface CustomChartPolyline {
+  points: Array<{ time: number; price: number }>;
+  color: string;
+  fillColor?: string;
+  width?: number;
+  style?: 'solid' | 'dashed' | 'dotted';
+  curved?: boolean;
+  closed?: boolean;
+}
+
+export interface PineConsoleLog {
+  time: number;
+  barIndex: number;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
+export interface PineInputMeta {
+  name: string;
+  title: string;
+  type: string;
+  value: string | number | boolean;
+}
+
 export interface CustomChartMarker {
   time: number;
   position: 'belowBar' | 'aboveBar' | 'inBar';
@@ -116,6 +140,8 @@ export interface CustomChartMarker {
 export interface CustomStrategyEvalResult {
   valid: boolean;
   language: CustomStrategyLanguage;
+  pineVersion?: 4 | 5 | 6;
+  scriptKind?: 'indicator' | 'strategy' | 'library';
   title: string;
   overlay: boolean;
   errors: string[];
@@ -131,6 +157,10 @@ export interface CustomStrategyEvalResult {
   lines?: CustomChartLine[];
   boxes?: CustomChartBox[];
   tables?: CustomChartTable[];
+  polylines?: CustomChartPolyline[];
+  logs?: PineConsoleLog[];
+  inputs?: PineInputMeta[];
+  alertsTriggered?: Array<{ time: number; message: string }>;
   latestSignal: StrategySignalOutput | null;
 }
 
@@ -692,6 +722,150 @@ function keltnerSeries(candles: Candle[], period = 20, mult = 1.5, atrLen = 10) 
   };
 }
 
+function kamaSeries(values: number[], period = 10, fastPeriod = 2, slowPeriod = 30): number[] {
+  const out = new Array<number>(values.length).fill(NaN);
+  if (period <= 0 || values.length < period) return out;
+  const fastSc = 2 / (fastPeriod + 1);
+  const slowSc = 2 / (slowPeriod + 1);
+  for (let i = 0; i < values.length; i++) {
+    const cur = values[i];
+    if (cur === undefined || !Number.isFinite(cur)) continue;
+    if (i < period) {
+      out[i] = cur;
+      continue;
+    }
+    const prevKama = Number.isFinite(out[i - 1]) ? out[i - 1]! : cur;
+    const change = Math.abs(cur - (values[i - period] ?? cur));
+    let vol = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      vol += Math.abs((values[j] ?? cur) - (values[j - 1] ?? cur));
+    }
+    const er = vol > 0 ? change / vol : 0;
+    const sc = Math.pow(er * (fastSc - slowSc) + slowSc, 2);
+    out[i] = prevKama + sc * (cur - prevKama);
+  }
+  return out;
+}
+
+function donchianSeries(highs: number[], lows: number[], period = 20) {
+  const upper = highest(highs, period);
+  const lower = lowest(lows, period);
+  const mid = upper.map((u, i) => (Number.isFinite(u) && Number.isFinite(lower[i]) ? (u + lower[i]!) / 2 : NaN));
+  return { mid, upper, lower };
+}
+
+function obvSeries(candles: Candle[]): number[] {
+  const out = new Array<number>(candles.length).fill(0);
+  for (let i = 1; i < candles.length; i++) {
+    const prev = out[i - 1]!;
+    const c = candles[i]!;
+    const pc = candles[i - 1]!;
+    if (c.close > pc.close) out[i] = prev + c.volume;
+    else if (c.close < pc.close) out[i] = prev - c.volume;
+    else out[i] = prev;
+  }
+  return out;
+}
+
+function pvtSeries(candles: Candle[]): number[] {
+  const out = new Array<number>(candles.length).fill(0);
+  for (let i = 1; i < candles.length; i++) {
+    const prevClose = candles[i - 1]!.close;
+    const delta = prevClose !== 0 ? ((candles[i]!.close - prevClose) / prevClose) * candles[i]!.volume : 0;
+    out[i] = out[i - 1]! + delta;
+  }
+  return out;
+}
+
+function accDistSeries(candles: Candle[]): number[] {
+  const out = new Array<number>(candles.length).fill(0);
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i]!;
+    const hl = c.high - c.low;
+    const mfm = hl > 0 ? ((c.close - c.low) - (c.high - c.close)) / hl : 0;
+    out[i] = (i > 0 ? out[i - 1]! : 0) + mfm * c.volume;
+  }
+  return out;
+}
+
+function tsiSeries(values: number[], shortLen = 13, longLen = 25): number[] {
+  const mom = values.map((v, i) => (i > 0 ? v - values[i - 1]! : 0));
+  const absMom = mom.map((v) => Math.abs(v));
+  const s1 = ema(ema(mom, longLen), shortLen);
+  const s2 = ema(ema(absMom, longLen), shortLen);
+  return s1.map((num, i) => {
+    const den = s2[i]!;
+    return Number.isFinite(num) && Number.isFinite(den) && den !== 0 ? (100 * num) / den : NaN;
+  });
+}
+
+function percentRankSeries(values: number[], period = 20): number[] {
+  return values.map((v, i) => {
+    if (i < period - 1 || !Number.isFinite(v)) return NaN;
+    let count = 0;
+    let total = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const x = values[j];
+      if (x !== undefined && Number.isFinite(x)) {
+        total++;
+        if (x <= v) count++;
+      }
+    }
+    return total > 0 ? (count / total) * 100 : NaN;
+  });
+}
+
+function percentileSeries(values: number[], period = 20, pct = 50, linear = true): number[] {
+  const q = Math.max(0, Math.min(100, pct)) / 100;
+  return values.map((_, i) => {
+    if (i < period - 1) return NaN;
+    const slice = values.slice(i - period + 1, i + 1).filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+    if (!slice.length) return NaN;
+    const pos = q * (slice.length - 1);
+    if (!linear) return slice[Math.round(pos)]!;
+    const lo = Math.floor(pos);
+    const hi = Math.min(slice.length - 1, lo + 1);
+    const frac = pos - lo;
+    return slice[lo]! + frac * (slice[hi]! - slice[lo]!);
+  });
+}
+
+function cogSeries(values: number[], period = 10): number[] {
+  return values.map((_, i) => {
+    if (i < period - 1) return NaN;
+    let num = 0;
+    let den = 0;
+    for (let k = 0; k < period; k++) {
+      const v = values[i - k] ?? 0;
+      if (Number.isFinite(v)) {
+        num += v * (k + 1);
+        den += v;
+      }
+    }
+    return den !== 0 ? -num / den : NaN;
+  });
+}
+
+function modeSeries(values: number[], period = 10): number[] {
+  return values.map((_, i) => {
+    if (i < period - 1) return NaN;
+    const freq = new Map<number, number>();
+    let best = NaN;
+    let bestCnt = -1;
+    for (let j = i - period + 1; j <= i; j++) {
+      const v = values[j];
+      if (v === undefined || !Number.isFinite(v)) continue;
+      const c = (freq.get(v) ?? 0) + 1;
+      freq.set(v, c);
+      if (c > bestCnt) {
+        bestCnt = c;
+        best = v;
+      }
+    }
+    return best;
+  });
+}
+
 function shiftSeries(arr: number[], offset: number): number[] {
   if (offset <= 0) return arr;
   return arr.map((_, i) => (i - offset >= 0 ? (arr[i - offset] ?? NaN) : NaN));
@@ -861,14 +1035,55 @@ interface UserPineFn {
   bodyLines: string[];
 }
 
-type Val = number[] | number | string | boolean | Val[] | { __objType: 'label' | 'line' | 'box' | 'table' | 'array'; id: string };
+interface DrawPointObj {
+  barIdx?: number;
+  timeSec?: number;
+  price: number;
+}
+
+interface DrawPolylineObj {
+  id: string;
+  pointsArrId: string;
+  color: string;
+  fillColor?: string;
+  width: number;
+  style: CustomChartLine['style'];
+  curved: boolean;
+  closed: boolean;
+  deleted?: boolean;
+}
+
+interface DrawLineFillObj {
+  id: string;
+  line1Id: string;
+  line2Id: string;
+  color: string;
+}
+
+interface UdtFieldDef {
+  name: string;
+  type: string;
+  defaultExpr?: string;
+}
+
+type ObjTypeTag = 'label' | 'line' | 'box' | 'table' | 'array' | 'map' | 'matrix' | 'point' | 'polyline' | 'linefill' | 'udt';
+
+type Val = number[] | number | string | boolean | Val[] | { __objType: ObjTypeTag; id: string; typeName?: string };
 
 interface ExecEnv {
   candles: Candle[];
   timeframe: string;
+  pineVersion: 4 | 5 | 6;
+  scriptKind: 'indicator' | 'strategy' | 'library';
   vars: Map<string, Val>;
+  varHistory: Map<string, Array<number | string>>;
   barLocals: Map<string, Val>;
   userFns: Map<string, UserPineFn>;
+  userMethods: Map<string, UserPineFn>;
+  importedAliases: Map<string, string>;
+  udtDefs: Map<string, UdtFieldDef[]>;
+  udtInstances: Map<string, { typeName: string; fields: Map<string, Val> }>;
+  enumDefs: Map<string, Map<string, string | number>>;
   plots: CustomPlotSeries[];
   plotSeriesById: Map<string, number[]>;
   hlines: CustomHLine[];
@@ -881,10 +1096,19 @@ interface ExecEnv {
   boxes: Map<string, DrawBoxObj>;
   tables: Map<string, DrawTableObj>;
   arrays: Map<string, Val[]>;
+  maps: Map<string, Map<string, Val>>;
+  matrices: Map<string, { rows: number; cols: number; data: number[][] }>;
+  points: Map<string, DrawPointObj>;
+  polylines: Map<string, DrawPolylineObj>;
+  linefills: Map<string, DrawLineFillObj>;
+  inputs: PineInputMeta[];
+  logs: PineConsoleLog[];
+  alertsTriggered: Array<{ time: number; message: string }>;
   longFlags: number[];
   shortFlags: number[];
   closeFlags: number[];
   warnings: string[];
+  warningSet: Set<string>;
   barIdx: number | null;
   nextObjSeq: number;
 }
@@ -1066,7 +1290,15 @@ function formatPineNum(n: number, fmt?: string): string {
   return Number(n.toFixed(4)).toString();
 }
 
-function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val[] {
+function callBuiltinFn(nameRaw: string, rawArgs: string[], env: ExecEnv): Val | Val[] {
+  let name = nameRaw.replace(/<[^>]+>/g, '');
+  if (name.includes('.')) {
+    const dotIdx = name.indexOf('.');
+    const prefix = name.slice(0, dotIdx);
+    const rest = name.slice(dotIdx + 1);
+    const mappedNs = env.importedAliases.get(prefix);
+    if (mappedNs) name = `${mappedNs}.${rest}`;
+  }
   const n = name.toLowerCase();
   const len = env.candles.length;
   const bar = env.barIdx;
@@ -1133,6 +1365,24 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     return def;
   };
 
+  // UDT Constructor: MyType.new(a, b, ...)
+  if (name.endsWith('.new')) {
+    const typeName = name.slice(0, -4);
+    const fieldsDef = env.udtDefs.get(typeName);
+    if (fieldsDef) {
+      const id = `udt_${env.nextObjSeq++}`;
+      const fields = new Map<string, Val>();
+      fieldsDef.forEach((f, idx) => {
+        const argExpr = getArgExpr(f.name, idx);
+        if (argExpr !== undefined) fields.set(f.name, evalExpr(argExpr, env));
+        else if (f.defaultExpr !== undefined) fields.set(f.name, evalExpr(f.defaultExpr, env));
+        else fields.set(f.name, NaN);
+      });
+      env.udtInstances.set(id, { typeName, fields });
+      return { __objType: 'udt', id, typeName };
+    }
+  }
+
   // User-defined functions
   if (env.userFns.has(name)) {
     const fn = env.userFns.get(name)!;
@@ -1158,11 +1408,20 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     return lastVal;
   }
 
-  // Inputs (all input.* variants)
+  // Inputs (all input.* variants — recorded for Inspector UI)
   if (n === 'input' || n.startsWith('input.')) {
-    const dv = namedOrIdx('defval', 0, n === 'input.bool' ? 1 : n === 'input.string' ? '' : 14);
-    if (n === 'input.color') return resolveColorToken(String(dv), '#2b74ff');
-    return dv;
+    const dv = namedOrIdx('defval', 0, n === 'input.bool' ? 1 : n === 'input.string' || n === 'input.timeframe' || n === 'input.session' ? '' : 14);
+    const inTitle = strArg(1, n.replace('input.', ''), 'title');
+    const resolved = n === 'input.color' ? resolveColorToken(String(dv), '#2b74ff') : dv;
+    if (bar === null || bar === 0) {
+      env.inputs.push({
+        name: inTitle,
+        title: inTitle,
+        type: n.replace('input.', '') || 'float',
+        value: typeof resolved === 'boolean' || typeof resolved === 'number' || typeof resolved === 'string' ? resolved : String(resolved),
+      });
+    }
+    return resolved;
   }
 
   // Color builders
@@ -1246,21 +1505,59 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     const x = Number(strArg(0, 'NaN'));
     return Number.isFinite(x) ? x : NaN;
   }
+  if (n === 'str.pos') return strArg(0, '').indexOf(strArg(1, ''));
+  if (n === 'str.startswith') return strArg(0, '').startsWith(strArg(1, '')) ? 1 : 0;
+  if (n === 'str.endswith') return strArg(0, '').endsWith(strArg(1, '')) ? 1 : 0;
+  if (n === 'str.match') return strArg(0, '').match(new RegExp(strArg(1, ''))) ? 1 : 0;
+  if (n === 'str.format_time') {
+    const ms = floatArg(0, Date.now());
+    try {
+      return new Date(ms).toISOString().replace('T', ' ').slice(0, 16);
+    } catch {
+      return String(ms);
+    }
+  }
+  if (n === 'str.split') {
+    const parts = strArg(0, '').split(strArg(1, ','));
+    const id = `arr_${env.nextObjSeq++}`;
+    env.arrays.set(id, parts);
+    return { __objType: 'array', id };
+  }
 
-  // Request Security (Multi-Timeframe Resampling)
-  if (n === 'request.security' || n === 'security') {
+  // Request Security (Multi-Timeframe Resampling — supports single expression & tuple [a, b, c])
+  if (n === 'request.security' || n === 'security' || n === 'request.security_lower_tf') {
     const tf = strArg(1, env.timeframe);
-    const exprStr = getArgExpr('expression', 2) ?? 'close';
+    const exprStr = (getArgExpr('expression', 2) ?? 'close').trim();
     const { htf, mapIdx } = resampleCandlesForTf(env.candles, tf);
     if (!htf.length) return new Array<number>(len).fill(NaN);
     const subEnv = makeBaseEnv(htf, tf);
-    // Copy numeric scalar vars from parent
     for (const [k, v] of env.vars.entries()) {
       if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') subEnv.vars.set(k, v);
     }
     subEnv.userFns = env.userFns;
+    subEnv.importedAliases = env.importedAliases;
+    if (exprStr.startsWith('[') && exprStr.endsWith(']')) {
+      const tupleParts = splitTopLevelArgs(exprStr.slice(1, -1));
+      return tupleParts.map((part) => {
+        const subVal = toSeries(evalExpr(part, subEnv), htf.length);
+        return mapIdx.map((hi) => subVal[hi] ?? NaN);
+      });
+    }
     const subVal = toSeries(evalExpr(exprStr, subEnv), htf.length);
     return mapIdx.map((hi) => subVal[hi] ?? NaN);
+  }
+
+  // Timeframe helpers (timeframe.*)
+  if (n === 'timeframe.in_seconds') {
+    const tfArg = rawArgs[0] ? strArg(0, env.timeframe) : env.timeframe;
+    const { htf } = resampleCandlesForTf(env.candles.slice(0, 2), tfArg);
+    void htf;
+    const mapSec: Record<string, number> = {
+      '1': 60, '1m': 60, '3': 180, '3m': 180, '5': 300, '5m': 300, '15': 900, '15m': 900,
+      '30': 1800, '30m': 1800, '60': 3600, '1h': 3600, '120': 7200, '2h': 7200,
+      '240': 14400, '4h': 14400, 'd': 86400, '1d': 86400, 'w': 604800, '1w': 604800,
+    };
+    return mapSec[tfArg.toLowerCase()] ?? 900;
   }
 
   // Full TA Library (ta.*)
@@ -1532,6 +1829,42 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
       return den > 0 ? num / den : 0;
     });
   }
+  if (n === 'ta.kama') {
+    return kamaSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 10), numArg(2, 2), numArg(3, 30));
+  }
+  if (n === 'ta.donchian' || n === 'ta.dc') {
+    const p = numArg(0, 20);
+    const dc = donchianSeries(highArr, lowArr, p);
+    return n === 'ta.dc' ? [dc.mid, dc.upper, dc.lower] : dc.mid;
+  }
+  if (n === 'ta.kcw') {
+    const k = keltnerSeries(env.candles, numArg(1, 20), floatArg(2, 1.5), numArg(3, 10));
+    return k.mid.map((m, i) => (Number.isFinite(m) && m !== 0 ? (k.upper[i]! - k.lower[i]!) / m : NaN));
+  }
+  if (n === 'ta.obv') return obvSeries(env.candles);
+  if (n === 'ta.pvt') return pvtSeries(env.candles);
+  if (n === 'ta.accdist') return accDistSeries(env.candles);
+  if (n === 'ta.tsi') return tsiSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 13), numArg(2, 25));
+  if (n === 'ta.percentrank') return percentRankSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 20));
+  if (n === 'ta.percentile_linear_interpolation') return percentileSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 20), floatArg(2, 50), true);
+  if (n === 'ta.percentile_nearest_rank') return percentileSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 20), floatArg(2, 50), false);
+  if (n === 'ta.cog') return cogSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 10));
+  if (n === 'ta.mode') return modeSeries(toSeries(evalArg(0, closeArr), len), numArg(1, 10));
+  if (n === 'ta.rci') {
+    const src = toSeries(evalArg(0, closeArr), len);
+    const p = numArg(1, 10);
+    return src.map((_, i) => {
+      if (i < p - 1) return NaN;
+      const win = src.slice(i - p + 1, i + 1);
+      const indexed = win.map((v, idx) => ({ v, tRank: idx + 1 })).sort((a, b) => a.v - b.v);
+      let d2 = 0;
+      indexed.forEach((item, rIdx) => {
+        const diff = item.tRank - (rIdx + 1);
+        d2 += diff * diff;
+      });
+      return (1 - (6 * d2) / (p * (p * p - 1))) * 100;
+    });
+  }
 
   // Full Math Library (math.*)
   if (n === 'math.abs' || n === 'abs') return toSeries(evalArg(0), len).map((x) => Math.abs(x));
@@ -1546,6 +1879,22 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
   if (n === 'math.sin' || n === 'sin') return toSeries(evalArg(0), len).map((x) => Math.sin(x));
   if (n === 'math.cos' || n === 'cos') return toSeries(evalArg(0), len).map((x) => Math.cos(x));
   if (n === 'math.tan' || n === 'tan') return toSeries(evalArg(0), len).map((x) => Math.tan(x));
+  if (n === 'math.asin') return toSeries(evalArg(0), len).map((x) => Math.asin(Math.max(-1, Math.min(1, x))));
+  if (n === 'math.acos') return toSeries(evalArg(0), len).map((x) => Math.acos(Math.max(-1, Math.min(1, x))));
+  if (n === 'math.atan') return toSeries(evalArg(0), len).map((x) => Math.atan(x));
+  if (n === 'math.todegrees') return toSeries(evalArg(0), len).map((x) => (x * 180) / Math.PI);
+  if (n === 'math.toradians') return toSeries(evalArg(0), len).map((x) => (x * Math.PI) / 180);
+  if (n === 'math.clamp') {
+    const valS = toSeries(evalArg(0), len);
+    const minS = toSeries(evalArg(1), len);
+    const maxS = toSeries(evalArg(2), len);
+    return valS.map((v, i) => Math.max(minS[i]!, Math.min(maxS[i]!, v)));
+  }
+  if (n === 'math.random') {
+    const lo = floatArg(0, 0);
+    const hi = floatArg(1, 1);
+    return lo + Math.random() * (hi - lo);
+  }
   if (n === 'math.pow' || n === 'pow') {
     const a = toSeries(evalArg(0), len);
     const b = toSeries(evalArg(1), len);
@@ -1598,7 +1947,7 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
   }
   if (n === 'shift') return shiftSeries(toSeries(evalArg(0), len), numArg(1, 1));
 
-  // Array Constructors & Methods
+  // Array Constructors & Methods (Full v5/v6 array.*)
   if (n.startsWith('array.new')) {
     const id = `arr_${env.nextObjSeq++}`;
     const size = Math.max(0, Math.round(floatArg(0, 0)));
@@ -1637,27 +1986,307 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     }
     if (sub === 'get') {
       const idx = Math.round(floatArg(1, 0));
-      return arr[idx] ?? NaN;
+      return arr[idx < 0 ? arr.length + idx : idx] ?? NaN;
     }
+    if (sub === 'first') return arr[0] ?? NaN;
+    if (sub === 'last') return arr[arr.length - 1] ?? NaN;
     if (sub === 'set') {
       const idx = Math.round(floatArg(1, 0));
       const val = evalArg(2, NaN);
-      if (idx >= 0 && idx < arr.length) arr[idx] = val;
+      const realIdx = idx < 0 ? arr.length + idx : idx;
+      if (realIdx >= 0 && realIdx < arr.length) arr[realIdx] = val;
       return val;
+    }
+    if (sub === 'insert') {
+      const idx = Math.max(0, Math.min(arr.length, Math.round(floatArg(1, 0))));
+      arr.splice(idx, 0, evalArg(2, NaN));
+      return arr.length;
     }
     if (sub === 'remove') {
       const idx = Math.round(floatArg(1, 0));
-      return arr.splice(idx, 1)[0] ?? NaN;
+      const realIdx = idx < 0 ? arr.length + idx : idx;
+      return arr.splice(realIdx, 1)[0] ?? NaN;
     }
-    if (sub === 'sum' || sub === 'avg' || sub === 'max' || sub === 'min') {
+    if (sub === 'indexof') {
+      const target = evalArg(1, NaN);
+      return arr.findIndex((x) => x === target);
+    }
+    if (sub === 'includes') {
+      const target = evalArg(1, NaN);
+      return arr.includes(target) ? 1 : 0;
+    }
+    if (sub === 'reverse') {
+      arr.reverse();
+      return { __objType: 'array', id };
+    }
+    if (sub === 'sort') {
+      const desc = String(getArgExpr(null, 1) || '').toLowerCase().includes('desc');
+      arr.sort((a, b) => (desc ? Number(b) - Number(a) : Number(a) - Number(b)));
+      return { __objType: 'array', id };
+    }
+    if (sub === 'copy') {
+      const nid = `arr_${env.nextObjSeq++}`;
+      env.arrays.set(nid, [...arr]);
+      return { __objType: 'array', id: nid };
+    }
+    if (sub === 'slice') {
+      const from = Math.max(0, Math.round(floatArg(1, 0)));
+      const to = rawArgs[2] ? Math.round(floatArg(2, arr.length)) : arr.length;
+      const nid = `arr_${env.nextObjSeq++}`;
+      env.arrays.set(nid, arr.slice(from, to));
+      return { __objType: 'array', id: nid };
+    }
+    if (sub === 'fill') {
+      const val = evalArg(1, NaN);
+      const from = rawArgs[2] ? Math.max(0, Math.round(floatArg(2, 0))) : 0;
+      const to = rawArgs[3] ? Math.min(arr.length, Math.round(floatArg(3, arr.length))) : arr.length;
+      arr.fill(val, from, to);
+      return arr.length;
+    }
+    if (sub === 'join') return arr.map((x) => String(x)).join(strArg(1, ','));
+    if (sub === 'sum' || sub === 'avg' || sub === 'max' || sub === 'min' || sub === 'median' || sub === 'stdev' || sub === 'percentile_linear_interpolation') {
       const nums = arr.map((x) => Number(x)).filter((x) => Number.isFinite(x));
       if (!nums.length) return NaN;
       if (sub === 'sum') return nums.reduce((a, b) => a + b, 0);
-      if (sub === 'avg') return nums.reduce((a, b) => a + b, 0) / nums.length;
+      const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+      if (sub === 'avg') return mean;
       if (sub === 'max') return Math.max(...nums);
-      return Math.min(...nums);
+      if (sub === 'min') return Math.min(...nums);
+      if (sub === 'stdev') return Math.sqrt(nums.reduce((a, b) => a + (b - mean) * (b - mean), 0) / nums.length);
+      const sorted = [...nums].sort((a, b) => a - b);
+      if (sub === 'median') return sorted[Math.floor(sorted.length / 2)]!;
+      const q = Math.max(0, Math.min(100, floatArg(1, 50))) / 100;
+      const pos = q * (sorted.length - 1);
+      const lo = Math.floor(pos);
+      const hi = Math.min(sorted.length - 1, lo + 1);
+      return sorted[lo]! + (pos - lo) * (sorted[hi]! - sorted[lo]!);
     }
     return NaN;
+  }
+
+  // Map Library (Pine v5.5 / v6 map.*)
+  if (n.startsWith('map.new')) {
+    const id = `map_${env.nextObjSeq++}`;
+    env.maps.set(id, new Map<string, Val>());
+    return { __objType: 'map', id };
+  }
+  if (n.startsWith('map.')) {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    const mp = env.maps.get(id);
+    if (!mp) return NaN;
+    const sub = n.slice(4);
+    const key = strArg(1, '');
+    if (sub === 'put') {
+      const val = evalArg(2, NaN);
+      const prev = mp.get(key) ?? NaN;
+      mp.set(key, val);
+      return prev;
+    }
+    if (sub === 'get') return mp.get(key) ?? NaN;
+    if (sub === 'contains') return mp.has(key) ? 1 : 0;
+    if (sub === 'remove') {
+      const prev = mp.get(key) ?? NaN;
+      mp.delete(key);
+      return prev;
+    }
+    if (sub === 'size') return mp.size;
+    if (sub === 'clear') {
+      mp.clear();
+      return 0;
+    }
+    if (sub === 'keys') {
+      const aid = `arr_${env.nextObjSeq++}`;
+      env.arrays.set(aid, [...mp.keys()]);
+      return { __objType: 'array', id: aid };
+    }
+    if (sub === 'values') {
+      const aid = `arr_${env.nextObjSeq++}`;
+      env.arrays.set(aid, [...mp.values()]);
+      return { __objType: 'array', id: aid };
+    }
+    return NaN;
+  }
+
+  // Matrix Library (Pine v5 / v6 matrix.*)
+  if (n.startsWith('matrix.new')) {
+    const id = `mat_${env.nextObjSeq++}`;
+    const rows = Math.max(0, Math.min(64, Math.round(floatArg(0, 0))));
+    const cols = Math.max(0, Math.min(64, Math.round(floatArg(1, 0))));
+    const init = floatArg(2, NaN);
+    const data = Array.from({ length: rows }, () => new Array<number>(cols).fill(init));
+    env.matrices.set(id, { rows, cols, data });
+    return { __objType: 'matrix', id };
+  }
+  if (n.startsWith('matrix.')) {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    const mat = env.matrices.get(id);
+    if (!mat) return NaN;
+    const sub = n.slice(7);
+    if (sub === 'rows') return mat.rows;
+    if (sub === 'columns') return mat.cols;
+    if (sub === 'get') {
+      const r = Math.round(floatArg(1, 0));
+      const c = Math.round(floatArg(2, 0));
+      return mat.data[r]?.[c] ?? NaN;
+    }
+    if (sub === 'set') {
+      const r = Math.round(floatArg(1, 0));
+      const c = Math.round(floatArg(2, 0));
+      const v = floatArg(3, NaN);
+      if (mat.data[r] && c >= 0 && c < mat.cols) mat.data[r]![c] = v;
+      return v;
+    }
+    if (sub === 'row') {
+      const r = Math.round(floatArg(1, 0));
+      const aid = `arr_${env.nextObjSeq++}`;
+      env.arrays.set(aid, [...(mat.data[r] ?? [])]);
+      return { __objType: 'array', id: aid };
+    }
+    if (sub === 'add_row') {
+      const idx = Math.max(0, Math.min(mat.rows, Math.round(floatArg(1, mat.rows))));
+      const rowRef = evalArg(2);
+      const rArr =
+        typeof rowRef === 'object' && rowRef && '__objType' in rowRef
+          ? (env.arrays.get(rowRef.id) ?? []).map((x) => Number(x))
+          : new Array<number>(mat.cols).fill(NaN);
+      mat.data.splice(idx, 0, rArr);
+      mat.rows = mat.data.length;
+      return mat.rows;
+    }
+    if (sub === 'sum' || sub === 'avg' || sub === 'min' || sub === 'max') {
+      const flat = mat.data.flat().filter((x) => Number.isFinite(x));
+      if (!flat.length) return NaN;
+      if (sub === 'sum') return flat.reduce((a, b) => a + b, 0);
+      if (sub === 'avg') return flat.reduce((a, b) => a + b, 0) / flat.length;
+      if (sub === 'min') return Math.min(...flat);
+      return Math.max(...flat);
+    }
+    return NaN;
+  }
+
+  // Chart Points & Polylines (Pine v5.5 / v6)
+  if (n === 'chart.point.from_index') {
+    const id = `pt_${env.nextObjSeq++}`;
+    const curBar = bar ?? len - 1;
+    env.points.set(id, {
+      barIdx: Math.round(floatArg(0, curBar, 'index')),
+      price: floatArg(1, closeArr[curBar] ?? 0, 'price'),
+    });
+    return { __objType: 'point', id };
+  }
+  if (n === 'chart.point.from_time') {
+    const id = `pt_${env.nextObjSeq++}`;
+    const curBar = bar ?? len - 1;
+    const tMs = floatArg(0, env.candles[curBar]?.timestamp ?? Date.now(), 'time');
+    env.points.set(id, {
+      timeSec: tMs > 1e11 ? Math.floor(tMs / 1000) : Math.floor(tMs),
+      price: floatArg(1, closeArr[curBar] ?? 0, 'price'),
+    });
+    return { __objType: 'point', id };
+  }
+  if (n === 'chart.point.now') {
+    const id = `pt_${env.nextObjSeq++}`;
+    const curBar = bar ?? len - 1;
+    env.points.set(id, {
+      barIdx: curBar,
+      price: floatArg(0, closeArr[curBar] ?? 0, 'price'),
+    });
+    return { __objType: 'point', id };
+  }
+  if (n === 'polyline.new') {
+    const ptsRef = namedOrIdx('points', 0);
+    const ptsArrId = typeof ptsRef === 'object' && ptsRef && '__objType' in ptsRef ? ptsRef.id : '';
+    const curved = Boolean(floatArg(1, 0, 'curved'));
+    const closed = Boolean(floatArg(2, 0, 'closed'));
+    const colRaw = getArgExpr('line_color', 4);
+    const lineColor = resolveColorToken(colRaw ? String(evalExpr(colRaw, env)) : '#38e1ff', '#38e1ff') || '#38e1ff';
+    const fillRaw = getArgExpr('fill_color', 5);
+    const fillColor = fillRaw ? resolveColorToken(String(evalExpr(fillRaw, env)), '') : undefined;
+    const styleRaw = getArgExpr('line_style', 6) ?? 'line.style_solid';
+    const width = Math.max(1, Math.min(5, Math.round(floatArg(7, 2, 'line_width'))));
+    const id = `poly_${env.nextObjSeq++}`;
+    env.polylines.set(id, {
+      id,
+      pointsArrId: ptsArrId,
+      color: lineColor,
+      fillColor: fillColor || undefined,
+      width,
+      style: resolveLineStyle(styleRaw),
+      curved,
+      closed,
+    });
+    return { __objType: 'polyline', id };
+  }
+  if (n === 'polyline.delete') {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    const p = env.polylines.get(id);
+    if (p) p.deleted = true;
+    env.polylines.delete(id);
+    return 0;
+  }
+
+  // Linefill (fill region between two line.new objects)
+  if (n === 'linefill.new') {
+    const l1 = evalArg(0);
+    const l2 = evalArg(1);
+    const l1Id = typeof l1 === 'object' && l1 && '__objType' in l1 ? l1.id : '';
+    const l2Id = typeof l2 === 'object' && l2 && '__objType' in l2 ? l2.id : '';
+    const cRaw = getArgExpr('color', 2);
+    const col = resolveColorToken(cRaw ? String(evalExpr(cRaw, env)) : 'rgba(56,225,255,0.14)', 'rgba(56,225,255,0.14)');
+    const id = `lf_${env.nextObjSeq++}`;
+    env.linefills.set(id, { id, line1Id: l1Id, line2Id: l2Id, color: col });
+    return { __objType: 'linefill', id };
+  }
+  if (n === 'linefill.set_color') {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    const lf = env.linefills.get(id);
+    if (lf) lf.color = resolveColorToken(strArg(1, lf.color), lf.color) || lf.color;
+    return 0;
+  }
+  if (n === 'linefill.delete') {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    env.linefills.delete(id);
+    return 0;
+  }
+
+  // Pine v5/v6 Console Logging & Alerts (log.*, alert)
+  if (n === 'log.info' || n === 'log.warning' || n === 'log.error') {
+    const curBar = bar ?? len - 1;
+    let msg = strArg(0, '');
+    if (rawArgs.length > 1) {
+      for (let i = 1; i < rawArgs.length; i++) {
+        const v = evalArg(i, '');
+        const s = typeof v === 'number' ? formatPineNum(v) : Array.isArray(v) ? formatPineNum(Number(v[curBar] ?? NaN)) : String(v);
+        msg = msg.replace(new RegExp(`\\{${i - 1}(?:,[^}]*)?\\}`, 'g'), s);
+      }
+    }
+    if (env.logs.length < 250) {
+      env.logs.push({
+        time: barTimeSec(env.candles, curBar),
+        barIndex: curBar,
+        level: n === 'log.error' ? 'error' : n === 'log.warning' ? 'warn' : 'info',
+        message: msg,
+      });
+    }
+    return 0;
+  }
+  if (n === 'alert') {
+    const curBar = bar ?? len - 1;
+    const msg = strArg(0, 'Alert triggered');
+    env.alertsTriggered.push({ time: barTimeSec(env.candles, curBar), message: msg });
+    if (env.logs.length < 250) {
+      env.logs.push({ time: barTimeSec(env.candles, curBar), barIndex: curBar, level: 'info', message: `[ALERT] ${msg}` });
+    }
+    return 0;
+  }
+  if (n === 'runtime.error') {
+    pushWarning(env, strArg(0, 'Runtime error'));
+    return 0;
   }
 
   // Drawing Primitives: label.new, line.new, box.new, table.new + setters
@@ -1715,7 +2344,10 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     else if (n === 'label.set_xy') {
       lbl.barIdx = Math.round(floatArg(1, lbl.barIdx));
       lbl.price = floatArg(2, lbl.price);
-    }
+    } else if (n === 'label.set_tooltip') lbl.tooltip = strArg(1, lbl.tooltip || '');
+    else if (n === 'label.get_x') return lbl.barIdx;
+    else if (n === 'label.get_y') return lbl.price;
+    else if (n === 'label.get_text') return lbl.text;
     return 0;
   }
 
@@ -1764,7 +2396,17 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
       ln.y2 = floatArg(2, ln.y2);
     } else if (n === 'line.set_color') ln.color = resolveColorToken(strArg(1, ln.color), ln.color) || ln.color;
     else if (n === 'line.set_width') ln.width = Math.max(1, Math.min(5, Math.round(floatArg(1, ln.width))));
+    else if (n === 'line.set_style') ln.style = resolveLineStyle(getArgExpr(null, 1) ?? 'solid');
     else if (n === 'line.set_extend') ln.extend = resolveExtend(getArgExpr(null, 1) ?? 'none');
+    else if (n === 'line.get_x1') return ln.x1Bar;
+    else if (n === 'line.get_x2') return ln.x2Bar;
+    else if (n === 'line.get_y1') return ln.y1;
+    else if (n === 'line.get_y2') return ln.y2;
+    else if (n === 'line.get_price') {
+      const targetBar = floatArg(1, bar ?? len - 1);
+      const dx = ln.x2Bar - ln.x1Bar;
+      return dx !== 0 ? ln.y1 + ((ln.y2 - ln.y1) * (targetBar - ln.x1Bar)) / dx : ln.y1;
+    }
     return 0;
   }
 
@@ -1812,9 +2454,18 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     else if (n === 'box.set_right') bx.rightBar = Math.round(floatArg(1, bx.rightBar));
     else if (n === 'box.set_top') bx.top = floatArg(1, bx.top);
     else if (n === 'box.set_bottom') bx.bottom = floatArg(1, bx.bottom);
-    else if (n === 'box.set_bgcolor') bx.bgcolor = resolveColorToken(strArg(1, bx.bgcolor), bx.bgcolor) || bx.bgcolor;
+    else if (n === 'box.set_lefttop') {
+      bx.leftBar = Math.round(floatArg(1, bx.leftBar));
+      bx.top = floatArg(2, bx.top);
+    } else if (n === 'box.set_rightbottom') {
+      bx.rightBar = Math.round(floatArg(1, bx.rightBar));
+      bx.bottom = floatArg(2, bx.bottom);
+    } else if (n === 'box.set_bgcolor') bx.bgcolor = resolveColorToken(strArg(1, bx.bgcolor), bx.bgcolor) || bx.bgcolor;
     else if (n === 'box.set_border_color') bx.borderColor = resolveColorToken(strArg(1, bx.borderColor), bx.borderColor) || bx.borderColor;
+    else if (n === 'box.set_border_width') bx.borderWidth = Math.max(0, Math.min(4, Math.round(floatArg(1, bx.borderWidth))));
+    else if (n === 'box.set_border_style') bx.borderStyle = resolveLineStyle(getArgExpr(null, 1) ?? 'solid');
     else if (n === 'box.set_text') bx.text = strArg(1, bx.text || '');
+    else if (n === 'box.set_text_color') bx.textColor = resolveColorToken(strArg(1, bx.textColor || '#e2e8f0'), '#e2e8f0');
     else if (n === 'box.set_extend') bx.extend = resolveExtend(getArgExpr(null, 1) ?? 'none');
     else if (n === 'box.get_top') return bx.top;
     else if (n === 'box.get_bottom') return bx.bottom;
@@ -1851,11 +2502,38 @@ function callBuiltinFn(name: string, rawArgs: string[], env: ExecEnv): Val | Val
     tbl.cells.set(`${row}:${col}`, { row, col, text, textColor: tc, bgcolor: bg, textSize: 'small' });
     return 0;
   }
+  if (n === 'table.cell_set_text' || n === 'table.cell_set_bgcolor' || n === 'table.cell_set_text_color') {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    const tbl = env.tables.get(id);
+    if (!tbl) return 0;
+    const col = Math.max(0, Math.round(floatArg(1, 0)));
+    const row = Math.max(0, Math.round(floatArg(2, 0)));
+    const key = `${row}:${col}`;
+    const existing = tbl.cells.get(key) ?? { row, col, text: '', textColor: '#e2e8f0', textSize: 'small' as const };
+    if (n === 'table.cell_set_text') existing.text = strArg(3, existing.text);
+    else if (n === 'table.cell_set_bgcolor') existing.bgcolor = resolveColorToken(strArg(3, 'transparent'), 'transparent');
+    else existing.textColor = resolveColorToken(strArg(3, '#e2e8f0'), '#e2e8f0');
+    tbl.cells.set(key, existing);
+    return 0;
+  }
+  if (n === 'table.clear') {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    env.tables.get(id)?.cells.clear();
+    return 0;
+  }
+  if (n === 'table.delete') {
+    const ref = evalArg(0);
+    const id = typeof ref === 'object' && ref && '__objType' in ref ? ref.id : '';
+    env.tables.delete(id);
+    return 0;
+  }
   if (n.startsWith('table.')) return 0;
 
   // Fallback for openArr lookback safety
   void openArr;
-  env.warnings.push(`Unsupported helper ${name}; defaulted safely.`);
+  pushWarning(env, `Unsupported helper ${name}; defaulted safely.`);
   return new Array<number>(len).fill(NaN);
 }
 
@@ -1940,6 +2618,23 @@ function evalExpr(exprRaw: string, env: ExecEnv): Val {
     [{ tok: '*', isWord: false }, { tok: '/', isWord: false }, { tok: '%', isWord: false }],
   ];
 
+  const isGenericAngleAt = (s: string, pos: number): boolean => {
+    const ch = s[pos];
+    if (ch !== '<' && ch !== '>') return false;
+    const openPos = ch === '<' ? pos : s.lastIndexOf('<', pos - 1);
+    if (openPos <= 0) return false;
+    const closePos = ch === '>' ? pos : s.indexOf('>', pos + 1);
+    if (closePos <= openPos) return false;
+    const before = s.slice(0, openPos);
+    const inside = s.slice(openPos + 1, closePos);
+    const after = s.slice(closePos + 1);
+    return (
+      /[A-Za-z_][A-Za-z0-9_.]*$/.test(before) &&
+      /^[A-Za-z0-9_.,\s[\]]+$/.test(inside) &&
+      /^\s*\(/.test(after)
+    );
+  };
+
   for (const ops of opGroups) {
     let depth = 0;
     let quote: string | null = null;
@@ -1967,8 +2662,11 @@ function evalExpr(exprRaw: string, env: ExecEnv): Val {
           const next = expr[i + 1] ?? ' ';
           if (!/\s|\)/.test(prev) || !/\s|\(/.test(next)) continue;
         }
-        if (op.tok === '-' && /^[\s(*\/+\-><=!&|,%?]$/.test(expr[start - 1] ?? ' ')) continue;
-        if ((op.tok === '>' || op.tok === '<') && (expr[start - 1] === '=' || expr[i + 1] === '=')) continue;
+        if (op.tok === '-') {
+          const prevNonWs = expr.slice(0, start).trimEnd().slice(-1);
+          if (!prevNonWs || /^[(*\/+\-><=!&|,%?:\[]$/.test(prevNonWs)) continue;
+        }
+        if ((op.tok === '>' || op.tok === '<') && (expr[start - 1] === '=' || expr[i + 1] === '=' || isGenericAngleAt(expr, start))) continue;
         if ((op.tok === '|' || op.tok === '&') && (expr[start - 1] === op.tok || expr[i + 1] === op.tok)) continue;
 
         const leftVal = evalExpr(expr.slice(0, start), env);
@@ -2118,14 +2816,41 @@ function evalExpr(exprRaw: string, env: ExecEnv): Val {
   const shiftMatch = expr.match(/^(.+)\.shift\(\s*(\d+)\s*\)$/);
   if (shiftMatch) return shiftSeries(toSeries(evalExpr(shiftMatch[1]!, env), len), Number(shiftMatch[2]!));
 
-  // Method call sugar: obj.method(args) -> namespace.method(obj, args) for array/label/line/box/table
-  const methodMatch = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)\.(push|pop|shift|unshift|get|set|size|clear|sum|avg|max|min|remove|delete|set_text|set_color|set_textcolor|set_xy|set_xy1|set_xy2|set_x1|set_x2|set_y1|set_y2|set_left|set_right|set_top|set_bottom|set_bgcolor|set_border_color|get_top|get_bottom|get_left|get_right|cell)\(([\s\S]*)\)$/);
+  // Method call sugar: obj.method(args) -> namespace.method(obj, args) for array/map/matrix/label/line/box/table/udt
+  const methodMatch = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\(([\s\S]*)\)$/);
   if (methodMatch) {
     const objName = methodMatch[1]!;
     const method = methodMatch[2]!;
     const obj = lookupVar(objName, env);
     if (obj && typeof obj === 'object' && '__objType' in obj) {
       const ns = obj.__objType;
+      if (ns === 'udt') {
+        const userM = env.userMethods.get(`${obj.typeName ?? ''}.${method}`) ?? env.userMethods.get(method);
+        if (userM) {
+          const savedLocals = new Map(env.barLocals);
+          const rawArgList = splitTopLevelArgs(methodMatch[3]!.trim());
+          if (userM.params[0]) env.barLocals.set(userM.params[0].name, obj);
+          userM.params.slice(1).forEach((p, idx) => {
+            const argExpr = rawArgList[idx];
+            if (argExpr !== undefined) env.barLocals.set(p.name, evalExpr(stripNamedArg(argExpr).expr, env));
+            else if (p.defaultExpr !== undefined) env.barLocals.set(p.name, evalExpr(p.defaultExpr, env));
+          });
+          let lastVal: Val = NaN;
+          for (const line of userM.bodyLines) {
+            const t = line.trim();
+            if (!t) continue;
+            const mAssign = t.match(/^(?:(?:var|varip|int|float|bool|string|color)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+)$/);
+            if (mAssign) {
+              lastVal = evalExpr(mAssign[2]!, env);
+              env.barLocals.set(mAssign[1]!, lastVal);
+            } else {
+              lastVal = evalExpr(t, env);
+            }
+          }
+          env.barLocals = savedLocals;
+          return lastVal;
+        }
+      }
       const innerArgs = methodMatch[3]!.trim();
       const argsList = innerArgs ? [objName, ...splitTopLevelArgs(innerArgs)] : [objName];
       const r = callBuiltinFn(`${ns}.${method}`, argsList, env);
@@ -2139,25 +2864,45 @@ function evalExpr(exprRaw: string, env: ExecEnv): Val {
   const dfDot = expr.match(/^df\.([A-Za-z0-9_]+)$/);
   if (dfDot) return lookupVar(dfDot[1]!, env) ?? new Array<number>(len).fill(NaN);
 
-  // Function call
-  const fnMatch = expr.match(/^([A-Za-z_][A-Za-z0-9_.]*)\(([\s\S]*)\)$/);
+  // Function call (supports Pine v5/v6 generics e.g. array.new<float>(0), map.new<string, float>())
+  const fnMatch = expr.match(/^([A-Za-z_][A-Za-z0-9_.]*(?:<[^>()]+>)?)\(([\s\S]*)\)$/);
   if (fnMatch) {
-    const res = callBuiltinFn(fnMatch[1]!, splitTopLevelArgs(fnMatch[2]!), env);
+    const cleanFnName = fnMatch[1]!.replace(/<[^>]+>/g, '');
+    const res = callBuiltinFn(cleanFnName, splitTopLevelArgs(fnMatch[2]!), env);
     return Array.isArray(res) && Array.isArray(res[0]) ? (res[0] as number[]) : (res as Val);
   }
 
-  // Historical lookback: series[k] or series[expr]
+  // Historical lookback: series[k] or series[expr] (uses bar-by-bar varHistory when mutated)
   const histMatch = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)\[([^\]]+)\]$/);
   if (histMatch) {
-    const s = lookupVar(histMatch[1]!, env);
+    const varName = histMatch[1]!;
     const kVal = evalExpr(histMatch[2]!, env);
     const k = Math.max(0, Math.round(typeof kVal === 'number' ? kVal : toNumberAtBar(kVal, bar ?? len - 1, 1)));
+    const histArr = env.varHistory.get(varName);
+    if (bar !== null && histArr) {
+      const targetIdx = bar - k;
+      if (targetIdx >= 0 && targetIdx < histArr.length) {
+        const hv = histArr[targetIdx];
+        if (hv !== undefined) return hv;
+      }
+      if (k > 0) return NaN;
+    }
+    const s = lookupVar(varName, env);
     if (s !== undefined) {
       if (bar !== null) {
         if (Array.isArray(s)) return Number(s[bar - k] ?? NaN);
-        return typeof s === 'number' ? s : NaN;
+        return typeof s === 'number' ? (k === 0 ? s : NaN) : NaN;
       }
       return shiftSeries(toSeries(s, len), k);
+    }
+  }
+
+  // UDT field access: myObj.field
+  const udtFieldMatch = expr.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/);
+  if (udtFieldMatch && !lookupVar(expr, env)) {
+    const obj = lookupVar(udtFieldMatch[1]!, env);
+    if (obj && typeof obj === 'object' && '__objType' in obj && obj.__objType === 'udt') {
+      return env.udtInstances.get(obj.id)?.fields.get(udtFieldMatch[2]!) ?? NaN;
     }
   }
 
@@ -2169,7 +2914,41 @@ function evalExpr(exprRaw: string, env: ExecEnv): Val {
     return found;
   }
   if (expr === 'ta.vwap') return coreVwap(env.candles);
+  if (expr === 'ta.obv') return obvSeries(env.candles);
+  if (expr === 'ta.pvt') return pvtSeries(env.candles);
+  if (expr === 'ta.accdist') return accDistSeries(env.candles);
+  if (expr === 'ta.tr') {
+    const trS = env.candles.map((c, i) =>
+      i === 0 ? c.high - c.low : Math.max(c.high - c.low, Math.abs(c.high - env.candles[i - 1]!.close), Math.abs(c.low - env.candles[i - 1]!.close))
+    );
+    return bar !== null ? (trS[bar] ?? NaN) : trS;
+  }
   return NaN;
+}
+
+function pushWarning(env: ExecEnv, msg: string) {
+  if (!env.warningSet.has(msg)) {
+    env.warningSet.add(msg);
+    env.warnings.push(msg);
+  }
+}
+
+function setBarVar(name: string, val: Val, env: ExecEnv) {
+  env.vars.set(name, val);
+  if (env.barIdx !== null) {
+    let hist = env.varHistory.get(name);
+    if (!hist) {
+      hist = new Array<number | string>(env.candles.length).fill(NaN);
+      env.varHistory.set(name, hist);
+    }
+    if (typeof val === 'number' || typeof val === 'string') {
+      hist[env.barIdx] = val;
+    } else if (typeof val === 'boolean') {
+      hist[env.barIdx] = val ? 1 : 0;
+    } else if (Array.isArray(val) && (typeof val[env.barIdx] === 'number' || typeof val[env.barIdx] === 'string')) {
+      hist[env.barIdx] = val[env.barIdx] as number | string;
+    }
+  }
 }
 
 function makeBaseEnv(candles: Candle[], timeframe = '15m'): ExecEnv {
@@ -2184,6 +2963,7 @@ function makeBaseEnv(candles: Candle[], timeframe = '15m'): ExecEnv {
   const hlcc4 = candles.map((c) => (c.high + c.low + c.close * 2) / 4);
   const timeArr = candles.map((c) => c.timestamp);
   const barIndex = candles.map((_, i) => i);
+  const tfSecMap: Record<string, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400, '1w': 604800 };
 
   const vars = new Map<string, Val>([
     ['open', open],
@@ -2196,27 +2976,77 @@ function makeBaseEnv(candles: Candle[], timeframe = '15m'): ExecEnv {
     ['ohlc4', ohlc4],
     ['hlcc4', hlcc4],
     ['time', timeArr],
+    ['time_close', timeArr.map((t) => t + (tfSecMap[timeframe] ?? 900) * 1000)],
     ['timenow', candles[candles.length - 1]?.timestamp ?? Date.now()],
     ['bar_index', barIndex],
+    ['last_bar_index', Math.max(0, candles.length - 1)],
     ['strategy.long', 1],
     ['strategy.short', -1],
+    ['strategy.cash', 0],
+    ['strategy.percent_of_equity', 1],
+    ['strategy.fixed', 2],
     ['strategy.position_size', 0],
+    ['strategy.position_avg_price', 0],
+    ['strategy.opentrades', 0],
+    ['strategy.closedtrades', 0],
+    ['strategy.netprofit', 0],
+    ['strategy.equity', 10000],
+    ['strategy.initial_capital', 10000],
     ['math.pi', Math.PI],
     ['math.e', Math.E],
     ['math.phi', 1.618033988749895],
+    ['math.rphi', 0.6180339887498949],
     ['syminfo.ticker', 'BTCUSDT'],
     ['syminfo.tickerid', 'BINANCE:BTCUSDT'],
+    ['syminfo.basecurrency', 'BTC'],
+    ['syminfo.currency', 'USDT'],
+    ['syminfo.mintick', 0.01],
+    ['syminfo.pointvalue', 1],
+    ['syminfo.type', 'crypto'],
     ['timeframe.period', timeframe],
+    ['timeframe.multiplier', parseInt(timeframe, 10) || 1],
     ['timeframe.isintraday', timeframe.includes('m') || timeframe.includes('h') ? 1 : 0],
+    ['timeframe.isminutes', timeframe.includes('m') ? 1 : 0],
     ['timeframe.isdaily', timeframe.toLowerCase().includes('d') ? 1 : 0],
+    ['timeframe.isweekly', timeframe.toLowerCase().includes('w') ? 1 : 0],
+    ['timeframe.ismonthly', 0],
+    ['barstate.isrealtime', 0],
+    ['barstate.ishistory', 1],
+    ['barstate.isnew', 1],
+    ['chart.bg_color', '#060c1c'],
+    ['chart.fg_color', '#e2e8f0'],
+    ['chart.is_standard', 1],
+    ['display.all', 1],
+    ['display.none', 0],
+    ['display.data_window', 1],
+    ['display.pane', 1],
+    ['format.price', 'price'],
+    ['format.volume', 'volume'],
+    ['format.percent', 'percent'],
+    ['format.inherit', 'inherit'],
+    ['alert.freq_once_per_bar', 'once_per_bar'],
+    ['alert.freq_once_per_bar_close', 'once_per_bar_close'],
+    ['alert.freq_all', 'all'],
+    ['barmerge.gaps_off', 0],
+    ['barmerge.gaps_on', 1],
+    ['barmerge.lookahead_off', 0],
+    ['barmerge.lookahead_on', 1],
   ]);
 
   return {
     candles,
     timeframe,
+    pineVersion: 5,
+    scriptKind: 'indicator',
     vars,
+    varHistory: new Map(),
     barLocals: new Map(),
     userFns: new Map(),
+    userMethods: new Map(),
+    importedAliases: new Map(),
+    udtDefs: new Map(),
+    udtInstances: new Map(),
+    enumDefs: new Map(),
     plots: [],
     plotSeriesById: new Map(),
     hlines: [],
@@ -2229,10 +3059,19 @@ function makeBaseEnv(candles: Candle[], timeframe = '15m'): ExecEnv {
     boxes: new Map(),
     tables: new Map(),
     arrays: new Map(),
+    maps: new Map(),
+    matrices: new Map(),
+    points: new Map(),
+    polylines: new Map(),
+    linefills: new Map(),
+    inputs: [],
+    logs: [],
+    alertsTriggered: [],
     longFlags: new Array<number>(candles.length).fill(0),
     shortFlags: new Array<number>(candles.length).fill(0),
     closeFlags: new Array<number>(candles.length).fill(0),
     warnings: [],
+    warningSet: new Set(),
     barIdx: null,
     nextObjSeq: 1,
   };
@@ -2241,7 +3080,7 @@ function makeBaseEnv(candles: Candle[], timeframe = '15m'): ExecEnv {
 function finalizeCustomDrawings(env: ExecEnv) {
   const labels: CustomChartLabel[] = [...env.labels.values()]
     .filter((l) => !l.deleted && Number.isFinite(l.price))
-    .slice(-120)
+    .slice(-140)
     .map((l) => ({
       time: barTimeSec(env.candles, l.barIdx),
       price: l.price,
@@ -2256,7 +3095,7 @@ function finalizeCustomDrawings(env: ExecEnv) {
 
   const lines: CustomChartLine[] = [...env.lines.values()]
     .filter((l) => !l.deleted && Number.isFinite(l.y1) && Number.isFinite(l.y2))
-    .slice(-80)
+    .slice(-100)
     .map((l) => ({
       x1Time: barTimeSec(env.candles, l.x1Bar),
       y1: l.y1,
@@ -2270,7 +3109,7 @@ function finalizeCustomDrawings(env: ExecEnv) {
 
   const boxes: CustomChartBox[] = [...env.boxes.values()]
     .filter((b) => !b.deleted && Number.isFinite(b.top) && Number.isFinite(b.bottom))
-    .slice(-60)
+    .slice(-80)
     .map((b) => ({
       leftTime: barTimeSec(env.candles, b.leftBar),
       rightTime: barTimeSec(env.candles, b.rightBar),
@@ -2286,7 +3125,7 @@ function finalizeCustomDrawings(env: ExecEnv) {
     }));
 
   const tables: CustomChartTable[] = [...env.tables.values()]
-    .slice(-4)
+    .slice(-6)
     .map((t) => ({
       position: t.position,
       columns: t.columns,
@@ -2298,7 +3137,55 @@ function finalizeCustomDrawings(env: ExecEnv) {
     }))
     .filter((t) => t.cells.length > 0);
 
-  return { labels, lines, boxes, tables };
+  const polylines: CustomChartPolyline[] = [...env.polylines.values()]
+    .filter((p) => !p.deleted)
+    .slice(-40)
+    .map((p) => {
+      const arr = env.arrays.get(p.pointsArrId) ?? [];
+      const pts: Array<{ time: number; price: number }> = [];
+      for (const item of arr) {
+        if (item && typeof item === 'object' && '__objType' in item && item.__objType === 'point') {
+          const pt = env.points.get(item.id);
+          if (pt && Number.isFinite(pt.price)) {
+            const time = pt.timeSec !== undefined ? pt.timeSec : barTimeSec(env.candles, pt.barIdx ?? 0);
+            pts.push({ time, price: pt.price });
+          }
+        }
+      }
+      return {
+        points: pts,
+        color: p.color,
+        fillColor: p.fillColor,
+        width: p.width,
+        style: p.style,
+        curved: p.curved,
+        closed: p.closed,
+      };
+    })
+    .filter((p) => p.points.length >= 2);
+
+  // Convert linefill.new(l1, l2, color) into closed quadrilateral polylines
+  for (const lf of env.linefills.values()) {
+    const l1 = env.lines.get(lf.line1Id);
+    const l2 = env.lines.get(lf.line2Id);
+    if (!l1 || !l2 || l1.deleted || l2.deleted) continue;
+    polylines.push({
+      points: [
+        { time: barTimeSec(env.candles, l1.x1Bar), price: l1.y1 },
+        { time: barTimeSec(env.candles, l1.x2Bar), price: l1.y2 },
+        { time: barTimeSec(env.candles, l2.x2Bar), price: l2.y2 },
+        { time: barTimeSec(env.candles, l2.x1Bar), price: l2.y1 },
+      ],
+      color: 'transparent',
+      fillColor: lf.color,
+      width: 0,
+      style: 'solid',
+      curved: false,
+      closed: true,
+    });
+  }
+
+  return { labels, lines, boxes, tables, polylines };
 }
 
 function buildFinalSignalsAndMarkers(
@@ -2368,6 +3255,8 @@ function buildFinalSignalsAndMarkers(
   return {
     valid: true,
     language,
+    pineVersion: env.pineVersion,
+    scriptKind: env.scriptKind,
     title,
     overlay,
     errors: [],
@@ -2383,6 +3272,10 @@ function buildFinalSignalsAndMarkers(
     lines: drawings.lines,
     boxes: drawings.boxes,
     tables: drawings.tables,
+    polylines: drawings.polylines,
+    logs: env.logs.slice(-120),
+    inputs: env.inputs,
+    alertsTriggered: env.alertsTriggered.slice(-60),
     latestSignal: signals[signals.length - 1] ?? null,
   };
 }
@@ -2499,7 +3392,10 @@ function buildStatementTree(lines: Array<{ indent: number; text: string; lineNo:
     }
     const stmt: PineStatement = { indent: ln.indent, text: ln.text, lineNo: ln.lineNo };
     stack[stack.length - 1]!.list.push(stmt);
-    if (/^(?:if|else(?:\s+if)?|for|while|switch)\b/.test(ln.text) || /=>\s*$/.test(ln.text)) {
+    if (
+      /^(?:if|else(?:\s+if)?|for|while|switch|(?:export\s+)?type|(?:export\s+)?enum)\b/.test(ln.text) ||
+      /=>\s*$/.test(ln.text)
+    ) {
       stmt.children = [];
       stack.push({ indent: ln.indent, list: stmt.children });
     }
@@ -2511,9 +3407,10 @@ function requiresBarExecution(stmt: PineStatement, mutatedBarVars?: Set<string>)
   const txt = stmt.text;
   if (/^(?:var|varip)\b/.test(txt)) return true;
   if (/^(?:for|while|if|else)\b/.test(txt)) return true;
-  if (/\b(?:label|line|box|table|array)\.(?:new|set_|delete|push|pop|shift|unshift|clear|remove|cell)\b/.test(txt)) return true;
-  if (/\.(?:push|pop|shift|unshift|set|clear|remove|delete|set_|cell)\(/.test(txt)) return true;
-  if (/^[A-Za-z_][A-Za-z0-9_]*\s*(?::=|\+=|-=|\*=|\/=)/.test(txt)) return true;
+  if (/\b(?:label|line|box|table|array|map|matrix|polyline|linefill|log)\.(?:new|set_|delete|push|pop|shift|unshift|insert|clear|remove|cell|put|info|warning|error)\b/.test(txt)) return true;
+  if (/^alert\s*\(/.test(txt)) return true;
+  if (/\.(?:push|pop|shift|unshift|insert|set|clear|remove|delete|set_|cell|put)\(/.test(txt)) return true;
+  if (/^[A-Za-z_][A-Za-z0-9_.]*\s*(?::=|\+=|-=|\*=|\/=)/.test(txt)) return true;
   if (mutatedBarVars && mutatedBarVars.size > 0) {
     const ids = txt.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
     for (const id of ids) {
@@ -2525,7 +3422,7 @@ function requiresBarExecution(stmt: PineStatement, mutatedBarVars?: Set<string>)
 
 function collectMutatedVars(stmts: PineStatement[], out = new Set<string>()): Set<string> {
   for (const s of stmts) {
-    const vDecl = s.text.match(/^(?:varip|var)\s+(?:(?:int|float|bool|string|color|label|line|box|table)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    const vDecl = s.text.match(/^(?:varip|var)\s+(?:(?:[A-Za-z_][A-Za-z0-9_.<>[\],\s]*?)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/);
     if (vDecl?.[1]) out.add(vDecl[1]);
     const mut = s.text.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|\+=|-=|\*=|\/=)/);
     if (mut?.[1]) out.add(mut[1]);
@@ -2546,10 +3443,17 @@ export function evaluatePineStrategy(
   const errors: string[] = [];
   const extraMarkers: CustomChartMarker[] = [];
 
+  const verMatch = code.match(/\/\/\s*@version\s*=\s*(4|5|6)/i);
+  if (verMatch?.[1]) {
+    env.pineVersion = Number(verMatch[1]) as 4 | 5 | 6;
+  }
+
   if (!code.trim()) {
     return {
       valid: false,
       language: 'pine',
+      pineVersion: env.pineVersion,
+      scriptKind: env.scriptKind,
       title,
       overlay,
       errors: ['Pine Script code cannot be empty.'],
@@ -2564,6 +3468,22 @@ export function evaluatePineStrategy(
   const logicalLines = preprocessPineLogicalLines(code);
   const stmts = buildStatementTree(logicalLines);
 
+  // Stateful strategy position tracker across bars
+  let stPosSize = 0;
+  let stAvgPrice = 0;
+  let stClosedTrades = 0;
+  let stNetProfit = 0;
+  const syncStrategyVars = (barIdx: number) => {
+    const closePx = candles[barIdx]?.close ?? 0;
+    const unrealized = stPosSize !== 0 ? stPosSize * (closePx - stAvgPrice) : 0;
+    env.vars.set('strategy.position_size', stPosSize);
+    env.vars.set('strategy.position_avg_price', stAvgPrice);
+    env.vars.set('strategy.opentrades', stPosSize !== 0 ? 1 : 0);
+    env.vars.set('strategy.closedtrades', stClosedTrades);
+    env.vars.set('strategy.netprofit', stNetProfit);
+    env.vars.set('strategy.equity', 10000 + stNetProfit + unrealized);
+  };
+
   const execBarStmt = (stmt: PineStatement, barIdx: number, guardOk: boolean) => {
     const t = stmt.text;
     env.barIdx = barIdx;
@@ -2572,7 +3492,17 @@ export function evaluatePineStrategy(
       const condExpr = t.slice(3).trim();
       const passed = guardOk && Boolean(toNumberAtBar(evalExpr(condExpr, env), barIdx, 0));
       if (passed && stmt.children) {
-        for (const ch of stmt.children) execBarStmt(ch, barIdx, true);
+        let childIfPassed = false;
+        for (const ch of stmt.children) {
+          const isChildElse = ch.text === 'else' || ch.text.startsWith('else ') || ch.text.startsWith('else if ');
+          if (ch.text.startsWith('if ')) childIfPassed = Boolean(execBarStmt(ch, barIdx, true));
+          else if (isChildElse) {
+            if (!childIfPassed) childIfPassed = Boolean(execBarStmt(ch, barIdx, true));
+          } else {
+            childIfPassed = false;
+            execBarStmt(ch, barIdx, true);
+          }
+        }
       }
       return passed;
     }
@@ -2595,6 +3525,39 @@ export function evaluatePineStrategy(
 
     if (!guardOk) return false;
 
+    // Standalone switch inside bar loop
+    const switchHead = t.match(/^switch(?:\s+(.+))?$/);
+    if (switchHead && stmt.children?.length) {
+      const subj = switchHead[1] ? evalExpr(switchHead[1], env) : null;
+      for (const cs of stmt.children) {
+        const arrowIdx = cs.text.indexOf('=>');
+        if (arrowIdx === -1) continue;
+        const condPart = cs.text.slice(0, arrowIdx).trim();
+        const bodyPart = cs.text.slice(arrowIdx + 2).trim();
+        let matched = condPart === '';
+        if (!matched) {
+          if (subj !== null) matched = String(subj) === String(evalExpr(condPart, env));
+          else matched = Boolean(toNumberAtBar(evalExpr(condPart, env), barIdx, 0));
+        }
+        if (matched) {
+          if (bodyPart) execBarStmt({ indent: cs.indent, text: bodyPart, lineNo: cs.lineNo }, barIdx, true);
+          else if (cs.children) for (const ch of cs.children) execBarStmt(ch, barIdx, true);
+          break;
+        }
+      }
+      return true;
+    }
+
+    // while cond
+    const whileM = t.match(/^while\s+(.+)$/);
+    if (whileM && stmt.children) {
+      let guard = 0;
+      while (guard++ < 400 && Boolean(toNumberAtBar(evalExpr(whileM[1]!, env), barIdx, 0))) {
+        for (const ch of stmt.children) execBarStmt(ch, barIdx, true);
+      }
+      return true;
+    }
+
     // for i = start to end [by step]
     const forRange = t.match(/^for\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s+to\s+(.+?)(?:\s+by\s+(.+))?$/);
     if (forRange && stmt.children) {
@@ -2602,7 +3565,7 @@ export function evaluatePineStrategy(
       const startN = Math.round(toNumberAtBar(evalExpr(forRange[2]!, env), barIdx, 0));
       const endN = Math.round(toNumberAtBar(evalExpr(forRange[3]!, env), barIdx, -1));
       const stepN = forRange[4] ? Math.round(toNumberAtBar(evalExpr(forRange[4]!, env), barIdx, 1)) : startN <= endN ? 1 : -1;
-      const safeCap = 200;
+      const safeCap = 250;
       let iter = 0;
       if (stepN !== 0) {
         for (let k = startN; stepN > 0 ? k <= endN : k >= endN; k += stepN) {
@@ -2615,14 +3578,31 @@ export function evaluatePineStrategy(
       return true;
     }
 
-    // for item in arr
+    // for [idx, item] in arr  OR  for item in arr
+    const forTupleIn = t.match(/^for\s+\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s+in\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (forTupleIn && stmt.children) {
+      const arrRef = lookupVar(forTupleIn[3]!, env);
+      const id = arrRef && typeof arrRef === 'object' && '__objType' in arrRef ? arrRef.id : '';
+      const arr = env.arrays.get(id);
+      if (arr) {
+        const snap = [...arr].slice(0, 250);
+        for (let idx = 0; idx < snap.length; idx++) {
+          env.barLocals.set(forTupleIn[1]!, idx);
+          env.barLocals.set(forTupleIn[2]!, snap[idx]!);
+          for (const ch of stmt.children) execBarStmt(ch, barIdx, true);
+        }
+        env.barLocals.delete(forTupleIn[1]!);
+        env.barLocals.delete(forTupleIn[2]!);
+      }
+      return true;
+    }
     const forIn = t.match(/^for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+([A-Za-z_][A-Za-z0-9_]*)$/);
     if (forIn && stmt.children) {
       const arrRef = lookupVar(forIn[2]!, env);
       const id = arrRef && typeof arrRef === 'object' && '__objType' in arrRef ? arrRef.id : '';
       const arr = env.arrays.get(id);
       if (arr) {
-        for (const item of [...arr].slice(0, 200)) {
+        for (const item of [...arr].slice(0, 250)) {
           env.barLocals.set(forIn[1]!, item);
           for (const ch of stmt.children) execBarStmt(ch, barIdx, true);
         }
@@ -2632,16 +3612,29 @@ export function evaluatePineStrategy(
     }
 
     // Tuple destructuring per bar
-    const tupleM = t.match(/^\[([^\]]+)\]\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\(([\s\S]*)\)$/);
+    const tupleM = t.match(/^\[([^\]]+)\]\s*=\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>()]+>)?)\(([\s\S]*)\)$/);
     if (tupleM) {
       const names = tupleM[1]!.split(',').map((s) => s.trim());
       const out = callBuiltinFn(tupleM[2]!, splitTopLevelArgs(tupleM[3]!), env);
       if (Array.isArray(out)) {
         names.forEach((nm, idx) => {
-          if (nm && nm !== '_') env.vars.set(nm, (out as Val[])[idx] ?? NaN);
+          if (nm && nm !== '_') setBarVar(nm, (out as Val[])[idx] ?? NaN, env);
         });
       }
       return true;
+    }
+
+    // UDT field mutation: myObj.field := expr
+    const udtMut = t.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+)$/);
+    if (udtMut) {
+      const obj = lookupVar(udtMut[1]!, env);
+      if (obj && typeof obj === 'object' && '__objType' in obj && obj.__objType === 'udt') {
+        const inst = env.udtInstances.get(obj.id);
+        if (inst) {
+          inst.fields.set(udtMut[2]!, evalExpr(udtMut[3]!, env));
+          return true;
+        }
+      }
     }
 
     // Compound assignment += -= *= /=
@@ -2650,22 +3643,25 @@ export function evaluatePineStrategy(
       const cur = toNumberAtBar(lookupVar(compM[1]!, env) ?? 0, barIdx, 0);
       const rhs = toNumberAtBar(evalExpr(compM[3]!, env), barIdx, 0);
       const next = compM[2] === '+=' ? cur + rhs : compM[2] === '-=' ? cur - rhs : compM[2] === '*=' ? cur * rhs : rhs !== 0 ? cur / rhs : NaN;
-      env.vars.set(compM[1]!, next);
+      setBarVar(compM[1]!, next, env);
       return true;
     }
 
-    // var / := / =
-    const varDecl = t.match(/^(?:varip|var)\s+(?:(?:int|float|bool|string|color|label|line|box|table)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+    // var / varip with optional Pine v5/v6 typed prefixes (including generics / [] arrays)
+    const varDecl = t.match(/^(?:varip|var)\s+(?:(?:[A-Za-z_][A-Za-z0-9_.<>[\],\s]*?)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
     if (varDecl) {
-      if (barIdx === 0 || !env.vars.has(varDecl[1]!)) {
-        env.vars.set(varDecl[1]!, evalExpr(varDecl[2]!, env));
+      const vName = varDecl[1]!;
+      if (barIdx === 0 || !env.vars.has(vName)) {
+        setBarVar(vName, evalExpr(varDecl[2]!, env), env);
+      } else {
+        setBarVar(vName, env.vars.get(vName)!, env);
       }
       return true;
     }
 
-    const assignM = t.match(/^(?:(?:int|float|bool|string|color|label|line|box|table)\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(:=|=)\s*(.+)$/);
+    const assignM = t.match(/^(?:(?:int|float|bool|string|color|label|line|box|table|polyline|linefill|array<[^>]+>|map<[^>]+>|matrix<[^>]+>|[A-Za-z_][A-Za-z0-9_]*\[\])\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(:=|=)\s*(.+)$/);
     if (assignM) {
-      env.vars.set(assignM[1]!, evalExpr(assignM[3]!, env));
+      setBarVar(assignM[1]!, evalExpr(assignM[3]!, env), env);
       return true;
     }
 
@@ -2681,32 +3677,208 @@ export function evaluatePineStrategy(
         if (parsed.key === 'when') whenOk = Boolean(toNumberAtBar(evalExpr(parsed.expr, env), barIdx, 0));
       }
       if (whenOk) {
-        if (isShort) env.shortFlags[barIdx] = 1;
-        else env.longFlags[barIdx] = 1;
+        const px = candles[barIdx]!.close;
+        if (isShort) {
+          env.shortFlags[barIdx] = 1;
+          if (stPosSize > 0) {
+            stNetProfit += stPosSize * (px - stAvgPrice);
+            stClosedTrades++;
+          }
+          stPosSize = -1;
+          stAvgPrice = px;
+        } else {
+          env.longFlags[barIdx] = 1;
+          if (stPosSize < 0) {
+            stNetProfit += Math.abs(stPosSize) * (stAvgPrice - px);
+            stClosedTrades++;
+          }
+          stPosSize = 1;
+          stAvgPrice = px;
+        }
+        syncStrategyVars(barIdx);
       }
       return true;
     }
 
     if (t.startsWith('strategy.close') || t.startsWith('strategy.exit')) {
       env.closeFlags[barIdx] = 1;
+      if (stPosSize !== 0) {
+        const px = candles[barIdx]!.close;
+        stNetProfit += stPosSize > 0 ? stPosSize * (px - stAvgPrice) : Math.abs(stPosSize) * (stAvgPrice - px);
+        stClosedTrades++;
+        stPosSize = 0;
+        stAvgPrice = 0;
+        syncStrategyVars(barIdx);
+      }
       return true;
     }
 
-    // Standalone expression / drawing / array mutation
+    // Bar-level plot(...) / p = plot(...) for stateful var variables
+    const barPlotAssign = t.match(/^(?:([A-Za-z_][A-Za-z0-9_]*)\s*=\s*)?plot\(([\s\S]+)\)$/);
+    if (barPlotAssign) {
+      const assignVar = barPlotAssign[1];
+      const args = splitTopLevelArgs(barPlotAssign[2]!);
+      const valNum = toNumberAtBar(evalExpr(stripNamedArg(args[0] ?? 'close').expr, env), barIdx, NaN);
+      const plotId = `pl_bar_${stmt.lineNo}`;
+      let plotObj = env.plots.find((p) => p.id === plotId);
+      if (!plotObj) {
+        let pTitle = `Plot ${env.plots.length + 1}`;
+        let pColor = '#2b74ff';
+        let linewidth = 2;
+        let style: CustomPlotSeries['style'] = 'line';
+        let plotOverlay = overlay;
+        for (let idx = 1; idx < args.length; idx++) {
+          const p = stripNamedArg(args[idx]!);
+          if (p.key === 'title' || (idx === 1 && !p.key)) pTitle = p.expr.replace(/['"]/g, '').trim() || pTitle;
+          if (p.key === 'color' || (idx === 2 && !p.key)) {
+            const ce = evalExpr(p.expr, env);
+            pColor = resolveColorToken(typeof ce === 'string' ? ce : p.expr, pColor) || pColor;
+          }
+          if (p.key === 'linewidth' || (idx === 3 && !p.key)) linewidth = Math.max(1, Math.min(5, Math.round(toNumberAtBar(evalExpr(p.expr, env), barIdx, 2))));
+          if (p.key === 'style' || (idx === 4 && !p.key)) style = resolvePlotStyle(p.expr);
+          if (p.key === 'overlay') plotOverlay = !/false/i.test(p.expr);
+        }
+        plotObj = { id: plotId, title: pTitle, color: pColor, overlay: plotOverlay, linewidth, style, points: [] };
+        env.plots.push(plotObj);
+        env.plotSeriesById.set(plotId, new Array<number>(len).fill(NaN));
+      }
+      if (Number.isFinite(valNum)) {
+        let ptColor: string | undefined;
+        for (let idx = 1; idx < args.length; idx++) {
+          const p = stripNamedArg(args[idx]!);
+          if (p.key === 'color' || (idx === 2 && !p.key)) {
+            const ce = evalExpr(p.expr, env);
+            if (typeof ce === 'string') ptColor = resolveColorToken(ce, plotObj.color) || undefined;
+          }
+        }
+        plotObj.points.push({
+          time: Math.floor(candles[barIdx]!.timestamp / 1000),
+          value: valNum,
+          ...(ptColor ? { color: ptColor } : {}),
+        });
+        const seriesArr = env.plotSeriesById.get(plotId);
+        if (seriesArr) seriesArr[barIdx] = valNum;
+      }
+      if (assignVar) env.vars.set(assignVar, plotId);
+      return true;
+    }
+
+    // Bar-level barcolor(...) / bgcolor(...)
+    const barBgM = t.match(/^(bgcolor|barcolor)\(([\s\S]+)\)$/);
+    if (barBgM) {
+      const fnName = barBgM[1]!.toLowerCase();
+      const args = splitTopLevelArgs(barBgM[2]!);
+      const ce = evalExpr(stripNamedArg(args[0] ?? 'na').expr, env);
+      const col = typeof ce === 'string' ? resolveColorToken(ce, '') : '';
+      if (col) {
+        const time = Math.floor(candles[barIdx]!.timestamp / 1000);
+        if (fnName === 'bgcolor') env.bgcolors.push({ time, color: col });
+        else env.barcolors.push({ time, color: col });
+      }
+      return true;
+    }
+
+    // Bar-level plotshape / plotchar / plotarrow
+    const barShapeM = t.match(/^(plotshape|plotchar|plotarrow)\(([\s\S]+)\)$/);
+    if (barShapeM) {
+      const fnName = barShapeM[1]!.toLowerCase();
+      const args = splitTopLevelArgs(barShapeM[2]!);
+      const v = toNumberAtBar(evalExpr(stripNamedArg(args[0] ?? '0').expr, env), barIdx, 0);
+      if (v && Number.isFinite(v)) {
+        const time = Math.floor(candles[barIdx]!.timestamp / 1000);
+        if (fnName === 'plotarrow') {
+          extraMarkers.push({
+            time,
+            position: v > 0 ? 'belowBar' : 'aboveBar',
+            color: v > 0 ? '#10d9a3' : '#ff4d6d',
+            shape: v > 0 ? 'arrowUp' : 'arrowDown',
+            text: v > 0 ? '▲' : '▼',
+          });
+        } else {
+          const isShort = t.toLowerCase().includes('short') || t.toLowerCase().includes('abovebar');
+          if (isShort) env.shortFlags[barIdx] = 1;
+          else env.longFlags[barIdx] = 1;
+        }
+      }
+      return true;
+    }
+
+    // Standalone expression / drawing / array / map / matrix / log mutation
     evalExpr(t, env);
     return true;
   };
 
-  // Top-level pass: handle metadata, vectorized assignments, plots, hlines, fills, and collect bar-by-bar statements
+  // Top-level pass: handle metadata, imports, UDTs, enums, vectorized assignments, plots, hlines, fills, and collect bar-by-bar statements
   const mutatedBarVars = collectMutatedVars(stmts);
   const barStmts: PineStatement[] = [];
   const execTopStmt = (stmt: PineStatement) => {
-    const trimmed = stmt.text;
+    const trimmed = stmt.text.replace(/^export\s+/, '');
 
-    if (trimmed.startsWith('indicator(') || trimmed.startsWith('strategy(') || trimmed.startsWith('study(')) {
+    // import owner/lib/ver [as alias]
+    const importM = trimmed.match(/^import\s+([A-Za-z0-9_]+)\/([A-Za-z0-9_]+)\/\d+(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?$/);
+    if (importM) {
+      const libName = importM[2]!.toLowerCase();
+      const alias = importM[3] || importM[2]!;
+      if (libName.includes('ta') || libName.includes('indicator')) env.importedAliases.set(alias, 'ta');
+      else if (libName.includes('strat')) env.importedAliases.set(alias, 'strategy');
+      else env.importedAliases.set(alias, 'ta');
+      return;
+    }
+
+    // type UDT definition (Pine v5/v6)
+    const typeM = trimmed.match(/^type\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (typeM && stmt.children) {
+      const fields: UdtFieldDef[] = [];
+      for (const ch of stmt.children) {
+        const fM = ch.text.match(/^(?:[A-Za-z_][A-Za-z0-9_.<>[\],\s]*?\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s*=\s*(.+))?$/);
+        if (fM?.[1]) fields.push({ name: fM[1], type: 'float', defaultExpr: fM[2] });
+      }
+      env.udtDefs.set(typeM[1]!, fields);
+      return;
+    }
+
+    // enum definition (Pine v6)
+    const enumM = trimmed.match(/^enum\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (enumM && stmt.children) {
+      const eMap = new Map<string, string | number>();
+      stmt.children.forEach((ch, idx) => {
+        const kv = ch.text.split('=').map((x) => x.trim());
+        const key = kv[0]!;
+        const val = kv[1] ? kv[1].replace(/^['"]|['"]$/g, '') : idx;
+        eMap.set(key, val);
+        env.vars.set(`${enumM[1]!}.${key}`, val);
+      });
+      env.enumDefs.set(enumM[1]!, eMap);
+      return;
+    }
+
+    if (trimmed.startsWith('indicator(') || trimmed.startsWith('strategy(') || trimmed.startsWith('study(') || trimmed.startsWith('library(')) {
+      env.scriptKind = trimmed.startsWith('strategy(') ? 'strategy' : trimmed.startsWith('library(') ? 'library' : 'indicator';
       const mTitle = trimmed.match(/["']([^"']+)["']/);
       if (mTitle?.[1]) title = mTitle[1];
       if (/overlay\s*=\s*false/i.test(trimmed)) overlay = false;
+      return;
+    }
+
+    // method foo(this<TypeName> self, ...) => ...
+    const methodSingle = trimmed.match(/^method\s+([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\)\s*=>\s*(.+)$/);
+    const methodHeader = !methodSingle ? trimmed.match(/^method\s+([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\)\s*=>\s*$/) : null;
+    if (methodSingle || (methodHeader && stmt.children)) {
+      const mName = (methodSingle ?? methodHeader)![1]!;
+      const rawP = (methodSingle ?? methodHeader)![2]!;
+      const bodyLines = methodSingle ? [methodSingle[3]!] : stmt.children!.map((c) => c.text);
+      let targetType = '';
+      const params = splitTopLevelArgs(rawP).map((p, idx) => {
+        const [lhs, def] = p.split('=').map((x) => x.trim());
+        if (idx === 0) {
+          const tm = lhs!.match(/^([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+          if (tm?.[1]) targetType = tm[1];
+        }
+        const cleanName = lhs!.replace(/^(?:simple|series|int|float|bool|string|color|[A-Za-z_][A-Za-z0-9_<>[\]]*)\s+/, '');
+        return { name: cleanName, defaultExpr: def };
+      });
+      if (targetType) env.userMethods.set(`${targetType}.${mName}`, { params, bodyLines });
+      env.userMethods.set(mName, { params, bodyLines });
       return;
     }
 
@@ -2736,7 +3908,6 @@ export function evaluatePineStrategy(
       const targetVar = switchAssign[1]!;
       const switchSubject = switchAssign[2] ? evalExpr(switchAssign[2]!, env) : null;
       let resSeries: Val = NaN;
-      // Evaluate cases cleanly (default case `=> expr` becomes fallback)
       const cases = stmt.children.map((c) => {
         const parts = c.text.split('=>');
         return { cond: parts[0]?.trim() || '', valExpr: parts.slice(1).join('=>').trim() };
@@ -2763,14 +3934,14 @@ export function evaluatePineStrategy(
 
     // Route bar-level stateful logic & drawings to bar-by-bar pass (keeping dependency chain causal)
     if (requiresBarExecution(stmt, mutatedBarVars)) {
-      const lhsM = trimmed.match(/^(?:(?:var|varip|int|float|bool|string|color|label|line|box|table)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)/);
+      const lhsM = trimmed.match(/^(?:(?:var|varip|[A-Za-z_][A-Za-z0-9_.<>[\],\s]*?)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)/);
       if (lhsM?.[1]) mutatedBarVars.add(lhsM[1]);
       barStmts.push(stmt);
       return;
     }
 
-    // Tuple destructuring: [a, b, c] = ta.macd(...)
-    const tupleMatch = trimmed.match(/^\[([^\]]+)\]\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\(([\s\S]*)\)$/);
+    // Tuple destructuring: [a, b, c] = ta.macd(...) or request.security(..., [h, l, c])
+    const tupleMatch = trimmed.match(/^\[([^\]]+)\]\s*=\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>()]+>)?)\(([\s\S]*)\)$/);
     if (tupleMatch) {
       const names = tupleMatch[1]!.split(',').map((s) => s.trim());
       const out = callBuiltinFn(tupleMatch[2]!, splitTopLevelArgs(tupleMatch[3]!), env);
@@ -2784,7 +3955,7 @@ export function evaluatePineStrategy(
 
     // Plot assignment (`p1 = plot(...)`) or hline assignment (`h1 = hline(...)`)
     const plotAssignMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(plot|hline)\(([\s\S]+)\)$/);
-    const barePlotMatch = !plotAssignMatch ? trimmed.match(/^(plot|hline|plotcandle|plotbar)\(([\s\S]+)\)$/) : null;
+    const barePlotMatch = !plotAssignMatch ? trimmed.match(/^(plot|hline|plotcandle|plotbar|plotarrow)\(([\s\S]+)\)$/) : null;
 
     if (plotAssignMatch || barePlotMatch) {
       const assignVar = plotAssignMatch ? plotAssignMatch[1]! : undefined;
@@ -2849,6 +4020,23 @@ export function evaluatePineStrategy(
         env.plots.push({ id, title: pTitle, color: pColorRaw, overlay: plotOverlay, linewidth, style, points });
         env.plotSeriesById.set(id, series);
         if (assignVar) env.vars.set(assignVar, id);
+        return;
+      }
+
+      if (fnName === 'plotarrow') {
+        const sArr = toSeries(evalExpr(stripNamedArg(args[0] ?? '0').expr, env), len);
+        for (let i = 0; i < len; i++) {
+          const v = sArr[i];
+          if (v !== undefined && Number.isFinite(v) && v !== 0) {
+            extraMarkers.push({
+              time: Math.floor(candles[i]!.timestamp / 1000),
+              position: v > 0 ? 'belowBar' : 'aboveBar',
+              color: v > 0 ? '#10d9a3' : '#ff4d6d',
+              shape: v > 0 ? 'arrowUp' : 'arrowDown',
+              text: v > 0 ? '▲' : '▼',
+            });
+          }
+        }
         return;
       }
 
@@ -2984,12 +4172,12 @@ export function evaluatePineStrategy(
       return;
     }
 
-    if (trimmed.startsWith('strategy.close(') || trimmed.startsWith('strategy.close_all(') || trimmed.startsWith('strategy.exit(')) {
+    if (trimmed.startsWith('strategy.close(') || trimmed.startsWith('strategy.close_all(') || trimmed.startsWith('strategy.exit(') || trimmed.startsWith('strategy.cancel(')) {
       return;
     }
 
-    // Variable assignment (vectorized)
-    const assignMatch = trimmed.match(/^(?:(?:var|varip|int|float|bool|string|color|series|simple|const)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+)$/);
+    // Variable assignment (vectorized — supports Pine v5/v6 typed syntax including generics and arrays)
+    const assignMatch = trimmed.match(/^(?:(?:var|varip|series|simple|const|[A-Za-z_][A-Za-z0-9_.<>[\],\s]*?)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=)\s*(.+)$/);
     if (assignMatch) {
       try {
         env.vars.set(assignMatch[1]!, evalExpr(assignMatch[2]!, env));
@@ -3012,6 +4200,7 @@ export function evaluatePineStrategy(
   // Execute collected stateful / bar-by-bar drawing & array blocks cleanly across all candles
   if (barStmts.length > 0) {
     for (let i = 0; i < len; i++) {
+      syncStrategyVars(i);
       let lastIfPassed = false;
       for (const s of barStmts) {
         const isElse = s.text === 'else' || s.text.startsWith('else ') || s.text.startsWith('else if ');
@@ -3034,6 +4223,8 @@ export function evaluatePineStrategy(
     return {
       valid: false,
       language: 'pine',
+      pineVersion: env.pineVersion,
+      scriptKind: env.scriptKind,
       title,
       overlay,
       errors,
@@ -3041,6 +4232,8 @@ export function evaluatePineStrategy(
       signals: [],
       plots: env.plots,
       markers: [],
+      logs: env.logs,
+      inputs: env.inputs,
       latestSignal: null,
     };
   }
@@ -3586,6 +4779,226 @@ def generate_signals(df):
     df.loc[df['close'] > df['upper_ch'], 'signal'] = 1
     df.loc[df['close'] < df['lower_ch'], 'signal'] = -1
     return df
+`,
+  },
+  {
+    id: 'pine6_ichimoku_cloud',
+    nameFa: 'Pine v6: ابر ایچیموکو کامل + فیل رنگی + سیگنال کومو',
+    nameEn: 'Pine v6: Full Ichimoku Cloud + Kumo Twist Signals',
+    descriptionFa: 'اسکریپت کامل Pine Script v6 برای رسم تنکان‌سن، کیجون‌سن و ابر سبز/قرمز کومو با ورود در شکست ابر.',
+    descriptionEn: 'Pine Script v6 Ichimoku Cloud with Tenkan, Kijun, dynamic Kumo fill, and cloud breakout signals.',
+    language: 'pine',
+    category: 'Pine v6 Pro',
+    code: `//@version=6
+strategy("Ichimoku Cloud Breakout v6", overlay=true)
+
+convLen = input.int(9, title="Tenkan-sen")
+baseLen = input.int(26, title="Kijun-sen")
+spanBLen = input.int(52, title="Senkou Span B")
+
+tenkan = math.avg(ta.lowest(low, convLen), ta.highest(high, convLen))
+kijun = math.avg(ta.lowest(low, baseLen), ta.highest(high, baseLen))
+spanA = math.avg(tenkan, kijun)
+spanB = math.avg(ta.lowest(low, spanBLen), ta.highest(high, spanBLen))
+
+plot(tenkan, title="Tenkan-sen", color=color.aqua, linewidth=1)
+plot(kijun, title="Kijun-sen", color=color.orange, linewidth=2)
+pA = plot(spanA, title="Senkou A", color=color.new(color.green, 30), linewidth=1)
+pB = plot(spanB, title="Senkou B", color=color.new(color.red, 30), linewidth=1)
+fill(pA, pB, color=spanA >= spanB ? color.new(color.green, 80) : color.new(color.red, 80))
+
+bullCloud = ta.crossover(tenkan, kijun) and close > math.max(spanA, spanB)
+bearCloud = ta.crossunder(tenkan, kijun) and close < math.min(spanA, spanB)
+
+if bullCloud
+    label.new(bar_index, low, text="KUMO ▲", style=label.style_label_up, color=color.green, textcolor=color.white)
+    log.info("Bullish Ichimoku Breakout @ {0}", close)
+if bearCloud
+    label.new(bar_index, high, text="KUMO ▼", style=label.style_label_down, color=color.red, textcolor=color.white)
+    log.info("Bearish Ichimoku Breakout @ {0}", close)
+
+strategy.entry("Ichimoku Long", strategy.long, when=bullCloud)
+strategy.entry("Ichimoku Short", strategy.short, when=bearCloud)
+`,
+  },
+  {
+    id: 'pine6_vwap_bands',
+    nameFa: 'Pine v6: باندهای VWAP ± انحراف معیار + اسکلپ',
+    nameEn: 'Pine v6: VWAP ± StdDev Bands & Mean Reversion',
+    descriptionFa: 'اندیکاتور و استراتژی VWAP با باندهای ۱σ و ۲σ برای تشخیص نقاط اکسترمم و اسکلپ.',
+    descriptionEn: 'Pine v6 VWAP with 1-sigma and 2-sigma deviation bands and reversion alerts.',
+    language: 'pine',
+    category: 'Pine v6 Pro',
+    code: `//@version=6
+strategy("VWAP Deviation Bands v6", overlay=true)
+
+mult = input.float(2.0, title="Band Multiplier")
+vwapVal = ta.vwap(hlc3)
+dev = ta.stdev(close, 20) * mult
+upperBand = vwapVal + dev
+lowerBand = vwapVal - dev
+
+pV = plot(vwapVal, title="VWAP", color=color.yellow, linewidth=2)
+pU = plot(upperBand, title="VWAP +2σ", color=color.new(color.red, 20), linewidth=1)
+pL = plot(lowerBand, title="VWAP -2σ", color=color.new(color.lime, 20), linewidth=1)
+fill(pV, pU, color=color.new(color.red, 90))
+fill(pV, pL, color=color.new(color.green, 90))
+
+rsiVal = ta.rsi(close, 14)
+longSig = ta.crossover(close, lowerBand) and rsiVal < 42
+shortSig = ta.crossunder(close, upperBand) and rsiVal > 58
+
+strategy.entry("VWAP Long", strategy.long, when=longSig)
+strategy.entry("VWAP Short", strategy.short, when=shortSig)
+`,
+  },
+  {
+    id: 'pine6_atr_trailing_stop',
+    nameFa: 'Pine v6: تریلینگ استاپ ATR پویا + var History',
+    nameEn: 'Pine v6: Dynamic ATR Trailing Stop (Stateful var)',
+    descriptionFa: 'اسکریپت پیشرفته Pine v6 با حافظه تاریخی کندل‌های قبل برای دنبال کردن روند با تریلینگ استاپ ATR.',
+    descriptionEn: 'Stateful Pine v6 ATR trailing stop using var historical tracking and trend flip barcolors.',
+    language: 'pine',
+    category: 'Pine v6 Pro',
+    code: `//@version=6
+strategy("ATR Trailing Stop Engine v6", overlay=true)
+
+atrLen = input.int(14, title="ATR Length")
+atrMult = input.float(2.5, title="Multiplier")
+
+xAtr = ta.atr(atrLen) * atrMult
+var float trail = na
+var int dir = 1
+
+prevTrail = nz(trail[1], close)
+if close > prevTrail and close[1] > prevTrail
+    trail := math.max(prevTrail, close - xAtr)
+else if close < prevTrail and close[1] < prevTrail
+    trail := math.min(prevTrail, close + xAtr)
+else
+    trail := close > prevTrail ? close - xAtr : close + xAtr
+
+dir := close > trail ? 1 : -1
+
+plot(trail, title="ATR Trail", color=dir > 0 ? color.lime : color.red, linewidth=2)
+barcolor(dir > 0 ? color.new(color.lime, 25) : color.new(color.red, 25))
+
+bullFlip = dir == 1 and dir[1] == -1
+bearFlip = dir == -1 and dir[1] == 1
+
+if bullFlip
+    log.info("ATR Trail Flip LONG @ {0}", close)
+if bearFlip
+    log.warning("ATR Trail Flip SHORT @ {0}", close)
+
+strategy.entry("Trail Long", strategy.long, when=bullFlip)
+strategy.entry("Trail Short", strategy.short, when=bearFlip)
+`,
+  },
+  {
+    id: 'pine6_polyline_zigzag',
+    nameFa: 'Pine v6: زیگزاگ Polyline + خطوط پیوت حمایت و مقاومت',
+    nameEn: 'Pine v6: Polyline ZigZag + Auto Pivot Levels',
+    descriptionFa: 'استفاده از chart.point و polyline.new (ویژگی اختصاصی Pine v6) برای اتصال سقف‌ها و کف‌های بازار.',
+    descriptionEn: 'Pine Script v6 showcase using UDTs, arrays, chart.point.from_index, and polyline.new.',
+    language: 'pine',
+    category: 'Pine v6 Pro',
+    code: `//@version=6
+indicator("Polyline ZigZag & Pivot SR v6", overlay=true)
+
+leftBars = input.int(6, title="Pivot Left")
+rightBars = input.int(6, title="Pivot Right")
+
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+
+var pts = array.new<chart.point>()
+
+if not na(ph)
+    pts.push(chart.point.from_index(bar_index - rightBars, ph))
+    line.new(bar_index - rightBars, ph, bar_index + 8, ph, color=color.new(color.red, 35), style=line.style_dotted)
+
+if not na(pl)
+    pts.push(chart.point.from_index(bar_index - rightBars, pl))
+    line.new(bar_index - rightBars, pl, bar_index + 8, pl, color=color.new(color.lime, 35), style=line.style_dotted)
+
+if barstate.islast and pts.size() >= 2
+    polyline.new(pts, curved=false, closed=false, line_color=color.aqua, line_width=2)
+
+plot(ta.kama(close, 14), title="KAMA (14)", color=color.yellow, linewidth=2)
+`,
+  },
+  {
+    id: 'pine6_macd_subpane',
+    nameFa: 'Pine v6: اسیلاتور MACD + RSI (پنل مجزا پایین چارت)',
+    nameEn: 'Pine v6: Dual Momentum Oscillator (Sub-Pane)',
+    descriptionFa: 'رسم اسیلاتور مستقل در پنجره مجزای پایین چارت (overlay=false) با هیستوگرام دو رنگ و خط صفر.',
+    descriptionEn: 'Sub-pane oscillator indicator (overlay=false) with MACD histogram, signal line, and hline thresholds.',
+    language: 'pine',
+    category: 'Oscillator v6',
+    code: `//@version=6
+strategy("MACD + TSI Sub-Pane v6", overlay=false)
+
+[macdLine, sigLine, hist] = ta.macd(close, 12, 26, 9)
+tsiVal = ta.tsi(close, 13, 25)
+
+hline(0, title="Zero Line", color=color.gray, linestyle=hline.style_dashed)
+plot(hist, title="MACD Hist", color=hist >= 0 ? color.lime : color.red, style=plot.style_histogram)
+plot(macdLine, title="MACD", color=color.aqua, linewidth=2)
+plot(sigLine, title="Signal", color=color.orange, linewidth=2)
+
+longCond = ta.crossover(macdLine, sigLine) and tsiVal > -10
+shortCond = ta.crossunder(macdLine, sigLine) and tsiVal < 10
+
+strategy.entry("MACD Long", strategy.long, when=longCond)
+strategy.entry("MACD Short", strategy.short, when=shortCond)
+`,
+  },
+  {
+    id: 'pine6_udt_dashboard',
+    nameFa: 'Pine v6: داشبورد چندتایم‌فریمی با Enum و Method',
+    nameEn: 'Pine v6: Multi-TF Matrix Dashboard (UDT + Enum + Method)',
+    descriptionFa: 'مثال مدرن Pine v6 با استفاده از type، enum، method و جدول تحلیلی همزمان روی ۳ تایم‌فریم.',
+    descriptionEn: 'Modern Pine v6 script demonstrating enum, UDT type/method, and MTF table HUD.',
+    language: 'pine',
+    category: 'Pine v6 Pro',
+    code: `//@version=6
+indicator("Multi-TF Trend Matrix v6", overlay=true)
+
+enum Bias
+    BULL = "BULLISH"
+    BEAR = "BEARISH"
+
+type TrendMetric
+    string tfLabel
+    float emaVal
+    float rsiVal
+
+method isBullish(TrendMetric self, float px) =>
+    px > self.emaVal and self.rsiVal > 50
+
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+rsi14 = ta.rsi(close, 14)
+
+htf1h = request.security(syminfo.tickerid, "60", ta.ema(close, 50))
+htf4h = request.security(syminfo.tickerid, "240", ta.ema(close, 50))
+
+plot(ema50, title="EMA 50", color=color.aqua, linewidth=2)
+plot(ema200, title="EMA 200", color=color.purple, linewidth=2)
+plot(htf4h, title="4H EMA 50", color=color.orange, linewidth=2)
+
+var table panel = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 18), border_color=color.aqua)
+if barstate.islast
+    mCur = TrendMetric.new(timeframe.period, ema50, rsi14)
+    table.cell(panel, 0, 0, "MTF Matrix v6", text_color=color.aqua, bgcolor=color.new(color.blue, 60))
+    table.cell(panel, 1, 0, mCur.isBullish(close) ? Bias.BULL : Bias.BEAR, text_color=mCur.isBullish(close) ? color.lime : color.red)
+    table.cell(panel, 0, 1, "1H EMA 50", text_color=color.silver)
+    table.cell(panel, 1, 1, close > htf1h ? "ABOVE" : "BELOW", text_color=close > htf1h ? color.lime : color.red)
+    table.cell(panel, 0, 2, "4H EMA 50", text_color=color.silver)
+    table.cell(panel, 1, 2, close > htf4h ? "ABOVE" : "BELOW", text_color=close > htf4h ? color.lime : color.red)
+    table.cell(panel, 0, 3, "RSI (14)", text_color=color.silver)
+    table.cell(panel, 1, 3, str.tostring(rsi14, "#.##"), text_color=color.yellow)
 `,
   },
 ];

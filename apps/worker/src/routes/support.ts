@@ -50,7 +50,7 @@ async function buildUserSupportContext(db: D1Database, user: AppVariables['user'
 supportRoutes.get('/tickets', async (c) => {
   const user = c.get('user');
 
-  const [ticketsRes, msgsRes, tgSetting, antiScamSetting] = await Promise.all([
+  const [ticketsRes, msgsRes, tgSetting, officialChanSetting, antiScamSetting] = await Promise.all([
     c.env.DB.prepare(
       `SELECT * FROM support_tickets WHERE user_id = ? ORDER BY last_message_at DESC LIMIT 20`
     ).bind(user.id).all<{
@@ -72,6 +72,8 @@ supportRoutes.get('/tickets', async (c) => {
     ).bind(user.id).all().catch(() => ({ results: [] })),
     c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'telegram_support'`)
       .first<{ value: string }>().catch(() => null),
+    c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'official_channel'`)
+      .first<{ value: string }>().catch(() => null),
     c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'anti_scam_notice_fa'`)
       .first<{ value: string }>().catch(() => null),
   ]);
@@ -83,7 +85,7 @@ supportRoutes.get('/tickets', async (c) => {
     tickets: ticketsRes.results,
     messages: msgsRes.results,
     telegramSupport,
-    officialChannel: OFFICIAL_CHANNEL_HANDLE,
+    officialChannel: officialChanSetting?.value || OFFICIAL_CHANNEL_HANDLE,
     antiScamNotice: antiScamSetting?.value || ANTI_SCAM_WARNING_FA,
   });
 });

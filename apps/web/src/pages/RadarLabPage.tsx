@@ -273,6 +273,7 @@ export function RadarLabPage({
         '2h': '4h',
         '4h': '1d',
         '1d': '1d',
+        '1w': '1w',
       };
       const htf = htfMap[btTf] ?? '1h';
       const [ltfRes, htfRes] = await Promise.all([
