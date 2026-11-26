@@ -432,7 +432,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const autoMagicCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('tg_login='));
     expect(autoMagicCall).toBeTruthy();
 
-    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو V11.6</b> خوش آمدید، علی!'));
+    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو V11.7</b> خوش آمدید، علی!'));
     expect(welcomeCall).toBeTruthy();
     expect(String(welcomeCall!.body.text)).not.toContain('**');
     expect(welcomeCall!.body.parse_mode).toBe('HTML');

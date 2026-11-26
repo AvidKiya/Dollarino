@@ -129,7 +129,36 @@ describe('Dollarino V11.6 Overhaul: DEX AI Verdict, Direct Buy, Live Pool Routes
     );
     const { token } = (await loginRes.json()) as { token: string };
 
-    // 1. AI Analyze quantitative verdict
+    // 1. AI Analyze quantitative verdict (deterministic DexScreener pool stub)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = String(input);
+        if (u.includes('api.dexscreener.com')) {
+          return new Response(
+            JSON.stringify({
+              pairs: [
+                {
+                  chainId: 'solana',
+                  dexId: 'raydium',
+                  pairAddress: 'pair1',
+                  url: 'https://dexscreener.com/solana/pair1',
+                  baseToken: { address: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', name: 'Bonk', symbol: 'BONK' },
+                  quoteToken: { symbol: 'SOL' },
+                  priceUsd: '0.000028',
+                  liquidity: { usd: 450000 },
+                  volume: { h24: 1200000 },
+                  priceChange: { h1: 4.2, h24: 18.5 },
+                  txns: { h1: { buys: 320, sells: 140 } },
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return realFetch(input, init);
+      })
+    );
     const aiRes = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/dex/ai-analyze', {
         method: 'POST',

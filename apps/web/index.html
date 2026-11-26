@@ -46,7 +46,6 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
-    <script src="https://telegram.org/js/telegram-web-app.js" async></script>
     <script>
       (function () {
         try {
@@ -69,7 +68,15 @@
     <link
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Vazirmatn:wght@400;500;600;700;800;900&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Vazirmatn:wght@400;500;600;700;800;900&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <style>
       #dl-boot-splash {
         position: relative;
@@ -283,6 +290,15 @@
         0% { transform: translateX(-120%); }
         100% { transform: translateX(300%); }
       }
+      @media (max-width: 1024px) {
+        .dl-boot-card {
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+        }
+        .dl-boot-glow-top {
+          filter: blur(36px);
+        }
+      }
     </style>
   </head>
   <body class="antialiased">
@@ -294,12 +310,12 @@
             <div class="dl-boot-ring-1"></div>
             <div class="dl-boot-ring-2"></div>
             <div class="dl-boot-logo-box">
-              <img src="/logo.png" alt="Dollarino" width="54" height="54" style="object-fit:contain" />
+              <img src="/logo-sm.webp" alt="Dollarino" width="54" height="54" style="object-fit:contain" />
             </div>
           </div>
           <div class="dl-boot-badge">
             <span style="width:6px;height:6px;border-radius:9999px;background:#10d856;display:inline-block"></span>
-            <bdi dir="ltr">DOLLARINO AI · V11.6</bdi>
+            <bdi dir="ltr">DOLLARINO AI · V11.7</bdi>
           </div>
           <h1 class="dl-boot-title">دلارینو</h1>
           <p class="dl-boot-sub">دستیار ترید هوشمند ۲۴/۷، کپی‌ترید ولت‌ها و کیف‌پول چندزنجیره‌ای DEX</p>
@@ -350,5 +366,6 @@
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js" async></script>
   </body>
 </html>

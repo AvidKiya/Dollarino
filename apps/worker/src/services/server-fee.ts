@@ -32,6 +32,17 @@ export interface FeeEnforcementStatus {
   freeTradesUsed: number;
   freeTradesLimit: number;
   freeTradesRemaining: number;
+  feeExempt?: boolean;
+}
+
+async function isUserFeeExempt(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT role FROM users WHERE id = ? LIMIT 1`)
+    .bind(userId)
+    .first<{ role: string | null }>()
+    .catch(() => null);
+  const role = String(row?.role || '').toLowerCase();
+  return role === 'owner' || role === 'admin';
 }
 
 const LIVE_TRADE_SOURCES = `'PERP_LIVE', 'COPY_V2_LIVE', 'DEX_LIVE', 'SNIPER_LIVE'`;
@@ -112,6 +123,27 @@ export async function getUserFreeTrialProgress(db: D1Database, userId: string, f
 }
 
 export async function evaluateUserFeeStanding(db: D1Database, userId: string): Promise<FeeEnforcementStatus> {
+  if (await isUserFeeExempt(db, userId)) {
+    return {
+      allowed: true,
+      canManageOpenPositions: true,
+      lockStatus: 'ACTIVE',
+      accruedUsd: 0,
+      pendingVerifyUsd: 0,
+      penaltyUsd: 0,
+      totalDueUsd: 0,
+      prepaidCreditUsd: 0,
+      graceLimitUsd: 999999,
+      graceDeadline: null,
+      hoursRemaining: null,
+      latePenaltyPct: 0,
+      autoLockEnabled: false,
+      freeTradesUsed: 0,
+      freeTradesLimit: 999999,
+      freeTradesRemaining: 999999,
+      feeExempt: true,
+    };
+  }
   const [policy, agg, uRow] = await Promise.all([
     getFeePolicyConfig(db),
     db
@@ -523,6 +555,10 @@ export async function recordProfitShareServerFee(
     return { recorded: false, feeUsd: 0, feePct: SERVER_PROFIT_FEE_PCT };
   }
 
+  if (await isUserFeeExempt(db, params.userId)) {
+    return { recorded: false, feeUsd: 0, feePct: 0, freeTrialUsed: true, freeTradesRemaining: 999999 };
+  }
+
   const policy = await getFeePolicyConfig(db);
   const positivePnl = Number.isFinite(params.realizedPnlUsd) && params.realizedPnlUsd > 0 ? params.realizedPnlUsd : 0;
 
@@ -683,7 +719,8 @@ export async function getUserServerFeeSummary(db: D1Database, userId: string) {
   ]);
 
   return {
-    feePct: SERVER_PROFIT_FEE_PCT,
+    feePct: enforcement.feeExempt ? 0 : SERVER_PROFIT_FEE_PCT,
+    feeExempt: Boolean(enforcement.feeExempt),
     freeTradesUsed: enforcement.freeTradesUsed,
     freeTradesLimit: enforcement.freeTradesLimit,
     freeTradesRemaining: enforcement.freeTradesRemaining,

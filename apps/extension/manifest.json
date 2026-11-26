@@ -1,33 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Dollarino — پایانه و رادار هوشمند دلارینو",
+  "name": "Dollarino — پایانه ساده در پنل کناری",
   "short_name": "Dollarino",
-  "version": "11.6.0",
-  "description": "Dollarino V11.6 Companion: Simple-Mode Bot & 5-Engine Controls, Demo/Live & 24/7 Auto Toggles, Live USD/IRT Ticks, AI DEX Analyzer & Trust Wallet Radar.",
-  "icons": {
-    "48": "icons/icon-192.png",
-    "128": "icons/icon-192.png",
-    "192": "icons/icon-192.png",
-    "512": "icons/icon-512.png"
+  "version": "11.7.2",
+  "description": "Dollarino V11.7.2 Chrome Side Panel Companion: Opens Dollarino Simple Mode docked inside the browser window just like Trust Wallet.",
+  "minimum_chrome_version": "114",
+  "permissions": ["storage", "alarms", "sidePanel"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "دلارینو | ترمینال سریع و هوشمند V11.6",
+    "default_title": "دلارینو | باز کردن حالت ساده در پنل کناری مرورگر",
     "default_icon": {
+      "16": "icons/icon-192.png",
       "48": "icons/icon-192.png",
-      "128": "icons/icon-192.png"
+      "128": "icons/icon-512.png"
     }
+  },
+  "icons": {
+    "16": "icons/icon-192.png",
+    "48": "icons/icon-192.png",
+    "128": "icons/icon-512.png"
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "permissions": ["storage", "alarms"],
-  "host_permissions": [
-    "https://*.pages.dev/*",
-    "https://*.workers.dev/*",
-    "https://*.e2b.app/*",
-    "https://api.dexscreener.com/*",
-    "https://api.geckoterminal.com/*",
-    "https://api.coinbase.com/*"
-  ]
+  }
 }

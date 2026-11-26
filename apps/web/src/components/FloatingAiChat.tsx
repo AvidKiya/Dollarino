@@ -642,7 +642,7 @@ export function DedicatedAiChatSurface({
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="relative w-10 h-10 rounded-full overflow-hidden dz-logo-pill p-1 shrink-0 grid place-items-center">
                 <img
-                  src="/logo.png"
+                  src="/logo-sm.webp"
                   alt="Dollarino Logo"
                   className="w-full h-full object-contain drop-shadow-[0_2px_6px_rgba(22,82,240,0.3)]"
                 />

@@ -69,8 +69,8 @@ export class TradingBotCoordinator implements DurableObject {
   async alarm() {
     const [runningUsers, openUsers, alertUsers] = await Promise.all([
       this.env.DB.prepare(
-        `SELECT user_id FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') LIMIT 200`
-      ).all<{ user_id: string }>(),
+        `SELECT * FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') LIMIT 200`
+      ).all<UserBotConfigRow>(),
       this.env.DB.prepare(
         `SELECT DISTINCT user_id FROM trades WHERE status = 'OPEN' LIMIT 200`
       ).all<{ user_id: string }>(),
@@ -79,16 +79,17 @@ export class TradingBotCoordinator implements DurableObject {
       ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
     ]);
 
-    const runningSet = new Set(runningUsers.results.map((r) => r.user_id));
+    const runningMap = new Map(runningUsers.results.map((r) => [r.user_id, r]));
     const openSet = new Set(openUsers.results.map((r) => r.user_id));
     const alertSet = new Set(alertUsers.results.map((r) => r.user_id));
-    const allUserIds = new Set([...runningSet, ...openSet, ...alertSet]);
+    const allUserIds = new Set([...runningMap.keys(), ...openSet, ...alertSet]);
 
     for (const userId of allUserIds) {
       await this.runUserTick(userId, {
-        isBotRunning: runningSet.has(userId),
+        isBotRunning: runningMap.has(userId),
         hasOpenTrades: openSet.has(userId),
         hasAlerts: alertSet.has(userId),
+        prefetchedCfg: runningMap.get(userId),
       }).catch(() => {});
     }
 
@@ -103,8 +104,8 @@ export class TradingBotCoordinator implements DurableObject {
     }
 
     if (allUserIds.size > 0) {
-      // Check every 30s when open trades exist for tight TP/SL control; otherwise every 90s to dramatically cut idle D1 Rows Read
-      const nextDelay = openSet.size > 0 ? 30_000 : 90_000;
+      // Check every 45s when open trades exist for tight TP/SL control; otherwise every 120s to minimize D1 Rows Read
+      const nextDelay = openSet.size > 0 ? 45_000 : 120_000;
       await this.state.storage.setAlarm(Date.now() + nextDelay);
     }
   }
@@ -220,7 +221,7 @@ export class TradingBotCoordinator implements DurableObject {
 
   private async runUserTick(
     userId: string,
-    hints?: { isBotRunning?: boolean; hasOpenTrades?: boolean; hasAlerts?: boolean }
+    hints?: { isBotRunning?: boolean; hasOpenTrades?: boolean; hasAlerts?: boolean; prefetchedCfg?: UserBotConfigRow }
   ) {
     // 1. Only query & reconcile open positions if user actually has open trades (or manual /tick trigger)
     if (!hints || hints.hasOpenTrades) {
@@ -240,14 +241,28 @@ export class TradingBotCoordinator implements DurableObject {
       return;
     }
 
-    const cfg = await this.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
-      .bind(userId).first<UserBotConfigRow>();
+    const cfg =
+      hints?.prefetchedCfg ??
+      (await this.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+        .bind(userId)
+        .first<UserBotConfigRow>());
     if (!cfg || (cfg.bot_state !== 'RUNNING_PAPER' && cfg.bot_state !== 'RUNNING_LIVE')) {
       return;
     }
 
-    const onboardingGate = await checkPreTradeOnboardingGate(this.env.DB, userId).catch(() => ({ ok: true }));
+    const gateKey = `do_gate_ok_${userId}`;
+    const gateCached = hints?.prefetchedCfg
+      ? await this.state.storage.get<{ ts: number; ok: boolean }>(gateKey)
+      : undefined;
+    const onboardingGate =
+      gateCached && gateCached.ok && Date.now() - gateCached.ts < 120_000
+        ? { ok: true }
+        : await checkPreTradeOnboardingGate(this.env.DB, userId).catch(() => ({ ok: true }));
+    if (onboardingGate.ok && (!gateCached || Date.now() - gateCached.ts >= 120_000)) {
+      await this.state.storage.put(gateKey, { ts: Date.now(), ok: true }).catch(() => {});
+    }
     if (!onboardingGate.ok) {
+      await this.state.storage.delete(gateKey).catch(() => {});
       await this.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`)
         .bind(userId)
         .run()
@@ -290,22 +305,36 @@ export class TradingBotCoordinator implements DurableObject {
       }
     }
 
-    const [agentRow, activeCopyRow] = await Promise.all([
-      this.env.DB.prepare(`SELECT is_active_for_trading FROM user_ai_agents WHERE user_id = ? LIMIT 1`)
-        .bind(userId)
-        .first<{ is_active_for_trading: number }>()
-        .catch(() => null),
-      this.env.DB.prepare(`SELECT COUNT(*) as cnt FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`)
-        .bind(userId)
-        .first<{ cnt: number }>()
-        .catch(() => ({ cnt: 0 })),
-    ]);
+    const metaKey = `do_eng_meta_${userId}`;
+    const metaCached = hints?.prefetchedCfg
+      ? await this.state.storage.get<{ ts: number; agentActive: boolean; copyCount: number }>(metaKey)
+      : undefined;
+    let agentActive: boolean;
+    let copyCount: number;
+    if (metaCached && Date.now() - metaCached.ts < 90_000) {
+      agentActive = metaCached.agentActive;
+      copyCount = metaCached.copyCount;
+    } else {
+      const [agentRow, activeCopyRow] = await Promise.all([
+        this.env.DB.prepare(`SELECT is_active_for_trading FROM user_ai_agents WHERE user_id = ? LIMIT 1`)
+          .bind(userId)
+          .first<{ is_active_for_trading: number }>()
+          .catch(() => null),
+        this.env.DB.prepare(`SELECT COUNT(*) as cnt FROM copy_subscriptions WHERE user_id = ? AND is_active = 1`)
+          .bind(userId)
+          .first<{ cnt: number }>()
+          .catch(() => ({ cnt: 0 })),
+      ]);
+      agentActive = Boolean(agentRow?.is_active_for_trading);
+      copyCount = Number(activeCopyRow?.cnt ?? 0);
+      await this.state.storage.put(metaKey, { ts: Date.now(), agentActive, copyCount }).catch(() => {});
+    }
 
     const activeEngines: TradingEngineChoice[] = parseActiveEnginesFromConfig(
       cfg.active_engines_json,
       cfg.strategy_key,
-      Boolean(agentRow?.is_active_for_trading),
-      Number(activeCopyRow?.cnt ?? 0),
+      agentActive,
+      copyCount,
       Boolean(cfg.sniper_enabled),
       cfg.bot_state
     );
@@ -395,7 +424,7 @@ export class TradingBotCoordinator implements DurableObject {
 
     const hbKey = `last_scan_hb_${userId}`;
     const lastHb = (await this.state.storage.get<number>(hbKey)) ?? 0;
-    if (Date.now() - lastHb >= 60_000) {
+    if (Date.now() - lastHb >= 300_000) {
       await this.state.storage.put(hbKey, Date.now());
       const names = symbolsToScan.map((s) => s.replace('USDT', '')).join('، ');
       await logAudit(

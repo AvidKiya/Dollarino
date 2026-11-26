@@ -1,34 +1,35 @@
-# گزارش جامع تست و راستی‌آزمایی زنده (QA Verification Report) — **Dollarino V11.6.5**
+# گزارش جامع تست و راستی‌آزمایی زنده (QA Verification Report) — **Dollarino V11.7.2 (`11.7.2`)**
 
-> **محیط تست زنده:** `http://0.0.0.0:1654` (`wrangler dev --local` + Miniflare D1 با ۴۴ مایگریشن فعال)  
-> **تاریخ اجرا:** ۱۴۰۵/۰۹/۰۵ (`2026-11-25`)  
-> **مجموعه تست‌های خودکار + مرورگر واقعی:** TypeScript (`0` خطا) · Vite Production Build (`1744` ماژول) · Unit/Integration (`15/15` Core + `74/74` Worker) · Playwright Live 4-Mode Matrix (`21/21` Check Pass · `84` اسکرین‌شات سازمان‌یافته)
+> **محیط تست زنده:** `http://127.0.0.1:5173` & `http://127.0.0.1:8787` (`wrangler dev --local` + Miniflare D1 با ۴۷ مایگریشن فعال)  
+> **آخرین به‌روزرسانی تاییدشده (V11.7.2 Final):** ۱۴۰۵/۰۹/۰۵ (`2026-11-26`)  
+> **مجموعه تست‌های خودکار + مرورگر واقعی V11.7.2 Final:** TypeScript (`0` خطا) · Vite Production Build (`1748` ماژول) · Unit/Integration (`17/17` Core + `84/84` Worker در `14` مجموعه شامل `v1172-release.test.ts` و `v117-overhaul.test.ts`) · Playwright Live 4-Mode + Side Panel E2E (**۷۵/۷۵ سناریوی موفق · ۹۸ اسکرین‌شات سازمان‌یافته · `۰ px` سرریز افقی · `۰` خطای JS و کنسول**) — پوشش کامل صفحه معرفی جدید `V11.7.2` (`LandingPage`), نوار قیمت پیوسته بی‌انتها (`LiveTickerBar`) بدون فضای سفید در ساده و حرفه‌ای، کلیک به صفحه بازارها (`market-spotlight-card`), ترمینال TP/SL درصدی `%`, Pine v5 IDE, اسنایپر ۵ دقیقه، سولانا خزانه، استودیو کارت سود `16:9`/`9:16`, خدمات/۲FA/صفرسازی حساب مدیر (`200 OK`), پنل مدیریت `صفرسازی ۰` + D1, و اکستنشن Chrome Side Panel (`395×820`)!
 
 ---
 
-## ۱. خلاصه نتایج کلان (Executive Summary)
+## ۱. خلاصه نتایج کلان (Executive Summary — V11.7.2 Final)
 
 | ردیف | لایه آزمایش | ابزار / دستور | نتیجه | جزئیات عددی تاییدشده |
 | :--- | :--- | :--- | :--- | :--- |
 | ۱ | بررسی تایپ‌اسکریپت (`Typecheck`) | `npm run typecheck` | **PASS** | `core` + `worker` + `web` = **۰ خطا** |
-| ۲ | بیلد تولیدی و باندل کلادفلر | `npm run build` + `wrangler deploy --dry-run` | **PASS** | `1744` ماژول Vite + باندل Worker (`4861.78 KiB`) |
-| ۳ | تست‌های واحد هسته ریاضی | `npm test --workspace=packages/core` | **PASS** | **۱۵/۱۵ تست پاس** |
-| ۴ | تست‌های سرور، امنیت و D1 | `npm test --workspace=apps/worker` | **PASS** | **۷۴/۷۴ تست پاس** در ۱۲ مجموعه تست |
-| ۵ | سلامت و کش‌باستینگ HTTP | `curl -s /api/health` + `curl -sI / /sw.js` | **PASS** | `ok: true`، `Cache-Control: no-store`، `SW: dollarino-pwa-v11.6.5` |
-| ۶ | **تست E2E مرورگر در ۴ حالت** | Playwright (`Chromium Headless 1255`) | **PASS** | **۲۱/۲۱ بررسی عملکردی پاس** · **۰ خطای JS** · **۰ خطای ۵۰۰ سرور** |
-| ۷ | بررسی سرریز افقی ریسپانسیو | `scrollWidth - innerWidth` در تمام ۴ مود | **PASS** | **۰ مورد سرریز افقی (`overflowIssues: []`)** در دسکتاپ و موبایل |
-| ۸ | پوشش تصویربرداری سازمان‌یافته | `01-Desktop-Light` تا `04-Mobile-Dark` | **PASS** | **۸۴ اسکرین‌شات کامل** (`25 + 19 + 18 + 22`) و بازبینی بصری تاییدشده |
+| ۲ | بیلد تولیدی و اکستنشن پنل کناری | `npm run build` + `dollarino-extension-v11.7.2.zip` | **PASS** | `1748` ماژول Vite + اکستنشن `sidePanel` (`v11.7.2` · حالت ساده اختصاصی) |
+| ۳ | تست‌های واحد هسته ریاضی و Pine v5 | `npm test --workspace=packages/core` | **PASS** | **۱۷/۱۷ تست پاس** (شامل گرافیک و HUD در `evaluatePineStrategy` و `tpsl.ts`) |
+| ۴ | تست‌های سرور، امنیت، تلگرام و D1 | `npm test --workspace=apps/worker` | **PASS** | **۸۴/۸۴ تست پاس** در **۱۴ مجموعه تست** (با `v1172-release.test.ts`) |
+| ۵ | سلامت، نوار بازار و صفرسازی مدیر | `/api/health`, `/api/public/market-snapshot`, `DELETE /api/auth/account` | **PASS** | `version: "11.7.2"` · `16` ارز برتر بدون توکن سهام · بازنشانی حساب ادمین به `۰` با حفظ نقش (`200 OK`) |
+| ۶ | **تست زنده ۴ حالته + Side Panel** | Playwright (`Chromium Headless 1255`) | **PASS** | **۷۵/۷۵ آزمون موفق** در `Desktop Light/Dark` (`1440×900`), `Mobile Light/Dark` (`395×844`) و `Side Panel` (`395×820`) · **۰ خطای JS** |
+| ۷ | بررسی سرریز افقی و پیوستگی نوار قیمت | `scrollWidth - innerWidth` + هندسه دو ردیف `LiveTickerBar` | **PASS** | **۰ px سرریز افقی** + پوشش ۱۰۰٪ نوار قیمت (`coversFullBar: true`, عرض باند `5700–6206px`) |
+| ۸ | پوشش تصویربرداری سازمان‌یافته | آرشیو `Dollarino-V11.7.2-QA-Screenshots-4Modes.zip` | **PASS** | **۹۸ تصویر تمیز** (`24×4` + `2` پنل کناری) در ۵ پوشه مرتب + گزارش JSON کامل |
 
 ---
 
-## ۲. ماتریس ۴ حالته اسکرین‌شات‌ها و وضعیت ظاهری (Desktop / Mobile × Light / Dark)
+## ۲. ماتریس جدید ۵ پوشه‌ای اسکرین‌شات‌ها (`V11.7.2 Final` — ۹۸ تصویر)
 
-| کد پوشه | حالت آزمایش | ابعاد Viewport | شناسه تم واقعی (`data-theme`) | تعداد اسکرین‌شات | وضعیت سرریز افقی |
+| کد پوشه | حالت آزمایش | ابعاد Viewport | شناسه تم واقعی (`data-theme`) | تعداد اسکرین‌شات | وضعیت سرریز افقی و نوار قیمت |
 | :--- | :--- | :--- | :--- | :---: | :--- |
-| `01-Desktop-Light` | **دسکتاپ روشن** | `1440 × 900` | `paper` (`.theme-light`) | **۲۵ تصویر** | `۰ px` (بدون سرریز) |
-| `02-Desktop-Dark` | **دسکتاپ تیره** | `1440 × 900` | `cosmic` (`.dark`) | **۱۹ تصویر** | `۰ px` (بدون سرریز) |
-| `03-Mobile-Light` | **موبایل روشن** | `390 × 844` | `paper` (`.theme-light`) | **۱۸ تصویر** | `۰ px` (بدون سرریز) |
-| `04-Mobile-Dark` | **موبایل تیره** | `390 × 844` | `cosmic` (`.dark`) | **۲۲ تصویر** | `۰ px` (بدون سرریز) |
+| `01-Desktop-Light` | **دسکتاپ روشن** | `1440 × 900` | `paper` (`.theme-light`) | **۲۴ تصویر** | `۰ px` · `coversFullBar: true` (`trackWidth ~6186px`) |
+| `02-Desktop-Dark` | **دسکتاپ تیره** | `1440 × 900` | `cosmic` (`.dark`) | **۲۴ تصویر** | `۰ px` · `coversFullBar: true` (`trackWidth ~6206px`) |
+| `03-Mobile-Light` | **موبایل روشن** | `395 × 844` | `paper` (`.theme-light`) | **۲۴ تصویر** | `۰ px` · `coversFullBar: true` (`trackWidth ~5886px`) |
+| `04-Mobile-Dark` | **موبایل تیره** | `395 × 844` | `cosmic` (`.dark`) | **۲۴ تصویر** | `۰ px` · `coversFullBar: true` (`trackWidth ~5886px`) |
+| `05-Chrome-SidePanel` | **اکستنشن پنل کناری (ساده)** | `395 × 820` | `paper` و `cosmic` | **۲ تصویر** | `۰ px` · `proBtns = 0` · قفل کامل حالت ساده |
 
 > **نکته کشف‌شده و تاییدشده در آزمایش تم تیره:** اپلیکیشن برای بارگذاری تم در نخستین رندر، مقدار `dollarino_look` (`'paper'` برای روز و `'cosmic'` برای شب) را می‌خواند و سپس `dollarino_theme` را همگام‌سازی می‌کند. در اجرای تست، مقداردهی همزمان هر دو کلید (`cosmic` و `dark`) تم شب فضایی واقعی دلارینو را در دسکتاپ و موبایل فعال و تایید کرد.
 
@@ -92,12 +93,17 @@
 1. **بهبود پایداری و رم در محیط شبیه‌سازی محلی (`workerd` + Chromium):**
    - با پاکسازی و انتقال باینری مرورگر تست به دیسک اصلی و اجرای دسته‌ای حالت‌ها، مصرف رم به خوبی مدیریت شد و سرور محلی روی `0.0.0.0:1654` به شکل روان پاسخ داد.
    - در حالت آفلاین سندباکس بدون دسترسی اینترنت به `api.nobitex.ir` و `api.tetherland.com`، درخواست اول داشبورد حدود `~6.7s` برای تایم‌اوت DNS منتظر می‌ماند و در محیط دارای اینترنت واقعی کلادفلر در چند ده‌میلی‌ثانیه پاسخ می‌دهد.
-2. **نکته کوچک پیشنهادی برای نسخه بعدی (`V11.7`):**
-   - در بخش مدیریت ادمین (`AdminPage` -> تب `خزانه و مالی`، تصویر `04-Mobile-Dark/21_admin_fees.png`), در متن توضیح باکس دریافت کارمزد هنوز عبارت تاریخی «تمام واریزها (حداقل $10)... به این کیف‌پول خزانه واریز می‌شود» وجود دارد که پیشنهاد می‌شود در آپدیت بعدی متن مدیریت نیز مشابه سمت کاربر به «تسویه کارمزد ۳٪ و شارژ اعتبار اختیاری» همسان‌سازی شود (سمت کاربر ۱۰۰٪ تمیز و غیرحضانتی است).
-   - روی اسکرین‌شات `03-Mobile-Light/01_landing.png` در لندینگ مهمان، گوی شناور `FloatingAiChat` روی لبه چپ کپسول `Solana · Jupiter` قرار می‌گیرد که با درگ‌شدن توسط کاربر یا جابجایی موقعیت پیش‌فرض به پایین‌تر قابل تنظیم جزئی‌تر است.
+2. **تاییدیه‌های جامع `V11.7.2 Final` (`75/75` تست زنده ۴ حالته + Chrome Side Panel + Safe Reset):**
+   - **تنظیمات Google OAuth در ادمین و تلگرام + صفحه ورود (`AdminPage` & `AuthPage`):** ذخیره لحظه‌ای `google_client_id`/`google_client_secret` در پنل ادمین و منوی `/admin` تلگرام با نمایش وضعیت `آماده` و فعال‌شدن دکمه **`Google`** در `AuthPage`.
+   - **اسنایپر ۵ دقیقه‌ای و موتور گرافیکی Pine v5 (`SniperWorkbench` + `CandlestickChart`):** فیلتر `maxPairAgeMinutes` (تا `5` دقیقه) با نگهداری فیلتر محلی پس از `handleScanNow` و رندر کامل اندیکاتور `SMC Order Blocks + FVG + TV HUD` با **۰ خطای کنسول یا صفحه**.
+   - **نوار قیمت زنده پیوسته بی‌انتها (`LiveTickerBar.tsx` + `/api/public/market-snapshot`):** رندر دو ردیف هم‌تراز با حداقل `16` ارز برتر کریپتو (`BTC, ETH, SOL, BNB, XRP, DOGE, TON, ADA, AVAX, SUI, LINK, DOT, ...`) بدون تکرار نمایشی یا فضای سفید انتهای چرخه در هر ۴ حالت (`coversFullBar: true`) و انتقال مستقیم با کلیک هر ارز به `MarketsPage` (`market-spotlight-card`) یا `#live-markets` در صفحه معرفی.
+   - **صفحه معرفی V11.7.2 و ورود ۳ مسیره (`LandingPage` & `AuthPage`):** بخش‌های `#whats-new`, `#live-markets` تعاملی، دکمه مستقیم `Google`, فرم ۳ مسیره (Wallet + Google + Telegram)، با **`0` خطای JS و `0px` سرریز افقی**.
+   - **حالت ساده ⇄ حرفه‌ای + ترمینال TP/SL `%/$` + استودیو کارت سود `16:9`/`9:16` + خدمات/۲FA + ادمین:**
+     - تمام `24` مسیر و دکمه کلیدی در هر ۴ حالت (`01_landing_top`, `02_landing_whats_new_ticker_click`, `03_auth_3paths`, `04_overview_simple_top`, `05_overview_simple_5engines_live_toggles`, `06_markets_from_ticker_click`, `07_academy_modal`, `08_dex_trust_wallet_main`, `09_dex_trust_wallet_solana`, `10_copy_connect_hub`, `11_sniper_5m_workbench`, `12_portfolio_unified`, `13_services_hub_notifications`, `14_overview_pro`, `15_terminal_pro_tpsl_pct`, `16_radar_lab_pine_ide`, `17_ai_chat_vision_models`, `18_subscription_3pct_referral`, `18b_services_account_2fa_reset`, `19_weekly_profit_card_studio`, `20_faq_guide`, `21_admin_command_center`, `22_admin_users_reset0`, `23_admin_database_d1`) به علاوه `sidepanel_simple_{light,dark}.png` در **`395×820`** با **`proBtns = 0`** تایید شدند.
+   - **صفرسازی امن حساب مدیریتی (`DELETE /api/auth/account` + UI):** تست مستقیم با `{ confirmText: 'DELETE', password }` کد **`200 OK`** (`{"ok":true,"deleted":false,"resetAdminAccount":true,"role":"owner"}`) بازگرداند و بدون خروج مدیر، داده‌های غیرمحاسباتی را به `۰` بازنشانی نمود.
 
 ---
 
 ## ۵. نتیجه‌گیری نهایی
 
-نسخه **`Dollarino V11.6.5`** در تمامی لایه‌های کلیدی (**هسته ریاضی کوانت، سرور Cloudflare Worker + D1 با ۴۴ مایگریشن، سیستم ۵ موتوره همزمان، Trust Wallet DApp غیرحضانتی، کارمزد ۳٪ از سود، ربات تلگرام، اکستنشن MV3 و رابط کاربری دسکتاپ/موبایل در هر دو تم روز و شب**) با **۲۱/۲۱ تاییدیه Playwright، ۷۴/۷۴ تست سرور، ۱۵/۱۵ تست هسته و ۰ خطای جاوااسکریپت یا سرور** آماده استقرار و تحویل نهایی می‌باشد.
+نسخه **`Dollarino V11.7.2 Final`** در تمامی لایه‌های کلیدی (**هسته ریاضی کوانت و موتور گرافیکی Pine v4/v5/v6، سرور Cloudflare Worker + D1 با ۴۷ مایگریشن، اسنایپر ۵ دقیقه‌ای + فیلترهای حرفه‌ای، نوار قیمت پیوسته بی‌انتها با انتقال مستقیم به `MarketsPage`، سیستم ۵ موتوره همزمان، Trust Wallet DApp + Solana Vault غیرحضانتی، کارمزد ۳٪ از سود با معافیت کامل مدیر و صفرسازی ایمن، ترمینال با TP/SL درصدی `%/$`، استودیو کارت سود ۱۶:۹ و ۹:۱۶، ربات تلگرام + Google OAuth ادمین، اکستنشن Chrome Side Panel MV3 `v11.7.2` قفل‌شده روی حالت ساده، و رابط کاربری دسکتاپ/موبایل در هر دو تم روز و شب**) با **تاییدیه زنده ۷۵/۷۵ Playwright (`98` اسکرین‌شات تمیز، `0px` سرریز افقی، `0` خطای JS/صفحه)، ۸۴/۸۴ تست سرور در ۱۴ مجموعه، ۱۷/۱۷ تست هسته و بیلد تولیدی ۱۷۴۸ ماژولی** کاملاً آماده استقرار و تحویل نهایی است.

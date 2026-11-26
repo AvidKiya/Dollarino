@@ -1,4 +1,6 @@
-# چک‌لیست کامل بررسی طراحی، رفع مشکلات فنی و یکپارچه‌سازی واقعی Trust Wallet DApp Browser (V11.6)
+# چک‌لیست کامل بررسی طراحی، رفع مشکلات فنی و یکپارچه‌سازی واقعی Trust Wallet DApp Browser (V11.6 – V11.7.2)
+
+> **تکمیلشده در V11.7.2:** صفرسازی حساب مدیریتی به ۰ با حفظ حساب و دسترسی (`resetPrivilegedUserAccountToFreshState`)، معافیت کامل مدیر/مالک از کارمزد و محدودیت‌ها (`server-fee.ts`, `security.ts`, `trustwallet.ts`, `trading.ts`, `copy-trade.ts`), اکستنشن کروم **Side Panel** در حالت ساده اختصاصی (`chrome.sidePanel`, `?ui_mode=simple&embed=sidepanel`), ثبت خودکار کد معرف مدیر هنگام خالی بودن کد معرف (`resolveEffectiveReferralCode`), ثبت‌نام مستقیم DApps تراست‌ولت (`?auth_screen=1&auth_mode=register&tw_signup=1`), و یکپارچه‌سازی فرم تکمیل پروفایل (شماره تماس + اسم مستعار + نام کاربری + رمز عبور) پس از کیف‌پول، گوگل و تلگرام. ([`V11.7-MASTER-PLAN.md`](./V11.7-MASTER-PLAN.md))
 
 این فایل تمام ایرادات کشف‌شده در بررسی تک‌به‌تک اسکرین‌شات‌های دسکتاپ (`1440×900`) و موبایل (`390×844`) کاربر و ادمین، و همچنین مراحل پیاده‌سازی واقعی و امن **مرورگر DApp تراست‌ولت (Trust Wallet DApp Browser)**، **دسترسی‌های تک‌کلیکی بدون خطر سرقت** و **اتوترید واقعی ۲۴/۷** را به صورت مرحله‌ای لیست کرده و با انجام هر مورد تیک (`[x]`) می‌خورد.
 
@@ -81,3 +83,24 @@
 - [x] **۵.۴ احراز هویت ۳ مسیره (`Wallet / Google / Telegram`)، تکمیل پروفایل و TOTP 2FA (`0044_auth_profile_totp_2fa.sql`)**
 - [x] **۵.۵ مستندسازی جامع کل تاریخچه V1.0 تا V11.6.5 (`DOLLARINO-COMPLETE-DOCUMENTATION.md` + `CHANGELOG.md` + `README.md`)**
 - [x] **۵.۶ اجرای کامل تست زنده ۴ حالته (`Desktop Light`, `Desktop Dark`, `Mobile Light`, `Mobile Dark`), `74/74` تست سرور + `15/15` تست هسته + `21/21` تاییدیه Playwright با `84` اسکرین‌شات سازمان‌یافته (`QA-VERIFICATION-REPORT.md`)**
+
+---
+
+## فاز ۶: جهش جامع V11.7 — TP/SL درصدی، Pine v5 گرافیکی، Solana Vault، کارت ۹:۱۶ و اسنایپر ۵ دقیقه‌ای
+
+- [x] **۶.۱ موتور کامل TradingView Pine Script v4/v5/v6 + پالت گرافیکی روی کندل (`packages/core/src/pine.ts`, `CandlestickChart.tsx`)**
+- [x] **۶.۲ سوییچر جهانی `%` و `$` برای حد سود (`TP1/TP2/TP3`) و حد ضرر (`SL`) با تبدیل خودکار در ترمینال، حالت ساده و تنظیمات (`packages/core/src/tpsl.ts`, `TpSlModeSwitch.tsx`, `TerminalPage.tsx`)**
+- [x] **۶.۳ استودیو کارت سود رسمی ۱۶:۹ و ۹:۱۶ با ۸ بازه زمانی، QR وکتور تایید اصالت و ابطال مدیریتی (`WeeklyCardPage.tsx`, `/api/admin/profit-cards/:id/revoke`)**
+- [x] **۶.۴ اسنایپر ۵ دقیقه‌ای + ذخیره خودکار موتور ربات + تنظیمات دقیق ۵گانه اعلان‌ها (`USD/IRT`) همگام در وب و تلگرام (`SniperWorkbench.tsx`, `0047_v117_comprehensive_overhaul.sql`)**
+- [x] **۶.۵ شارژ مستقیم خزانه سولانا (`build-solana-fund-tx`), پلتفرم معرفی و Google OAuth زنده در پنل مدیریت و تلگرام**
+
+---
+
+## فاز ۷: انتشار نهایی V11.7.2 Final — Chrome Side Panel، صفرسازی ایمن ادمین، نوار قیمت پیوسته و QA ۴ حالته `75/75`
+
+- [x] **۷.۱ صفرسازی امن حساب مدیریتی با حفظ اکانت و دسترسی (`resetPrivilegedUserAccountToFreshState`, `ServicesPage`, `AdminPage`) + معافیت کامل مدیر/مالک از کارمزد و محدودیت‌ها**
+- [x] **۷.۲ اکستنشن Chrome Side Panel بومی (`apps/extension`, MV3 `11.7.2`) قفل‌شده روی حالت ساده (`?ui_mode=simple&embed=sidepanel`) بدون دکمه حالت حرفه‌ای**
+- [x] **۷.۳ ثبت‌نام مستقیم DApps تراست‌ولت (`tw_signup=1`), فرم یکپارچه تکمیل پروفایل (`CompleteProfileGate`) و ثبت خودکار کد معرف مدیر (`resolveEffectiveReferralCode`)**
+- [x] **۷.۴ نوار قیمت زنده پیوسته بی‌انتها (`LiveTickerBar.tsx`) با `16` ارز برتر کریپتو در هر ردیف و کلیک مستقیم به صفحه بازارها (`market-spotlight-card`) + بازسازی کامل `LandingPage.tsx`**
+- [x] **۷.۵ اجرای کامل `npm run typecheck`, `17/17` هسته، `84/84` سرور (`14` مجموعه)، `1748` ماژول Vite و `75/75` تست زنده ۴ حالته Playwright + Side Panel با `98` اسکرین‌شات (`0px` سرریز و `0` خطای JS)**
+

@@ -211,13 +211,41 @@ export interface ClosedTradeRow {
   closed_at: string;
 }
 
+export type ProfitCardPeriod = '24H' | '7D' | '30D' | '3M' | '6M' | '1Y' | 'ALL' | 'TRADE';
+export type ProfitCardSource = 'ALL' | 'PERP' | 'DEX' | 'COPY';
+
+export interface EligibleCardTrade {
+  id: string;
+  tradeSource: 'PERP' | 'DEX' | 'COPY';
+  mode: 'LIVE' | 'PAPER';
+  symbol: string;
+  baseSymbol: string;
+  direction: string;
+  leverage: number;
+  entryPrice: number;
+  exitPrice: number;
+  marginUsd: number;
+  realizedPnlUsd: number;
+  roiPct: number;
+  exchangeProvider: string;
+  engineKey: string;
+  engineLabel: string;
+  signalName: string;
+  tokenAddress?: string;
+  chainId?: string;
+  tokenImageUrl?: string;
+  closedAt: string;
+}
+
 export interface VerifiedProfitCard {
   id: string;
   userId?: string;
   displayName?: string;
   mode: 'LIVE' | 'PAPER';
   isVerifiedReal: boolean;
-  period: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
+  revoked?: boolean;
+  tradeSource?: ProfitCardSource;
+  period: ProfitCardPeriod;
   startDate: string;
   endDate: string;
   tradesCount: number;
@@ -227,9 +255,20 @@ export interface VerifiedProfitCard {
   profitFactor: number;
   exchangeProvider: string;
   strategyName: string;
+  engineKey?: string;
   cardStyle?: string;
   symbol?: string;
+  baseSymbol?: string;
   direction?: string;
+  leverage?: number;
+  entryPrice?: number | null;
+  exitPrice?: number | null;
+  signalName?: string;
+  tokenAddress?: string;
+  chainId?: string;
+  tokenImageUrl?: string;
+  bestSymbol?: string;
+  bestRoiPct?: number;
   hmacSignature?: string;
   signaturePrefix?: string;
   verifyPath?: string;
@@ -263,6 +302,16 @@ export type TradingEngineChoice = 'CENTRAL_AI' | 'MY_AI' | 'STRATEGY' | 'COPY_TR
 
 export type SniperTargetType = 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME' | 'BOTH';
 
+export interface SniperAdvancedFilters {
+  sortBy?: 'SCORE' | 'NEWEST' | 'MOMENTUM_5M' | 'VOLUME_1H' | 'LIQUIDITY' | 'SAFETY';
+  minVolume5mUsd?: number;
+  minVolume1hUsd?: number;
+  minBuySellRatio?: number;
+  requireSocials?: boolean;
+  minChange5mPct?: number;
+  maxMcapUsd?: number;
+}
+
 export interface SniperSettings {
   enabled: boolean;
   targetType: SniperTargetType;
@@ -270,6 +319,7 @@ export interface SniperSettings {
   minSafetyScore: number;
   minLiquidityUsd: number;
   maxPairAgeHours: number;
+  maxPairAgeMinutes?: number;
   maxTaxPct: number;
   tpPct: number;
   slPct: number;
@@ -279,6 +329,7 @@ export interface SniperSettings {
   autoExecute: boolean;
   slippagePct: number;
   networks: string[];
+  advancedFilters?: SniperAdvancedFilters;
 }
 
 export interface SniperCandidate {
@@ -290,12 +341,21 @@ export interface SniperCandidate {
   safetyScore: number;
   liquidityUsd: number;
   volume24hUsd?: number;
+  volume5mUsd?: number;
+  volume1hUsd?: number;
+  buys5m?: number;
+  sells5m?: number;
+  buySellRatio1h?: number;
   priceUsd: number;
   change1hPct: number;
   change5mPct?: number;
-  pairAgeHours?: number;
+  pairAgeHours?: number | null;
+  ageHours?: number | null;
+  ageMinutes?: number | null;
+  mcapUsd?: number | null;
   estimatedTaxPct?: number;
-  note: string;
+  hasSocials?: boolean;
+  note?: string;
 }
 
 export interface ActiveEngineState {
@@ -358,6 +418,8 @@ export interface DashboardPayload {
     sniper_networks_json?: string;
     sniper_target_type?: SniperTargetType;
     sniper_max_pair_age_hours?: number;
+    sniper_max_pair_age_minutes?: number;
+    sniper_advanced_filters_json?: string;
     sniper_max_tax_pct?: number;
     sniper_tp_pct?: number;
     sniper_sl_pct?: number;
@@ -391,6 +453,8 @@ export interface DashboardPayload {
     macro_blackout?: number;
     use_signal_leverage?: number;
     notifications_enabled?: number;
+    notification_prefs_json?: string;
+    display_currency?: 'USD' | 'IRT';
     active_custom_strategy_id?: string | null;
     last_ai_reason?: string | null;
     last_ai_decision_at?: string | null;
@@ -469,6 +533,7 @@ export interface DashboardPayload {
   } | null;
   serverFeeSummary?: {
     feePct: number;
+    feeExempt?: boolean;
     totalProfitablePnlUsd: number;
     totalFeeUsd: number;
     accruedFeeUsd: number;

@@ -4,7 +4,7 @@ import {
   getPlatformAISummary,
   testAllPlatformAIEngines,
 } from '../ai/providers.js';
-import { requireAuth, type AppVariables } from '../auth.js';
+import { invalidateAuthUserCache, requireAuth, resetPrivilegedUserAccountToFreshState, type AppVariables } from '../auth.js';
 import { encryptVaultJson, maskSecret, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { fetchPublicMarket24h } from '../exchanges/paper.js';
@@ -461,14 +461,20 @@ adminRoutes.patch('/users/:id', async (c) => {
     await c.env.DB.prepare('UPDATE users SET is_blocked = ? WHERE id = ? AND role != \'owner\'')
       .bind(body.is_blocked ? 1 : 0, targetId).run();
   }
+  invalidateAuthUserCache(c.env.DB, targetId);
   return c.json({ ok: true });
 });
 
 adminRoutes.put('/settings', async (c) => {
-  const body = await c.req.json<Record<string, string>>();
-  for (const [k, v] of Object.entries(body)) {
+  const body = await c.req.json<Record<string, unknown>>();
+  const entriesSource: Record<string, unknown> =
+    body && typeof body.settings === 'object' && body.settings !== null && !Array.isArray(body.settings)
+      ? (body.settings as Record<string, unknown>)
+      : body;
+  for (const [k, v] of Object.entries(entriesSource)) {
+    if (v === undefined || v === null || typeof v === 'object') continue;
     const strVal = String(v);
-    if (k === 'google_client_secret' && strVal.trim() === '********') continue;
+    if (k === 'google_client_secret' && (strVal.trim() === '********' || strVal.trim() === '')) continue;
     await setCachedSystemSetting(c.env.DB, k, strVal);
   }
   invalidateSettingsCache(c.env.DB);
@@ -1738,6 +1744,10 @@ adminRoutes.get('/system-health', async (c) => {
         telegramBotConfigured: Boolean(await resolveTelegramBotToken(c.env)),
         aiEngineConfigured: Boolean(c.env.HILINKUP_API_KEY?.trim()) || (activeAiEngines?.cnt ?? 0) > 0,
         feeReceiverWalletConfigured: feeWalletOk,
+        googleOauthConfigured: Boolean(
+          (c.env.GOOGLE_CLIENT_ID?.trim() || (await c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'google_client_id'`).first<{ value: string }>().catch(() => null))?.value?.trim()) &&
+          (c.env.GOOGLE_CLIENT_SECRET?.trim() || (await c.env.DB.prepare(`SELECT value FROM system_settings WHERE key = 'google_client_secret'`).first<{ value: string }>().catch(() => null))?.value?.trim())
+        ),
         allowLiveTrading: c.env.ALLOW_LIVE_TRADING === 'true',
         publicWebUrl: c.env.PUBLIC_WEB_URL || '',
       },
@@ -1947,16 +1957,38 @@ adminRoutes.post('/users/:id/reset-fee-debt', async (c) => {
 
 adminRoutes.delete('/users/:id', async (c) => {
   const actor = c.get('user');
+  const targetId = c.req.param('id');
+  const target = await c.env.DB.prepare(`SELECT id, role, username FROM users WHERE id = ?`)
+    .bind(targetId)
+    .first<{ id: string; role: string; username: string }>()
+    .catch(() => null);
+  if (!target) return c.json({ error: 'کاربر یافت نشد.' }, 404);
+
+  const isTargetPrivileged = target.role === 'owner' || target.role === 'admin';
+  if (isTargetPrivileged) {
+    if (actor.id !== targetId && !isSystemOwner(actor, c.env)) {
+      return c.json({ error: 'فقط مالک اصلی یا خود مدیر مجاز به صفرسازی حساب مدیریتی است.' }, 403);
+    }
+    await resetPrivilegedUserAccountToFreshState(c.env.DB, targetId);
+    await c.env.DB.prepare(
+      `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+       VALUES (?, ?, 'RESET_ADMIN_ACCOUNT_TO_FRESH', 'users', ?, ?)`
+    )
+      .bind(randomId('aud'), actor.id, targetId, JSON.stringify({ username: target.username, preservedRole: target.role }))
+      .run()
+      .catch(() => {});
+    return c.json({
+      ok: true,
+      resetToFresh: true,
+      preservedRole: target.role,
+      username: target.username,
+      message: `تمامی اطلاعات و موجودی‌های حساب ${target.username} صفر شد و دسترسی ${target.role} حفظ گردید.`,
+    });
+  }
+
   if (!isSystemOwner(actor, c.env)) {
     return c.json({ error: 'فقط مالک اصلی سیستم اجازه حذف کاربر را دارد.' }, 403);
   }
-  const targetId = c.req.param('id');
-  if (targetId === actor.id) {
-    return c.json({ error: 'امکان حذف حساب مالک فعلی وجود ندارد.' }, 400);
-  }
-  const target = await c.env.DB.prepare(`SELECT id, role, username FROM users WHERE id = ?`).bind(targetId).first<{ id: string; role: string; username: string }>().catch(() => null);
-  if (!target) return c.json({ error: 'کاربر یافت نشد.' }, 404);
-  if (target.role === 'owner') return c.json({ error: 'امکان حذف حساب Owner وجود ندارد.' }, 403);
 
   const userTablesWithFk = [
     'support_messages',
@@ -2002,6 +2034,34 @@ adminRoutes.delete('/users/:id', async (c) => {
      VALUES (?, ?, 'DELETE_USER', 'users', ?, ?)`
   ).bind(randomId('aud'), actor.id, targetId, JSON.stringify({ username: target.username })).run().catch(() => {});
   return c.json({ ok: true, deletedUsername: target.username });
+});
+
+adminRoutes.post('/users/:id/reset-account', async (c) => {
+  const actor = c.get('user');
+  const targetId = c.req.param('id');
+  const target = await c.env.DB.prepare(`SELECT id, role, username FROM users WHERE id = ?`)
+    .bind(targetId)
+    .first<{ id: string; role: string; username: string }>()
+    .catch(() => null);
+  if (!target) return c.json({ error: 'کاربر یافت نشد.' }, 404);
+  if (actor.id !== targetId && !isSystemOwner(actor, c.env)) {
+    return c.json({ error: 'فقط مالک اصلی یا خود کاربر مجاز به صفرسازی حساب است.' }, 403);
+  }
+  await resetPrivilegedUserAccountToFreshState(c.env.DB, targetId);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'RESET_ACCOUNT_TO_FRESH', 'users', ?, ?)`
+  )
+    .bind(randomId('aud'), actor.id, targetId, JSON.stringify({ username: target.username, preservedRole: target.role }))
+    .run()
+    .catch(() => {});
+  return c.json({
+    ok: true,
+    resetToFresh: true,
+    preservedRole: target.role,
+    username: target.username,
+    message: `تمامی اطلاعات و موجودی‌های حساب ${target.username} صفر شد و دسترسی ${target.role} حفظ گردید.`,
+  });
 });
 
 // =========================================================================
@@ -2179,7 +2239,7 @@ adminRoutes.get('/database/backup', async (c) => {
 
   const payload = {
     format: 'dollarino-d1-backup-v1',
-    version: '11.6.0',
+    version: '11.7.2',
     exportedAt: new Date().toISOString(),
     exportedBy: actor.username,
     excludeSecrets,
@@ -2406,4 +2466,79 @@ adminRoutes.post('/database/wipe', async (c) => {
   });
 });
 
+// =========================================================================
+// V11.7 Stage 6: Profit Cards Audit/Revoke & Active Bots Monitor
+// =========================================================================
+
+adminRoutes.get('/profit-cards', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT vpc.id, vpc.user_id, u.username, u.email, vpc.mode, vpc.period, vpc.trade_source,
+            vpc.trades_count, vpc.win_rate, vpc.net_pnl_usd, vpc.roi_pct, vpc.profit_factor,
+            vpc.exchange_provider, vpc.strategy_name, vpc.signal_name, vpc.entry_price, vpc.exit_price,
+            COALESCE(vpc.revoked, 0) AS revoked, vpc.issued_at
+     FROM verified_profit_cards vpc
+     LEFT JOIN users u ON u.id = vpc.user_id
+     ORDER BY vpc.issued_at DESC
+     LIMIT 120`
+  ).all().catch(() => ({ results: [] }));
+  return c.json({ ok: true, cards: rows.results });
+});
+
+adminRoutes.post('/profit-cards/:id/revoke', async (c) => {
+  const actor = c.get('user');
+  const cardId = c.req.param('id');
+  const body = await c.req.json<{ revoked?: boolean }>().catch(() => ({ revoked: true }));
+  const revokedInt = body.revoked === false ? 0 : 1;
+
+  const res = await c.env.DB.prepare(
+    `UPDATE verified_profit_cards SET revoked = ? WHERE id = ?`
+  ).bind(revokedInt, cardId).run();
+  if (!res.meta?.changes) {
+    return c.json({ error: 'Profit card not found' }, 404);
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, ?, 'profit_card', ?, ?)`
+  ).bind(
+    randomId('aud'),
+    actor.id,
+    revokedInt ? 'REVOKE_PROFIT_CARD' : 'RESTORE_PROFIT_CARD',
+    cardId,
+    JSON.stringify({ revoked: Boolean(revokedInt) })
+  ).run().catch(() => {});
+
+  return c.json({ ok: true, cardId, revoked: Boolean(revokedInt) });
+});
+
+adminRoutes.get('/active-bots', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT bc.user_id, u.username, u.email, u.telegram_username,
+            bc.bot_state, bc.trading_mode, bc.trade_execution_mode,
+            bc.active_engines_json, bc.strategy_key, bc.max_leverage AS leverage, bc.margin_pct,
+            bc.paper_balance, bc.display_currency, bc.notifications_enabled, bc.updated_at
+     FROM bot_configs bc
+     JOIN users u ON u.id = bc.user_id
+     WHERE bc.bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')
+        OR (bc.active_engines_json IS NOT NULL AND bc.active_engines_json != '[]' AND bc.active_engines_json != '')
+     ORDER BY CASE WHEN bc.bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') THEN 0 ELSE 1 END, bc.updated_at DESC
+     LIMIT 120`
+  ).all().catch(() => ({ results: [] }));
+  return c.json({ ok: true, bots: rows.results });
+});
+
+adminRoutes.post('/users/:id/bot-stop', async (c) => {
+  const actor = c.get('user');
+  const targetUserId = c.req.param('id');
+  await c.env.DB.prepare(
+    `UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`
+  ).bind(targetUserId).run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'ADMIN_STOP_USER_BOT', 'user', ?, '{}')`
+  ).bind(randomId('aud'), actor.id, targetUserId).run().catch(() => {});
+
+  return c.json({ ok: true, userId: targetUserId, bot_state: 'STOPPED' });
+});
 

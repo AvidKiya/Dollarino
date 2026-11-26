@@ -295,87 +295,183 @@ interface GeckoResponse {
   }>;
 }
 
-async function fetchGeckoTerminalFallback(query?: string): Promise<DexTokenEnriched[]> {
+async function parseGeckoPoolsResponse(json: GeckoResponse, defaultChain = 'bsc'): Promise<DexTokenEnriched[]> {
+  const rows = Array.isArray(json.data) ? json.data : [];
+  const incMap = new Map<string, { address?: string; name?: string; symbol?: string; image_url?: string | null }>();
+  for (const item of json.included || []) {
+    if (item?.id && item.attributes) incMap.set(item.id, item.attributes);
+  }
+
+  const mapped: DexPair[] = [];
+  for (const pool of rows.slice(0, 60)) {
+    const a = pool.attributes;
+    if (!a?.address || !a.base_token_price_usd) continue;
+    const rawNet = pool.relationships?.network?.data?.id || pool.id.split('_')[0] || defaultChain;
+    const chainId = GECKO_NETWORK_MAP[rawNet] || rawNet;
+    const baseId = pool.relationships?.base_token?.data?.id || '';
+    const quoteId = pool.relationships?.quote_token?.data?.id || '';
+    const baseMeta = incMap.get(baseId);
+    const quoteMeta = incMap.get(quoteId);
+    const dexId = pool.relationships?.dex?.data?.id || 'dex';
+    const nameParts = (a.name || '').split('/').map((x) => x.trim());
+    const baseSym = baseMeta?.symbol || nameParts[0] || 'TOKEN';
+    const quoteSym = quoteMeta?.symbol || nameParts[1] || 'USDT';
+
+    mapped.push({
+      chainId,
+      dexId,
+      url: `https://www.geckoterminal.com/${encodeURIComponent(rawNet)}/pools/${encodeURIComponent(a.address)}`,
+      pairAddress: a.address,
+      baseToken: {
+        address: baseMeta?.address || a.address,
+        name: baseMeta?.name || baseSym,
+        symbol: baseSym,
+      },
+      quoteToken: {
+        address: quoteMeta?.address || '',
+        name: quoteMeta?.name || quoteSym,
+        symbol: quoteSym,
+      },
+      priceUsd: a.base_token_price_usd,
+      liquidity: { usd: Number(a.reserve_in_usd || 0) },
+      volume: {
+        h24: Number(a.volume_usd?.h24 || 0),
+        h1: Number(a.volume_usd?.h1 || 0),
+        m5: Number(a.volume_usd?.m5 || 0),
+      },
+      priceChange: {
+        h24: Number(a.price_change_percentage?.h24 || 0),
+        h1: Number(a.price_change_percentage?.h1 || 0),
+        m5: Number(a.price_change_percentage?.m5 || 0),
+      },
+      txns: {
+        m5: {
+          buys: Number(a.transactions?.m5?.buys || 0),
+          sells: Number(a.transactions?.m5?.sells || 0),
+        },
+        h1: {
+          buys: Number(a.transactions?.h1?.buys || a.transactions?.m15?.buys || a.transactions?.m5?.buys || 0),
+          sells: Number(a.transactions?.h1?.sells || a.transactions?.m15?.sells || a.transactions?.m5?.sells || 0),
+        },
+        h24: {
+          buys: Number(a.transactions?.h24?.buys || 0),
+          sells: Number(a.transactions?.h24?.sells || 0),
+        },
+      },
+      fdv: a.fdv_usd ? Number(a.fdv_usd) : null,
+      marketCap: a.market_cap_usd ? Number(a.market_cap_usd) : null,
+      pairCreatedAt: a.pool_created_at ? Date.parse(a.pool_created_at) : null,
+      info: baseMeta?.image_url ? { imageUrl: baseMeta.image_url } : undefined,
+    });
+  }
+  return mapped.filter((p) => Number(p.priceUsd || 0) > 0).map(enrichDexPair);
+}
+
+async function fetchGeckoUrl(url: string, defaultChain = 'bsc'): Promise<DexTokenEnriched[]> {
   try {
-    const path = query
-      ? `https://api.geckoterminal.com/api/v2/search/pools?query=${encodeURIComponent(query)}&include=base_token,quote_token,dex`
-      : `https://api.geckoterminal.com/api/v2/networks/trending_pools?include=base_token,quote_token,dex`;
-    const res = await fetch(path, {
+    const res = await fetch(url, {
       headers: {
         Accept: 'application/json;version=20230302',
-        'User-Agent': 'Mozilla/5.0 (compatible; DollarinoDexRadar/9.6; +https://dollarino.pages.dev)',
+        'User-Agent': 'Mozilla/5.0 (compatible; DollarinoDexRadar/11.7; +https://dollarino.pages.dev)',
       },
-      signal: AbortSignal.timeout(9000),
+      signal: AbortSignal.timeout(6500),
     });
     if (!res.ok) return [];
     const json = (await res.json()) as GeckoResponse;
-    const rows = Array.isArray(json.data) ? json.data : [];
-    const incMap = new Map<string, { address?: string; name?: string; symbol?: string; image_url?: string | null }>();
-    for (const item of json.included || []) {
-      if (item?.id && item.attributes) incMap.set(item.id, item.attributes);
-    }
-
-    const mapped: DexPair[] = [];
-    for (const pool of rows.slice(0, 48)) {
-      const a = pool.attributes;
-      if (!a?.address || !a.base_token_price_usd) continue;
-      const rawNet = pool.relationships?.network?.data?.id || pool.id.split('_')[0] || 'bsc';
-      const chainId = GECKO_NETWORK_MAP[rawNet] || rawNet;
-      const baseId = pool.relationships?.base_token?.data?.id || '';
-      const quoteId = pool.relationships?.quote_token?.data?.id || '';
-      const baseMeta = incMap.get(baseId);
-      const quoteMeta = incMap.get(quoteId);
-      const dexId = pool.relationships?.dex?.data?.id || 'dex';
-      const nameParts = (a.name || '').split('/').map((x) => x.trim());
-      const baseSym = baseMeta?.symbol || nameParts[0] || 'TOKEN';
-      const quoteSym = quoteMeta?.symbol || nameParts[1] || 'USDT';
-
-      mapped.push({
-        chainId,
-        dexId,
-        url: `https://www.geckoterminal.com/${encodeURIComponent(rawNet)}/pools/${encodeURIComponent(a.address)}`,
-        pairAddress: a.address,
-        baseToken: {
-          address: baseMeta?.address || a.address,
-          name: baseMeta?.name || baseSym,
-          symbol: baseSym,
-        },
-        quoteToken: {
-          address: quoteMeta?.address || '',
-          name: quoteMeta?.name || quoteSym,
-          symbol: quoteSym,
-        },
-        priceUsd: a.base_token_price_usd,
-        liquidity: { usd: Number(a.reserve_in_usd || 0) },
-        volume: {
-          h24: Number(a.volume_usd?.h24 || 0),
-          h1: Number(a.volume_usd?.h1 || 0),
-        },
-        priceChange: {
-          h24: Number(a.price_change_percentage?.h24 || 0),
-          h1: Number(a.price_change_percentage?.h1 || 0),
-          m5: Number(a.price_change_percentage?.m5 || 0),
-        },
-        txns: {
-          m5: {
-            buys: Number(a.transactions?.m5?.buys || 0),
-            sells: Number(a.transactions?.m5?.sells || 0),
-          },
-          h24: {
-            buys: Number(a.transactions?.h24?.buys || 0),
-            sells: Number(a.transactions?.h24?.sells || 0),
-          },
-        },
-        fdv: a.fdv_usd ? Number(a.fdv_usd) : null,
-        marketCap: a.market_cap_usd ? Number(a.market_cap_usd) : null,
-        pairCreatedAt: a.pool_created_at ? Date.parse(a.pool_created_at) : null,
-        info: baseMeta?.image_url ? { imageUrl: baseMeta.image_url } : undefined,
-      });
-    }
-    return mapped.filter((p) => Number(p.priceUsd || 0) > 0).map(enrichDexPair);
+    return await parseGeckoPoolsResponse(json, defaultChain);
   } catch {
     return [];
   }
+}
+
+async function fetchGeckoTerminalFallback(query?: string): Promise<DexTokenEnriched[]> {
+  const path = query
+    ? `https://api.geckoterminal.com/api/v2/search/pools?query=${encodeURIComponent(query)}&include=base_token,quote_token,dex`
+    : `https://api.geckoterminal.com/api/v2/networks/trending_pools?include=base_token,quote_token,dex`;
+  return fetchGeckoUrl(path);
+}
+
+const CHAIN_TO_GECKO_NET: Record<string, string> = {
+  solana: 'solana',
+  bsc: 'bsc',
+  ethereum: 'eth',
+  base: 'base',
+  arbitrum: 'arbitrum',
+  polygon: 'polygon_pos',
+  ton: 'ton',
+  avalanche: 'avax',
+  optimism: 'optimism',
+  sui: 'sui-network',
+  linea: 'linea',
+  blast: 'blast',
+  tron: 'tron',
+};
+
+export async function fetchGeckoTerminalNewPools(allowedChains: string[] = ['solana', 'bsc', 'base']): Promise<DexTokenEnriched[]> {
+  const urls: Array<{ url: string; defChain: string }> = [
+    {
+      url: 'https://api.geckoterminal.com/api/v2/networks/new_pools?include=base_token,quote_token,dex',
+      defChain: 'solana',
+    },
+  ];
+  for (const ch of allowedChains.slice(0, 5)) {
+    const net = CHAIN_TO_GECKO_NET[ch.toLowerCase()];
+    if (net) {
+      urls.push({
+        url: `https://api.geckoterminal.com/api/v2/networks/${encodeURIComponent(net)}/new_pools?include=base_token,quote_token,dex`,
+        defChain: ch.toLowerCase(),
+      });
+    }
+  }
+  const settled = await Promise.allSettled(urls.map((u) => fetchGeckoUrl(u.url, u.defChain)));
+  const seen = new Set<string>();
+  const out: DexTokenEnriched[] = [];
+  for (const res of settled) {
+    if (res.status !== 'fulfilled') continue;
+    for (const p of res.value) {
+      const key = `${p.chainId}:${p.baseToken.address.toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(p);
+      }
+    }
+  }
+  return out;
+}
+
+export async function fetchUltraFreshSniperPoolFeed(allowedChains: string[]): Promise<DexTokenEnriched[]> {
+  const [newPoolsRes, trendingRes] = await Promise.allSettled([
+    fetchGeckoTerminalNewPools(allowedChains),
+    fetchDexTrendingOverview(),
+  ]);
+  const map = new Map<string, DexTokenEnriched>();
+  const add = (p: DexTokenEnriched) => {
+    if (!p.baseToken?.address || !(Number(p.priceUsd || 0) > 0)) return;
+    const key = `${p.chainId}:${p.baseToken.address.toLowerCase()}`;
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, p);
+      return;
+    }
+    // Prefer entry with fresher/known pairCreatedAt and higher liquidity/socials
+    const prevCreated = prev.pairCreatedAt ?? 0;
+    const curCreated = p.pairCreatedAt ?? 0;
+    const merged: DexTokenEnriched = {
+      ...prev,
+      ...p,
+      pairCreatedAt: curCreated || prevCreated || null,
+      info: p.info?.websites?.length || p.info?.socials?.length ? p.info : prev.info || p.info,
+      liquidity: Number(p.liquidity?.usd || 0) >= Number(prev.liquidity?.usd || 0) ? p.liquidity : prev.liquidity,
+    };
+    map.set(key, merged);
+  };
+  if (newPoolsRes.status === 'fulfilled') {
+    for (const p of newPoolsRes.value) add(p);
+  }
+  if (trendingRes.status === 'fulfilled') {
+    for (const p of trendingRes.value.pairs) add(p);
+  }
+  return [...map.values()];
 }
 
 export async function searchDexPairs(query: string): Promise<DexTokenEnriched[]> {

@@ -47,10 +47,12 @@ import { CoinIcon } from '../components/CoinIcon';
 import { SmoothSlider } from '../components/SmoothSlider';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
+import { TpSlModeSwitch } from '../components/TpSlModeSwitch';
 import { apiFetch } from '../lib/api';
 import { coinDisplayName, formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
+import { calcPctFromPrice, calcPriceFromPct, calcRoePct, formatLevelPrice, type TpSlInputMode } from '../lib/tpsl';
 import type { DashboardPayload, OpenTradeRow } from '../lib/types';
 
 interface OverviewResponse {
@@ -174,12 +176,16 @@ export function TerminalPage({
   const [tp1, setTp1] = useState('');
   const [tp2, setTp2] = useState('');
   const [tp3, setTp3] = useState('');
+  const [tpslMode, setTpslMode] = useState<TpSlInputMode>('PRICE');
+  const [tpslPcts, setTpslPcts] = useState({ stopLoss: '1.5', tp1: '2', tp2: '3.5', tp3: '5.5' });
   const [submitting, setSubmitting] = useState(false);
   const [orderMsg, setOrderMsg] = useState('');
 
   // Inline Edit TP/SL modal
   const [editPos, setEditPos] = useState<OpenTradeRow | null>(null);
   const [editForm, setEditForm] = useState({ stopLoss: '', tp1: '', tp2: '', tp3: '' });
+  const [editTpSlMode, setEditTpSlMode] = useState<TpSlInputMode>('PRICE');
+  const [editPcts, setEditPcts] = useState({ stopLoss: '1.5', tp1: '2', tp2: '', tp3: '' });
 
   // Chart AI state + persistent saved chat loader
   const [prompt, setPrompt] = useState(
@@ -203,6 +209,74 @@ export function TerminalPage({
     setTp1((dir === 'LONG' ? px * 1.02 : px * 0.98).toFixed(dec));
     setTp2((dir === 'LONG' ? px * 1.035 : px * 0.965).toFixed(dec));
     setTp3((dir === 'LONG' ? px * 1.055 : px * 0.945).toFixed(dec));
+    setTpslPcts({ stopLoss: '1.5', tp1: '2', tp2: '3.5', tp3: '5.5' });
+  };
+
+  const switchTicketTpSlMode = (nextMode: TpSlInputMode) => {
+    if (nextMode === tpslMode) return;
+    const entryPx = orderType === 'LIMIT' && Number(limitPrice) > 0 ? Number(limitPrice) : Number(snap?.market24h.lastPrice || 0);
+    if (nextMode === 'PCT' && entryPx > 0) {
+      const pSl = calcPctFromPrice({ entryPrice: entryPx, side: effectiveSide, kind: 'SL', targetPrice: Number(stopLoss) });
+      const p1 = calcPctFromPrice({ entryPrice: entryPx, side: effectiveSide, kind: 'TP', targetPrice: Number(tp1) });
+      const p2 = calcPctFromPrice({ entryPrice: entryPx, side: effectiveSide, kind: 'TP', targetPrice: Number(tp2) });
+      const p3 = calcPctFromPrice({ entryPrice: entryPx, side: effectiveSide, kind: 'TP', targetPrice: Number(tp3) });
+      setTpslPcts({
+        stopLoss: pSl !== null ? String(pSl) : '1.5',
+        tp1: p1 !== null ? String(p1) : '2',
+        tp2: p2 !== null ? String(p2) : '',
+        tp3: p3 !== null ? String(p3) : '',
+      });
+    }
+    setTpslMode(nextMode);
+  };
+
+  const updateTicketPct = (field: 'stopLoss' | 'tp1' | 'tp2' | 'tp3', rawPct: string) => {
+    setTpslPcts((prev) => ({ ...prev, [field]: rawPct }));
+    const entryPx = orderType === 'LIMIT' && Number(limitPrice) > 0 ? Number(limitPrice) : Number(snap?.market24h.lastPrice || 0);
+    const num = Number(rawPct);
+    const kind = field === 'stopLoss' ? 'SL' : 'TP';
+    const px = Number.isFinite(num) && num > 0 && entryPx > 0
+      ? calcPriceFromPct({ entryPrice: entryPx, side: effectiveSide, kind, pct: num })
+      : null;
+    const formatted = px !== null ? formatLevelPrice(px) : '';
+    if (field === 'stopLoss') setStopLoss(formatted);
+    else if (field === 'tp1') setTp1(formatted);
+    else if (field === 'tp2') setTp2(formatted);
+    else setTp3(formatted);
+  };
+
+  const openEditTpSlModal = (p: OpenTradeRow) => {
+    const entryPx = Number(p.entry_price || 0);
+    setEditPos(p);
+    setEditForm({
+      stopLoss: p.current_stop_loss || '',
+      tp1: p.tp1 || '',
+      tp2: p.tp2 || '',
+      tp3: p.tp3 || '',
+    });
+    const pSl = calcPctFromPrice({ entryPrice: entryPx, side: p.direction, kind: 'SL', targetPrice: Number(p.current_stop_loss) });
+    const p1 = calcPctFromPrice({ entryPrice: entryPx, side: p.direction, kind: 'TP', targetPrice: Number(p.tp1) });
+    const p2 = calcPctFromPrice({ entryPrice: entryPx, side: p.direction, kind: 'TP', targetPrice: Number(p.tp2) });
+    const p3 = calcPctFromPrice({ entryPrice: entryPx, side: p.direction, kind: 'TP', targetPrice: Number(p.tp3) });
+    setEditPcts({
+      stopLoss: pSl !== null ? String(pSl) : '1.5',
+      tp1: p1 !== null ? String(p1) : '2',
+      tp2: p2 !== null ? String(p2) : '',
+      tp3: p3 !== null ? String(p3) : '',
+    });
+    setEditTpSlMode('PRICE');
+  };
+
+  const updateEditPct = (field: 'stopLoss' | 'tp1' | 'tp2' | 'tp3', rawPct: string) => {
+    setEditPcts((prev) => ({ ...prev, [field]: rawPct }));
+    if (!editPos) return;
+    const entryPx = Number(editPos.entry_price || 0);
+    const num = Number(rawPct);
+    const kind = field === 'stopLoss' ? 'SL' : 'TP';
+    const px = Number.isFinite(num) && num > 0 && entryPx > 0
+      ? calcPriceFromPct({ entryPrice: entryPx, side: editPos.direction, kind, pct: num })
+      : null;
+    setEditForm((prev) => ({ ...prev, [field]: px !== null ? formatLevelPrice(px) : '' }));
   };
 
   const loadAlerts = async () => {
@@ -265,7 +339,10 @@ export function TerminalPage({
       .then((c) => { if (active) setChatHistory(c.chats || []); })
       .catch(() => {});
 
-    const iv = setInterval(() => void run(false), 10_000);
+    const iv = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void run(false);
+    }, 15_000);
     return () => {
       active = false;
       clearInterval(iv);
@@ -1079,7 +1156,19 @@ export function TerminalPage({
                   type="button"
                   onClick={() => {
                     setSide(s);
-                    applyAutoLevels(lastPx, s, orderType === 'LIMIT');
+                    const entryPx = orderType === 'LIMIT' && Number(limitPrice) > 0 ? Number(limitPrice) : lastPx;
+                    if (tpslMode === 'PCT' && entryPx > 0) {
+                      const slPx = calcPriceFromPct({ entryPrice: entryPx, side: s, kind: 'SL', pct: Number(tpslPcts.stopLoss) });
+                      const p1Px = calcPriceFromPct({ entryPrice: entryPx, side: s, kind: 'TP', pct: Number(tpslPcts.tp1) });
+                      const p2Px = calcPriceFromPct({ entryPrice: entryPx, side: s, kind: 'TP', pct: Number(tpslPcts.tp2) });
+                      const p3Px = calcPriceFromPct({ entryPrice: entryPx, side: s, kind: 'TP', pct: Number(tpslPcts.tp3) });
+                      if (slPx !== null) setStopLoss(formatLevelPrice(slPx));
+                      if (p1Px !== null) setTp1(formatLevelPrice(p1Px));
+                      if (p2Px !== null) setTp2(formatLevelPrice(p2Px));
+                      if (p3Px !== null) setTp3(formatLevelPrice(p3Px));
+                    } else {
+                      applyAutoLevels(lastPx, s, orderType === 'LIMIT');
+                    }
                   }}
                   className={`py-2.5 rounded-lg font-black transition flex items-center justify-center gap-1.5 ${
                     effectiveSide === s ? (s === 'LONG' ? 'bg-jade text-black shadow-sm' : 'bg-rose-500 text-white shadow-sm') : 'text-dim hover:text-main'
@@ -1132,7 +1221,21 @@ export function TerminalPage({
                 <label className="text-[10px] text-dim block mb-1">{isFa ? `قیمت ورود لیمیت (${symbol})` : 'Limit Entry Price'}</label>
                 <input
                   value={limitPrice}
-                  onChange={(e) => setLimitPrice(e.target.value)}
+                  onChange={(e) => {
+                    const nextLimit = e.target.value;
+                    setLimitPrice(nextLimit);
+                    const px = Number(nextLimit);
+                    if (tpslMode === 'PCT' && Number.isFinite(px) && px > 0) {
+                      const slPx = calcPriceFromPct({ entryPrice: px, side: effectiveSide, kind: 'SL', pct: Number(tpslPcts.stopLoss) });
+                      const p1Px = calcPriceFromPct({ entryPrice: px, side: effectiveSide, kind: 'TP', pct: Number(tpslPcts.tp1) });
+                      const p2Px = calcPriceFromPct({ entryPrice: px, side: effectiveSide, kind: 'TP', pct: Number(tpslPcts.tp2) });
+                      const p3Px = calcPriceFromPct({ entryPrice: px, side: effectiveSide, kind: 'TP', pct: Number(tpslPcts.tp3) });
+                      if (slPx !== null) setStopLoss(formatLevelPrice(slPx));
+                      if (p1Px !== null) setTp1(formatLevelPrice(p1Px));
+                      if (p2Px !== null) setTp2(formatLevelPrice(p2Px));
+                      if (p3Px !== null) setTp3(formatLevelPrice(p3Px));
+                    }
+                  }}
                   placeholder={lastPx ? fmtPx(lastPx) : 'USDT'}
                   className="field font-num text-xs py-2"
                 />
@@ -1171,40 +1274,173 @@ export function TerminalPage({
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
                 <span className="text-[11px] font-bold text-sub">{isFa ? 'حد ضرر و تارگت‌های سود' : 'Stop Loss & Take Profits'}</span>
-                <button
-                  type="button"
-                  onClick={() => applyAutoLevels(lastPx, effectiveSide, orderType === 'LIMIT')}
-                  className="text-[10px] font-bold text-[var(--gold)] hover:underline inline-flex items-center gap-1"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>{isFa ? 'محاسبه خودکار' : 'Auto Reset'}</span>
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'حد ضرر SL' : 'Stop Loss'}</label>
-                  <input
-                    value={stopLoss}
-                    onChange={(e) => setStopLoss(e.target.value)}
-                    className={`field font-num text-xs py-1.5 ${slConflict ? '!border-rose-500' : ''}`}
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'تارگت ۱' : 'TP 1'}</label>
-                  <input value={tp1} onChange={(e) => setTp1(e.target.value)} className="field font-num text-xs py-1.5" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'تارگت ۲' : 'TP 2'}</label>
-                  <input value={tp2} onChange={(e) => setTp2(e.target.value)} className="field font-num text-xs py-1.5" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'تارگت ۳' : 'TP 3'}</label>
-                  <input value={tp3} onChange={(e) => setTp3(e.target.value)} className="field font-num text-xs py-1.5" />
+                <div className="flex items-center gap-1.5">
+                  <TpSlModeSwitch mode={tpslMode} onChange={switchTicketTpSlMode} isFa={isFa} compact />
+                  <button
+                    type="button"
+                    onClick={() => applyAutoLevels(lastPx, effectiveSide, orderType === 'LIMIT')}
+                    className="text-[10px] font-bold text-[var(--gold)] hover:underline inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>{isFa ? 'خودکار' : 'Reset'}</span>
+                  </button>
                 </div>
               </div>
+
+              {tpslMode === 'PRICE' ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'حد ضرر SL ($)' : 'Stop Loss ($)'}</label>
+                    <input
+                      value={stopLoss}
+                      onChange={(e) => setStopLoss(e.target.value)}
+                      className={`field font-num text-xs py-1.5 ${slConflict ? '!border-rose-500' : ''}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'تارگت ۱ ($)' : 'TP 1 ($)'}</label>
+                    <input value={tp1} onChange={(e) => setTp1(e.target.value)} className="field font-num text-xs py-1.5" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'تارگت ۲ ($)' : 'TP 2 ($)'}</label>
+                    <input value={tp2} onChange={(e) => setTp2(e.target.value)} className="field font-num text-xs py-1.5" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-0.5">{isFa ? 'تارگت ۳ ($)' : 'TP 3 ($)'}</label>
+                    <input value={tp3} onChange={(e) => setTp3(e.target.value)} className="field font-num text-xs py-1.5" />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-loss font-bold">{isFa ? 'حد ضرر SL (%)' : 'SL (%)'}</label>
+                        {stopLoss && (
+                          <span dir="ltr" className="text-[9.5px] font-num text-dim">
+                            ≈ ${stopLoss}
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        min={0.05}
+                        max={95}
+                        dir="ltr"
+                        value={tpslPcts.stopLoss}
+                        onChange={(e) => updateTicketPct('stopLoss', e.target.value)}
+                        placeholder="1.5"
+                        className="field font-num text-xs py-1.5"
+                      />
+                      <div className="flex gap-1 mt-1" dir="ltr">
+                        {['1', '2', '3', '5'].map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => updateTicketPct('stopLoss', p)}
+                            className={`flex-1 py-0.5 rounded text-[9px] font-num font-bold ${
+                              tpslPcts.stopLoss === p ? 'bg-rose-500 text-white' : 'bg-[var(--soft)] text-dim hover:text-main'
+                            }`}
+                          >
+                            -{p}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-jade font-bold">{isFa ? 'تارگت ۱ (%)' : 'TP 1 (%)'}</label>
+                        {tp1 && (
+                          <span dir="ltr" className="text-[9.5px] font-num text-dim">
+                            ≈ ${tp1}
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        min={0.05}
+                        max={500}
+                        dir="ltr"
+                        value={tpslPcts.tp1}
+                        onChange={(e) => updateTicketPct('tp1', e.target.value)}
+                        placeholder="2"
+                        className="field font-num text-xs py-1.5"
+                      />
+                      <div className="flex gap-1 mt-1" dir="ltr">
+                        {['2', '5', '10', '15'].map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => updateTicketPct('tp1', p)}
+                            className={`flex-1 py-0.5 rounded text-[9px] font-num font-bold ${
+                              tpslPcts.tp1 === p ? 'bg-jade text-slate-950' : 'bg-[var(--soft)] text-dim hover:text-main'
+                            }`}
+                          >
+                            +{p}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-dim">{isFa ? 'تارگت ۲ (%)' : 'TP 2 (%)'}</label>
+                        {tp2 && (
+                          <span dir="ltr" className="text-[9.5px] font-num text-dim">
+                            ≈ ${tp2}
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        min={0.05}
+                        max={500}
+                        dir="ltr"
+                        value={tpslPcts.tp2}
+                        onChange={(e) => updateTicketPct('tp2', e.target.value)}
+                        placeholder="3.5"
+                        className="field font-num text-xs py-1.5"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-dim">{isFa ? 'تارگت ۳ (%)' : 'TP 3 (%)'}</label>
+                        {tp3 && (
+                          <span dir="ltr" className="text-[9.5px] font-num text-dim">
+                            ≈ ${tp3}
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="any"
+                        min={0.05}
+                        max={500}
+                        dir="ltr"
+                        value={tpslPcts.tp3}
+                        onChange={(e) => updateTicketPct('tp3', e.target.value)}
+                        placeholder="5.5"
+                        className="field font-num text-xs py-1.5"
+                      />
+                    </div>
+                  </div>
+                  {effectiveLev > 1 && Number(tpslPcts.tp1) > 0 && (
+                    <div dir="ltr" className="text-[10px] text-dim flex items-center justify-between px-1">
+                      <span className="text-loss">SL ROE: -{calcRoePct(Number(tpslPcts.stopLoss || 0), effectiveLev)}%</span>
+                      <span className="text-jade font-bold">TP1 ROE: +{calcRoePct(Number(tpslPcts.tp1 || 0), effectiveLev)}%</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {slConflict && (
                 <div className="text-[10px] text-loss font-bold flex items-center justify-between bg-rose-500/10 rounded-lg px-2.5 py-1.5">
                   <span>
@@ -1364,10 +1600,7 @@ export function TerminalPage({
                       </span>
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditPos(p);
-                          setEditForm({ stopLoss: p.current_stop_loss || '', tp1: p.tp1 || '', tp2: p.tp2 || '', tp3: p.tp3 || '' });
-                        }}
+                        onClick={() => openEditTpSlModal(p)}
                         className="btn-ghost px-2.5 py-1.5 rounded-xl font-bold inline-flex items-center gap-1"
                       >
                         <Edit3 className="w-3.5 h-3.5" /> TP/SL
@@ -1846,16 +2079,105 @@ export function TerminalPage({
             onClick={() => setEditPos(null)}
           >
             <form onSubmit={saveEditTpSl} className="pop-in panel !bg-[var(--panel)] rounded-[26px] w-full max-w-sm p-6 space-y-3 text-xs" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <h3 className="font-display font-bold text-base text-main">{isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}</h3>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-display font-bold text-base text-main">{isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}</h3>
+                  <p dir="ltr" className="text-[10px] text-dim font-num">
+                    {editPos.direction} · Entry ${editPos.entry_price} · {editPos.leverage}×
+                  </p>
+                </div>
                 <button type="button" onClick={() => setEditPos(null)}><X className="w-4 h-4" /></button>
               </div>
-              <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} placeholder="Stop Loss" className="field font-num" required />
-              <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} placeholder="TP1" className="field font-num" required />
-              <div className="grid grid-cols-2 gap-2">
-                <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} placeholder="TP2" className="field font-num" />
-                <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} placeholder="TP3" className="field font-num" />
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-sub">{isFa ? 'نحوه ورود:' : 'Input Mode:'}</span>
+                <TpSlModeSwitch
+                  mode={editTpSlMode}
+                  onChange={(next) => {
+                    if (next === 'PCT') {
+                      const entryPx = Number(editPos.entry_price || 0);
+                      const pSl = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'SL', targetPrice: Number(editForm.stopLoss) });
+                      const p1 = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'TP', targetPrice: Number(editForm.tp1) });
+                      const p2 = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'TP', targetPrice: Number(editForm.tp2) });
+                      const p3 = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'TP', targetPrice: Number(editForm.tp3) });
+                      setEditPcts({
+                        stopLoss: pSl !== null ? String(pSl) : '1.5',
+                        tp1: p1 !== null ? String(p1) : '2',
+                        tp2: p2 !== null ? String(p2) : '',
+                        tp3: p3 !== null ? String(p3) : '',
+                      });
+                    }
+                    setEditTpSlMode(next);
+                  }}
+                  isFa={isFa}
+                  compact
+                />
               </div>
+
+              {editTpSlMode === 'PRICE' ? (
+                <>
+                  <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} placeholder="Stop Loss ($)" className="field font-num" required />
+                  <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} placeholder="TP1 ($)" className="field font-num" required />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} placeholder="TP2 ($)" className="field font-num" />
+                    <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} placeholder="TP3 ($)" className="field font-num" />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex justify-between text-[10px] mb-1">
+                      <span className="text-loss font-bold">{isFa ? 'حد ضرر SL (%)' : 'Stop Loss (%)'}</span>
+                      <span dir="ltr" className="font-num text-dim">≈ ${editForm.stopLoss || '—'}</span>
+                    </div>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0.05}
+                      max={95}
+                      dir="ltr"
+                      value={editPcts.stopLoss}
+                      onChange={(e) => updateEditPct('stopLoss', e.target.value)}
+                      placeholder="SL %"
+                      className="field font-num"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[10px] mb-1">
+                      <span className="text-jade font-bold">{isFa ? 'تارگت ۱ TP1 (%)' : 'TP 1 (%)'}</span>
+                      <span dir="ltr" className="font-num text-dim">≈ ${editForm.tp1 || '—'}</span>
+                    </div>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0.05}
+                      max={500}
+                      dir="ltr"
+                      value={editPcts.tp1}
+                      onChange={(e) => updateEditPct('tp1', e.target.value)}
+                      placeholder="TP1 %"
+                      className="field font-num"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="text-dim">TP2 (%)</span>
+                        {editForm.tp2 && <span dir="ltr" className="font-num text-dim">≈ ${editForm.tp2}</span>}
+                      </div>
+                      <input type="number" step="any" min={0.05} max={500} dir="ltr" value={editPcts.tp2} onChange={(e) => updateEditPct('tp2', e.target.value)} placeholder="TP2 %" className="field font-num" />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="text-dim">TP3 (%)</span>
+                        {editForm.tp3 && <span dir="ltr" className="font-num text-dim">≈ ${editForm.tp3}</span>}
+                      </div>
+                      <input type="number" step="any" min={0.05} max={500} dir="ltr" value={editPcts.tp3} onChange={(e) => updateEditPct('tp3', e.target.value)} placeholder="TP3 %" className="field font-num" />
+                    </div>
+                  </div>
+                </div>
+              )}
               <button type="submit" className="btn-gold w-full py-3 rounded-xl font-black">{isFa ? 'ذخیره TP/SL' : 'Save TP/SL'}</button>
             </form>
           </div>,

@@ -94,6 +94,9 @@ export function SniperPage({
           minSafetyScore: data.config.sniper_min_safety_score ?? data.config.sniper_min_safety ?? 75,
           minLiquidityUsd: data.config.sniper_min_liquidity_usd ?? 25_000,
           maxPairAgeHours: data.config.sniper_max_pair_age_hours ?? 24,
+          maxPairAgeMinutes:
+            data.config.sniper_max_pair_age_minutes ??
+            Math.round((data.config.sniper_max_pair_age_hours ?? 24) * 60),
           maxTaxPct: data.config.sniper_max_tax_pct ?? 5,
           tpPct: data.config.sniper_tp_pct ?? 35,
           slPct: data.config.sniper_sl_pct ?? 15,
@@ -102,6 +105,15 @@ export function SniperPage({
           maxOpenPositions: data.config.sniper_max_open_positions ?? 3,
           autoExecute: data.config.sniper_auto_execute !== 0,
           slippagePct: data.config.sniper_slippage_pct ?? 3,
+          advancedFilters: (() => {
+            try {
+              return data.config.sniper_advanced_filters_json
+                ? JSON.parse(data.config.sniper_advanced_filters_json)
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          })(),
         }}
         onRefreshDashboard={onRefresh}
         onRequireOnboardingGate={onRequireOnboardingGate}

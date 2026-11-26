@@ -9,7 +9,7 @@ export function DollarinoBrandMark({
 }) {
   return (
     <img
-      src="/logo.png"
+      src="/logo-sm.webp"
       alt="Dollarino"
       width={size}
       height={size}

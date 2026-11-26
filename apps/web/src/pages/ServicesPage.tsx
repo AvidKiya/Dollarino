@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Award,
+  Bell,
   Bot,
   BrainCircuit,
   Camera,
@@ -26,9 +27,11 @@ import {
   Moon,
   Phone,
   Radar,
+  RefreshCw,
   Save,
   Send,
   Shield,
+  SlidersHorizontal,
   Smartphone,
   Sparkles,
   Sprout,
@@ -83,18 +86,20 @@ export function ServicesPage({
   data,
   onNavigate,
   onUpdateUser,
+  onRefresh,
   onOpenSupport,
   onLogout,
 }: {
   lang: Lang;
   uiMode: UiMode;
-  onToggleUiMode: (mode: UiMode) => void;
+  onToggleUiMode?: (mode: UiMode) => void;
   currentLook: LookId;
   onToggleDaylight: () => void;
   user: AuthUserInfo;
   data: DashboardPayload;
   onNavigate: (tab: NavTab) => void;
   onUpdateUser?: (next: AuthUserInfo) => void;
+  onRefresh?: () => Promise<void>;
   onOpenSupport?: () => void;
   onLogout: () => Promise<void>;
 }) {
@@ -126,6 +131,92 @@ export function ServicesPage({
   const [totpInputCode, setTotpInputCode] = useState('');
   const [totpBusy, setTotpBusy] = useState(false);
   const [totpMsg, setTotpMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const parsedNotifPrefs = (() => {
+    try {
+      const p = data.config.notification_prefs_json ? JSON.parse(data.config.notification_prefs_json) : {};
+      return {
+        tradeOpen: Boolean(p.tradeOpen),
+        tpSlHit: Boolean(p.tpSlHit),
+        aiSignals: Boolean(p.aiSignals),
+        whaleCopy: Boolean(p.whaleCopy),
+        dailyDigest: Boolean(p.dailyDigest),
+      };
+    } catch {
+      return { tradeOpen: false, tpSlHit: false, aiSignals: false, whaleCopy: false, dailyDigest: false };
+    }
+  })();
+
+  const [prefCurrency, setPrefCurrency] = useState<'USD' | 'IRT'>(data.config.display_currency === 'IRT' ? 'IRT' : 'USD');
+  const [prefNotifMaster, setPrefNotifMaster] = useState<boolean>(Boolean(data.config.notifications_enabled));
+  const [prefNotifs, setPrefNotifs] = useState(parsedNotifPrefs);
+  const [prefExecMode, setPrefExecMode] = useState<'AUTO' | 'MANUAL_CONFIRM'>(
+    data.config.trade_execution_mode === 'AUTO' ? 'AUTO' : 'MANUAL_CONFIRM'
+  );
+  const [prefMarketType, setPrefMarketType] = useState<'FUTURES' | 'SPOT'>(
+    data.config.market_type === 'SPOT' ? 'SPOT' : 'FUTURES'
+  );
+  const [prefDirection, setPrefDirection] = useState<'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY'>(
+    (data.config.direction_mode as 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY') || 'BOTH'
+  );
+  const [prefBlockWeekends, setPrefBlockWeekends] = useState<boolean>(Boolean(data.config.block_weekends));
+  const [prefMacroBlackout, setPrefMacroBlackout] = useState<boolean>(Boolean(data.config.macro_blackout));
+  const [prefPaperBalance, setPrefPaperBalance] = useState<string>(String(data.config.custom_paper_balance ?? 10000));
+  const [prefsBusy, setPrefsBusy] = useState(false);
+  const [prefsMsg, setPrefsMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    setPrefCurrency(data.config.display_currency === 'IRT' ? 'IRT' : 'USD');
+    setPrefNotifMaster(Boolean(data.config.notifications_enabled));
+    setPrefExecMode(data.config.trade_execution_mode === 'AUTO' ? 'AUTO' : 'MANUAL_CONFIRM');
+    setPrefMarketType(data.config.market_type === 'SPOT' ? 'SPOT' : 'FUTURES');
+    setPrefDirection((data.config.direction_mode as 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY') || 'BOTH');
+    setPrefBlockWeekends(Boolean(data.config.block_weekends));
+    setPrefMacroBlackout(Boolean(data.config.macro_blackout));
+    setPrefPaperBalance(String(data.config.custom_paper_balance ?? 10000));
+    try {
+      const p = data.config.notification_prefs_json ? JSON.parse(data.config.notification_prefs_json) : {};
+      setPrefNotifs({
+        tradeOpen: Boolean(p.tradeOpen),
+        tpSlHit: Boolean(p.tpSlHit),
+        aiSignals: Boolean(p.aiSignals),
+        whaleCopy: Boolean(p.whaleCopy),
+        dailyDigest: Boolean(p.dailyDigest),
+      });
+    } catch { /* ignore */ }
+  }, [data.config]);
+
+  const handleSaveUserPreferences = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPrefsBusy(true);
+    setPrefsMsg(null);
+    try {
+      const paperNum = Math.max(50, Math.min(10_000_000, Number(prefPaperBalance) || 10000));
+      await apiFetch('/api/trading/config', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          display_currency: prefCurrency,
+          notifications_enabled: prefNotifMaster ? 1 : 0,
+          notification_prefs_json: JSON.stringify(prefNotifs),
+          trade_execution_mode: prefExecMode,
+          market_type: prefMarketType,
+          direction_mode: prefMarketType === 'SPOT' && prefDirection === 'SHORT_ONLY' ? 'LONG_ONLY' : prefDirection,
+          block_weekends: prefBlockWeekends ? 1 : 0,
+          macro_blackout: prefMacroBlackout ? 1 : 0,
+          custom_paper_balance: paperNum,
+        }),
+      });
+      setPrefsMsg({
+        ok: true,
+        text: isFa ? 'تنظیمات کامل حساب، اعلانات و ربات ذخیره شد ✅' : 'Account, notifications & bot preferences saved ✅',
+      });
+      if (onRefresh) await onRefresh();
+    } catch (err) {
+      setPrefsMsg({ ok: false, text: err instanceof Error ? err.message : 'Save failed' });
+    } finally {
+      setPrefsBusy(false);
+    }
+  };
 
   useEffect(() => {
     setTotpEnabled(Boolean(user.totp_enabled));
@@ -342,9 +433,12 @@ export function ServicesPage({
     }
   };
 
+  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
+
   const handleDeleteAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     setDeleteErr(null);
+    setDeleteSuccessMsg(null);
     const clean = deleteConfirmText.trim();
     if (clean.toUpperCase() !== 'DELETE' && clean !== 'حذف' && clean !== 'حذف حساب') {
       setDeleteErr(isFa ? 'لطفاً عبارت DELETE یا «حذف» را تایپ کنید.' : 'Please type DELETE to confirm.');
@@ -353,13 +447,26 @@ export function ServicesPage({
     setDeleteBusy(true);
     try {
       const hasExistingPwd = Boolean(user.has_custom_password) && !isTelegramPseudo;
-      await apiFetch<{ ok: boolean; deleted: boolean }>('/api/auth/account', {
+      const res = await apiFetch<{ ok: boolean; deleted?: boolean; resetAdminAccount?: boolean; message?: string }>('/api/auth/account', {
         method: 'DELETE',
         body: JSON.stringify({
           confirmText: clean,
           password: hasExistingPwd ? deletePassword : undefined,
         }),
       });
+      if (res.resetAdminAccount) {
+        setDeleteOpen(false);
+        setDeleteConfirmText('');
+        setDeletePassword('');
+        setDeleteSuccessMsg(
+          res.message ||
+            (isFa
+              ? 'تمام موجودی‌ها و سوابق حساب مدیریتی به ۰ بازنشانی شد و دسترسی مدیریت حفظ گردید.'
+              : 'Admin account reset to fresh zero state while preserving admin privileges.')
+        );
+        if (onRefresh) await onRefresh();
+        return;
+      }
       setStoredToken(null);
       await onLogout();
     } catch (err) {
@@ -369,9 +476,13 @@ export function ServicesPage({
     }
   };
 
-  const activePlanLabel = isFa
-    ? '۳ معامله اول ۰٪ · ۹۷٪ سود برای شما (کارمزد ۳٪ فقط از سود واقعی)'
-    : 'First 3 Live Wins 0% · 3% Fee Only on Net Profit';
+  const activePlanLabel = isAdmin
+    ? isFa
+      ? 'دسترسی کامل مدیریت · بدون کارمزد و محدودیت ∞'
+      : 'Admin Full Access · 0% Fee & Unlimited ∞'
+    : isFa
+      ? '۳ معامله اول ۰٪ · ۹۷٪ سود برای شما (کارمزد ۳٪ فقط از سود واقعی)'
+      : 'First 3 Live Wins 0% · 3% Fee Only on Net Profit';
 
   /* Dedicated Account Management View: Full Editable Profile with Locked Verified Phone */
   if (accountView) {
@@ -792,6 +903,208 @@ export function ServicesPage({
           )}
         </div>
 
+        {/* Comprehensive User Preferences & Notification Center */}
+        <form onSubmit={handleSaveUserPreferences} className="panel rounded-[26px] p-5 space-y-4 border hairline">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="w-4 h-4 text-brand" />
+              <div>
+                <h3 className="text-sm font-black text-main">
+                  {isFa ? 'تنظیمات کامل اعلانات، نمایشگر و ترجیحات ربات' : 'Bot Preferences, Display & Notification Center'}
+                </h3>
+                <p className="text-[11px] text-dim">
+                  {isFa
+                    ? 'تمام تنظیمات به‌صورت پیش‌فرض ایمن و خاموش است؛ هر بخش را مطابق نیاز خود فعال کنید.'
+                    : 'All automated switches start safely OFF — customize and activate only what you want.'}
+                </p>
+              </div>
+            </div>
+            <button type="submit" disabled={prefsBusy} className="btn-gold px-4 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5">
+              <Save className="w-3.5 h-3.5" />
+              <span>{prefsBusy ? '...' : isFa ? 'ذخیره تنظیمات' : 'Save Settings'}</span>
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-3 text-xs">
+            {onToggleUiMode && (
+            <div className="surface-soft rounded-2xl p-3.5 space-y-2 border hairline">
+              <span className="text-[11px] font-bold text-dim block">{isFa ? 'نمای رابط کاربری سایت و تلگرام' : 'UI Experience Mode'}</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onToggleUiMode('simple')}
+                  className={`py-2 rounded-xl text-[11px] font-black transition ${
+                    uiMode === 'simple' ? 'btn-emerald text-white' : 'bg-[var(--bg)]/60 text-sub hover:text-main'
+                  }`}
+                >
+                  {isFa ? '🌱 حالت ساده' : '🌱 Simple Mode'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleUiMode('pro')}
+                  className={`py-2 rounded-xl text-[11px] font-black transition ${
+                    uiMode === 'pro' ? 'btn-cobalt text-white' : 'bg-[var(--bg)]/60 text-sub hover:text-main'
+                  }`}
+                >
+                  {isFa ? '⚡ حالت حرفه‌ای' : '⚡ Pro Mode'}
+                </button>
+              </div>
+            </div>
+            )}
+
+            <div className="surface-soft rounded-2xl p-3.5 space-y-2 border hairline">
+              <span className="text-[11px] font-bold text-dim block">{isFa ? 'واحد نمایش اصلی مبالغ' : 'Primary Display Currency'}</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPrefCurrency('USD')}
+                  className={`py-2 rounded-xl text-[11px] font-black transition ${
+                    prefCurrency === 'USD' ? 'btn-cobalt text-white' : 'bg-[var(--bg)]/60 text-sub hover:text-main'
+                  }`}
+                >
+                  {isFa ? '💵 دلار (USDT)' : '💵 USD / USDT'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrefCurrency('IRT')}
+                  className={`py-2 rounded-xl text-[11px] font-black transition ${
+                    prefCurrency === 'IRT' ? 'btn-cobalt text-white' : 'bg-[var(--bg)]/60 text-sub hover:text-main'
+                  }`}
+                >
+                  {isFa ? '🇮🇷 معادل تومان' : '🇮🇷 Toman (IRT)'}
+                </button>
+              </div>
+            </div>
+
+            <div className="surface-soft rounded-2xl p-3.5 space-y-2 border hairline">
+              <span className="text-[11px] font-bold text-dim block">{isFa ? 'روش اجرای دستورات' : 'Trade Execution Mode'}</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPrefExecMode('MANUAL_CONFIRM')}
+                  className={`py-2 rounded-xl text-[11px] font-black transition ${
+                    prefExecMode === 'MANUAL_CONFIRM' ? 'btn-cobalt text-white' : 'bg-[var(--bg)]/60 text-sub hover:text-main'
+                  }`}
+                >
+                  {isFa ? '✋ تایید دستی من' : '✋ Manual Confirm'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrefExecMode('AUTO')}
+                  className={`py-2 rounded-xl text-[11px] font-black transition ${
+                    prefExecMode === 'AUTO' ? 'btn-emerald text-white' : 'bg-[var(--bg)]/60 text-sub hover:text-main'
+                  }`}
+                >
+                  {isFa ? '🤖 اتوترید خودکار' : '🤖 Auto Execute'}
+                </button>
+              </div>
+            </div>
+
+            <div className="surface-soft rounded-2xl p-3.5 space-y-2 border hairline">
+              <span className="text-[11px] font-bold text-dim block">{isFa ? 'نوع بازار و جهت مجاز' : 'Market & Direction'}</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <select
+                  value={prefMarketType}
+                  onChange={(ev) => setPrefMarketType(ev.target.value === 'SPOT' ? 'SPOT' : 'FUTURES')}
+                  className="field py-2 text-[11px] font-bold"
+                >
+                  <option value="FUTURES">{isFa ? 'فیوچرز (با اهرم)' : 'Futures (Perp)'}</option>
+                  <option value="SPOT">{isFa ? 'اسپات (بدون اهرم)' : 'Spot (1x)'}</option>
+                </select>
+                <select
+                  value={prefDirection}
+                  onChange={(ev) => setPrefDirection((ev.target.value as 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY') || 'BOTH')}
+                  className="field py-2 text-[11px] font-bold"
+                >
+                  <option value="BOTH">{isFa ? 'لانگ + شورت' : 'Long + Short'}</option>
+                  <option value="LONG_ONLY">{isFa ? 'فقط خرید (Long)' : 'Long Only'}</option>
+                  {prefMarketType === 'FUTURES' && <option value="SHORT_ONLY">{isFa ? 'فقط فروش (Short)' : 'Short Only'}</option>}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="surface-soft rounded-2xl p-4 space-y-3 border hairline text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-black text-main inline-flex items-center gap-2">
+                <Bell className="w-4 h-4 text-[var(--gold)]" />
+                {isFa ? 'اعلانات لحظه‌ای تلگرام و سایت (Master Switch)' : 'Instant Telegram & App Notifications'}
+              </span>
+              <input
+                type="checkbox"
+                checked={prefNotifMaster}
+                onChange={(ev) => {
+                  const next = ev.target.checked;
+                  setPrefNotifMaster(next);
+                  if (next && !Object.values(prefNotifs).some(Boolean)) {
+                    setPrefNotifs({ tradeOpen: true, tpSlHit: true, aiSignals: true, whaleCopy: true, dailyDigest: false });
+                  }
+                }}
+                className="w-4 h-4 accent-[#10d9a3] cursor-pointer"
+              />
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {[
+                { k: 'tradeOpen' as const, fa: 'باز/بسته شدن معاملات', en: 'Trade Open & Close' },
+                { k: 'tpSlHit' as const, fa: 'رسیدن به TP1/2/3 و حد ضرر', en: 'TP / SL Hit Alerts' },
+                { k: 'aiSignals' as const, fa: 'سیگنال‌های مدل AI دلارینو', en: 'AI Signal Alerts' },
+                { k: 'whaleCopy' as const, fa: 'تراکنش نهنگ‌های کپی‌ترید', en: 'Whale Copy Activity' },
+                { k: 'dailyDigest' as const, fa: 'گزارش خلاصه سود روزانه', en: 'Daily PnL Digest' },
+              ].map((item) => (
+                <label key={item.k} className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[var(--bg)]/50 cursor-pointer">
+                  <span className="text-[11px] font-semibold text-sub">{isFa ? item.fa : item.en}</span>
+                  <input
+                    type="checkbox"
+                    disabled={!prefNotifMaster}
+                    checked={prefNotifMaster && prefNotifs[item.k]}
+                    onChange={(ev) => setPrefNotifs((p) => ({ ...p, [item.k]: ev.target.checked }))}
+                    className="w-3.5 h-3.5 accent-[#10d9a3]"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
+            <label className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline cursor-pointer">
+              <span className="font-bold text-main text-[11px]">{isFa ? 'توقف ترید آخر هفته‌ها' : 'Block Weekends'}</span>
+              <input
+                type="checkbox"
+                checked={prefBlockWeekends}
+                onChange={(ev) => setPrefBlockWeekends(ev.target.checked)}
+                className="w-4 h-4 accent-[#10d9a3]"
+              />
+            </label>
+            <label className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline cursor-pointer">
+              <span className="font-bold text-main text-[11px]">{isFa ? 'توقف در اخبار CPI/FOMC' : 'Macro Blackout'}</span>
+              <input
+                type="checkbox"
+                checked={prefMacroBlackout}
+                onChange={(ev) => setPrefMacroBlackout(ev.target.checked)}
+                className="w-4 h-4 accent-[#10d9a3]"
+              />
+            </label>
+            <div className="surface-soft rounded-2xl p-3 flex items-center justify-between gap-2 border hairline">
+              <span className="font-bold text-main text-[11px] shrink-0">{isFa ? 'موجودی دمو ($)' : 'Demo ($)'}</span>
+              <input
+                dir="ltr"
+                type="number"
+                min={50}
+                max={10000000}
+                value={prefPaperBalance}
+                onChange={(ev) => setPrefPaperBalance(ev.target.value)}
+                className="field py-1.5 px-2 w-28 font-num text-xs text-end"
+              />
+            </div>
+          </div>
+
+          {prefsMsg && (
+            <div className={`p-2.5 rounded-xl text-[11px] font-bold ${prefsMsg.ok ? 'bg-emerald-500/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
+              {prefsMsg.text}
+            </div>
+          )}
+        </form>
+
         {/* Dollarino Quick Settings */}
         <div className="space-y-1.5">
           <p className="text-xs font-extrabold text-dim px-1">{isFa ? 'حساب کاربری دلارینو' : 'Dollarino Settings'}</p>
@@ -843,34 +1156,53 @@ export function ServicesPage({
               <AlertTriangle className="w-4 h-4 text-loss shrink-0 mt-0.5" />
               <div>
                 <h3 className="text-xs font-black text-loss">
-                  {isFa ? 'حذف دائمی حساب کاربری (Delete Account)' : 'Danger Zone — Delete Account'}
+                  {isAdmin
+                    ? isFa
+                      ? 'صفرسازی کامل حساب مدیریتی (Reset Account to 0)'
+                      : 'Reset Admin Account to Fresh Zero State'
+                    : isFa
+                      ? 'حذف دائمی حساب کاربری (Delete Account)'
+                      : 'Danger Zone — Delete Account'}
                 </h3>
                 <p className="text-[11px] text-sub mt-0.5 leading-relaxed">
-                  {isFa
-                    ? 'با حذف حساب، تمامی اطلاعات پروفایل، کلیدهای API صرافی، اتصال ربات، تاریخچه معاملات و کلید اکستنشن برای همیشه پاک می‌شوند و قابل بازیابی نیستند.'
-                    : 'Permanently erases your profile, exchange APIs, trades, alerts, and extension key. This cannot be undone.'}
+                  {isAdmin
+                    ? isFa
+                      ? 'با اجرای این عملیات روی حساب مدیر/مالک، حساب شما حذف نمی‌شود و دسترسی مدیریتی پابرجا می‌ماند؛ اما تمام موجودی‌ها، تاریخچه معاملات، کیف‌پول‌های متصل، سیگنال‌ها و تنظیمات مثل یک کاربر تازه‌وارد به ۰ بازنشانی می‌شوند.'
+                      : 'Wipes all balances, trades, wallets, signals, and preferences back to 0 like a fresh user while preserving your admin/owner account and privileges.'
+                    : isFa
+                      ? 'با حذف حساب، تمامی اطلاعات پروفایل، کلیدهای API صرافی، اتصال ربات، تاریخچه معاملات و کلید اکستنشن برای همیشه پاک می‌شوند و قابل بازیابی نیستند.'
+                      : 'Permanently erases your profile, exchange APIs, trades, alerts, and extension key. This cannot be undone.'}
                 </p>
               </div>
             </div>
           </div>
 
-          {user.role.toLowerCase() === 'owner' ? (
-            <p className="text-[11px] font-bold text-amber-400">
-              {isFa
-                ? 'حساب مالک اصلی پلتفرم جهت حفظ امنیت سیستم قابل حذف نیست.'
-                : 'Primary platform owner account cannot be deleted.'}
-            </p>
-          ) : !deleteOpen ? (
+          {deleteSuccessMsg && (
+            <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-jade text-[11px] font-bold">
+              {deleteSuccessMsg}
+            </div>
+          )}
+
+          {!deleteOpen ? (
             <button
               type="button"
               onClick={() => {
                 setDeleteOpen(true);
                 setDeleteErr(null);
+                setDeleteSuccessMsg(null);
               }}
               className="px-4 py-2.5 rounded-xl bg-rose-500/15 text-loss border border-rose-500/30 text-xs font-black inline-flex items-center gap-2 hover:bg-rose-500/25 transition"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>{isFa ? 'حذف حساب کاربری من' : 'Delete My Account'}</span>
+              <span>
+                {isAdmin
+                  ? isFa
+                    ? 'صفرسازی حساب من (حفظ مدیریت)'
+                    : 'Reset Account to 0 (Keep Admin)'
+                  : isFa
+                    ? 'حذف حساب کاربری من'
+                    : 'Delete My Account'}
+              </span>
             </button>
           ) : (
             <form onSubmit={handleDeleteAccount} className="space-y-2.5 pt-2 border-t border-rose-500/20 text-xs">
@@ -1080,6 +1412,7 @@ export function ServicesPage({
 
         {/* 3 Circular Inline Controls matching image-6.png */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {onToggleUiMode && (
           <button
             type="button"
             onClick={() => onToggleUiMode(uiMode === 'simple' ? 'pro' : 'simple')}
@@ -1088,6 +1421,7 @@ export function ServicesPage({
           >
             {uiMode === 'simple' ? <Sprout className="w-4 h-4 text-[#0D9455] dark:text-[#34D399]" /> : <Zap className="w-4 h-4 text-[#1652F0] dark:text-[#60A5FA]" />}
           </button>
+          )}
           <button
             type="button"
             onClick={onToggleDaylight}
@@ -1225,9 +1559,9 @@ export function ServicesPage({
               <UserCheck className="w-5 h-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، امنیت (2FA) و رمز عبور' : 'Account Details, 2FA Security & Password'}</span>
+              <span className="text-xs sm:text-sm font-extrabold text-main block">{isFa ? 'مدیریت حساب، امنیت (2FA) و تنظیمات کامل ربات' : 'Account Details, 2FA & Full Bot Preferences'}</span>
               <span className="text-[11px] text-dim block">
-                {isFa ? 'احراز دومرحله‌ای Google Authenticator، ویرایش نام کاربری، ایمیل و عکس پروفایل' : 'Google Authenticator 2FA, profile, email, bio, avatar & password'}
+                {isFa ? 'اعلانات، حالت ساده/حرفه‌ای، واحد تومان/دلار، 2FA، رمز عبور و عکس پروفایل' : 'Notifications, UI mode, currency, 2FA, profile, avatar & password'}
               </span>
             </div>
             <Arrow className="w-4 h-4 text-dim shrink-0" />
@@ -1265,8 +1599,8 @@ export function ServicesPage({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (V11.6 ZIP)'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">V11.6 گرافیکی</span>
+                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (V11.7 ZIP)'}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">V11.7 گرافیکی</span>
               </div>
               <span className="text-[11px] text-dim block">{isFa ? 'طراحی Liquid Glass هم‌شکل سایت · کنترل ربات، بازارها و رادار DEX' : 'Liquid Glass UI matching web app · Bot, Markets & DEX radar'}</span>
             </div>

@@ -6,7 +6,7 @@ import {
   type ExtractedChartSetup,
 } from '../ai/assistant.js';
 import { generateSupportAIReply, getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
-import { ensureUserDefaults, syncTelegramAvatarForUser } from '../auth.js';
+import { ensureUserDefaults, resolveEffectiveReferralCode, syncTelegramAvatarForUser } from '../auth.js';
 import { encryptVaultJson, generateReferralCode, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
 import {
   annotateRoutesWithLivePools,
@@ -25,12 +25,19 @@ import {
   type TradingEngineChoice,
 } from '../engine/exclusive-engine.js';
 import { executeSignalForUser, resolveUserCapitalSummary, type UserBotConfigRow } from '../engine/executor.js';
+import { discoverListingAndBoomCandidates } from '../engine/listing-sniper.js';
 import { checkPreTradeOnboardingGate } from '../engine/onboarding-gate.js';
 import type { AuthUser, Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
 import { DEFAULT_TRAINED_RULES, extractRulesFromConversation, type TrainedAIRules } from '../routes/my-ai.js';
 import { buildVerifiedCardCanonicalPayload } from '../routes/trading.js';
+import {
+  buildTokenDisplayIconUrl,
+  listUnifiedClosedTrades,
+  normalizeCardPeriod,
+  resolveTokenLogoPngDataUri,
+} from '../services/profit-cards.js';
 import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { resolveUserEntitlement } from '../routes/subscriptions.js';
 import {
@@ -719,10 +726,10 @@ async function getOrProvisionTelegramUser(
     const myRefCode = generateReferralCode();
 
     await env.DB.prepare(
-      `INSERT INTO users (id, email, username, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, ui_mode, referral_code, has_custom_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'simple', ?, 0)`
+      `INSERT INTO users (id, email, username, display_name, auth_provider, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, profile_completed, ui_mode, referral_code, has_custom_password)
+       VALUES (?, ?, ?, ?, 'telegram', ?, ?, ?, ?, ?, ?, ?, 'simple', ?, 0)`
     )
-      .bind(id, pseudoEmail, username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, tgId === ownerId ? 1 : 0, myRefCode)
+      .bind(id, pseudoEmail, username, tgUser.first_name || username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, tgId === ownerId ? 1 : 0, tgId === ownerId ? 1 : 0, myRefCode)
       .run();
 
     await ensureUserDefaults(env.DB, id);
@@ -940,20 +947,28 @@ async function sendPreAuthIntro(
       .run()
       .catch(() => {});
   }
+  if (!pendingStartArg || !pendingStartArg.toUpperCase().startsWith('LINK-')) {
+    await applyReferralIfPresent(env, user.id, pendingStartArg || null, user.phone_number).catch(() => {});
+  }
   await bot.sendMessage(chatId, preAuthIntroMessage(firstName), {
     replyKeyboard: contactVerificationKeyboard(),
   });
 }
 
 async function applyReferralIfPresent(env: Env, userId: string, rawPayload?: string | null, phoneNumber?: string | null) {
-  if (!rawPayload) return;
-  const upper = rawPayload.trim().toUpperCase();
-  const refMatch = upper.match(/(?:REF_)?(DLR-?[A-Z0-9_]+)/);
-  const extracted = refMatch?.[1] || (upper.includes('REF_') ? upper.split('REF_').pop()?.trim() || '' : '');
-  if (!extracted) return;
-
   const existingRef = await env.DB.prepare(`SELECT id FROM referrals WHERE referred_user_id = ? LIMIT 1`).bind(userId).first();
   if (existingRef) return;
+
+  let extracted = '';
+  if (rawPayload) {
+    const upper = rawPayload.trim().toUpperCase();
+    const refMatch = upper.match(/(?:REF_)?(DLR-?[A-Z0-9_]+)/);
+    extracted = refMatch?.[1] || (upper.includes('REF_') ? upper.split('REF_').pop()?.trim() || '' : '');
+  }
+  if (!extracted) {
+    extracted = (await resolveEffectiveReferralCode(env.DB, null, userId)) || '';
+  }
+  if (!extracted) return;
 
   const referrer = await env.DB.prepare(
     `SELECT id FROM users
@@ -1462,6 +1477,262 @@ async function showTradeQuantitiesMenu(env: Env, bot: TelegramBotClient, chatId:
   }
 }
 
+function parseTgNotifPrefs(raw: string | null | undefined): Record<string, boolean> {
+  const def = { signals: true, open_close: true, tp_sl: true, dex_sniper: true, cards_reports: true };
+  if (!raw) return def;
+  try {
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      signals: typeof p.signals === 'boolean' ? p.signals : true,
+      open_close: typeof p.open_close === 'boolean' ? p.open_close : true,
+      tp_sl: typeof p.tp_sl === 'boolean' ? p.tp_sl : true,
+      dex_sniper: typeof p.dex_sniper === 'boolean' ? p.dex_sniper : true,
+      cards_reports: typeof p.cards_reports === 'boolean' ? p.cards_reports : true,
+    };
+  } catch {
+    return def;
+  }
+}
+
+function buildNotifSettingsKeyboard(
+  enabled: number,
+  prefs: Record<string, boolean>,
+  currency: string
+): InlineKeyboardButton[][] {
+  const isOn = Number(enabled || 0) === 1;
+  const curr = currency === 'IRT' ? 'IRT' : 'USD';
+  return [
+    [
+      {
+        text: isOn ? '🔔 اعلان سراسری: روشن (برای خاموشی لمس کنید)' : '🔕 اعلان سراسری: خاموش (برای روشنی لمس کنید)',
+        callback_data: 'tg_notif_master',
+        style: isOn ? 'success' : 'danger',
+      },
+    ],
+    [
+      { text: `${prefs.signals ? '✅' : '⬜️'} سیگنال‌های جدید`, callback_data: 'tg_notif_pref:signals' },
+      { text: `${prefs.open_close ? '✅' : '⬜️'} باز/بسته شدن معامله`, callback_data: 'tg_notif_pref:open_close' },
+    ],
+    [
+      { text: `${prefs.tp_sl ? '✅' : '⬜️'} تاچ TP/SL و کارت سود`, callback_data: 'tg_notif_pref:tp_sl' },
+      { text: `${prefs.dex_sniper ? '✅' : '⬜️'} اسنایپر و DEX`, callback_data: 'tg_notif_pref:dex_sniper' },
+    ],
+    [
+      { text: `${prefs.cards_reports ? '✅' : '⬜️'} گزارش و کارت‌های سود`, callback_data: 'tg_notif_pref:cards_reports' },
+      { text: curr === 'IRT' ? '🇮🇷 واحد نمایش: تومان' : '💵 واحد نمایش: دلار (USD)', callback_data: 'tg_disp_curr:toggle', style: 'primary' },
+    ],
+  ];
+}
+
+function buildTelegramProfitCardKeyboard(): InlineKeyboardButton[][] {
+  return [
+    [
+      { text: '⏱ ۲۴ ساعته (24H)', callback_data: 'tg_profit_issue:24H:horizontal', style: 'primary' },
+      { text: '📅 هفتگی (7D)', callback_data: 'tg_profit_issue:7D:horizontal', style: 'success' },
+    ],
+    [
+      { text: '🗓 ماهانه (30D)', callback_data: 'tg_profit_issue:30D:horizontal', style: 'primary' },
+      { text: '📊 ۳ ماهه (3M)', callback_data: 'tg_profit_issue:3M:horizontal', style: 'primary' },
+    ],
+    [
+      { text: '📈 ۶ ماهه (6M)', callback_data: 'tg_profit_issue:6M:horizontal' },
+      { text: '📆 سالانه (1Y)', callback_data: 'tg_profit_issue:1Y:horizontal', style: 'primary' },
+    ],
+    [
+      { text: '🏆 کل دوره (ALL)', callback_data: 'tg_profit_issue:ALL:horizontal', style: 'success' },
+      { text: '🎯 کارت تک‌معامله', callback_data: 'tg_profit_single_list', style: 'primary' },
+    ],
+    [
+      { text: '📱 استوری ۹:۱۶ هفتگی', callback_data: 'tg_profit_issue:7D:vertical', style: 'success' },
+      { text: '📱 استوری ۹:۱۶ ۳ماهه', callback_data: 'tg_profit_issue:3M:vertical', style: 'primary' },
+    ],
+  ];
+}
+
+async function issueAndPublishTelegramProfitCard(
+  env: Env,
+  chatId: string | number,
+  user: { id: string; username: string },
+  periodRaw: string,
+  layout: 'horizontal' | 'vertical',
+  tradeId?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const period = normalizeCardPeriod(periodRaw);
+  const cfgRow = await env.DB.prepare('SELECT trading_mode, paper_balance FROM bot_configs WHERE user_id = ?')
+    .bind(user.id).first<{ trading_mode: 'LIVE' | 'PAPER'; paper_balance: string }>();
+  const mode = cfgRow?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+
+  const trades = await listUnifiedClosedTrades(env.DB, user.id, {
+    mode,
+    tradeSource: 'ALL',
+    period,
+    tradeId,
+    limit: 200,
+  });
+
+  if (!trades.length) {
+    return { ok: false, error: `معامله بسته‌شده‌ای در بازه ${period} یافت نشد.` };
+  }
+
+  let netPnl = 0;
+  let wins = 0;
+  let grossWin = 0;
+  let grossLoss = 0;
+  let totalMargin = 0;
+  let bestTrade = trades[0]!;
+  for (const r of trades) {
+    const pnl = Number(r.realizedPnlUsd || 0);
+    netPnl += pnl;
+    totalMargin += Math.max(0, Number(r.marginUsd || 0));
+    if (pnl > 0) {
+      wins++;
+      grossWin += pnl;
+    } else if (pnl < 0) {
+      grossLoss += Math.abs(pnl);
+    }
+    if (r.roiPct > bestTrade.roiPct) bestTrade = r;
+  }
+
+  const winRate = Number(((wins / trades.length) * 100).toFixed(2));
+  const pf = grossLoss > 0 ? Number((grossWin / grossLoss).toFixed(2)) : grossWin > 0 ? 99 : 0;
+  const baseCap =
+    period !== 'TRADE' && mode === 'PAPER'
+      ? Math.max(totalMargin, Math.max(100, Number(cfgRow?.paper_balance || 10000) - netPnl))
+      : Math.max(10, totalMargin);
+  const single = period === 'TRADE' ? trades[0]! : null;
+  const roiPct =
+    single && single.roiPct !== 0
+      ? Number(single.roiPct.toFixed(2))
+      : Number(((netPnl / baseCap) * 100).toFixed(2));
+
+  const cardId = `DLR-${randomId('').slice(0, 10).toUpperCase()}`;
+  const issuedAt = new Date().toISOString();
+  const topStrategy = single ? single.engineLabel : bestTrade.engineLabel;
+  const topSignal = single ? single.signalName : bestTrade.signalName;
+  const topProv = single ? single.exchangeProvider : bestTrade.exchangeProvider;
+  const baseSymbol = single ? single.baseSymbol : bestTrade.baseSymbol;
+  const tokenAddress = single?.tokenAddress || bestTrade.tokenAddress;
+  const chainId = single?.chainId || bestTrade.chainId;
+  const tokenImageUrl =
+    single?.tokenImageUrl ||
+    bestTrade.tokenImageUrl ||
+    buildTokenDisplayIconUrl(baseSymbol, chainId, tokenAddress);
+
+  const startDate = trades[0]!.closedAt;
+  const endDate = trades[trades.length - 1]!.closedAt;
+  const tradesHash = await sha256Hex(trades.map((t) => `${t.tradeSource}:${t.id}:${t.realizedPnlUsd}:${t.closedAt}`).join(';'));
+  const canonical = buildVerifiedCardCanonicalPayload({
+    id: cardId,
+    userId: user.id,
+    mode,
+    period,
+    startDate,
+    endDate,
+    tradesCount: trades.length,
+    winRate,
+    netPnlUsd: Number(netPnl.toFixed(2)),
+    roiPct,
+    profitFactor: pf,
+    exchangeProvider: topProv,
+    strategyName: topStrategy,
+    tradesHash,
+    issuedAt,
+  });
+  const sig = await hmacSha256Hex(canonical, env.SESSION_JWT_SECRET || env.MASTER_ENCRYPTION_KEY || 'dollarino-card-hmac-secret');
+  const resolvedSource = single ? single.tradeSource : 'ALL';
+
+  await env.DB.prepare(
+    `INSERT INTO verified_profit_cards (
+      id, user_id, mode, period, start_date, end_date,
+      trades_count, win_rate, net_pnl_usd, roi_pct, profit_factor,
+      exchange_provider, strategy_name, payload_json, hmac_signature, issued_at,
+      trade_source, entry_price, exit_price, signal_name, token_address, chain_id, token_image_url, revoked
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+  ).bind(
+    cardId,
+    user.id,
+    mode,
+    period,
+    startDate,
+    endDate,
+    trades.length,
+    winRate,
+    Number(netPnl.toFixed(2)),
+    roiPct,
+    pf,
+    topProv,
+    topStrategy,
+    JSON.stringify({
+      isVerifiedReal: mode === 'LIVE',
+      tradeSource: resolvedSource,
+      symbol: single?.symbol,
+      baseSymbol,
+      direction: single?.direction,
+      leverage: single?.leverage,
+      entryPrice: single?.entryPrice,
+      exitPrice: single?.exitPrice,
+      signalName: topSignal,
+      engineKey: single?.engineKey || bestTrade.engineKey,
+      tokenAddress,
+      chainId,
+      tokenImageUrl,
+      bestSymbol: bestTrade.baseSymbol,
+      bestRoiPct: bestTrade.roiPct,
+      tradesHash,
+    }),
+    sig,
+    issuedAt,
+    resolvedSource,
+    single ? single.entryPrice : null,
+    single ? single.exitPrice : null,
+    topSignal,
+    tokenAddress || null,
+    chainId || null,
+    tokenImageUrl
+  ).run();
+
+  const tokenLogoDataUri = await resolveTokenLogoPngDataUri({
+    baseSymbol,
+    chainId,
+    tokenAddress,
+    tokenImageUrl,
+  }).catch(() => null);
+
+  await publishProfitCardToTelegram(
+    env,
+    chatId,
+    {
+      id: cardId,
+      displayName: user.username,
+      mode,
+      period,
+      tradeSource: resolvedSource,
+      tradesCount: trades.length,
+      winRate,
+      netPnlUsd: Number(netPnl.toFixed(2)),
+      roiPct,
+      profitFactor: pf,
+      exchangeProvider: topProv,
+      strategyName: topStrategy,
+      engineKey: single?.engineKey || bestTrade.engineKey,
+      symbol: single?.symbol,
+      baseSymbol,
+      direction: single?.direction,
+      leverage: single?.leverage,
+      entryPrice: single?.entryPrice,
+      exitPrice: single?.exitPrice,
+      signalName: topSignal,
+      bestSymbol: bestTrade.baseSymbol,
+      bestRoiPct: bestTrade.roiPct,
+      tokenLogoDataUri,
+      issuedAt,
+    },
+    layout
+  );
+
+  return { ok: true };
+}
+
 export async function handleTelegramUpdate(env: Env, botToken: string, update: TelegramUpdate) {
   const bot = new TelegramBotClient(botToken);
   const webAppUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
@@ -1918,7 +2189,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     // Trade Quantities Menu Callbacks
-    if (data === 'cfg_qty_menu') {
+    if (data === 'cfg_qty_menu' || data === 'tg_trade_quantities') {
       await bot.answerCallbackQuery(cq.id);
       await showTradeQuantitiesMenu(env, bot, chatId, user.id, msgId);
       return { ok: true };
@@ -2385,10 +2656,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         return { ok: true };
       }
 
-      await env.DB.prepare(`INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`)
-        .bind(user.id, randomId('wh'))
-        .run()
-        .catch(() => {});
+      await ensureUserDefaults(env.DB, user.id).catch(() => {});
 
       const botCfg = await env.DB.prepare(
         `SELECT trading_mode, paper_balance, margin_pct, sniper_budget_usd, sniper_tp_pct, sniper_sl_pct FROM bot_configs WHERE user_id = ? LIMIT 1`
@@ -2850,138 +3118,198 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
     if (data === 'tg_profit_card') {
       await bot.answerCallbackQuery(cq.id);
-      await bot.sendMessage(chatId, `🏆 صدور کارت سود رسمی دلارینو (با لوگو و مهر حساب واقعی / دمو):\nبازه زمانی و قالب دلخواه خود را انتخاب کنید:`, {
-        inlineKeyboard: [
-          [
-            { text: '⏱ ۲۴ ساعته (افقی)', callback_data: 'tg_profit_issue:24H:horizontal', style: 'primary' },
-            { text: '📅 هفتگی (افقی)', callback_data: 'tg_profit_issue:7D:horizontal', style: 'success' },
-          ],
-          [
-            { text: '🗓 ماهانه (افقی)', callback_data: 'tg_profit_issue:30D:horizontal' },
-            { text: '📆 سالانه (عمودی)', callback_data: 'tg_profit_issue:1Y:vertical', style: 'primary' },
-          ],
-          [{ text: '📱 کارت سود عمودی (استوری)', callback_data: 'tg_profit_issue:7D:vertical', style: 'success' }],
-        ],
+      await bot.sendMessage(
+        chatId,
+        `🏆 صدور کارت سود رسمی دلارینو (فیوچرز + DEX + کپی‌ترید):\nبازه زمانی، تک‌معامله یا قالب استوری ۹:۱۶ را انتخاب کنید:`,
+        { inlineKeyboard: buildTelegramProfitCardKeyboard() }
+      );
+      return { ok: true };
+    }
+
+    if (data === 'tg_profit_single_list') {
+      const cfgRow = await env.DB.prepare('SELECT trading_mode FROM bot_configs WHERE user_id = ?')
+        .bind(user.id).first<{ trading_mode: 'LIVE' | 'PAPER' }>();
+      const mode = cfgRow?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+      const closed = await listUnifiedClosedTrades(env.DB, user.id, { mode, tradeSource: 'ALL', period: 'ALL', limit: 6 });
+      if (!closed.length) {
+        await bot.answerCallbackQuery(cq.id, `معامله بسته‌شده‌ای در حساب ${mode} وجود ندارد.`, true);
+        return { ok: true };
+      }
+      await bot.answerCallbackQuery(cq.id);
+      const kb: InlineKeyboardButton[][] = [...closed].reverse().map((t) => [
+        {
+          text: `[${t.tradeSource}] ${t.symbol} ${t.roiPct >= 0 ? '+' : ''}${t.roiPct.toFixed(1)}% (افقی ۱۶:۹)`,
+          callback_data: `tg_profit_trade:${t.id}:horizontal`,
+          style: t.realizedPnlUsd >= 0 ? 'success' : 'danger',
+        },
+        {
+          text: `📱 استوری ۹:۱۶`,
+          callback_data: `tg_profit_trade:${t.id}:vertical`,
+          style: 'primary',
+        },
+      ]);
+      await bot.sendMessage(chatId, `🎯 آخرین معاملات تسویه‌شده شما (${mode}) — انتخاب کارت تک‌معامله:`, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_profit_trade:')) {
+      const [, tradeId, rawLayout] = data.split(':');
+      const layout = rawLayout === 'vertical' ? 'vertical' : 'horizontal';
+      if (!tradeId) {
+        await bot.answerCallbackQuery(cq.id, 'معامله نامعتبر است.', true);
+        return { ok: true };
+      }
+      await bot.answerCallbackQuery(cq.id, 'در حال صدور کارت تک‌معامله... 🎨');
+      const res = await issueAndPublishTelegramProfitCard(env, chatId, user, 'TRADE', layout, tradeId);
+      if (!res.ok) {
+        await bot.sendMessage(chatId, res.error || 'خطا در صدور کارت سود.');
+      }
+      return { ok: true };
+    }
+
+    if (data === 'tg_sniper_scan_5m' || data === 'tg_sniper_scan_1h') {
+      const is5m = data === 'tg_sniper_scan_5m';
+      await bot.answerCallbackQuery(cq.id, is5m ? 'در حال اسکن استخرهای زیر ۵ دقیقه... ⚡' : 'در حال اسکن مومنتوم ۱ ساعته... 🔥');
+      const cfg = await env.DB.prepare(
+        `SELECT sniper_networks_json, sniper_budget_usd FROM bot_configs WHERE user_id = ? LIMIT 1`
+      )
+        .bind(user.id)
+        .first<{ sniper_networks_json?: string; sniper_budget_usd?: number }>()
+        .catch(() => null);
+      let chains = ['solana', 'base', 'bsc', 'ton'];
+      try {
+        if (cfg?.sniper_networks_json) {
+          const parsed = JSON.parse(cfg.sniper_networks_json);
+          if (Array.isArray(parsed) && parsed.length) chains = parsed;
+        }
+      } catch { /* default */ }
+      const budget = Math.max(5, Number(cfg?.sniper_budget_usd || 25));
+      const cands = await discoverListingAndBoomCandidates({
+        targetType: 'DEX_BOOM_MEME',
+        minSafetyScore: is5m ? 45 : 60,
+        minLiquidityUsd: is5m ? 2000 : 10_000,
+        maxPairAgeMinutes: is5m ? 5 : 60,
+        maxPairAgeHours: is5m ? 5 / 60 : 1,
+        allowedChains: chains,
+        advancedFilters: {
+          sortBy: is5m ? 'NEWEST' : 'MOMENTUM_5M',
+          minVolume5mUsd: is5m ? 500 : 1500,
+        },
+      }).catch(() => []);
+
+      if (!cands.length) {
+        await bot.sendMessage(
+          chatId,
+          `🎯 **نتیجه اسکن زنده اسنایپر (${is5m ? 'عمر ≤ ۵ دقیقه ⚡' : 'عمر ≤ ۱ ساعت 🔥'})**\n\n` +
+            `در این لحظه استخر جدیدی با حداقل نقدینگی و امنیت یافت نشد. می‌توانید از داخل مینی‌اپ اسنایپر با فیلتر منعطف‌تر یا پریست‌های دیگر اسکن کنید.`,
+          {
+            inlineKeyboard: [
+              [
+                { text: '🔄 اسکن مجدد زیر ۵ دقیقه', callback_data: 'tg_sniper_scan_5m', style: 'primary' },
+                { text: '🔥 اسکن ۱ ساعته', callback_data: 'tg_sniper_scan_1h', style: 'success' },
+              ],
+            ],
+          }
+        );
+        return { ok: true };
+      }
+
+      const top5 = cands.slice(0, 5);
+      const lines = top5
+        .map((c, idx) => {
+          const age = c.ageMinutes !== null && c.ageMinutes !== undefined ? `${Math.max(1, c.ageMinutes)}m` : `${Math.max(1, Math.round((c.ageHours ?? 1) * 60))}m`;
+          const px = c.priceUsd < 0.0001 ? c.priceUsd.toExponential(2) : c.priceUsd < 0.01 ? c.priceUsd.toFixed(6) : c.priceUsd.toFixed(4);
+          return `${idx + 1}. **${c.symbol}** (${c.chainId.toUpperCase()} · عمر: ${age})\n   💵 $${px} | 💧 نقدینگی: $${Math.round(c.liquidityUsd).toLocaleString('en-US')} | 🛡 ایمنی: ${c.safetyScore}/100 | 5m: ${(c.change5mPct ?? 0) >= 0 ? '+' : ''}${(c.change5mPct ?? 0).toFixed(1)}%`;
+        })
+        .join('\n\n');
+
+      const kb: InlineKeyboardButton[][] = top5.map((c) => {
+        const key = `${c.chainId}:${c.tokenAddress}`.slice(0, 52);
+        return [
+          { text: `⚡ شکار ${c.symbol} ($${budget})`, callback_data: `tg_dex_buy:${key}`, style: 'success' },
+          { text: `🧠 تحلیل AI`, callback_data: `tg_dex_ai:${key}`, style: 'primary' },
+        ];
       });
+      kb.push([
+        { text: '🔄 بروزرسانی اسکن', callback_data: data },
+        { text: '🔙 بازگشت به پنل کنترل', callback_data: 'tg_acc:hunt' },
+      ]);
+
+      await bot.sendMessage(
+        chatId,
+        `🎯 **اسنایپر زنده (${is5m ? 'تازه‌لانچ زیر ۵ دقیقه ⚡' : 'مومنتوم ۱ ساعته 🔥'})**\n\n${lines}\n\nروی دکمه «⚡ شکار» کنار هر توکن بزنید تا با بودجه $${budget} در حالت فعلی (دمو/واقعی) خرید ثبت شود:`,
+        { inlineKeyboard: kb }
+      );
+      return { ok: true };
+    }
+
+    if (data === 'tg_notif_menu') {
+      const cfg = await env.DB.prepare(
+        'SELECT notifications_enabled, notification_prefs_json, display_currency FROM bot_configs WHERE user_id = ?'
+      ).bind(user.id).first<{
+        notifications_enabled: number;
+        notification_prefs_json?: string | null;
+        display_currency?: string | null;
+      }>();
+      const enabled = Number(cfg?.notifications_enabled ?? 1);
+      const prefs = parseTgNotifPrefs(cfg?.notification_prefs_json);
+      const currency = cfg?.display_currency === 'IRT' ? 'IRT' : 'USD';
+      await bot.answerCallbackQuery(cq.id);
+      await bot.sendMessage(
+        chatId,
+        `🔔 تنظیمات پیشرفته اعلان‌ها و واحد نمایش دلارینو:\n\nتمام تنظیمات زیر همزمان با پنل وب سایت همگام هستند:`,
+        { inlineKeyboard: buildNotifSettingsKeyboard(enabled, prefs, currency) }
+      );
+      return { ok: true };
+    }
+
+    if (data === 'tg_notif_master' || data.startsWith('tg_notif_pref:') || data === 'tg_disp_curr:toggle') {
+      const cfg = await env.DB.prepare(
+        'SELECT notifications_enabled, notification_prefs_json, display_currency FROM bot_configs WHERE user_id = ?'
+      ).bind(user.id).first<{
+        notifications_enabled: number;
+        notification_prefs_json?: string | null;
+        display_currency?: string | null;
+      }>();
+      let enabled = Number(cfg?.notifications_enabled || 0);
+      const prefs = parseTgNotifPrefs(cfg?.notification_prefs_json);
+      let currency = cfg?.display_currency === 'IRT' ? 'IRT' : 'USD';
+
+      if (data === 'tg_notif_master') {
+        enabled = enabled ? 0 : 1;
+      } else if (data.startsWith('tg_notif_pref:')) {
+        const key = data.split(':')[1] || '';
+        if (key in prefs) {
+          prefs[key] = !prefs[key];
+          if (prefs[key]) enabled = 1;
+        }
+      } else if (data === 'tg_disp_curr:toggle') {
+        currency = currency === 'IRT' ? 'USD' : 'IRT';
+      }
+
+      await env.DB.prepare(
+        `UPDATE bot_configs SET notifications_enabled = ?, notification_prefs_json = ?, display_currency = ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(enabled, JSON.stringify(prefs), currency, user.id).run();
+
+      await bot.answerCallbackQuery(cq.id, 'تنظیمات ذخیره شد ✅');
+      await bot.editMessageText(
+        chatId,
+        cq.message!.message_id,
+        `🔔 تنظیمات پیشرفته اعلان‌ها و واحد نمایش دلارینو:\n\nتمام تنظیمات زیر همزمان با پنل وب سایت همگام هستند:`,
+        buildNotifSettingsKeyboard(enabled, prefs, currency)
+      ).catch(() => {});
       return { ok: true };
     }
 
     if (data.startsWith('tg_profit_issue:')) {
       const [, rawPeriod, rawLayout] = data.split(':');
-      const period = (['24H', '7D', '30D', '1Y', 'ALL'].includes(rawPeriod || '') ? rawPeriod : '7D') as '24H' | '7D' | '30D' | '1Y' | 'ALL';
       const layout = rawLayout === 'vertical' ? 'vertical' : 'horizontal';
-      const cfgRow = await env.DB.prepare('SELECT trading_mode, paper_balance FROM bot_configs WHERE user_id = ?')
-        .bind(user.id).first<{ trading_mode: 'LIVE' | 'PAPER'; paper_balance: string }>();
-      const mode = cfgRow?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
-      const whereParts = [`user_id = ?`, `status = 'CLOSED'`, `mode = ?`];
-      if (period === '24H') whereParts.push(`closed_at >= datetime('now', '-24 hours')`);
-      else if (period === '7D') whereParts.push(`closed_at >= datetime('now', '-7 days')`);
-      else if (period === '30D') whereParts.push(`closed_at >= datetime('now', '-30 days')`);
-      else if (period === '1Y') whereParts.push(`closed_at >= datetime('now', '-365 days')`);
-
-      const trRows = await env.DB.prepare(
-        `SELECT id, exchange_provider, strategy_key, realized_pnl, margin_used, closed_at
-         FROM trades WHERE ${whereParts.join(' AND ')} ORDER BY closed_at ASC`
-      ).bind(user.id, mode).all<{
-        id: string;
-        exchange_provider: string;
-        strategy_key: string | null;
-        realized_pnl: string;
-        margin_used: string;
-        closed_at: string;
-      }>();
-
-      if (!trRows.results.length) {
-        await bot.answerCallbackQuery(cq.id, `معامله بسته‌شده‌ای در بازه ${period} یافت نشد.`, true);
+      const res = await issueAndPublishTelegramProfitCard(env, chatId, user, rawPeriod || '7D', layout);
+      if (!res.ok) {
+        await bot.answerCallbackQuery(cq.id, res.error || 'معامله یافت نشد.', true);
         return { ok: true };
       }
-
-      let netPnl = 0;
-      let wins = 0;
-      let grossWin = 0;
-      let grossLoss = 0;
-      let totalMargin = 0;
-      for (const r of trRows.results) {
-        const pnl = Number(r.realized_pnl || 0);
-        netPnl += pnl;
-        totalMargin += Math.max(0, Number(r.margin_used || 0));
-        if (pnl > 0) {
-          wins++;
-          grossWin += pnl;
-        } else if (pnl < 0) {
-          grossLoss += Math.abs(pnl);
-        }
-      }
-      const winRate = Number(((wins / trRows.results.length) * 100).toFixed(2));
-      const pf = grossLoss > 0 ? Number((grossWin / grossLoss).toFixed(2)) : grossWin > 0 ? 99 : 0;
-      const baseCap = mode === 'PAPER' ? Math.max(totalMargin, Math.max(100, Number(cfgRow?.paper_balance || 10000) - netPnl)) : Math.max(10, totalMargin);
-      const roiPct = Number(((netPnl / baseCap) * 100).toFixed(2));
-      const cardId = `DLR-${randomId('').slice(0, 10).toUpperCase()}`;
-      const issuedAt = new Date().toISOString();
-      const topStrategy = resolveEngineDisplayLabel(trRows.results[0]?.strategy_key);
-      const topProv = (trRows.results[0]?.exchange_provider || 'TRUSTWALLET').toUpperCase();
-      const tradesHash = await sha256Hex(trRows.results.map((t) => `${t.id}:${t.realized_pnl}:${t.closed_at}`).join(';'));
-      const canonical = buildVerifiedCardCanonicalPayload({
-        id: cardId,
-        userId: user.id,
-        mode,
-        period,
-        startDate: trRows.results[0]!.closed_at,
-        endDate: trRows.results[trRows.results.length - 1]!.closed_at,
-        tradesCount: trRows.results.length,
-        winRate,
-        netPnlUsd: Number(netPnl.toFixed(2)),
-        roiPct,
-        profitFactor: pf,
-        exchangeProvider: topProv,
-        strategyName: topStrategy,
-        tradesHash,
-        issuedAt,
-      });
-      const sig = await hmacSha256Hex(canonical, env.SESSION_JWT_SECRET || env.MASTER_ENCRYPTION_KEY || 'dollarino-card-hmac-secret');
-
-      await env.DB.prepare(
-        `INSERT INTO verified_profit_cards (id, user_id, mode, period, start_date, end_date, trades_count, win_rate, net_pnl_usd, roi_pct, profit_factor, exchange_provider, strategy_name, payload_json, hmac_signature, issued_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(
-        cardId,
-        user.id,
-        mode,
-        period,
-        trRows.results[0]!.closed_at,
-        trRows.results[trRows.results.length - 1]!.closed_at,
-        trRows.results.length,
-        winRate,
-        Number(netPnl.toFixed(2)),
-        roiPct,
-        pf,
-        topProv,
-        topStrategy,
-        JSON.stringify({ isVerifiedReal: mode === 'LIVE', tradesHash }),
-        sig,
-        issuedAt
-      ).run();
-
       await bot.answerCallbackQuery(cq.id, 'در حال صدور کارت سود... 🎨');
-      await publishProfitCardToTelegram(
-        env,
-        chatId,
-        {
-          id: cardId,
-          displayName: user.username,
-          mode,
-          period,
-          tradesCount: trRows.results.length,
-          winRate,
-          netPnlUsd: Number(netPnl.toFixed(2)),
-          roiPct,
-          profitFactor: pf,
-          exchangeProvider: topProv,
-          strategyName: topStrategy,
-          issuedAt,
-        },
-        layout
-      );
       return { ok: true };
     }
 
@@ -3606,18 +3934,18 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
     if (payload === 'web_auth' || payload.toLowerCase().startsWith('web_auth__')) {
-      if (payload.toLowerCase().includes('ref_') || payload.toUpperCase().includes('DLR')) {
-        await applyReferralIfPresent(env, user.id, payload, user.phone_number);
-      }
+      await applyReferralIfPresent(env, user.id, payload, user.phone_number);
       await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
         replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
       });
       await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
       return { ok: true };
     }
+    await applyReferralIfPresent(env, user.id, payload || null, user.phone_number);
   }
 
   if (text === '/start' || text === '/menu' || text === 'بازگشت به صفحه قبل 🔙') {
+    await applyReferralIfPresent(env, user.id, null, user.phone_number);
     await clearState();
     const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
     const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
@@ -4226,7 +4554,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🧩 اکستنشن و ویجت موبایل' || text === '🧩 اکستنشن کروم V11.6') {
+  if (text === '🧩 اکستنشن و ویجت موبایل' || text === '🧩 اکستنشن کروم V11.7' || text === '🧩 اکستنشن کروم V11.6') {
     await showExtensionWidgetsMenu(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
@@ -4291,6 +4619,44 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  if (text === '🎯 اسنایپر زیر ۵ دقیقه') {
+    await bot.sendMessage(
+      chatId,
+      `🎯 **اسنایپر فوق‌سریع زیر ۵ دقیقه و مومنتوم DEX**\n\nبازه زمانی اسکن استخرهای تازه‌لانچ (GeckoTerminal + DexScreener) را انتخاب کنید:`,
+      {
+        inlineKeyboard: [
+          [
+            { text: '⚡ اسکن استخرهای زیر ۵ دقیقه', callback_data: 'tg_sniper_scan_5m', style: 'success' },
+            { text: '🔥 مومنتوم ۱ ساعته', callback_data: 'tg_sniper_scan_1h', style: 'primary' },
+          ],
+          ...(webAppUrl.startsWith('https://')
+            ? [[{ text: '🌐 باز کردن اسنایپر کامل در مینی‌اپ', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/?tab=sniper` } }]]
+            : []),
+        ],
+      }
+    );
+    return { ok: true };
+  }
+
+  if (text === 'اعلان‌ها 🔔' || text === 'دریافت اعلان 🔔') {
+    const cfg = await env.DB.prepare(
+      'SELECT notifications_enabled, notification_prefs_json, display_currency FROM bot_configs WHERE user_id = ?'
+    ).bind(user.id).first<{
+      notifications_enabled: number;
+      notification_prefs_json?: string | null;
+      display_currency?: string | null;
+    }>();
+    const enabled = Number(cfg?.notifications_enabled ?? 1);
+    const prefs = parseTgNotifPrefs(cfg?.notification_prefs_json);
+    const currency = cfg?.display_currency === 'IRT' ? 'IRT' : 'USD';
+    await bot.sendMessage(
+      chatId,
+      `🔔 تنظیمات پیشرفته اعلان‌ها و واحد نمایش دلارینو:\n\nتمام تنظیمات زیر همزمان با پنل وب سایت همگام هستند:`,
+      { inlineKeyboard: buildNotifSettingsKeyboard(enabled, prefs, currency) }
+    );
+    return { ok: true };
+  }
+
   if (text === '📊 وضعیت سود و معاملات' || text === '📊 معاملات باز و پورتفوی') {
     await showAccountCard(env, bot, chatId, user, tgId, webAppUrl);
     return { ok: true };
@@ -4344,23 +4710,8 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   if (text === '/card' || text === 'کارت سود دلارینو 📊') {
     await bot.sendMessage(
       chatId,
-      `📊 صدور کارت سود تاییدشده دلارینو:\n\nبازه زمانی و قالب دلخواه خود را انتخاب کنید تا تصویر رسمی با لوگوی دلارینو، مهر حساب واقعی/دمو و QR اصالت‌سنجی صادر شود:`,
-      {
-        inlineKeyboard: [
-          [
-            { text: '۲۴ ساعته (24H)', callback_data: 'tg_profit_issue:24H:horizontal', style: 'primary' },
-            { text: 'هفتگی (7D)', callback_data: 'tg_profit_issue:7D:horizontal', style: 'success' },
-          ],
-          [
-            { text: 'ماهانه (30D)', callback_data: 'tg_profit_issue:30D:horizontal', style: 'primary' },
-            { text: 'سالانه (1Y)', callback_data: 'tg_profit_issue:1Y:horizontal', style: 'primary' },
-          ],
-          [
-            { text: 'کل دوره (ALL · افقی)', callback_data: 'tg_profit_issue:ALL:horizontal', style: 'success' },
-            { text: '📱 استوری عمودی (7D)', callback_data: 'tg_profit_issue:7D:vertical', style: 'primary' },
-          ],
-        ],
-      }
+      `📊 صدور کارت سود تاییدشده دلارینو (فیوچرز + تراست‌ولت/DEX + کپی‌ترید):\n\nبازه زمانی، تک‌معامله یا قالب استوری ۹:۱۶ خود را انتخاب کنید:`,
+      { inlineKeyboard: buildTelegramProfitCardKeyboard() }
     );
     return { ok: true };
   }
@@ -4611,11 +4962,21 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   if (text === 'دریافت اعلان 🔔') {
-    const cfg = await env.DB.prepare('SELECT notifications_enabled FROM bot_configs WHERE user_id = ?')
-      .bind(user.id).first<{ notifications_enabled: number }>();
-    const next = cfg?.notifications_enabled ? 0 : 1;
-    await env.DB.prepare('UPDATE bot_configs SET notifications_enabled = ? WHERE user_id = ?').bind(next, user.id).run();
-    await bot.sendMessage(chatId, next ? '🔔 اعلان‌های باز و بسته شدن معاملات روشن شد.' : '🔕 اعلان‌های ربات خاموش شد.');
+    const cfg = await env.DB.prepare(
+      'SELECT notifications_enabled, notification_prefs_json, display_currency FROM bot_configs WHERE user_id = ?'
+    ).bind(user.id).first<{
+      notifications_enabled: number;
+      notification_prefs_json?: string | null;
+      display_currency?: string | null;
+    }>();
+    const enabled = Number(cfg?.notifications_enabled || 0);
+    const prefs = parseTgNotifPrefs(cfg?.notification_prefs_json);
+    const currency = cfg?.display_currency === 'IRT' ? 'IRT' : 'USD';
+    await bot.sendMessage(
+      chatId,
+      `🔔 تنظیمات پیشرفته اعلان‌ها و واحد نمایش دلارینو:\n\nتمام تنظیمات زیر همزمان با پنل وب سایت همگام هستند:`,
+      { inlineKeyboard: buildNotifSettingsKeyboard(enabled, prefs, currency) }
+    );
     return { ok: true };
   }
 

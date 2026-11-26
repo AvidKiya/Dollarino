@@ -16,8 +16,8 @@ export interface IranUsdtRate {
 }
 
 let cachedRate: { data: IranUsdtRate; expiresAt: number } | null = null;
-const CACHE_TTL_MS = 10 * 1000;
-const FALLBACK_CACHE_TTL_MS = 10 * 1000;
+const CACHE_TTL_MS = 45 * 1000;
+const FALLBACK_CACHE_TTL_MS = 60 * 1000;
 const SAFE_FALLBACK_IRT = 290_000;
 
 export function faDigitsToEn(input: string): string {

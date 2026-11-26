@@ -58,6 +58,7 @@ interface FeeEnforcementInfo {
 
 interface ServerFeePayload {
   feePct: number;
+  feeExempt?: boolean;
   freeProfitableLiveTrades?: number;
   freeTradesUsed?: number;
   freeTradesLimit?: number;
@@ -206,8 +207,9 @@ export function SubscriptionPage({
       {/* Hero Banner: Free Forever + First 3 Live Trades 0% + Only 3% On Real Profit */}
       <div className="relative overflow-hidden rounded-3xl border border-emerald-400/30 shadow-xl min-h-[190px] flex items-center">
         <img
-          src="/images/treasury-bank-banner.png"
+          src="/images/treasury-bank-banner.webp"
           alt="Dollarino Treasury & 3% Profit Model"
+          decoding="async"
           className="absolute inset-0 w-full h-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-l from-[#06132b]/95 via-[#06132b]/85 to-[#06132b]/45" />
@@ -312,9 +314,17 @@ export function SubscriptionPage({
         <div className="panel rounded-3xl p-4 border border-emerald-500/35 bg-emerald-500/8 space-y-1">
           <p className="text-[11px] font-bold text-[#059669] dark:text-[#34D399]">{isFa ? 'معاملات رایگان باقی‌مانده' : 'Free Live Wins Left'}</p>
           <p className="text-2xl font-black text-[#059669] dark:text-[#34D399]" dir="ltr">
-            {ledger?.freeTradesRemaining ?? 3} / {ledger?.freeTradesLimit ?? 3}
+            {ledger?.feeExempt ? '∞' : `${ledger?.freeTradesRemaining ?? 3} / ${ledger?.freeTradesLimit ?? 3}`}
           </p>
-          <p className="text-[10px] text-dim">{isFa ? '۰٪ کارمزد سرور' : '0% server fee'}</p>
+          <p className="text-[10px] text-dim">
+            {ledger?.feeExempt
+              ? isFa
+                ? 'معافیت کامل مدیر (۰٪ کارمزد و نامحدود)'
+                : 'Admin Exempt (0% fee · Unlimited)'
+              : isFa
+                ? '۰٪ کارمزد سرور'
+                : '0% server fee'}
+          </p>
         </div>
         <div className="panel rounded-3xl p-4 border hairline space-y-1">
           <p className="text-[11px] font-bold text-dim">{isFa ? 'اعتبار پیش‌پرداخت کارمزد' : 'Prepaid Fee Credit'}</p>
@@ -433,8 +443,10 @@ export function SubscriptionPage({
           className="relative rounded-3xl overflow-hidden border hairline shadow-lg bg-[#061233] min-h-[250px] sm:min-h-[270px] flex items-stretch justify-end"
         >
           <img
-            src="/images/referral-invite-banner.png?v=105"
+            src="/images/referral-invite-banner.webp?v=1166"
             alt="Dollarino Referral Banner"
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover object-left opacity-30 sm:opacity-100 pointer-events-none select-none"
           />
           <div className="relative z-10 w-full sm:w-[64%] bg-gradient-to-l from-[#061233]/95 via-[#061233]/75 to-transparent p-5 sm:p-7 flex flex-col justify-between items-end gap-4">
@@ -486,7 +498,7 @@ export function SubscriptionPage({
                       await new Promise<void>((res) => {
                         img.onload = () => res();
                         img.onerror = () => res();
-                        img.src = '/images/referral-invite-banner.png?v=105';
+                        img.src = '/images/referral-invite-banner.webp?v=1166';
                       });
                       ctx.fillStyle = '#061233';
                       ctx.fillRect(0, 0, 1200, 630);
@@ -503,7 +515,7 @@ export function SubscriptionPage({
                       ctx.fillStyle = '#34D399';
                       ctx.font = 'bold 26px sans-serif';
                       ctx.textAlign = 'right';
-                      ctx.fillText('DOLLARINO V11.6 · AI + TRUST WALLET', 1135, 95);
+                      ctx.fillText('DOLLARINO V11.7 · AI + TRUST WALLET', 1135, 95);
 
                       ctx.fillStyle = '#FFFFFF';
                       ctx.font = 'bold 46px sans-serif';

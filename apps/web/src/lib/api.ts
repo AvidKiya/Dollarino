@@ -68,7 +68,15 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
   if (!res.ok) {
     const errObj = json as { error?: string; code?: string };
-    throw new ApiError(errObj.error || `HTTP ${res.status}`, res.status, errObj.code);
+    const rawMsg = errObj.error || `HTTP ${res.status}`;
+    if (res.status === 404 && /route not found/i.test(rawMsg)) {
+      throw new ApiError(
+        `${rawMsg} — نسخه Worker سرور با رابط کاربری هماهنگ نیست (نیاز به اجرای npx wrangler d1 migrations apply && npx wrangler deploy).`,
+        res.status,
+        errObj.code || 'WORKER_OUTDATED'
+      );
+    }
+    throw new ApiError(rawMsg, res.status, errObj.code);
   }
   return json as T;
 }

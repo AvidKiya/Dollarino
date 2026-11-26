@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, type IChartApi, type SeriesMarker, type Time } from 'lightweight-charts';
-import type { Candle } from '@dollarino/core';
+import { createChart, ColorType, LineStyle, LineType, type IChartApi, type ISeriesApi, type SeriesMarker, type Time } from 'lightweight-charts';
+import type {
+  Candle,
+  CustomBarColor,
+  CustomBgBand,
+  CustomChartBox,
+  CustomChartLabel,
+  CustomChartLine,
+  CustomChartTable,
+  CustomFillZone,
+  CustomHLine,
+  CustomPlotSeries,
+} from '@dollarino/core';
 
 export interface ChartLevels {
   entry?: number;
@@ -43,14 +54,55 @@ export interface CustomStrategyChartOverlay {
   id?: string;
   title: string;
   language?: 'pine' | 'python' | 'visual';
-  plots: Array<{ title: string; color: string; overlay: boolean; points: IndicatorPoint[] }>;
+  plots: CustomPlotSeries[];
   markers: Array<{
     time: number;
-    position: 'belowBar' | 'aboveBar';
+    position: 'belowBar' | 'aboveBar' | 'inBar';
     color: string;
-    shape: 'arrowUp' | 'arrowDown';
+    shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
     text: string;
   }>;
+  hlines?: CustomHLine[];
+  fills?: CustomFillZone[];
+  bgcolors?: CustomBgBand[];
+  barcolors?: CustomBarColor[];
+  labels?: CustomChartLabel[];
+  lines?: CustomChartLine[];
+  boxes?: CustomChartBox[];
+  tables?: CustomChartTable[];
+}
+
+function toLwLineStyle(style?: 'solid' | 'dashed' | 'dotted'): LineStyle {
+  if (style === 'dotted') return LineStyle.Dotted;
+  if (style === 'dashed') return LineStyle.Dashed;
+  return LineStyle.Solid;
+}
+
+function svgDash(style?: 'solid' | 'dashed' | 'dotted'): string | undefined {
+  if (style === 'dashed') return '6 4';
+  if (style === 'dotted') return '2 3';
+  return undefined;
+}
+
+function tablePosClass(pos: CustomChartTable['position']): string {
+  switch (pos) {
+    case 'top_left':
+      return 'top-2.5 left-2.5';
+    case 'bottom_left':
+      return 'bottom-8 left-2.5';
+    case 'bottom_right':
+      return 'bottom-8 right-16';
+    case 'top_center':
+      return 'top-2.5 left-1/2 -translate-x-1/2';
+    case 'bottom_center':
+      return 'bottom-8 left-1/2 -translate-x-1/2';
+    case 'middle_left':
+      return 'top-1/2 -translate-y-1/2 left-2.5';
+    case 'middle_right':
+      return 'top-1/2 -translate-y-1/2 right-16';
+    default:
+      return 'top-2.5 right-16';
+  }
 }
 
 export function CandlestickChart({
@@ -71,6 +123,8 @@ export function CandlestickChart({
   height?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const svgOverlayRef = useRef<SVGSVGElement>(null);
+  const subPaneRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
   const [isLight, setIsLight] = useState(() => document.documentElement.classList.contains('theme-light'));
@@ -79,7 +133,10 @@ export function CandlestickChart({
   const [showAlmaRibbon, setShowAlmaRibbon] = useState(true);
   const [showEmas, setShowEmas] = useState(false);
   const [showCustomOverlay, setShowCustomOverlay] = useState(true);
+  const [showTvGraphics, setShowTvGraphics] = useState(true);
   const [showMarkers, setShowMarkers] = useState(true);
+
+  const hasSubPane = Boolean(showCustomOverlay && customOverlays?.plots?.some((p) => p.overlay === false && p.points.length));
 
   useEffect(() => {
     const obs = new MutationObserver(() => {
@@ -136,8 +193,16 @@ export function CandlestickChart({
       wickDownColor: '#f43f5e',
     });
 
+    const barColorMap = new Map<number, string>();
+    if (showCustomOverlay && customOverlays?.barcolors?.length) {
+      for (const bc of customOverlays.barcolors) {
+        if (bc.color) barColorMap.set(bc.time, bc.color);
+      }
+    }
+
+    let sortedCandles: Array<{ time: Time; open: number; high: number; low: number; close: number; volume: number }> = [];
     if (candles.length > 0) {
-      const sortedCandles = dedupAsc(
+      sortedCandles = dedupAsc(
         candles.map((c) => ({
           time: Math.floor(c.timestamp / 1000) as Time,
           open: c.open,
@@ -148,7 +213,12 @@ export function CandlestickChart({
         }))
       );
       series.setData(
-        sortedCandles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close }))
+        sortedCandles.map(({ time, open, high, low, close }) => {
+          const overrideColor = barColorMap.get(Number(time));
+          return overrideColor
+            ? { time, open, high, low, close, color: overrideColor, borderColor: overrideColor, wickColor: overrideColor }
+            : { time, open, high, low, close };
+        })
       );
 
       if (showVolume) {
@@ -177,7 +247,7 @@ export function CandlestickChart({
             position: m.position,
             color: m.color,
             shape: m.shape,
-            text: m.text.includes('BUY') ? 'BUY' : m.text.includes('SELL') ? 'SELL' : m.text.slice(0, 6),
+            text: m.text.includes('BUY') ? 'BUY' : m.text.includes('SELL') ? 'SELL' : m.text.slice(0, 10),
           }))
         );
         const barStepSec =
@@ -187,14 +257,13 @@ export function CandlestickChart({
         const firstSec = Number(sortedCandles[0]?.time ?? 0);
         const lastSec = Number(sortedCandles[sortedCandles.length - 1]?.time ?? 0);
         const spanSec = Math.max(0, lastSec - firstSec);
-        const minGapSec = Math.max(barStepSec * 16, Math.floor(spanSec / 6));
+        const minGapSec = Math.max(barStepSec * 10, Math.floor(spanSec / 12));
         const spaced: SeriesMarker<Time>[] = [];
         for (const m of sortedRaw) {
           const prev = spaced[spaced.length - 1];
           if (!prev || Number(m.time) - Number(prev.time) >= minGapSec) {
             spaced.push(m);
           } else {
-            // Keep the newer signal within the cluster so labels stay readable
             spaced[spaced.length - 1] = m;
           }
         }
@@ -206,14 +275,37 @@ export function CandlestickChart({
 
     if (showCustomOverlay && customOverlays?.plots?.length) {
       for (const pl of customOverlays.plots) {
-        if (!pl.points.length) continue;
-        const cs = chart.addLineSeries({
-          color: pl.color || '#38e1ff',
-          lineWidth: 2,
-          priceLineVisible: false,
-          title: pl.title,
+        if (pl.overlay === false || !pl.points.length) continue;
+        if (pl.style === 'histogram' || pl.style === 'columns') {
+          const hs = chart.addHistogramSeries({ color: pl.color || '#38e1ff', priceLineVisible: false, title: pl.title });
+          hs.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value, ...(p.color ? { color: p.color } : {}) }))));
+        } else if (pl.style === 'area') {
+          const as = chart.addAreaSeries({ lineColor: pl.color || '#38e1ff', topColor: 'rgba(56,225,255,0.22)', bottomColor: 'rgba(56,225,255,0.02)', lineWidth: (pl.linewidth || 2) as 1 | 2 | 3 | 4, priceLineVisible: false, title: pl.title });
+          as.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value }))));
+        } else {
+          const cs = chart.addLineSeries({
+            color: pl.color || '#38e1ff',
+            lineWidth: Math.max(1, Math.min(4, pl.linewidth || 2)) as 1 | 2 | 3 | 4,
+            lineType: pl.style === 'stepline' ? LineType.WithSteps : LineType.Simple,
+            priceLineVisible: false,
+            title: pl.title,
+          });
+          cs.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value, ...(p.color ? { color: p.color } : {}) }))));
+        }
+      }
+    }
+
+    if (showCustomOverlay && customOverlays?.hlines?.length) {
+      for (const hl of customOverlays.hlines) {
+        if (hl.overlay === false) continue;
+        series.createPriceLine({
+          price: hl.price,
+          color: hl.color || '#94a3b8',
+          lineWidth: Math.max(1, Math.min(4, hl.linewidth || 1)) as 1 | 2 | 3 | 4,
+          lineStyle: toLwLineStyle(hl.linestyle),
+          axisLabelVisible: true,
+          title: hl.title,
         });
-        cs.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value }))));
       }
     }
 
@@ -275,16 +367,264 @@ export function CandlestickChart({
       levels.resistances?.forEach((r, idx) => addLevel(r, `R${idx + 1}`, '#8b5cf6'));
     }
 
+    // Synchronized TradingView Vector Overlay Layer (Box, Line, Label, Fill, Bgcolor)
+    const timeStep =
+      sortedCandles.length >= 2 ? Math.max(60, Number(sortedCandles[1]!.time) - Number(sortedCandles[0]!.time)) : 900;
+    const minCandleTime = Number(sortedCandles[0]?.time ?? 0);
+    const maxCandleTime = Number(sortedCandles[sortedCandles.length - 1]?.time ?? 0);
+
+    const resolveX = (t: number, width: number): number | null => {
+      const direct = chart.timeScale().timeToCoordinate(t as Time);
+      if (direct !== null && Number.isFinite(direct)) return direct;
+      if (sortedCandles.length >= 2) {
+        if (t > maxCandleTime) {
+          const xLast = chart.timeScale().timeToCoordinate(maxCandleTime as Time);
+          const xPrev = chart.timeScale().timeToCoordinate((maxCandleTime - timeStep) as Time);
+          if (xLast !== null && xPrev !== null) {
+            const pxPerBar = Math.max(1, xLast - xPrev);
+            return xLast + ((t - maxCandleTime) / timeStep) * pxPerBar;
+          }
+          return width - 60;
+        }
+        if (t < minCandleTime) return 0;
+      }
+      return null;
+    };
+
+    const drawSvgOverlay = () => {
+      const svg = svgOverlayRef.current;
+      if (!svg) return;
+      if (!showCustomOverlay || !showTvGraphics || !customOverlays) {
+        svg.replaceChildren();
+        return;
+      }
+      const w = el.clientWidth || 600;
+      const h = height;
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      const ns = 'http://www.w3.org/2000/svg';
+      const frag = document.createDocumentFragment();
+
+      const mk = (tag: string, attrs: Record<string, string | number | undefined>) => {
+        const node = document.createElementNS(ns, tag);
+        for (const [k, v] of Object.entries(attrs)) {
+          if (v !== undefined) node.setAttribute(k, String(v));
+        }
+        return node;
+      };
+
+      // 1. Background Bands (bgcolor)
+      for (const bg of customOverlays.bgcolors || []) {
+        const x = resolveX(bg.time, w);
+        if (x === null || x < -20 || x > w) continue;
+        frag.appendChild(mk('rect', { x: x - 3, y: 0, width: 6, height: h, fill: bg.color }));
+      }
+
+      // 2. Plot Fills (fill)
+      for (const fl of customOverlays.fills || []) {
+        if (fl.overlay === false || fl.points.length < 2) continue;
+        const topPts: string[] = [];
+        const botPts: string[] = [];
+        for (const pt of fl.points) {
+          const x = resolveX(pt.time, w);
+          const yT = series.priceToCoordinate(pt.top);
+          const yB = series.priceToCoordinate(pt.bottom);
+          if (x === null || yT === null || yB === null) continue;
+          topPts.push(`${x.toFixed(1)},${yT.toFixed(1)}`);
+          botPts.unshift(`${x.toFixed(1)},${yB.toFixed(1)}`);
+        }
+        if (topPts.length >= 2) {
+          frag.appendChild(mk('polygon', { points: [...topPts, ...botPts].join(' '), fill: fl.color }));
+        }
+      }
+
+      // 3. Boxes (box.new — Order Blocks, FVG, Supply/Demand)
+      for (const bx of customOverlays.boxes || []) {
+        const yTop = series.priceToCoordinate(bx.top);
+        const yBot = series.priceToCoordinate(bx.bottom);
+        if (yTop === null || yBot === null) continue;
+        let x1 = resolveX(bx.leftTime, w);
+        let x2 = resolveX(bx.rightTime, w);
+        if (bx.extend === 'right' || bx.extend === 'both') x2 = w - 58;
+        if (bx.extend === 'left' || bx.extend === 'both') x1 = 0;
+        if (x1 === null) x1 = 0;
+        if (x2 === null) x2 = Math.min(w - 60, x1 + 64);
+        const rx = Math.min(x1, x2);
+        const rw = Math.max(8, Math.abs(x2 - x1));
+        const ry = Math.min(yTop, yBot);
+        const rh = Math.max(4, Math.abs(yBot - yTop));
+        if (rx + rw < 0 || rx > w) continue;
+
+        frag.appendChild(
+          mk('rect', {
+            x: rx.toFixed(1),
+            y: ry.toFixed(1),
+            width: rw.toFixed(1),
+            height: rh.toFixed(1),
+            rx: 3,
+            fill: bx.bgcolor || 'rgba(43,116,255,0.16)',
+            stroke: bx.borderColor || '#2b74ff',
+            'stroke-width': bx.borderWidth ?? 1,
+            'stroke-dasharray': svgDash(bx.borderStyle),
+          })
+        );
+        if (bx.text && rh >= 10 && rw >= 24) {
+          const txt = mk('text', {
+            x: (rx + 5).toFixed(1),
+            y: (ry + Math.min(rh - 3, 12)).toFixed(1),
+            fill: bx.textColor || bx.borderColor || '#e2e8f0',
+            'font-size': 10,
+            'font-weight': 700,
+          });
+          txt.textContent = bx.text.slice(0, 22);
+          frag.appendChild(txt);
+        }
+      }
+
+      // 4. Lines (line.new — BOS, CHoCH, Trendlines)
+      for (const ln of customOverlays.lines || []) {
+        const y1 = series.priceToCoordinate(ln.y1);
+        const y2 = series.priceToCoordinate(ln.y2);
+        if (y1 === null || y2 === null) continue;
+        let x1 = resolveX(ln.x1Time, w);
+        let x2 = resolveX(ln.x2Time, w);
+        if (ln.extend === 'right' || ln.extend === 'both') x2 = w - 58;
+        if (ln.extend === 'left' || ln.extend === 'both') x1 = 0;
+        if (x1 === null || x2 === null) continue;
+        frag.appendChild(
+          mk('line', {
+            x1: x1.toFixed(1),
+            y1: y1.toFixed(1),
+            x2: x2.toFixed(1),
+            y2: y2.toFixed(1),
+            stroke: ln.color || '#38e1ff',
+            'stroke-width': ln.width ?? 2,
+            'stroke-dasharray': svgDash(ln.style),
+          })
+        );
+      }
+
+      // 5. Floating Labels (label.new)
+      for (const lbl of customOverlays.labels || []) {
+        const x = resolveX(lbl.time, w);
+        const yRaw = series.priceToCoordinate(lbl.price);
+        if (x === null || yRaw === null || x < 4 || x > w - 40) continue;
+        const text = (lbl.text || '').slice(0, 18);
+        if (!text) continue;
+        const bw = Math.max(26, text.length * 6.5 + 10);
+        const bh = 16;
+        const isUp = lbl.style === 'label_up' || lbl.yloc === 'belowbar';
+        const by = isUp ? yRaw + 5 : yRaw - bh - 5;
+        const bx = x - bw / 2;
+        frag.appendChild(
+          mk('rect', {
+            x: bx.toFixed(1),
+            y: by.toFixed(1),
+            width: bw.toFixed(1),
+            height: bh,
+            rx: 4,
+            fill: lbl.color || '#2b74ff',
+          })
+        );
+        const txtEl = mk('text', {
+          x: x.toFixed(1),
+          y: (by + 11.5).toFixed(1),
+          'text-anchor': 'middle',
+          fill: lbl.textcolor || '#ffffff',
+          'font-size': 9.5,
+          'font-weight': 800,
+        });
+        txtEl.textContent = text;
+        frag.appendChild(txtEl);
+      }
+
+      svg.replaceChildren(frag);
+    };
+
+    const scheduleDraw = () => requestAnimationFrame(drawSvgOverlay);
+    scheduleDraw();
+    chart.timeScale().subscribeVisibleTimeRangeChange(scheduleDraw);
+
+    // Optional Sub-Pane Chart for overlay=false oscillators (RSI, MACD, Stochastic, etc.)
+    let subChart: IChartApi | null = null;
+    const subEl = subPaneRef.current;
+    const subPlots = (customOverlays?.plots || []).filter((p) => p.overlay === false && p.points.length);
+    if (showCustomOverlay && subEl && subPlots.length > 0) {
+      subChart = createChart(subEl, {
+        width: Math.max(280, subEl.clientWidth || 600),
+        height: 135,
+        layout: {
+          background: { type: ColorType.Solid, color: isLight ? '#f8fafc' : '#050915' },
+          textColor: isLight ? '#4b6491' : '#96a9cf',
+        },
+        grid: {
+          vertLines: { color: isLight ? 'rgba(12, 68, 200, 0.05)' : 'rgba(120, 165, 255, 0.05)' },
+          horzLines: { color: isLight ? 'rgba(12, 68, 200, 0.05)' : 'rgba(120, 165, 255, 0.05)' },
+        },
+        timeScale: { timeVisible: true, borderColor: 'rgba(120,165,255,0.12)' },
+        rightPriceScale: { borderColor: 'rgba(120,165,255,0.12)' },
+      });
+      let firstSubSeries: ISeriesApi<'Line'> | ISeriesApi<'Histogram'> | null = null;
+      for (const pl of subPlots) {
+        if (pl.style === 'histogram' || pl.style === 'columns') {
+          const s = subChart.addHistogramSeries({ color: pl.color || '#38e1ff', title: pl.title });
+          s.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value, ...(p.color ? { color: p.color } : {}) }))));
+          if (!firstSubSeries) firstSubSeries = s;
+        } else {
+          const s = subChart.addLineSeries({ color: pl.color || '#38e1ff', lineWidth: 2, title: pl.title });
+          s.setData(dedupAsc(pl.points.map((p) => ({ time: p.time as Time, value: p.value }))));
+          if (!firstSubSeries) firstSubSeries = s;
+        }
+      }
+      if (firstSubSeries && customOverlays?.hlines?.length) {
+        for (const hl of customOverlays.hlines) {
+          firstSubSeries.createPriceLine({
+            price: hl.price,
+            color: hl.color || '#94a3b8',
+            lineWidth: 1,
+            lineStyle: toLwLineStyle(hl.linestyle),
+            axisLabelVisible: true,
+            title: hl.title,
+          });
+        }
+      }
+      subChart.timeScale().fitContent();
+    }
+
     const ro = new ResizeObserver(() => {
-      if (el && el.clientWidth > 0) chart.applyOptions({ width: el.clientWidth });
+      if (el && el.clientWidth > 0) {
+        chart.applyOptions({ width: el.clientWidth });
+        scheduleDraw();
+      }
+      if (subEl && subChart && subEl.clientWidth > 0) {
+        subChart.applyOptions({ width: subEl.clientWidth });
+      }
     });
     ro.observe(el);
 
     return () => {
       ro.disconnect();
-      try { chart.remove(); } catch { /* ignore */ }
+      try {
+        chart.timeScale().unsubscribeVisibleTimeRangeChange(scheduleDraw);
+      } catch { /* ignore */ }
+      try {
+        chart.remove();
+      } catch { /* ignore */ }
+      if (subChart) {
+        try {
+          subChart.remove();
+        } catch { /* ignore */ }
+      }
     };
-  }, [candles, levels, overlays, kbosOverlays, customOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showCustomOverlay, showMarkers, isLight]);
+  }, [candles, levels, overlays, kbosOverlays, customOverlays, showVolume, height, showKbosHtf, showDemaAtr, showAlmaRibbon, showEmas, showCustomOverlay, showTvGraphics, showMarkers, isLight]);
+
+  const hasPrimitives = Boolean(
+    customOverlays &&
+      ((customOverlays.boxes?.length || 0) > 0 ||
+        (customOverlays.lines?.length || 0) > 0 ||
+        (customOverlays.labels?.length || 0) > 0 ||
+        (customOverlays.fills?.length || 0) > 0 ||
+        (customOverlays.tables?.length || 0) > 0)
+  );
 
   return (
     <div className="space-y-2">
@@ -297,6 +637,15 @@ export function CandlestickChart({
               className={`px-2.5 py-1 rounded-lg border font-bold transition ${showCustomOverlay ? 'btn-lime' : 'surface-soft text-dim'}`}
             >
               {customOverlays.language ? `${customOverlays.language.toUpperCase()} · ` : ''}{customOverlays.title}
+            </button>
+          )}
+          {hasPrimitives && (
+            <button
+              type="button"
+              onClick={() => setShowTvGraphics((v) => !v)}
+              className={`px-2.5 py-1 rounded-lg border font-bold transition ${showTvGraphics ? 'btn-cobalt' : 'surface-soft text-dim'}`}
+            >
+              TV Graphics (Box/Label/Table)
             </button>
           )}
           <button
@@ -338,7 +687,64 @@ export function CandlestickChart({
           )}
         </div>
       )}
-      <div ref={containerRef} className="w-full rounded-2xl overflow-hidden border" />
+
+      <div className="relative w-full rounded-2xl overflow-hidden border">
+        <div ref={containerRef} className="w-full" />
+        <svg
+          ref={svgOverlayRef}
+          className="pointer-events-none absolute inset-0 w-full h-full z-10"
+        />
+
+        {/* TradingView table.new HUD overlays */}
+        {showCustomOverlay &&
+          showTvGraphics &&
+          customOverlays?.tables?.map((tbl, tIdx) => {
+            const cellGrid: Array<Array<CustomChartTable['cells'][number] | undefined>> = Array.from({ length: tbl.rows }, () =>
+              Array.from({ length: tbl.columns }, () => undefined)
+            );
+            for (const c of tbl.cells) {
+              if (c.row >= 0 && c.row < tbl.rows && c.col >= 0 && c.col < tbl.columns) {
+                cellGrid[c.row]![c.col] = c;
+              }
+            }
+            return (
+              <div
+                key={`tv_tbl_${tIdx}`}
+                dir="ltr"
+                style={{ background: tbl.bgcolor, borderColor: tbl.borderColor, borderWidth: tbl.borderWidth ?? 1 }}
+                className={`pointer-events-none absolute z-20 rounded-xl border backdrop-blur-md shadow-lg overflow-hidden text-[10px] font-mono ${tablePosClass(tbl.position)}`}
+              >
+                <table className="border-collapse">
+                  <tbody>
+                    {cellGrid.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        {row.map((cell, cIdx) => (
+                          <td
+                            key={cIdx}
+                            style={{
+                              background: cell?.bgcolor && cell.bgcolor !== 'transparent' ? cell.bgcolor : undefined,
+                              color: cell?.textColor || '#e2e8f0',
+                              borderColor: tbl.borderColor,
+                            }}
+                            className="px-2 py-1 border border-white/10 whitespace-nowrap font-bold"
+                          >
+                            {cell?.text ?? ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+      </div>
+
+      {hasSubPane && (
+        <div className="w-full rounded-2xl overflow-hidden border">
+          <div ref={subPaneRef} className="w-full" />
+        </div>
+      )}
     </div>
   );
 }

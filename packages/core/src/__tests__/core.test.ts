@@ -858,4 +858,112 @@ describe('@dollarino/core Pine Script, Python & Visual Strategy Engine', () => {
   });
 });
 
+describe('@dollarino/core Pine Script v5 Engine & TradingView Graphical Primitives', () => {
+  const buildCandles = (len = 160): Candle[] => {
+    const out: Candle[] = [];
+    const start = Date.UTC(2026, 2, 1);
+    let px = 60_000;
+    for (let i = 0; i < len; i++) {
+      const wave = Math.sin(i / 5) * 420 + (i % 17 === 0 ? 520 : -15);
+      const open = px;
+      const close = Math.max(5000, open + wave * 0.4);
+      const high = Math.max(open, close) + 180;
+      const low = Math.min(open, close) - 180;
+      out.push({
+        timestamp: start + i * 900_000,
+        open,
+        high,
+        low,
+        close,
+        volume: 1500 + (i % 9) * 350,
+      });
+      px = close;
+    }
+    return out;
+  };
+
+  it('evaluates Pine v5 user functions, switch/for/var, request.security, and graphical objects (box/line/label/table/fill/hline/bgcolor/barcolor)', () => {
+    const pineV5 = `//@version=5
+indicator("SMC V5 Pro Visual Test", overlay=true)
+len = input.int(14, "Len")
+calcBias(src, fast, slow) =>
+    f = ta.ema(src, fast)
+    s = ta.ema(src, slow)
+    f > s ? 1 : -1
+
+var int trendHits = 0
+bias = calcBias(close, 9, 21)
+htfEma = request.security(syminfo.tickerid, "1h", ta.ema(close, 14))
+fastLine = plot(ta.ema(close, 9), "Fast EMA", color=color.aqua, linewidth=2)
+slowLine = plot(htfEma, "HTF EMA", color=color.orange, linewidth=2)
+fill(fastLine, slowLine, color=bias > 0 ? color.new(color.lime, 82) : color.new(color.red, 82))
+hline(60000, "Anchor 60k", color=color.gray, linestyle=hline.style_dashed)
+bgcolor(bias > 0 ? color.new(color.green, 90) : color.new(color.red, 90))
+barcolor(bias > 0 ? color.lime : color.red)
+
+pivH = ta.pivothigh(high, 4, 4)
+if not na(pivH)
+    box.new(bar_index - 4, high[4], bar_index + 4, math.max(open[4], close[4]), border_color=color.red, bgcolor=color.new(color.red, 85), text="Supply OB")
+    line.new(bar_index - 4, high[4], bar_index + 4, high[4], color=color.red, style=line.style_dashed)
+    label.new(bar_index, high, "OB", style=label.style_label_down, color=color.red)
+
+var tbl = table.new(position.top_right, 2, 2, border_width=1)
+if barstate.islast
+    table.cell(tbl, 0, 0, "Trend", bgcolor=color.navy, text_color=color.white)
+    table.cell(tbl, 1, 0, bias > 0 ? "BULL" : "BEAR", bgcolor=color.green, text_color=color.white)
+    sumLoop = 0.0
+    for k = 0 to 2
+        sumLoop := sumLoop + k
+    trendHits := int(sumLoop)
+
+longCond = ta.crossover(ta.ema(close, 9), ta.ema(close, 21))
+shortCond = ta.crossunder(ta.ema(close, 9), ta.ema(close, 21))
+if longCond
+    strategy.entry("Long", strategy.long)
+if shortCond
+    strategy.entry("Short", strategy.short)
+`;
+    const candles = buildCandles(160);
+    const res = evaluatePineStrategy(pineV5, candles, '15m');
+
+    expect(res.valid).toBe(true);
+    expect(res.errors).toHaveLength(0);
+    expect(res.title).toBe('SMC V5 Pro Visual Test');
+    expect(res.plots.length).toBeGreaterThanOrEqual(2);
+    expect(res.hlines?.length).toBeGreaterThanOrEqual(1);
+    expect(res.fills?.length).toBeGreaterThanOrEqual(1);
+    expect(res.bgcolors?.length).toBeGreaterThan(0);
+    expect(res.barcolors?.length).toBeGreaterThan(0);
+    expect(res.boxes?.length).toBeGreaterThan(0);
+    expect(res.lines?.length).toBeGreaterThan(0);
+    expect(res.labels?.length).toBeGreaterThan(0);
+    expect(res.tables?.length).toBe(1);
+    expect(res.tables?.[0]?.cells.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('compiles all built-in SAMPLE_CUSTOM_STRATEGIES cleanly including SMC HUD template', () => {
+    const candles = buildCandles(180);
+    expect(SAMPLE_CUSTOM_STRATEGIES.length).toBeGreaterThanOrEqual(7);
+    for (const tpl of SAMPLE_CUSTOM_STRATEGIES) {
+      if (tpl.language === 'pine') {
+        const res = evaluatePineStrategy(tpl.code, candles, '15m');
+        expect(res.valid, `Template ${tpl.id} errors: ${res.errors.join('; ')}`).toBe(true);
+        expect(res.plots.length + (res.boxes?.length ?? 0) + res.markers.length).toBeGreaterThan(0);
+      } else if (tpl.language === 'python') {
+        const res = evaluatePythonStrategy(tpl.code, candles);
+        expect(res.valid, `Python template ${tpl.id} errors: ${res.errors.join('; ')}`).toBe(true);
+      } else {
+        const res = evaluateVisualStrategy(tpl.code, candles);
+        expect(res.valid, `Visual template ${tpl.id} errors: ${res.errors.join('; ')}`).toBe(true);
+      }
+    }
+    const smcTpl = SAMPLE_CUSTOM_STRATEGIES.find((t) => t.id === 'pine_smc_orderblocks_hud');
+    expect(smcTpl).toBeDefined();
+    const smcRes = evaluatePineStrategy(smcTpl!.code, candles, '15m');
+    expect(smcRes.boxes?.length).toBeGreaterThan(0);
+    expect(smcRes.tables?.length).toBeGreaterThan(0);
+  });
+});
+
+
 

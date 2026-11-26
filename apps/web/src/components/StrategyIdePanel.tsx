@@ -112,6 +112,14 @@ export function StrategyIdePanel({
     warnings: string[];
     plots: CustomStrategyChartOverlay['plots'];
     markers: CustomStrategyChartOverlay['markers'];
+    hlines?: CustomStrategyChartOverlay['hlines'];
+    fills?: CustomStrategyChartOverlay['fills'];
+    bgcolors?: CustomStrategyChartOverlay['bgcolors'];
+    barcolors?: CustomStrategyChartOverlay['barcolors'];
+    labels?: CustomStrategyChartOverlay['labels'];
+    lines?: CustomStrategyChartOverlay['lines'];
+    boxes?: CustomStrategyChartOverlay['boxes'];
+    tables?: CustomStrategyChartOverlay['tables'];
     candles: Candle[];
     latestSignal: { signal: string; price: number; rsi: number } | null;
     backtestSummary: {
@@ -166,12 +174,21 @@ export function StrategyIdePanel({
           language,
           plots: res.plots,
           markers: res.markers,
+          hlines: res.hlines,
+          fills: res.fills,
+          bgcolors: res.bgcolors,
+          barcolors: res.barcolors,
+          labels: res.labels,
+          lines: res.lines,
+          boxes: res.boxes,
+          tables: res.tables,
         });
+        const gfxCount = (res.boxes?.length || 0) + (res.lines?.length || 0) + (res.labels?.length || 0) + (res.fills?.length || 0) + (res.tables?.length || 0);
         setMsg({
           ok: true,
           text: isFa
-            ? `استراتژی «${res.title}» با ${res.plots.length} اندیکاتور و ${res.markers.length} سیگنال روی چارت اجرا شد.`
-            : `"${res.title}" compiled with ${res.plots.length} plots & ${res.markers.length} chart signals.`,
+            ? `استراتژی «${res.title}» با ${res.plots.length} خط، ${res.markers.length} سیگنال و ${gfxCount} المان گرافیکی TradingView (Box/Label/Line/Fill/Table) روی چارت اجرا شد.`
+            : `"${res.title}" compiled with ${res.plots.length} plots, ${res.markers.length} signals & ${gfxCount} TradingView graphical objects.`,
         });
       } else {
         setMsg({ ok: false, text: res.errors[0] || 'Compile error' });
@@ -296,6 +313,14 @@ export function StrategyIdePanel({
           language,
           plots: evalRes.plots,
           markers: evalRes.markers,
+          hlines: evalRes.hlines,
+          fills: evalRes.fills,
+          bgcolors: evalRes.bgcolors,
+          barcolors: evalRes.barcolors,
+          labels: evalRes.labels,
+          lines: evalRes.lines,
+          boxes: evalRes.boxes,
+          tables: evalRes.tables,
         }
       : null;
 
@@ -502,18 +527,27 @@ export function StrategyIdePanel({
         </div>
 
         {language !== 'visual' ? (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-dim">
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-dim">
               <span className="font-mono font-bold">
                 {language === 'pine'
-                  ? 'TradingView Pine Script v4/v5 (ta.ema, ta.sma, ta.rsi, ta.bb, ta.supertrend, ta.macd, plot, strategy.entry)'
+                  ? 'TradingView Pine Script v4/v5/v6 — Full TA + Graphical Primitives Runtime'
                   : 'Python Strategy Sandbox (df["close"], ta.ema, ta.rsi, ta.bbands, ta.supertrend, crossover, plot, df.loc[..., "signal"])'}
               </span>
+              {language === 'pine' && (
+                <div className="flex flex-wrap gap-1 text-[10px] font-mono">
+                  {['ta.*', 'box.new', 'line.new', 'label.new', 'table.new', 'fill()', 'bgcolor()', 'barcolor()', 'hline()', 'request.security()', 'array.*', 'str.*'].map((tag) => (
+                    <span key={tag} className="px-1.5 py-0.5 rounded bg-blue-500/12 text-brand border border-blue-500/25">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <textarea
               dir="ltr"
               spellCheck={false}
-              rows={13}
+              rows={14}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               className="w-full rounded-2xl p-4 font-mono text-xs leading-relaxed bg-[#060d20] text-[#e2ecff] border border-blue-500/30 outline-none focus:border-blue-400"

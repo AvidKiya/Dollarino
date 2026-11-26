@@ -496,7 +496,8 @@ copyTradeRoutes.post('/rules', async (c) => {
   const minLiquidityUsd = Math.max(0, Number(body.minLiquidityUsd ?? 15000));
   const minMcapUsd = Math.max(0, Number(body.minMcapUsd ?? 25000));
   const maxMcapUsd = Math.max(minMcapUsd + 1000, Number(body.maxMcapUsd ?? 500000000));
-  const maxOpenPositions = Math.max(1, Math.min(25, Number(body.maxOpenPositions ?? 4)));
+  const isPrivilegedCopy = user.role === 'owner' || user.role === 'admin';
+  const maxOpenPositions = Math.max(1, Math.min(isPrivilegedCopy ? 999 : 25, Number(body.maxOpenPositions ?? 4)));
   const dailyMaxLossUsd = Math.max(5, Number(body.dailyMaxLossUsd ?? 50));
 
   const onlyNewPositions = body.onlyNewPositions === false ? 0 : 1;
@@ -746,7 +747,9 @@ copyTradeRoutes.post('/vault/request-pin', async (c) => {
     `🔐 **کد تایید ۲ مرحله‌ای خزانه کپی‌ترید دلارینو**\n\n` +
       `کد یک‌بارمصرف شما: \`${pin}\`\n` +
       `اعتبار: ۱۰ دقیقه\n\n` +
-      `⚠️ اگر خودتان درخواست مشاهده کلیدهای خزانه را نداده‌اید، این کد را در اختیار هیچ‌کس قرار ندهید.`
+      `⚠️ اگر خودتان درخواست مشاهده کلیدهای خزانه را نداده‌اید، این کد را در اختیار هیچ‌کس قرار ندهید.`,
+    undefined,
+    { bypassNotificationsPref: true }
   );
   return c.json({ ok: true, sentToTelegram: true, expiresInMinutes: 10 });
 });

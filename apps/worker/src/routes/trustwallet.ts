@@ -1,11 +1,18 @@
 import { Hono } from 'hono';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { requireAuth } from '../auth.js';
+import { ensureUserDefaults, requireAuth } from '../auth.js';
 import { randomId } from '../crypto.js';
 import { buildTrustWalletSwapLinks, getDexTokenPools } from '../dex/screener.js';
+import {
+  buildUnsignedSolanaTransferTx,
+  ensureUserCopyVault,
+  estimateSolPriceUsd,
+} from '../dex/smart-copy.js';
 import type { AuthUser, Env } from '../env.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
+import { invalidateLiveTicksCache } from './trading.js';
+import { getCachedSystemSetting } from '../services/settings-cache.js';
 
 export const trustWalletRoutes = new Hono<{ Bindings: Env; Variables: { user: AuthUser } }>();
 
@@ -417,6 +424,8 @@ trustWalletRoutes.post('/connect', async (c) => {
     JSON.stringify({ evm, tron, sol, ton, verified: Boolean(verified) })
   ).run().catch(() => {});
 
+  invalidateTrustWalletCache(c.env.DB, user.id);
+
   return c.json({
     ok: true,
     verified: Boolean(verified),
@@ -429,11 +438,13 @@ trustWalletRoutes.post('/disconnect', async (c) => {
   await c.env.DB.prepare(
     `UPDATE users SET trust_wallet_address = NULL, trust_wallet_tron = NULL, trust_wallet_solana = NULL, trust_wallet_ton = NULL, trust_wallet_verified = 0 WHERE id = ?`
   ).bind(user.id).run();
+  invalidateTrustWalletCache(c.env.DB, user.id);
   return c.json({ ok: true });
 });
 
 trustWalletRoutes.post('/balance', async (c) => {
   const user = c.get('user');
+  invalidateTrustWalletCache(c.env.DB, user.id);
   const u = await c.env.DB.prepare(
     `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton FROM users WHERE id = ?`
   ).bind(user.id).first<{
@@ -833,22 +844,52 @@ trustWalletRoutes.get('/execution-mode', async (c) => {
 
 export const MIN_LIVE_TRUST_USD = 10;
 
-export async function getTrustWalletLiveTotalUsd(
-  db: D1Database,
-  userId: string
-): Promise<{
+export interface TrustWalletLiveSummary {
   hasWallet: boolean;
   totalUsd: number;
   rpcReachable: boolean;
   meetsMinimum: boolean;
   minRequiredUsd: number;
   breakdown: Record<string, number>;
-}> {
-  const [u, perpRow, vaultRow, minSetting] = await Promise.all([
+}
+
+const TRUST_RPC_CACHE = new WeakMap<
+  object,
+  Map<string, { ts: number; rpcUsd: number; rpcReachable: boolean; breakdown: Record<string, number> }>
+>();
+const TRUST_LIVE_USD_CACHE = new WeakMap<object, Map<string, { ts: number; data: TrustWalletLiveSummary }>>();
+const TRUST_LIVE_CACHE_TTL_MS = 90_000;
+
+export function invalidateTrustWalletCache(db: D1Database, userId?: string): void {
+  const map = TRUST_LIVE_USD_CACHE.get(db as unknown as object);
+  if (map) {
+    if (userId) map.delete(userId);
+    else map.clear();
+  }
+  const rpcMap = TRUST_RPC_CACHE.get(db as unknown as object);
+  if (rpcMap && !userId) rpcMap.clear();
+}
+
+export async function getTrustWalletLiveTotalUsd(
+  db: D1Database,
+  userId: string,
+  opts?: { forceRefresh?: boolean; skipRpc?: boolean; useFullCache?: boolean }
+): Promise<TrustWalletLiveSummary> {
+  const now = Date.now();
+  let cacheMap = TRUST_LIVE_USD_CACHE.get(db as unknown as object);
+  if (opts?.useFullCache && !opts?.forceRefresh) {
+    const cached = cacheMap?.get(userId);
+    if (cached && now - cached.ts < TRUST_LIVE_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
+  const [u, perpRow, vaultRow, minSettingVal] = await Promise.all([
     db.prepare(
-      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, wallet_balance_usdt
+      `SELECT role, trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, wallet_balance_usdt
        FROM users WHERE id = ?`
     ).bind(userId).first<{
+      role: string | null;
       trust_wallet_address: string | null;
       trust_wallet_tron: string | null;
       trust_wallet_solana: string | null;
@@ -861,15 +902,30 @@ export async function getTrustWalletLiveTotalUsd(
     db.prepare(
       `SELECT id, allowance_limit_usd FROM user_copy_vaults WHERE user_id = ? LIMIT 1`
     ).bind(userId).first<{ id: string; allowance_limit_usd: number }>().catch(() => null),
-    db.prepare(`SELECT value FROM system_settings WHERE key = 'min_live_trust_usd'`).first<{ value: string }>().catch(() => null),
+    getCachedSystemSetting(db, 'min_live_trust_usd', String(MIN_LIVE_TRUST_USD)).catch(() => String(MIN_LIVE_TRUST_USD)),
   ]);
 
-  const minRequiredUsd = Math.max(10, Number(minSetting?.value || MIN_LIVE_TRUST_USD) || MIN_LIVE_TRUST_USD);
+  const isPrivileged = u?.role === 'owner' || u?.role === 'admin';
+  const minRequiredUsd = isPrivileged ? 0 : Math.max(10, Number(minSettingVal || MIN_LIVE_TRUST_USD) || MIN_LIVE_TRUST_USD);
   const hasWallet = Boolean(
     u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana || u?.trust_wallet_ton || perpRow || vaultRow
   );
   if (!hasWallet) {
-    return { hasWallet: false, totalUsd: 0, rpcReachable: true, meetsMinimum: false, minRequiredUsd, breakdown: {} };
+    const emptyRes: TrustWalletLiveSummary = {
+      hasWallet: false,
+      totalUsd: 0,
+      rpcReachable: true,
+      meetsMinimum: false,
+      minRequiredUsd,
+      breakdown: {},
+    };
+    if (!cacheMap) {
+      cacheMap = new Map();
+      TRUST_LIVE_USD_CACHE.set(db as unknown as object, cacheMap);
+    }
+    if (cacheMap.size > 500) cacheMap.clear();
+    cacheMap.set(userId, { ts: now, data: emptyRes });
+    return emptyRes;
   }
 
   let totalUsd = 0;
@@ -887,79 +943,107 @@ export async function getTrustWalletLiveTotalUsd(
     totalUsd += perpUsd;
   }
 
-  const tasks: Array<Promise<void>> = [];
-  if (u?.trust_wallet_address && isValidEvm(u.trust_wallet_address)) {
-    const addr = u.trust_wallet_address;
-    tasks.push(
-      fetchBscUsdtBalance(addr).then((v: number | null) => {
-        if (v !== null) {
-          rpcReachable = true;
-          breakdown.bscUsdt = v;
-          totalUsd += v;
-        }
-      }),
-      fetchEvmNativeBalance('https://bsc-dataseed.binance.org', addr).then((bnb) => {
-        if (bnb !== null) {
-          rpcReachable = true;
-          const usd = bnb * 620;
-          breakdown.bscBnbUsd = Number(usd.toFixed(2));
-          totalUsd += usd;
-        }
-      }),
-      fetchEvmNativeBalance('https://eth.llamarpc.com', addr).then((eth) => {
-        if (eth !== null) {
-          rpcReachable = true;
-          const usd = eth * 2600;
-          breakdown.ethUsd = Number(usd.toFixed(2));
-          totalUsd += usd;
-        }
-      })
-    );
-  }
-  if (u?.trust_wallet_tron && isValidTron(u.trust_wallet_tron)) {
-    tasks.push(
-      fetchTronBalances(u.trust_wallet_tron).then((tr) => {
-        if (tr !== null) {
-          rpcReachable = true;
-          const usd = tr.usdt + tr.trx * 0.25;
-          breakdown.tronUsd = Number(usd.toFixed(2));
-          totalUsd += usd;
-        }
-      })
-    );
-  }
-  if (u?.trust_wallet_solana && isValidSolana(u.trust_wallet_solana)) {
-    tasks.push(
-      fetchSolanaBalance(u.trust_wallet_solana).then((sol) => {
-        if (sol !== null) {
-          rpcReachable = true;
-          const usd = sol * 180;
-          breakdown.solanaUsd = Number(usd.toFixed(2));
-          totalUsd += usd;
-        }
-      })
-    );
-  }
-  if (u?.trust_wallet_ton && isValidTon(u.trust_wallet_ton)) {
-    tasks.push(
-      fetchTonBalance(u.trust_wallet_ton).then((ton) => {
-        if (ton !== null) {
-          rpcReachable = true;
-          const usd = ton * 5;
-          breakdown.tonUsd = Number(usd.toFixed(2));
-          totalUsd += usd;
-        }
-      })
-    );
-  }
+  const addrKey = `${u?.trust_wallet_address || ''}|${u?.trust_wallet_tron || ''}|${u?.trust_wallet_solana || ''}|${u?.trust_wallet_ton || ''}`;
+  let rpcMap = TRUST_RPC_CACHE.get(db as unknown as object);
+  const rpcCached = !opts?.forceRefresh ? rpcMap?.get(addrKey) : undefined;
+  if (rpcCached && now - rpcCached.ts < TRUST_LIVE_CACHE_TTL_MS) {
+    rpcReachable = rpcCached.rpcReachable;
+    totalUsd += rpcCached.rpcUsd;
+    Object.assign(breakdown, rpcCached.breakdown);
+  } else if (!opts?.skipRpc) {
+    let rpcUsd = 0;
+    const rpcBreakdown: Record<string, number> = {};
+    const tasks: Array<Promise<void>> = [];
+    if (u?.trust_wallet_address && isValidEvm(u.trust_wallet_address)) {
+      const addr = u.trust_wallet_address;
+      tasks.push(
+        fetchBscUsdtBalance(addr).then((v: number | null) => {
+          if (v !== null) {
+            rpcReachable = true;
+            rpcBreakdown.bscUsdt = v;
+            rpcUsd += v;
+          }
+        }),
+        fetchEvmNativeBalance('https://bsc-dataseed.binance.org', addr).then((bnb) => {
+          if (bnb !== null) {
+            rpcReachable = true;
+            const usd = Number((bnb * 620).toFixed(2));
+            rpcBreakdown.bscBnbUsd = usd;
+            rpcUsd += usd;
+          }
+        }),
+        fetchEvmNativeBalance('https://eth.llamarpc.com', addr).then((eth) => {
+          if (eth !== null) {
+            rpcReachable = true;
+            const usd = Number((eth * 2600).toFixed(2));
+            rpcBreakdown.ethUsd = usd;
+            rpcUsd += usd;
+          }
+        })
+      );
+    }
+    if (u?.trust_wallet_tron && isValidTron(u.trust_wallet_tron)) {
+      tasks.push(
+        fetchTronBalances(u.trust_wallet_tron).then((tr) => {
+          if (tr !== null) {
+            rpcReachable = true;
+            const usd = Number((tr.usdt + tr.trx * 0.25).toFixed(2));
+            rpcBreakdown.tronUsd = usd;
+            rpcUsd += usd;
+          }
+        })
+      );
+    }
+    if (u?.trust_wallet_solana && isValidSolana(u.trust_wallet_solana)) {
+      tasks.push(
+        fetchSolanaBalance(u.trust_wallet_solana).then((sol) => {
+          if (sol !== null) {
+            rpcReachable = true;
+            const usd = Number((sol * 180).toFixed(2));
+            rpcBreakdown.solanaUsd = usd;
+            rpcUsd += usd;
+          }
+        })
+      );
+    }
+    if (u?.trust_wallet_ton && isValidTon(u.trust_wallet_ton)) {
+      tasks.push(
+        fetchTonBalance(u.trust_wallet_ton).then((ton) => {
+          if (ton !== null) {
+            rpcReachable = true;
+            const usd = Number((ton * 5).toFixed(2));
+            rpcBreakdown.tonUsd = usd;
+            rpcUsd += usd;
+          }
+        })
+      );
+    }
 
-  await Promise.allSettled(tasks);
+    if (tasks.length > 0) {
+      await Promise.race([
+        Promise.allSettled(tasks),
+        new Promise<void>((resolve) => setTimeout(resolve, 2200)),
+      ]);
+      totalUsd += rpcUsd;
+      Object.assign(breakdown, rpcBreakdown);
+      if (!rpcMap) {
+        rpcMap = new Map();
+        TRUST_RPC_CACHE.set(db as unknown as object, rpcMap);
+      }
+      if (rpcMap.size > 500) rpcMap.clear();
+      rpcMap.set(addrKey, { ts: now, rpcUsd, rpcReachable, breakdown: rpcBreakdown });
+    }
+  }
 
   // When RPC succeeded (or explicit zero recorded balance), enforce >= $10 USD minimum strictly.
   // If user connected only Perp/Vault without an external address query returning zero, honor vault/perp balance check.
-  const meetsMinimum = rpcReachable ? totalUsd >= minRequiredUsd : totalUsd >= minRequiredUsd || Boolean(perpRow);
+  const meetsMinimum = isPrivileged
+    ? true
+    : rpcReachable
+      ? totalUsd >= minRequiredUsd
+      : totalUsd >= minRequiredUsd || Boolean(perpRow);
 
-  return {
+  const resData: TrustWalletLiveSummary = {
     hasWallet,
     totalUsd: Number(totalUsd.toFixed(2)),
     rpcReachable,
@@ -967,6 +1051,15 @@ export async function getTrustWalletLiveTotalUsd(
     minRequiredUsd,
     breakdown,
   };
+  if (!opts?.skipRpc) {
+    if (!cacheMap) {
+      cacheMap = new Map();
+      TRUST_LIVE_USD_CACHE.set(db as unknown as object, cacheMap);
+    }
+    if (cacheMap.size > 500) cacheMap.clear();
+    cacheMap.set(userId, { ts: now, data: resData });
+  }
+  return resData;
 }
 
 trustWalletRoutes.post('/execution-mode', async (c) => {
@@ -1016,10 +1109,9 @@ trustWalletRoutes.post('/execution-mode', async (c) => {
   }
 
   vals.push(user.id);
-  await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
-  ).bind(user.id, randomId('wh')).run().catch(() => {});
+  await ensureUserDefaults(c.env.DB, user.id).catch(() => {});
   await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
+  invalidateLiveTicksCache(c.env.DB, user.id);
 
   if (body.syncCopyRules) {
     const copyMode = nextExec === 'AUTO' ? 'AUTO_COPY_VAULT' : 'TRUST_ONE_CLICK';
@@ -1051,6 +1143,98 @@ trustWalletRoutes.post('/execution-mode', async (c) => {
         : nextExec === 'AUTO'
           ? 'حالت تمام‌اتوترید خودکار ۲۴/۷ فعال شد (بدون نیاز به تایید دستی هر معامله).'
           : 'حالت تایید دستی فعال شد (هر معامله قبل از ثبت، با یک کلیک در Trust Wallet تایید می‌شود).'),
+  });
+});
+
+trustWalletRoutes.post('/build-solana-fund-tx', async (c) => {
+  const user = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    fromAddress?: string;
+    vaultAddress?: string;
+    amountUsd?: number;
+    amountSol?: number;
+  };
+
+  const vault = await ensureUserCopyVault(c.env, user.id);
+  const toAddress =
+    typeof body.vaultAddress === 'string' && isValidSolana(body.vaultAddress)
+      ? body.vaultAddress.trim()
+      : vault.solanaAddress;
+
+  const uRow = await c.env.DB.prepare(
+    `SELECT trust_wallet_solana FROM users WHERE id = ? LIMIT 1`
+  )
+    .bind(user.id)
+    .first<{ trust_wallet_solana: string | null }>()
+    .catch(() => null);
+
+  const fromAddress =
+    typeof body.fromAddress === 'string' && isValidSolana(body.fromAddress)
+      ? body.fromAddress.trim()
+      : uRow?.trust_wallet_solana && isValidSolana(uRow.trust_wallet_solana)
+        ? uRow.trust_wallet_solana.trim()
+        : '';
+
+  const solPriceUsd = await estimateSolPriceUsd();
+  const reqUsd = Number(body.amountUsd || 0);
+  const reqSol = Number(body.amountSol || 0);
+  const amountSol =
+    Number.isFinite(reqSol) && reqSol > 0
+      ? Number(reqSol.toFixed(6))
+      : Number(Math.max(0.01, (Number.isFinite(reqUsd) && reqUsd > 0 ? reqUsd : 25) / solPriceUsd).toFixed(4));
+  const approxUsd = Number((amountSol * solPriceUsd).toFixed(2));
+
+  const sendDeepLink = `https://link.trustwallet.com/send?coin=501&address=${encodeURIComponent(toAddress)}&amount=${encodeURIComponent(String(amountSol))}`;
+  const jupiterDappUrl = `https://link.trustwallet.com/open_url?coin_id=501&url=${encodeURIComponent('https://jup.ag/swap/SOL-USDC')}`;
+
+  if (fromAddress) {
+    try {
+      const built = await buildUnsignedSolanaTransferTx(c.env, {
+        fromAddress,
+        toAddress,
+        amountSol,
+      });
+      return c.json({
+        ok: true,
+        kind: 'SOLANA_TX',
+        fromAddress,
+        vaultSolanaAddress: toAddress,
+        txBase64: built.txBase64,
+        blockhash: built.blockhash,
+        lamports: built.lamports,
+        amountSol: built.amountSol,
+        approxUsd,
+        solPriceUsd,
+        sendDeepLink,
+        jupiterDappUrl,
+      });
+    } catch (err) {
+      return c.json({
+        ok: true,
+        kind: 'DAPP_URL',
+        fromAddress,
+        vaultSolanaAddress: toAddress,
+        amountSol,
+        approxUsd,
+        solPriceUsd,
+        sendDeepLink,
+        jupiterDappUrl,
+        note: err instanceof Error ? err.message : 'Solana RPC unavailable; use Trust Wallet Send Deep Link',
+      });
+    }
+  }
+
+  return c.json({
+    ok: true,
+    kind: 'DAPP_URL',
+    fromAddress: null,
+    vaultSolanaAddress: toAddress,
+    amountSol,
+    approxUsd,
+    solPriceUsd,
+    sendDeepLink,
+    jupiterDappUrl,
+    note: 'آدرس سولانای Trust Wallet متصل نیست؛ لینک مستقیم انتقال سولانا باز می‌شود.',
   });
 });
 
