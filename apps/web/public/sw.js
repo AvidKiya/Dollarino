@@ -1,5 +1,5 @@
-const CACHE_NAME = 'dollarino-pwa-v11.6.5';
-const APP_SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE_NAME = 'dollarino-pwa-v11.7.2';
+const APP_SHELL = ['/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/logo-sm.webp'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -42,10 +42,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests & images: always Network-First so UI updates and icon refreshes appear immediately
-  if (request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/images/')) {
+  // Navigation requests: Network-First using conditional HTTP revalidation (ETag/304)
+  if (request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
     event.respondWith(
-      fetch(request, { cache: 'no-store' })
+      fetch(request, { cache: 'no-cache' })
         .then((res) => {
           if (res.ok) {
             const clone = res.clone();
@@ -54,6 +54,24 @@ self.addEventListener('fetch', (event) => {
           return res;
         })
         .catch(() => caches.match(request).then((c) => c || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Images & brand icons: Stale-While-Revalidate so UI renders instantly while refreshing in background
+  if (url.pathname.startsWith('/images/') || url.pathname === '/logo-sm.webp' || url.pathname === '/logo.png') {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) =>
+        cache.match(request).then((cached) => {
+          const networkFetch = fetch(request)
+            .then((res) => {
+              if (res.ok) cache.put(request, res.clone()).catch(() => {});
+              return res;
+            })
+            .catch(() => cached);
+          return cached || networkFetch;
+        })
+      )
     );
     return;
   }

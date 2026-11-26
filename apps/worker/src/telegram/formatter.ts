@@ -72,10 +72,10 @@ export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'si
   const cleanWeb = webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
   const modeSummary =
     uiMode === 'simple'
-      ? `🌱 **حالت ساده فعال است (هماهنگ با نسخه جدید سایت V11.6):** مدیریت سریع کل پلتفرم، سوئیچ آنی دمو/واقعی، انتخاب ۵ موتور ترید هم‌زمان و تنظیم بودجه و ریسک پویا.`
-      : `⚡ **حالت حرفه‌ای (Quant Pro V11.6) فعال است:** دسترسی هم‌زمان به رادار زنده DexScreener + خرید مستقیم، کپی‌ترید هوشمند و سبد نهنگ‌ها، دُرنا V1، هوش مصنوعی من، ۲۵+ آلرت TradingView و اکستنشن کروم.`;
+      ? `🌱 **حالت ساده فعال است (هماهنگ با نسخه جدید سایت V11.7):** مدیریت سریع کل پلتفرم، سوئیچ آنی دمو/واقعی، انتخاب ۵ موتور ترید هم‌زمان، کارت‌های سود یکپارچه و تنظیم دقیق اعلان‌ها.`
+      : `⚡ **حالت حرفه‌ای (Quant Pro V11.7) فعال است:** دسترسی هم‌زمان به رادار زنده DexScreener + خرید مستقیم، کپی‌ترید هوشمند و سبد نهنگ‌ها، دُرنا V1، کارت‌های سود ۱۶:۹ و ۹:۱۶، ۲۵+ آلرت TradingView و اکستنشن کروم.`;
   return (
-    `🚀 به **دلارینو V11.6** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
+    `🚀 به **دلارینو V11.7** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
     `${modeSummary}\n\n` +
     `✨ **امکانات نسخه جدید حساب شما:**\n` +
     `🧠 **هوش مصنوعی اختصاصی + تحلیل چارت + پیشنهاد صریح خرید/عدم خرید در DEX**\n` +
@@ -98,7 +98,8 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
           [{ text: '🤖 شروع / توقف ربات' }, { text: '⚡️ شکار فوری AI' }],
           [{ text: '🎛 ۵ موتور ترید همزمان' }, { text: '💰 حالت دمو/واقعی و بودجه' }],
           [{ text: '📊 معاملات باز و پورتفوی' }, { text: '🏆 کپی‌ترید حرفه‌ای (V2)' }],
-          [{ text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🧠 هوش مصنوعی من / چت AI' }],
+          [{ text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🎯 اسنایپر زیر ۵ دقیقه' }],
+          [{ text: 'کارت سود دلارینو 📊' }, { text: 'اعلان‌ها 🔔' }, { text: '🧠 هوش مصنوعی من / چت AI' }],
           [{ text: '🛡 Trust Wallet و کارمزد ۳٪' }, { text: '💬 پشتیبانی' }, { text: '⚡ حالت حرفه‌ای' }],
         ]
       : [
@@ -106,7 +107,7 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
           [{ text: '🎛 انتخاب ۵ موتور ترید' }, { text: '💰 بودجه مجاز و اهرم' }],
           [{ text: '📈 معاملات باز و پورتفوی' }, { text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🏆 کپی‌ترید حرفه‌ای (V2)' }],
           [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '🤖 هوش مصنوعی من' }, { text: '🎯 اسنایپر و استراتژی' }],
-          [{ text: '🛡 اتصال Trust Wallet' }, { text: '📡 آلرت رایگان TradingView' }, { text: '🧩 اکستنشن کروم V11.6' }],
+          [{ text: '🛡 اتصال Trust Wallet' }, { text: '📡 آلرت رایگان TradingView' }, { text: '🧩 اکستنشن کروم V11.7' }],
           [{ text: '💰 کارمزد ۳٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }, { text: 'تنظیمات ⚙️' }],
           [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '🌱 رفتن به حالت ساده' }],
         ];
@@ -150,11 +151,16 @@ export function miniAppInlineKeyboard(
   if (openSection === 'none') {
     rows.push([
       { text: '🎛 انتخاب ۵ موتور ترید', callback_data: 'tg_acc:ai', style: 'primary' },
-      { text: '🔍 رادار DEX & خرید مستقیم', callback_data: 'tg_dex_trending', style: 'success' },
+      { text: '🎯 اسنایپر زیر ۵ دقیقه ⚡', callback_data: 'tg_sniper_scan_5m', style: 'success' },
     ]);
     rows.push([
+      { text: '🔍 رادار DEX & خرید مستقیم', callback_data: 'tg_dex_trending' },
       { text: '🐋 کپی‌ترید و سبد نهنگ‌ها', callback_data: 'tg_copy_smart_v2' },
+    ]);
+    rows.push([
       { text: '🧠 چت AI و عکس چارت', callback_data: 'tg_ai_chat' },
+      { text: '📊 کارت سود', callback_data: 'tg_profit_card' },
+      { text: '🔔 اعلان‌ها', callback_data: 'tg_notif_menu' },
     ]);
     rows.push([
       { text: '🛡 Trust Wallet و دمو', callback_data: 'tg_acc:trust' },
@@ -193,10 +199,14 @@ export function miniAppInlineKeyboard(
 
   if (openSection === 'hunt') {
     rows.push([
-      { text: '⚡️ استراتژی‌های آماده', callback_data: 'tg_hunt_ready', style: 'success' },
+      { text: '🎯 اسکن زنده زیر ۵ دقیقه ⚡', callback_data: 'tg_sniper_scan_5m', style: 'success' },
+      { text: '🔥 مومنتوم ۱ ساعته', callback_data: 'tg_sniper_scan_1h', style: 'primary' },
+    ]);
+    rows.push([
+      { text: '⚡️ استراتژی‌های آماده', callback_data: 'tg_hunt_ready' },
       ...(hasHttps
-        ? [{ text: '🎯 رادار DEX و اسنایپر', web_app: { url: `${base}/?tab=radar` }, style: 'primary' as const }]
-        : [{ text: '🛠 استراتژی شخصی', callback_data: 'tg_hunt_personal', style: 'primary' as const }]),
+        ? [{ text: '🌐 اسنایپر کامل در مینی‌اپ', web_app: { url: `${base}/?tab=sniper` } }]
+        : [{ text: '🛠 استراتژی شخصی', callback_data: 'tg_hunt_personal' }]),
     ]);
   }
 
@@ -227,7 +237,7 @@ export function miniAppInlineKeyboard(
       { text: '📡 آلرت رایگان TradingView', callback_data: 'tg_tv_alerts', style: 'success' },
     ]);
     rows.push([
-      { text: '🧩 اکستنشن کروم V11.6', callback_data: 'tg_ext_widgets' },
+      { text: '🧩 اکستنشن کروم V11.7', callback_data: 'tg_ext_widgets' },
       { text: '📊 صدور کارت سود', callback_data: 'tg_profit_card' },
     ]);
     rows.push([

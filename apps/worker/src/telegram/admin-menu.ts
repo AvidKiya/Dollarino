@@ -4,6 +4,7 @@ import type { Env } from '../env.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { formatIranDateTime, formatToman, mainMenuKeyboard, settingsKeyboard } from './formatter.js';
 import { publishChannelNews, resolveChannelAndBotConfig } from './publisher.js';
+import { invalidateAuthUserCache } from '../auth.js';
 import { invalidateSettingsCache } from '../services/settings-cache.js';
 
 export interface AdminPerms {
@@ -387,6 +388,7 @@ export async function handleAdminCallback(
     }
     const nextBlock = uRow?.is_blocked ? 0 : 1;
     await env.DB.prepare(`UPDATE users SET is_blocked = ? WHERE id = ?`).bind(nextBlock, uid).run();
+    invalidateAuthUserCache(env.DB, uid);
     await auditAdmin(env.DB, actor.id, `${nextBlock ? 'Blocked' : 'Unblocked'} user ${uid}`);
     await bot.answerCallbackQuery(cqId, nextBlock ? 'کاربر مسدود شد 🔒' : 'رفع مسدودیت انجام شد ✅');
     await renderAdminUserCard(env, bot, chatId, msgId, uid);
@@ -684,7 +686,7 @@ export async function handleAdminCallback(
       await bot.answerCallbackQuery(cqId, 'عدم دسترسی به تنظیمات سیستم', true);
       return true;
     }
-    const [plans, margin, lev, chan, sup, wallet, bep20Recv, rate, privOnly, kycReq] = await Promise.all([
+    const [plans, margin, lev, chan, sup, wallet, bep20Recv, rate, privOnly, kycReq, gClientId, gClientSecret] = await Promise.all([
       env.DB.prepare(`SELECT code, price_usd FROM subscription_plans WHERE price_usd > 0`).all<{ code: string; price_usd: number }>(),
       getSystemSetting(env.DB, 'default_margin_pct', '10'),
       getSystemSetting(env.DB, 'default_max_leverage', '20'),
@@ -695,9 +697,12 @@ export async function handleAdminCallback(
       getSystemSetting(env.DB, 'usdt_to_toman_rate', '70000'),
       getSystemSetting(env.DB, 'bot_private_admin_only', 'false'),
       getSystemSetting(env.DB, 'require_telegram_phone_kyc', 'true'),
+      getSystemSetting(env.DB, 'google_client_id', ''),
+      getSystemSetting(env.DB, 'google_client_secret', ''),
     ]);
     const pMap: Record<string, number> = {};
     for (const p of plans.results) pMap[p.code] = p.price_usd;
+    const gReady = Boolean((env.GOOGLE_CLIENT_ID || gClientId).trim() && (env.GOOGLE_CLIENT_SECRET || gClientSecret).trim());
 
     const text =
       `⚙️ تنظیمات سیستم دلارینو:\n\n` +
@@ -707,6 +712,7 @@ export async function handleAdminCallback(
       `• ولت TRC20: ${wallet}\n` +
       `• ولت BEP20 (Trust Wallet): ${bep20Recv}\n` +
       `• نرخ تتر: ${Number(rate).toLocaleString('en-US')} تومان\n` +
+      `• 🔑 ورود با گوگل (OAuth): ${gReady ? 'فعال و متصل ✅' : 'تنظیم‌نشده ⏳'}\n` +
       `• 📱 احراز اجباری شماره تماس: ${kycReq === 'true' ? 'روشن ✅' : 'خاموش ⚪️'}\n` +
       `• 🔐 حالت دسترسی ربات: ${privOnly === 'true' ? 'فقط مدیران تاییدشده 🔒' : 'عمومی (همه کاربران) 🌐'}`;
 
@@ -734,6 +740,10 @@ export async function handleAdminCallback(
       [
         { text: '💱 نرخ تتر (تومان)', callback_data: 'adm:set:key:usdt_to_toman_rate' },
         { text: '📚 متن راهنما', callback_data: 'adm:set:key:bot_help_text' },
+      ],
+      [
+        { text: '🔑 Google Client ID', callback_data: 'adm:set:key:google_client_id' },
+        { text: '🗝 Google Client Secret', callback_data: 'adm:set:key:google_client_secret' },
       ],
       [
         { text: '🖼 مدیا راهنما (URL)', callback_data: 'adm:set:key:bot_help_media_url' },

@@ -1203,17 +1203,23 @@ export function SmartCopyProHub({
                       onClick={async () => {
                         setWdBusy(true);
                         try {
-                          const targetNet = wdChain === 'solana' ? 'bsc' : wdChain;
-                          const approxNative = targetNet === 'bsc' ? Number((usd / 600).toFixed(4)) : Number((usd / 3000).toFixed(4));
+                          const isSol = wdChain === 'solana';
+                          const targetAddr = isSol ? vaultData.vault.solanaAddress : vaultData.vault.evmAddress;
+                          const approxNative = isSol
+                            ? Number((usd / 180).toFixed(4))
+                            : wdChain === 'bsc'
+                              ? Number((usd / 600).toFixed(4))
+                              : Number((usd / 3000).toFixed(4));
                           const txHash = await fundCopyVaultFromDapp({
-                            networkKey: targetNet,
-                            vaultAddress: vaultData.vault.evmAddress,
+                            networkKey: wdChain,
+                            vaultAddress: targetAddr,
                             amountNative: approxNative,
+                            amountUsd: usd,
                           });
                           onMsg(
                             isFa
-                              ? `شارژ ~$${usd} (${approxNative} ${targetNet === 'bsc' ? 'BNB' : 'ETH'}) به خزانه ارسال شد! TX: ${txHash.slice(0, 12)}...`
-                              : `Funded ~$${usd} to Copy-Vault! TX: ${txHash.slice(0, 12)}...`
+                              ? `شارژ ~$${usd} (${approxNative} ${isSol ? 'SOL' : wdChain === 'bsc' ? 'BNB' : 'ETH'}) به خزانه ارسال شد! ${txHash === 'DEEP_LINK_OPENED' ? '(لینک Trust Wallet باز شد)' : `TX: ${txHash.slice(0, 12)}...`}`
+                              : `Funded ~$${usd} to Copy-Vault! ${txHash === 'DEEP_LINK_OPENED' ? '(Trust Wallet opened)' : `TX: ${txHash.slice(0, 12)}...`}`
                           );
                           await loadAll(false);
                         } catch (e) {

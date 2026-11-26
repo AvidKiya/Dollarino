@@ -1,4 +1,5 @@
 import { randomId } from '../crypto.js';
+import { getAllCachedSystemSettings } from './settings-cache.js';
 
 export interface SiteTopTraderCandidate {
   userId: string;
@@ -32,14 +33,7 @@ export interface SiteTraderAutoConfig {
 }
 
 export async function getSiteTraderAutoConfig(db: D1Database): Promise<SiteTraderAutoConfig> {
-  const rows = await db
-    .prepare(
-      `SELECT key, value FROM system_settings WHERE key IN ('auto_publish_top_traders', 'auto_publish_min_win_rate', 'auto_publish_max_count')`
-    )
-    .all<{ key: string; value: string }>()
-    .catch(() => ({ results: [] as Array<{ key: string; value: string }> }));
-
-  const map = new Map(rows.results.map((r) => [r.key, r.value]));
+  const map = await getAllCachedSystemSettings(db);
   return {
     enabled: map.get('auto_publish_top_traders') === 'true',
     minWinRate: Math.max(0, Math.min(95, Number(map.get('auto_publish_min_win_rate') ?? 52) || 52)),
@@ -81,6 +75,7 @@ export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promis
                 AVG(CASE WHEN CAST(COALESCE(margin_used, '0') AS REAL) > 0 THEN CAST(margin_used AS REAL) ELSE 25 END) AS avg_margin,
                 MAX(COALESCE(closed_at, opened_at)) AS last_trade_at
          FROM trades
+         WHERE COALESCE(closed_at, opened_at) >= datetime('now', '-90 days')
          GROUP BY user_id`
       )
       .all<{
@@ -104,6 +99,7 @@ export async function discoverTopSiteTraders(db: D1Database, limit = 30): Promis
                 SUM(CASE WHEN status = 'CLOSED' AND COALESCE(realized_pnl_usd, 0) < 0 THEN ABS(realized_pnl_usd) ELSE 0 END) AS gross_loss,
                 MAX(COALESCE(closed_at, opened_at)) AS last_trade_at
          FROM dex_trades
+         WHERE COALESCE(closed_at, opened_at) >= datetime('now', '-90 days')
          GROUP BY user_id`
       )
       .all<{
@@ -335,6 +331,15 @@ export async function syncAutoTopSiteTraders(db: D1Database, force = false): Pro
   autoEnabled: boolean;
 }> {
   const cfg = await getSiteTraderAutoConfig(db);
+  if (!cfg.enabled && !force) {
+    const hasPublishedSiteTrader = await db
+      .prepare(`SELECT 1 FROM copy_traders WHERE user_id IS NOT NULL LIMIT 1`)
+      .first()
+      .catch(() => null);
+    if (!hasPublishedSiteTrader) {
+      return { synced: 0, autoEnabled: false };
+    }
+  }
   const candidates = await discoverTopSiteTraders(db, 40);
   let synced = 0;
 

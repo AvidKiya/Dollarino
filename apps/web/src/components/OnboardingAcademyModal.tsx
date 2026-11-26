@@ -60,7 +60,7 @@ export function OnboardingAcademyModal({
         'داشبورد نمای کلی هم نمای «ساده» (مبتدی) دارد و هم نمای «حرفه‌ای». ربات هوشمند با تحلیل زنده و ۳ تارگت سود کار می‌کند و کنترل همه معاملات با یک نگاه در دست شماست.',
       subtitleEn:
         'Switch between Simple and Pro Dashboard anytime. The AI Engine monitors markets 24/7 with 3 take-profit targets and real-time PnL tracking.',
-      img: '/images/transparent/mascot-astronaut.png',
+      img: '/images/transparent/mascot-astronaut.webp',
     },
     {
       badgeFa: 'کیف‌پول Trust',
@@ -71,7 +71,7 @@ export function OnboardingAcademyModal({
         'پول شما همیشه ۱۰۰٪ داخل کیف‌پول Trust Wallet شخصی خودتان می‌ماند (غیرامانی). آدرس EVM/Solana خود را متصل کنید تا ۳ معامله سودده اول را با کارمزد ۰٪ شروع کنید — یا با دمو ($50 تا $10M) رایگان تمرین کنید!',
       subtitleEn:
         'Your funds stay 100% in your non-custodial Trust Wallet across EVM, Solana, TON & TRON. Get 0% fees on your first 3 profitable LIVE trades or practice free in Custom Demo.',
-      img: '/images/transparent/trust-shield-3d.png',
+      img: '/images/transparent/trust-shield-3d.webp',
     },
     {
       badgeFa: 'اسنایپر و رادار',
@@ -82,7 +82,7 @@ export function OnboardingAcademyModal({
         'در تب «رادار و اسنایپر»، توکن‌های جدید زنجیره‌های Solana، BSC، Base، ETH و TON لحظه‌به‌لحظه با نمره ایمنی (Trust Score) فیلتر می‌شوند و با ۱ کلیک خرید مستقیم یا سوآپ Trust Wallet انجام می‌شود.',
       subtitleEn:
         'Inside Radar & Sniper, tokens on Solana, BSC, Base, ETH & TON are screened by live Trust Score with 1-click direct buy and Trust Wallet DApp status.',
-      img: '/images/transparent/sniper-rocket-3d.png?v=1165',
+      img: '/images/transparent/sniper-rocket-3d.webp?v=1166',
     },
     {
       badgeFa: 'کپی‌ترید و پرپ',
@@ -93,7 +93,7 @@ export function OnboardingAcademyModal({
         'تریدرهای حرفه‌ای دلخواهتان را با فیلتر هولدر/اسکلپر، مشاهده سبد ارزهای کیف‌پول و بودجه مشخص دنبال کنید یا در پنل Perp DEX معاملات اهرم‌دار باز کنید.',
       subtitleEn:
         'Mirror top verified traders with wallet holdings & style filters, or trade up to 100x on Hyperliquid / dYdX / GMX directly with 24/7 execution.',
-      img: '/images/transparent/trophy-copy-3d.png',
+      img: '/images/transparent/trophy-copy-3d.webp',
     },
     {
       badgeFa: 'ترمینال و AI',
@@ -104,7 +104,7 @@ export function OnboardingAcademyModal({
         'در صفحه «ترمینال»، چارت لحظه‌ای تمام رمزارزها، سفارش‌گذاری دستی با انتخاب اهرم/تارگت و تحلیل هوشمند روند بازار را یکجا در اختیار دارید.',
       subtitleEn:
         'Inspect live candlestick charts, place custom Long/Short orders with TP/SL, and consult the AI Market Analyst inside the Terminal tab.',
-      img: '/images/transparent/tv-chart-3d.png',
+      img: '/images/transparent/tv-chart-3d.webp',
     },
     {
       badgeFa: 'پورتفوی یکپارچه',
@@ -115,7 +115,7 @@ export function OnboardingAcademyModal({
         'در بخش «کیف‌پول و معاملات باز»، همه موقعیت‌های CEX، DEX/اسنایپر، کپی‌ترید و Perp با برچسب منبع و سود ثانیه‌ای کنار هم نمایش داده می‌شوند — همراه با دکمه‌های «برداشت همه سودها» و «بستن همه ضررها» و مشاور هوشمند AI.',
       subtitleEn:
         'View all open CEX, DEX/Sniper, Copy-Trade & Perp positions side-by-side with live 1.5s PnL ticks, AI Coach proposals, and 1-click Take All Profit / Close All Losing buttons.',
-      img: '/images/transparent/piggy-wallet-3d.png',
+      img: '/images/transparent/piggy-wallet-3d.webp',
     },
     {
       badgeFa: 'امنیت و ۳٪ کارمزد',
@@ -126,7 +126,7 @@ export function OnboardingAcademyModal({
         'در صفحه «پروفایل و خدمات» می‌توانید ورود دومرحله‌ای Google Authenticator (2FA) را فعال کنید. اشتراک ماهانه در دلارینو صفر است؛ ۳ معامله سودده اول رایگان و پس از آن فقط ۳٪ از سود واقعی (با امکان پیش‌پرداخت و تسویه خودکار بدهی)!',
       subtitleEn:
         'Protect your account with Google Authenticator 2FA in Services. $0 monthly subscription: first 3 live winning trades are 0% fee, then just 3% of real net profits.',
-      img: '/images/transparent/capital-vault-3d.png?v=1165',
+      img: '/images/transparent/capital-vault-3d.webp?v=1166',
     },
     {
       badgeFa: 'آماده شروع',
@@ -137,7 +137,7 @@ export function OnboardingAcademyModal({
         'مشخص کنید ربات به صورت تمام‌خودکار ۲۴/۷ کار کند یا قبل از هر معامله تایید دستی بگیرد. پس از ذخیره، ربات فعلاً متوقف می‌ماند تا خودتان با اطمینان استارت بزنید.',
       subtitleEn:
         'Pick Full 24/7 Auto-Pilot or 1-Click Manual Confirmation. Your bot stays paused until you review rules and press Start on the dashboard.',
-      img: '/images/transparent/rocket-profit-3d.png',
+      img: '/images/transparent/rocket-profit-3d.webp',
     },
   ];
 
@@ -312,7 +312,7 @@ export function OnboardingAcademyModal({
                 title="Dollarino"
                 className="absolute bottom-0 end-0 z-20 w-9 h-9 rounded-full bg-[var(--bg-surface)]/95 border border-sky-400/50 shadow-lg flex items-center justify-center p-1"
               >
-                <img src="/logo.png" alt="Dollarino" className="w-full h-full object-contain rounded-full" />
+                <img src="/logo-sm.webp" alt="Dollarino" className="w-full h-full object-contain rounded-full" />
               </div>
             </div>
 

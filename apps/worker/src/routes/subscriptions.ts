@@ -190,8 +190,8 @@ export async function resolveUserEntitlement(_db: D1Database, user: AuthUser): P
     return {
       hasPaidPlan: true,
       planCode: 'vip_owner',
-      planNameFa: 'دسترسی کامل مدیریت · بدون اشتراک (۳ معامله رایگان · ۳٪ کارمزد سود واقعی)',
-      planNameEn: 'Admin Full Access · Zero Subscription (3 Free Live Trades · 3% Profit Fee)',
+      planNameFa: 'دسترسی کامل مدیریت · بدون کارمزد و بدون محدودیت (۰٪ کارمزد · نامحدود)',
+      planNameEn: 'Admin Full Access · Zero Fees & Zero Limits',
       status: 'ACTIVE',
       allowPaperDemo: true,
       allowAiTrading: true,
@@ -546,7 +546,7 @@ subscriptionRoutes.get('/me', async (c) => {
 
 subscriptionRoutes.post('/checkout', async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `chk:${user.id}`, 10, 300);
+  const rl = await enforceRateLimit(c.env, `chk:${user.id}`, 10, 300, { bypass: user.role === 'owner' || user.role === 'admin' });
   if (!rl.allowed) {
     return c.json({ error: `تعداد ثبت سفارش زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   }
@@ -1036,7 +1036,7 @@ subscriptionRoutes.post('/referrals/apply-to-fee-credit', async (c) => {
 
 subscriptionRoutes.post('/referrals/redeem-balance', async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `refred:${user.id}`, 8, 300);
+  const rl = await enforceRateLimit(c.env, `refred:${user.id}`, 8, 300, { bypass: user.role === 'owner' || user.role === 'admin' });
   if (!rl.allowed) return c.json({ error: 'درخواست زیاد است. کمی بعد تلاش کنید.' }, 429);
 
   const body = (await c.req.json().catch(() => ({}))) as { amountUsd?: number };
@@ -1072,7 +1072,7 @@ subscriptionRoutes.post('/referrals/redeem-balance', async (c) => {
 
 subscriptionRoutes.post('/referrals/withdraw', async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `refwd:${user.id}`, 5, 600);
+  const rl = await enforceRateLimit(c.env, `refwd:${user.id}`, 5, 600, { bypass: user.role === 'owner' || user.role === 'admin' });
   if (!rl.allowed) return c.json({ error: 'درخواست برداشت بیش از حد مجاز. چند دقیقه دیگر تلاش کنید.' }, 429);
 
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -1153,7 +1153,7 @@ subscriptionRoutes.post('/referrals/withdraw', async (c) => {
 
 subscriptionRoutes.post('/redeem-gift', async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `gift:${user.id}`, 8, 300);
+  const rl = await enforceRateLimit(c.env, `gift:${user.id}`, 8, 300, { bypass: user.role === 'owner' || user.role === 'admin' });
   if (!rl.allowed) return c.json({ error: 'تعداد تلاش برای کد هدیه زیاد است. چند دقیقه دیگر امتحان کنید.' }, 429);
   const body = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
   const code = (body.code || '').trim().toUpperCase();

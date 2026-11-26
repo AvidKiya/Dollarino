@@ -183,7 +183,7 @@ export function AppSplashLoader({
         <div className="space-y-1.5 mb-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full surface-soft border hairline text-[10px] font-extrabold tracking-wide text-[#1652F0] dark:text-[#60A5FA]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#10D856] academy-pulse-dot" />
-            <bdi dir="ltr">DOLLARINO AI · V11.6</bdi>
+            <bdi dir="ltr">DOLLARINO AI · V11.7</bdi>
           </div>
 
           <h1 className="font-display font-black text-2xl sm:text-[26px] tracking-tight text-main">

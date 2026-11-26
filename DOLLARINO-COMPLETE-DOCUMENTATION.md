@@ -1,23 +1,25 @@
-# مستندات جامع فنی، معماری و تاریخچه کامل پروژه **Dollarino (دلارینو)** — از **V1.0** تا **V11.6.5**
+# مستندات جامع فنی، معماری و تاریخچه کامل پروژه **Dollarino (دلارینو)** — از **V1.0** تا **V11.7.2**
 
 > **بنیان‌گذار و معمار نرم‌افزار:** آوید کیا (`Avid Kiya`) · تلگرام: `@avidkiya` · اینستاگرام و X: `@avid_kiya`  
-> **نسخه نهایی مستندشده:** `V11.6.5 Production` (غیرامانی ۱۰۰٪ با Trust Wallet، چندموتوره همزمان، ۰٪ اشتراک و ۳٪ کارمزد فقط از سود واقعی)  
-> **تعداد کل مایگریشن‌های دیتابیس (D1):** `44` فایل (`0001_init.sql` تا `0044_auth_profile_totp_2fa.sql`)  
-> **زیرساخت:** Cloudflare Workers + Cloudflare D1 (SQLite) + Cloudflare Durable Objects (`TradingBotCoordinator`) + React 18 / Vite PWA + Chrome Extension MV3 + Telegram Bot API
+> **نسخه نهایی مستندشده:** `V11.7.2 Production` (اکستنشن بومی Chrome Side Panel فقط در حالت ساده، صفرسازی امن حساب مدیریتی + معافیت کامل مدیر از کارمزد و محدودیت‌ها، ثبت خودکار کد معرف مدیر، ثبت‌نام مستقیم Trust Wallet DApp و فرم یکپارچه شماره تماس/نام/نام کاربری/رمز، ۰٪ اشتراک و ۳٪ کارمزد فقط از سود واقعی)  
+> **تعداد کل مایگریشن‌های دیتابیس (D1):** `47` فایل (`0001_init.sql` تا `0047_v11_7_sniper_pro_filters.sql`)  
+> **زیرساخت:** Cloudflare Workers + Cloudflare D1 (SQLite) + Cloudflare Durable Objects (`TradingBotCoordinator`) + React 18 / Vite PWA (`dollarino-pwa-v11.7.2`) + Chrome Extension MV3 (`11.7.2` · `sidePanel`) + Telegram Bot API
+
+> **نکته حیاتی استقرار Cloudflare (`dollarino.pages.dev`):** هنگام انتشار نسخه جدید، باید هر دو دستور `npx wrangler d1 migrations apply dollarino-db --remote && npx wrangler deploy` (بک‌اند Worker + D1) و سپس `npx wrangler pages deploy apps/web/dist --project-name=dollarino` (فرانت‌اند Pages) اجرا شوند تا خطای `404 Route not found` در مسیرهای `/api/...` رخ ندهد. همچنین در فایل‌های `functions/api/[[path]].ts` و `apps/web/functions/api/[[path]].ts` پروکسی `/api/*` با حفظ شفافیت کامل هدرها (بدون `X-Frame-Options` مزاحم) پیاده‌سازی شده است.
 
 ---
 
 ## فهرست مطالب
 1. [معرفی کلان و فلسفه معماری دلارینو](#۱-معرفی-کلان-و-فلسفه-معماری-دلارینو)
 2. [ساختار Monorepo و نقش هر ماژول](#۲-ساختار-monorepo-و-نقش-هر-ماژول)
-3. [تاریخچه کامل تکامل نسخه‌ها (V1.0 تا V11.6.5)](#۳-تاریخچه-کامل-تکامل-نسخه‌ها-v10-تا-v1165)
-4. [معماری پایگاه داده (۴۴ مایگریشن D1)](#۴-معماری-پایگاه-داده-۴۴-مایگریشن-d1)
+3. [تاریخچه کامل تکامل نسخه‌ها (V1.0 تا V11.7.2 Final)](#۳-تاریخچه-کامل-تکامل-نسخه‌ها-v10-تا-v1172-final)
+4. [معماری پایگاه داده (۴۷ مایگریشن D1)](#۴-معماری-پایگاه-داده-۴۷-مایگریشن-d1)
 5. [موتورهای ترید ۵گانه و اجرای همزمان (Multi-Engine & DO)](#۵-موتورهای-ترید-۵گانه-و-اجرای-همزمان)
-6. [معماری غیرامانی Trust Wallet DApp، Perp DEX و اسنایپر](#۶-معماری-غیرامانی-trust-wallet-dapp-perp-dex-و-اسنایپر)
-7. [سیستم مالی ۰٪ اشتراک و کارمزد ۳٪ از سود واقعی](#۷-سیستم-مالی-۰-اشتراک-و-کارمزد-۳-از-سود-واقعی)
+6. [معماری غیرامانی Trust Wallet DApp، Perp DEX، سولانا و اسنایپر](#۶-معماری-غیرامانی-trust-wallet-dapp-perp-dex-سولانا-و-اسنایپر)
+7. [سیستم مالی ۰٪ اشتراک، ۳ معامله رایگان، کارمزد ۳٪ از سود و معافیت مدیر](#۷-سیستم-مالی-۰-اشتراک-۳-معامله-رایگان-کارمزد-۳-از-سود-و-معافیت-مدیر)
 8. [امنیت، احراز هویت چندمسیره، رمزنگاری و TOTP 2FA](#۸-امنیت-احراز-هویت-چندمسیره-رمزنگاری-و-totp-2fa)
 9. [ربات تلگرام ۲۴/۷، کانال‌ها و مینی‌اپ](#۹-ربات-تلگرام-۲۴۷-کانال‌ها-و-مینی‌اپ)
-10. [معماری فرانت‌اند (`18` صفحه و `36` کامپوننت) و اکستنشن کروم MV3](#۱۰-معماری-فرانت‌اند-و-اکستنشن-کروم-mv3)
+10. [معماری فرانت‌اند (`18` صفحه و `38+` کامپوننت)، نوار قیمت زنده و اکستنشن Chrome Side Panel](#۱۰-معماری-فرانت‌اند-و-اکستنشن-کروم-mv3)
 11. [فهرست کامل مسیرهای API بک‌اند (`apps/worker`)](#۱۱-فهرست-کامل-مسیرهای-api-بک‌اند)
 12. [راهنمای استقرار، متغیرهای محیطی و نگهداری D1](#۱۲-راهنمای-استقرار-متغیرهای-محیطی-و-نگهداری-d1)
 
@@ -38,8 +40,9 @@
 Dollarino/
 ├── package.json                  # ریشه Workspaces: packages/core, apps/worker, apps/web
 ├── wrangler.toml                 # پیکربندی Worker, D1 (dollarino-db), Durable Object & Cron (* * * * *)
-├── migrations/                   # 44 فایل SQL متوالی از 0001_init.sql تا 0044_auth_profile_totp_2fa.sql
-├── packages/core/                # موتور ریاضی، اندیکاتورها، ریسک، بک‌تستر و مفسر Pine/Python (بدون eval)
+├── migrations/                   # 47 فایل SQL متوالی از 0001_init.sql تا 0047_v11_7_sniper_pro_filters.sql
+├── functions/api/[[path]].ts     # پروکسی Cloudflare Pages -> Worker بدون X-Frame-Options
+├── packages/core/                # موتور ریاضی، اندیکاتورها، ریسک، بک‌تستر، TP/SL و مفسر Pine/Python (بدون eval)
 │   └── src/
 │       ├── decimal.ts            # محاسبات دقیق اعشاری مالی
 │       ├── types.ts              # انواع مشترک سیگنال، پوزیشن، ریسک و کندل
@@ -47,42 +50,44 @@ Dollarino/
 │       ├── kiya-bot.ts           # موتور اختصاصی KBOs v11 + فیلترهای چندلایه
 │       ├── strategies.ts         # استراتژی منتخب Dollarino V0.1 (دُرنا V1) + میکسر ۸-کاناله
 │       ├── risk-engine.ts        # محاسبه سایز پوزیشن، SL/TP1-3، Break-Even و Trailing Stop
+│       ├── tpsl.ts               # محاسبه‌گر و مبدل دوطرفه TP/SL قیمتی ($) و درصدی (%) + ROE اهرمی
 │       ├── signal-parser.ts      # پارس استاندارد پیام‌های سیگنال تلگرام و JSON
 │       ├── tv-alerts.ts          # تبدیل هشدارهای TradingView به ساختار عملیاتی
 │       ├── backtester.ts         # شبیه‌ساز بک‌تست روی داده‌های تاریخی تا ۹۰۰ کندل
-│       └── custom-strategy-engine.ts # مفسر ایمن بدون eval برای Pine Script v4/v5، Python Quant و قوانین بصری
-├── apps/worker/                  # بک‌اند Hono/Cloudflare Worker + Durable Object + Telegram Bot
+│       └── custom-strategy-engine.ts # مفسر ایمن بدون eval برای Pine Script v4/v5/v6 (با باکس/خط/لیبل/HUD), Python Quant و قوانین بصری
+├── apps/worker/                  # بک‌اند Hono/Cloudflare Worker + Durable Object + Telegram Bot (84 تست در 14 مجموعه)
 │   └── src/
-│       ├── index.ts              # ورودی Worker، کرون ۲۴/۷ (`scheduled`), روتینگ، هدرهای امنیتی و Serve Assets + Dynamic OG
-│       ├── auth.ts               # صدور و بررسی JWT، لینک جادویی، ادغام حساب، Google/Wallet/Telegram Auth & TOTP
+│       ├── index.ts              # ورودی Worker، کرون ۲۴/۷ (`scheduled`)، /api/public/market-snapshot (16 ارز برتر)، و Serve Assets + Dynamic OG
+│       ├── auth.ts               # صدور و بررسی JWT، لینک جادویی، ادغام حساب، صفرسازی امن حساب مدیر، کد معرف خودکار مدیر، Google/Wallet/Telegram Auth & TOTP
 │       ├── crypto.ts             # رمزنگاری AES-256-GCM کلیدهای کاربر، امضای HMAC-SHA256، و TOTP RFC 6238
-│       ├── security.ts           # Rate Limiting دولایه (Isolate Cache + D1) و هش ایمن IP/UA
+│       ├── security.ts           # Rate Limiting دولایه (Isolate Cache + D1) با معافیت مدیران و هش ایمن IP/UA
 │       ├── routes/               # 12 فایل روتر API (admin, ai-assistant, chart-ai, connections, copy-trade, dex, my-ai, subscriptions, support, trading, trustwallet, webhooks)
 │       ├── engine/               # 7 ماژول موتور اجرایی (bot-do, executor, copy-mirror, exclusive-engine, listing-sniper, market-intel, onboarding-gate)
-│       ├── dex/                  # 4 ماژول آن‌چین (evm-tx, perp-dex, screener, smart-copy)
+│       ├── dex/                  # 4 ماژول آن‌چین (evm-tx, perp-dex, screener, smart-copy با buildUnsignedSolanaTransferTx)
 │       ├── exchanges/            # 10 ماژول اتصال بازار و نرخ لحظه‌ای (base, factory, paper, markets, iran-rate, hyperliquid, toobit, bitunix, kcex, proxy)
 │       ├── ai/                   # 2 ماژول هوش مصنوعی (providers, assistant + Vision + Live Fallback)
-│       ├── services/             # 5 سرویس هسته‌ای (founder-profile, server-fee, settings-cache, site-traders, treasury)
+│       ├── services/             # 6 سرویس هسته‌ای (founder-profile, profit-cards, server-fee با معافیت مدیر, settings-cache, site-traders, treasury)
 │       ├── telegram/             # 7 ماژول ربات و کانال تلگرام (handler, admin-menu, publisher, group-moderator, formatter, client, token)
-│       ├── cards/renderer.ts     # رندر سرورساید کارت سود و نتیجه سیگنال به PNG واقعی (@resvg/resvg-wasm)
-│       └── __tests__/            # 12 فایل تست یکپارچه Miniflare + D1 (74 تست)
-├── apps/web/                     # فرانت‌اند React 18 + Vite + Tailwind + Lightweight-Charts + PWA
+│       ├── cards/renderer.ts     # رندر سرورساید کارت سود (16:9 1200x675 و 9:16 1080x1920 + QR وکتور) و نتیجه سیگنال به PNG واقعی (@resvg/resvg-wasm)
+│       └── __tests__/            # 14 فایل تست یکپارچه Miniflare + D1 (84 تست موفق)
+├── apps/web/                     # فرانت‌اند React 18 + Vite + Tailwind + Lightweight-Charts + PWA (1748 ماژول)
 │   ├── public/
-│   │   ├── sw.js                 # Service Worker نسخه dollarino-pwa-v11.6.5 (Network-First + Cache-Bust)
-│   │   ├── _headers              # هدرهای Cache-Control کلادفلر (no-store برای HTML/SW، immutable برای /assets)
+│   │   ├── sw.js                 # Service Worker نسخه dollarino-pwa-v11.7.2 (Network-First + Cache-Bust)
+│   │   ├── _headers              # هدرهای Cache-Control کلادفلر (no-store برای HTML/SW، immutable برای /assets، بدون X-Frame-Options)
 │   │   ├── manifest.webmanifest  # تنظیمات نصب PWA و میانبرهای سریع موبایل
-│   │   └── images/transparent/   # 11 آیکون 3D با پس‌زمینه کاملاً شفاف 512x512
+│   │   ├── downloads/            # dollarino-extension.zip آماده نصب Chrome Side Panel v11.7.2
+│   │   └── images/transparent/   # آیکون‌های 3D با پس‌زمینه کاملاً شفاف (WebP/PNG)
 │   └── src/
-│       ├── App.tsx               # روتینگ مرکزی، تم روز/شب (paper/cosmic)، مدیریت وضعیت کاربر و مودال‌ها
-│       ├── pages/                # 18 صفحه مستقل با React.lazy code splitting
-│       ├── components/           # 36 کامپوننت اختصاصی (ProDropdown, SmoothSlider, FloatingAiChat, TreasuryBankingHub, ...)
-│       └── lib/                  # api.ts, format.ts, i18n.ts, pwa.ts, telegram.ts, toast.ts, trustwallet.ts, types.ts
-└── apps/extension/               # اکستنشن رسمی مرورگر Chrome / Edge / Brave (Manifest V3 - v11.6)
+│       ├── App.tsx               # روتینگ مرکزی، تم روز/شب (paper/cosmic)، قفل Side Panel ساده (?embed=sidepanel)، focusSymbol برای کلیک نوار قیمت -> بازارها
+│       ├── pages/                # 18 صفحه مستقل با React.lazy (LandingPage V11.7.2, MarketsPage با Spotlight, OverviewPage, TerminalPage, ...)
+│       ├── components/           # 38+ کامپوننت اختصاصی (LiveTickerBar پیوسته بدون فضای سفید, TpSlModeSwitch, ProDropdown, SmoothSlider, FloatingAiChat, ...)
+│       └── lib/                  # api.ts, format.ts, i18n.ts, pwa.ts, telegram.ts, toast.ts, trustwallet.ts, tpsl.ts, types.ts
+└── apps/extension/               # اکستنشن رسمی مرورگر Chrome MV3 (v11.7.2 · Native chrome.sidePanel در حالت ساده اختصاصی)
 ```
 
 ---
 
-## ۳. تاریخچه کامل تکامل نسخه‌ها (`V1.0` تا `V11.6.5`)
+## ۳. تاریخچه کامل تکامل نسخه‌ها (`V1.0` تا `V11.7.2 Final`)
 
 ### نسل ۱ تا ۴ (`V1.0` – `V4.0` · پایه‌گذاری هسته کوانت و اشتراک اولیه)
 - **V1.0 (`0001_init.sql`):** ساخت اسکلت کامل پایگاه داده روی Cloudflare D1 (`users`, `telegram_bots`, اتصالات و معاملات)، پیاده‌سازی اولین ربات معاملاتی با Cloudflare Durable Objects (`TradingBotCoordinator`)، نقش‌های `owner | admin | user`، اتصال اکانت تلگرام و اجرای خودکار سفارشات.
@@ -138,10 +143,29 @@ Dollarino/
   - **تولید و جایگزینی ۳ آیکون ۳D شفاف با آلفای واقعی (`512×512`):** رفع لکه‌های تیره و حفره‌های آلفا در `my-ai-brain-3d.png`, `sniper-rocket-3d.png`, `capital-vault-3d.png`.
   - **کَش‌باستینگ کامل PWA و CDN (`v11.6.5`):** تغییر سیاست `public/sw.js` (`dollarino-pwa-v11.6.5`) به Network-First برای مسیرهای `/`، HTML و `/images/*`، تنظیم هدرهای `no-store` روی `/`، `/index.html` و `/sw.js` در `_headers`، پاکسازی خودکار کش‌های قدیمی در `main.tsx` + بارگذاری مجدد هنگام `controllerchange` و پارامتر `?v=1165`.
   - **تایید جامع ۴ حالته روی سرور زنده (`Desktop Light`, `Desktop Dark`, `Mobile Light`, `Mobile Dark`):** اجرای ۲۱/۲۱ سناریو، ۸۴ اسکرین‌شات تمیز، ۰ خطای JS و ۰ خطای ۵۰۰ سرور.
+- **V11.6.6 (بهینه‌سازی شدید خوانش D1، تبدیل WebP و ۶۰fps موبایل — `0045`):**
+  - افزودن ۱۰ ایندکس پوششی در `0045_v11_6_6_d1_read_indexes.sql`، کش حافظه‌ای کوتاه‌عمر روی `RPC/Auth/LiveTicks/Quotes`، و بهینه‌سازی باندل WebP (`9.2MB -> 3.5MB`) + سرویس‌ورکر `v11.6.6`.
+- **V11.7 (`11.7.0` — بازطراحی استودیو کارت سود `16:9`/`9:16`، تنظیمات پیش‌فرض تمام-خاموش ایمن، اسنایپر ۵ دقیقه و گرافیک Pine v5 — `0046` و `0047`):**
+  - **پیش‌فرض‌های کاملاً ایمن (All-OFF) و مرکز تنظیمات کاربر (`0046`):** ساخت حساب‌های جدید با ربات متوقف، تمامی ۵ موتور خاموش (`[]`)، تایید دستی، اعلانات خاموش و اسنایپر خاموش + افزودن `notification_prefs_json` (۵ سوییچ دقیق) و `display_currency` (`USD`/`IRT`) در سایت (`ServicesPage.tsx`) و تلگرام (`دریافت اعلان 🔔`).
+  - **فیلترهای پرو ۵ دقیقه‌ای اسنایپر (`0047_v11_7_sniper_pro_filters.sql`):** افزودن `maxPairAgeMinutes` (از ۱ دقیقه تا ۷۲ ساعت)، ۴ پریست آماده (`5M_DEGEN` و ...) و موتور گرافیکی کامل Pine Script v4/v5/v6 (`ta.crossover`, `barssince`, `valuewhen`, باکس‌ها، خطوط، لیبل‌ها و جدول HUD زنده روی چارت).
+  - **استودیو کارت سود چندمنبعی (`PERP + DEX + COPY`) با کیفیت استودیویی (`1200×675` و `1080×1920`):** پشتیبانی از ۸ بازه (`24H`, `7D`, `30D`, `3M`, `6M`, `1Y`, `ALL`, `TRADE`)، انتخابگر تک‌معامله بسته، آیکون و لوگوی توکن‌ها، قیمت ورود/خروج، منبع سیگنال، QR وکتور واقعی و جداسازی اعداد فارسی در SVG (`\u200F`).
+  - **اکستنشن کروم `11.7.0`، ربات تلگرام، Google OAuth ادمین و ممیزی/ابطال:** رفع باگ `PLATFORM_AI -> CENTRAL_AI`، تنظیم آنی Google OAuth در پنل ادمین و تلگرام، ممیزی/ابطال کارت سود (`POST /api/admin/profit-cards/:id/revoke`) و مانیتورینگ + توقف اضطراری ربات‌های فعال کاربران (`GET /api/admin/active-bots`, `POST /api/admin/users/:id/bot-stop`).
+- **V11.7.1 (ذخیره خودکار موتور هنگام استارت، شارژ سولانا در خزانه، و TP/SL درصدی `%`):**
+  - **رفع ریشه‌ای ذخیره موتور هنگام کلیک «شروع ربات» (`routes/trading.ts`):** اگر کاربر از وضعیت پیش‌فرض `active_engines_json = '[]'` دکمه «شروع ربات» را بزند، موتور انتخابی (`STRATEGY` / `CENTRAL_AI` / ...) بلافاصله در D1 ذخیره می‌شود تا `TradingBotCoordinator` اجرا شود + راهنمای خطای همگام‌سازی Worker روی Cloudflare Pages.
+  - **شارژ سریع خزانه سولانا (`SOL / USDC · Jupiter`) (`routes/trustwallet.ts`, `dex/smart-copy.ts`, `TrustWalletConnectInline.tsx`):** افزودن `POST /api/trustwallet/build-solana-fund-tx` و سازنده بومی `buildUnsignedSolanaTransferTx` + لینک Jupiter بدون نیاز به Approve روتر.
+  - **سوییچر دوحالته `قیمت ($) | درصد (%)` در تمام فرم‌های TP/SL (`packages/core/src/tpsl.ts`, `TpSlModeSwitch.tsx`):** چیپ‌های سریع `%` (`-1%..-5%` / `+2%..+20%`)، محاسبه لحظه‌ای قیمت دلاری و نمایش `ROE %` اهرمی در ترمینال، ویرایش معامله، Perp DEX و ادمین.
+- **V11.7.2 Final (پنل کناری Chrome، صفرسازی ایمن و معافیت مدیر، ثبت‌نام مستقیم DApp، کد معرف خودکار، نوار قیمت پیوسته و صفحه معرفی کامل):**
+  - **صفرسازی امن حساب مدیریتی + معافیت کامل (`resetPrivilegedUserAccountToFreshState`):** حذف/صفرسازی روی اکانت `owner` یا `admin` از مسیرهای `DELETE /api/auth/account` (`ServicesPage.tsx`), `DELETE /api/admin/users/:id` و `POST /api/admin/users/:id/reset-account` (`AdminPage.tsx` `صفرسازی ۰`) تمام موجودی‌ها، معاملات، کیف‌پول‌ها و سوابق را به `۰` بازنشانی می‌کند در حالی که حساب و نقش مدیریتی حفظ می‌شوند؛ همچنین مدیران از کارمزد ۳٪، Rate Limit، حداقل موجودی ۱۰ دلاری و سقف پوزیشن معاف هستند.
+  - **اکستنشن کروم `chrome.sidePanel` در حالت ساده اختصاصی (`v11.7.2`):** با کلیک روی آیکون اکستنشن، دلارینو مشابه Trust Wallet درون پنل کناری مرورگر Chrome قفل‌شده در **حالت ساده** (`?ui_mode=simple&embed=sidepanel`) بدون دکمه حالت حرفه‌ای و بدون پاپ‌آپ مزاحم باز می‌شود و فاقد هدرهای مسدودکننده `X-Frame-Options` است.
+  - **ثبت خودکار کد معرف مدیر (`resolveEffectiveReferralCode`) + ثبت‌نام مستقیم DApps تراست‌ولت (`tw_signup=1`) + فرم یکپارچه تکمیل پروفایل:** ثبت خودکار کد معرف مدیر برای تمام ثبت‌نام‌های بدون معرف؛ باز شدن مستقیم سایت داخل مرورگر DApps تراست‌ولت برای ثبت‌نام/امضا؛ و دریافت شماره تماس، اسم مستعار، نام کاربری و رمز عبور پس از ورود با کیف‌پول، گوگل یا تلگرام.
+  - **نوار قیمت پیوسته بی‌انتها (`LiveTickerBar`) + کلیک مستقیم به صفحه بازارها + بروزرسانی کامل `LandingPage.tsx`:**
+    - نوار `LiveTickerBar.tsx` با دو مسیر یکسان و انیمیشن سخت‌افزاری `translate3d(-50%, 0, 0)` و حداقل ۱۶ ارز دیجیتال برتر (`BTC, ETH, SOL, BNB, XRP, DOGE, TON, ADA, AVAX, SUI, LINK, DOT, ...` — بدون افتادن سهام توکنیزه‌شده جای ارزهای اصلی) مشکل سفید شدن پایان چرخه را کاملاً برطرف کرد و در **هر دو حالت ساده و حرفه‌ای** (و نیز لندینگ) نمایش می‌یابد.
+    - کلیک روی هر ارز در نوار بالای داشبورد، کاربر را مستقیم به `MarketsPage` (`markets`) هدایت کرده، جستجو را بازنشانی و کارت تمرکز (`market-spotlight-card`) + ردیف پین‌شده همان ارز را نمایش می‌دهد.
+    - صفحه معرفی پیش از ورود (`LandingPage.tsx`) با بخش‌های کامل `#whats-new` (`V11.7.2`), `#live-markets` تعاملی متصل به نوار قیمت بالا، ۵ موتور همزمان، اسنایپر ۵ دقیقه، استودیو کارت ۱۶:۹ و ۹:۱۶، و مدل ۰٪ اشتراک / ۳٪ کارمزد سود کاملاً همگام‌سازی شد.
 
 ---
 
-## ۴. معماری پایگاه داده (`44` مایگریشن D1)
+## ۴. معماری پایگاه داده (`47` مایگریشن D1)
 
 | بازه مایگریشن | نسخه متناظر | جداول و ستون‌های کلیدی افزوده‌شده / اصلاح‌شده |
 | :--- | :--- | :--- |
@@ -159,41 +183,45 @@ Dollarino/
 | `0037`–`0040` | V11.0–V11.4 | `bot_configs.{active_engines_json, custom_paper_balance, sniper_*, bot_budget_*, trading_mode_selected}`, `treasury_deposits`, `account_notes`, `users.risk_terms_accepted_at` |
 | `0041` | V11.5 | ۱۵ ایندکس ترکیبی (`idx_trades_user_status_mode_closed`, `idx_signals_user_created_desc`, ...), کنترل‌های مستقل انتشار سیگنال |
 | `0042`–`0044` | V11.6–V11.6.5 | `trust_wallet_nonces`, پاکسازی آدرس‌های Placeholder و تریدرهای دمو، `sender_address`, `users.{display_name, auth_provider, google_sub, profile_completed, totp_secret, totp_enabled, totp_verified_at}` |
+| `0045`–`0047` | V11.6.6–V11.7.2 | ۱۰ ایندکس پوششی خوانش (`0045`) + `bot_configs.{notification_prefs_json, display_currency}` و `verified_profit_cards.{trade_source, entry_price, exit_price, signal_name, token_address, chain_id, token_image_url, revoked}` (`0046`) + ستون‌های فیلتر پیشرفته اسنایپر ۵ دقیقه `bot_configs.{sniper_max_pair_age_minutes, sniper_preset, sniper_pro_filters_json}` (`0047`) |
 
 ---
 
 ## ۵. موتورهای ترید ۵گانه و اجرای همزمان
 
-در نسخه `V11.0+` به بالا (و نسخه فعلی `V11.6.5`)، تنظیم `bot_configs.active_engines_json` اجازه می‌دهد تا **هر ۵ موتور به طور مستقل یا همزمان** برای هر حساب فعال باشند:
+در نسخه `V11.0+` به بالا (و نسخه فعلی `V11.7.2`)، تنظیم `bot_configs.active_engines_json` اجازه می‌دهد تا **هر ۵ موتور به طور مستقل یا همزمان** برای هر حساب فعال باشند (و در حساب‌های تازه تمام موتورها برای ایمنی خاموش‌اند تا با شروع ربات، موتور برگزیده ذخیره و فعال شود):
 
 1. **هوش مصنوعی مرکزی دلارینو (`CENTRAL_AI`):** اجماع چندمدلی روی موتورهای ثبت‌شده ادمین (`platform_ai_engines`) و درگاه Hilinkup (`deepseek-v4.1-flash`, OpenAI, Anthropic, Gemini) همراه با فالبک داخلی `dollarino-live-ai` جهت تضمین صفر بودن قطعی.
-2. **استراتژی منتخب دُرنا V1 (`DOLLARINO_V01` / `KBOs`):** استراتژی ترکیبی کوانت اختصاصی روی هسته `packages/core/src/strategies.ts` و `kiya-bot.ts` با اسکن کل بازار (`ALL_MARKET` از ۸۰۰+ جفت فیوچرز و ۱۰۰۰+ اسپات).
-3. **هوش مصنوعی شخصی من (`MY_AI`):** پروفایل قابل آموزش کاربر با قوانین معاملاتی، تایم‌فریم‌ها و سبک ریسک شخصی، و امکان اجرای استراتژی‌های سفارشی Pine Script / Python از `user_strategies`.
-4. **کپی‌ترید حرفه‌ای (`COPY_TRADE`):** شامل کپی از تریدرهای تاییدشده سایت و **Smart Copy Pro V2** (ردیابی ولت‌های برتر آن‌چین Top-10 و کپی‌ولت اختصاصی ۲۴/۷ با کلید در اختیار کاربر).
-5. **اسنایپر لیستینگ و میم‌کوین (`SNIPER`):** پایش پیوسته توکن‌های جدید در `listing-sniper.ts` روی شبکه‌های Solana / BSC / Base با فیلتر نقدینگی (`$25K+`)، نمره ضدراگ (`75+`)، مدیریت اسلیپیج و تریلینگ استاپ.
+2. **استراتژی منتخب دُرنا V1 (`DOLLARINO_V01` / `KBOs`):** استراتژی ترکیبی کوانت اختصاصی روی هسته `packages/core/src/strategies.ts` و `kiya-bot.ts` با اسکن کل بازار (`ALL_MARKET` از ۸۰۰+ جفت فیوچرز و ۱۰۰۰+ اسپات) و سوییچ TP/SL درصدی (`%`) و قیمتی (`$`).
+3. **هوش مصنوعی شخصی من (`MY_AI`):** پروفایل قابل آموزش کاربر با قوانین معاملاتی، تایم‌فریم‌ها و سبک ریسک شخصی، و امکان اجرای استراتژی‌های سفارشی Pine Script v4/v5/v6 (با پشتیبانی از `ta.*`, باکس، خط، لیبل و جدول HUD) و Python از `user_strategies`.
+4. **کپی‌ترید حرفه‌ای (`COPY_TRADE`):** شامل کپی از تریدرهای تاییدشده سایت و **Smart Copy Pro V2** (ردیابی ولت‌های برتر آن‌چین Top-10 و کپی‌ولت اختصاصی ۲۴/۷ با کلید در اختیار کاربر روی EVM و Solana).
+5. **اسنایپر لیستینگ و میم‌کوین (`SNIPER`):** پایش پیوسته توکن‌های جدید در `listing-sniper.ts` روی شبکه‌های Solana / BSC / Base با فیلتر سن جفت‌ارز (`maxPairAgeMinutes` از ۱ دقیقه تا ۷۲ ساعت)، پریست‌های حرفه‌ای (`5M_DEGEN`)، فیلتر نقدینگی (`$25K+`)، نمره ضدراگ (`75+`)، مدیریت اسلیپیج و تریلینگ استاپ.
 
-تمام حلقه اجرایی از طریق **Cloudflare Durable Object (`TradingBotCoordinator` در `engine/bot-do.ts`)** با مکانیزم Alarm خودکار (`90s` در حالت بیکاری و زمان‌بندی بهینه حین رصد) و **کرون دقیقه‌ای `* * * * *`** مدیریت می‌شود.
+تمام حلقه اجرایی از طریق **Cloudflare Durable Object (`TradingBotCoordinator` در `engine/bot-do.ts`)** با مکانیزم Alarm خودکار (`45s/90s/120s` تطبیقی) و **کرون دقیقه‌ای `* * * * *`** مدیریت می‌شود.
 
 ---
 
-## ۶. معماری غیرامانی Trust Wallet DApp، Perp DEX و اسنایپر
+## ۶. معماری غیرامانی Trust Wallet DApp، Perp DEX، سولانا و اسنایپر
 
-در معماری نهایی `V11.6.5`:
+در معماری نهایی `V11.7.2`:
 - **احراز مالکیت کیف‌پول (`routes/trustwallet.ts`):** صدور Nonce یک‌بارمصرف با انقضای ۵ دقیقه‌ای در `trust_wallet_nonces` و تایید رمزنگاری امضای `personal_sign` (EIP-191 + بازیابی کلید عمومی `secp256k1` بدون افشای کلید خصوصی).
-- **چندشبکه‌ای بومی (`lib/trustwallet.ts`):** پشتیبانی از EVM (`ETH`, `BSC`, `Base`, `Arbitrum`, `Polygon`, `Optimism`, `Avalanche`)، `Solana`، `TON` و `TRON`.
+- **چندشبکه‌ای بومی (`lib/trustwallet.ts`):** پشتیبانی از EVM (`ETH`, `BSC`, `Base`, `Arbitrum`, `Polygon`, `Optimism`, `Avalanche`)، `Solana` (`SOL / USDC · Jupiter`)، `TON` و `TRON`.
+- **شارژ سریع خزانه سولانا و EVM (`POST /api/trustwallet/build-solana-fund-tx`):** ساخت تراکنش آماده انتقال بومی Solana (`SystemProgram::Transfer` در `buildUnsignedSolanaTransferTx`) به همراه لینک مستقیم Jupiter (بدون نیاز به Approve روتر روی سولانا) و دیپ‌لینک `coin=501` در Trust Wallet.
 - **Perp DEX بدون دسترسی برداشت (`dex/perp-dex.ts` و `DexTrustPage.tsx`):** تولید کلید اختصاصی معامله‌گر در کلاینت، امضای استاندارد **EIP-712 `HyperliquidTransaction:ApproveAgent`** درون Trust Wallet DApp و رمزنگاری با AES-256-GCM. این کلید **صرفاً حق باز/بسته‌کردن معامله دارد و هیچ حق برداشتی ندارد**.
-- **سوآپ و اتوترید واقعی (`POST /api/dex/build-swap-tx`):** ساخت calldata واقعی از مسیرهای Jupiter v6 (Solana) و ParaSwap/1inch/Router (EVM) برای تایید تک‌کلیکی درون DApp؛ و در حالت `LIVE + AUTO` با کپی‌ولت اختصاصی ۲۴/۷ یا کنترل بودجه روی ولت خود کاربر (`bot_budget_mode`), اجرای واقعی و ثبت `tx_hash`.
-- **Zero-Custody UI (`V11.6.5`):** تمامی باکس‌ها و دکمه‌های بخش سرمایه (`TreasuryBankingHub.tsx`, `DexTrustPage.tsx`) کاملاً بر **حفظ سرمایه داخل Trust Wallet شخصی کاربر** و **تعیین سقف بودجه مجاز ربات** متمرکز هستند و هیچ مسیر واریز سرمایه به سایت ندارند.
+- **سوآپ و اتوترید واقعی (`POST /api/dex/build-swap-tx`):** ساخت calldata واقعی از مسیرهای Jupiter v6 (Solana) و ParaSwap/1inch/Router (EVM) برای تایید تک‌کلیکی درون DApp؛ و در حالت `LIVE + AUTO` با کپی‌ولت اختصاصی ۲۴/۷ یا کنترل بودجه روی ولت خود کاربر (`bot_budget_mode`)، اجرای واقعی و ثبت `tx_hash`.
+- **تنظیم دوحالته TP/SL (`%` و `$`) با محاسبه `ROE %`:** در تمام ترمینال‌ها و فرم‌های مدیریت سفارش، کاربر می‌تواند سطوح SL و TP1–TP3 را بر حسب درصد فاصله قیمتی (`%` با چیپ‌های سریع `-1%..-5%` و `+2%..+20%`) یا قیمت دقیق (`$`) تنظیم کند.
+- **Zero-Custody UI (`V11.6.5–V11.7.2`):** تمامی باکس‌ها و دکمه‌های بخش سرمایه (`TreasuryBankingHub.tsx`, `DexTrustPage.tsx`) کاملاً بر **حفظ سرمایه داخل Trust Wallet شخصی کاربر** و **تعیین سقف بودجه مجاز ربات** متمرکز هستند و هیچ مسیر واریز سرمایه به سایت ندارند.
 
 ---
 
-## ۷. سیستم مالی ۰٪ اشتراک و کارمزد ۳٪ از سود واقعی
+## ۷. سیستم مالی ۰٪ اشتراک، ۳ معامله رایگان، کارمزد ۳٪ از سود و معافیت مدیر
 
 - **حذف کامل قفل‌های ۴۰۲ (`paidSubscriptions: false`):** دسترسی به تمام موتورها، ایدئولوژی کدنویسی، چت AI، رادارها و دمو دلخواه (`$50` تا `$10M`) کاملاً آزاد است.
 - **مدل کارمزد ۳٪ (`services/server-fee.ts`):**
-  - ۳ معامله سودده اول لایو: **کاملاً رایگان (`۰٪`)**.
-  - معاملات ضررده لایو: **کارمزد ۰٪**.
-  - از معامله سودده چهارم به بعد در حالت لایو: **۳٪ از سود خالص** در `server_fee_ledger` ثبت می‌شود.
+  - **حساب‌های مدیر و مالک (`owner` / `admin`):** معافیت ۱۰۰٪ از کارمزد ۳٪، Rate Limit، حداقل موجودی ۱۰ دلاری و سقف پوزیشن‌ها (`isUserFeeExempt`).
+  - **۳ معامله سودده اول لایو کاربران:** **کاملاً رایگان (`۰٪`)**.
+  - **معاملات ضررده لایو:** **کارمزد ۰٪**.
+  - **از معامله سودده چهارم به بعد در حالت لایو:** **۳٪ از سود خالص** در `server_fee_ledger` ثبت می‌شود (`۹۷٪` سود خالص برای کاربر).
 - **تسویه دو منظوره (`SubscriptionPage.tsx` & `TreasuryBankingHub.tsx`):**
   1. **تسویه بدهی کارمزد ۳٪ سود واقعی:** پرداخت مستقیم از Trust Wallet (BSC BEP20 / TRON TRC20 / سایر شبکه‌ها) به آدرس رسمی ثبت‌شده توسط ادمین در D1 با تایید یا کشف آن‌چین.
   2. **شارژ اختیاری اعتبار کارمزد (`fee_prepaid_credit_usd`):** امکان پیش‌پرداخت اعتبار کارمزد یا تبدیل موجودی پاداش رفرال جهت جلوگیری از توقف ربات حین معاملات متوالی (هرگز به عنوان سرمایه ترید استفاده نمی‌شود).
@@ -203,34 +231,40 @@ Dollarino/
 ## ۸. امنیت، احراز هویت چندمسیره، رمزنگاری و TOTP 2FA
 
 1. **رمزنگاری لایه‌محافظ (`crypto.ts`):** کلیدهای API، کلید ایجنت Perp و کلیدهای اختیاری ولت ۲۴/۷ با کلید اصلی سرور (`MASTER_ENCRYPTION_KEY`) و الگوریتم **AES-256-GCM** به همراه IV تصادفی یکتا رمزنگاری می‌شوند.
-2. **کارت‌های ضدجعل (`cards/renderer.ts`):** تمام کارت‌های سود (`LIVE` یا `DEMO`) با امضای `HMAC-SHA256` صادر و قابل راستی‌آزمایی همگانی در `/verify-card/:cardId` هستند.
-3. **ثبت‌نام ۳ مسیره (`auth.ts`, `AuthPage.tsx`, `0044`):**
-   - اتصال ۱-کلیکی **Trust Wallet** (با Nonce + `ecrecover`)
-   - ورود و ثبت‌نام از طریق **Google**
+2. **کارت‌های ضدجعل ۱۶:۹ و ۹:۱۶ (`cards/renderer.ts` & `profit-cards.ts`):** تمام کارت‌های سود (`LIVE` یا `DEMO` روی `ALL | PERP | DEX | COPY` و ۸ بازه `24H..ALL + TRADE`) با امضای `HMAC-SHA256` و کد QR وکتور صادر و قابل راستی‌آزمایی یا ابطال در `/verify-card/:cardId` و پنل مدیریت هستند.
+3. **ثبت‌نام ۳ مسیره (`auth.ts`, `AuthPage.tsx`, `0044`, `V11.7.2`):**
+   - اتصال ۱-کلیکی **Trust Wallet DApp Browser** (دکمه ثبت‌نام مستقیماً درون مرورگر DApps تراست‌ولت با `?auth_screen=1&auth_mode=register&tw_signup=1` باز شده و با Nonce + `ecrecover` امضا می‌شود).
+   - ورود و ثبت‌نام از طریق **Google OAuth** (قابل پیکربندی لحظه‌ای از پنل ادمین وب و تلگرام).
    - ورود سریع از طریق ربات و ویجت **Telegram** (همراه با Phone KYC ضد چندحسابی و کد جادویی `/weblogin`).
-4. **دروازه تکمیل پروفایل (`CompleteProfileGate.tsx`):** الزام تنظیم نام نمایشی/نام کاربری و مشخصات پایه پیش از ورود به معاملات.
-5. **احراز هویت دوعاملی TOTP (`RFC 6238`):** تولید سکرت `Base32` و کد QR استاندارد سازگار با Google Authenticator / Authy (`TotpService` در `crypto.ts` و تنظیمات در `ServicesPage.tsx`), تایید دو‌مرحله‌ای هنگام ورود (`pending2faToken` در `AuthPage.tsx`) و محافظت از عملیات حساس.
-6. **Rate Limiting دولایه (`security.ts`):** محدودکننده همزمان در حافظه ایزوله و جدول `rate_limits` در D1 روی ورود، ثبت‌نام، پرداخت، برداشت رفرال، اسکن AI و سفارشات دستی.
+   - **کد معرف خودکار مدیر (`resolveEffectiveReferralCode`):** در صورت ثبت‌نام کاربر جدید بدون ورود کد معرف، کد معرف مدیر/مالک به صورت خودکار اعمال می‌شود.
+4. **دروازه تکمیل یکپارچه پروفایل (`CompleteProfileGate.tsx`):** دریافت **شماره تماس** (با نرمال‌سازی ارقام فارسی/لاتین و قفل ایمن شماره تاییدشده تلگرام)، **اسم مستعار (نام نمایشی)**، **نام کاربری یکتا** و **رمز عبور** برای تمام کاربران ورودی از کیف‌پول، گوگل یا تلگرام.
+5. **احراز هویت دوعاملی TOTP (`RFC 6238`) و صفرسازی ایمن مدیر:** تولید سکرت `Base32` و کد QR استاندارد سازگار با Google Authenticator؛ و هنگام اجرای حذف/صفرسازی حساب روی اکانت `owner`/`admin` (`resetPrivilegedUserAccountToFreshState`)، کل داده‌های مالی/معاملاتی به `۰` بازمی‌گردد بدون پاک شدن حساب یا نقش مدیریتی.
+6. **Rate Limiting دولایه (`security.ts`):** محدودکننده همزمان در حافظه ایزوله و جدول `rate_limits` در D1 روی ورود، ثبت‌نام، پرداخت، برداشت رفرال، اسکن AI و سفارشات دستی (با معافیت کامل مدیران).
 
 ---
 
 ## ۹. ربات تلگرام ۲۴/۷، کانال‌ها و مینی‌اپ
 
 ماژول `apps/worker/src/telegram/` دارای ۷ بخش مجزاست:
-- **`handler.ts`:** ورود و ثبت‌نام با Phone KYC، منوهای تاشو، اتصال Trust Wallet و انتخاب شبیه‌ساز، تغییر حالت ساده/حرفه‌ای، تنظیم مقادیر معامله 🪛، تحلیل چارت با ارسال عکس به ربات، مدیریت پوزیشن‌های باز و بسته‌کردن دستی، پشتیبانی آنلاین با ارسال عکس، و `My AI`.
-- **`admin-menu.ts`:** پنل مدیریت ۹-بخشی کامل در تلگرام قفل‌شده روی شناسه مالک (`944021185`) با تایم‌اوت ۱۵ دقیقه‌ای و خروجی مستقیم فایل‌های CSV/Excel و JSON.
+- **`handler.ts`:** ورود و ثبت‌نام با Phone KYC (با قفل ایمن شماره تاییدشده و دروازه تکمیل مشخصات در اولین ورود وب)، منوهای تاشو، اتصال Trust Wallet و انتخاب شبیه‌ساز، تغییر حالت ساده/حرفه‌ای، تنظیم مقادیر معامله 🪛، منوی دقیق **`دریافت اعلان 🔔`** (تغییر واحد نمایش `USD/IRT` و ۵ سوییچ دقیق اعلان‌ها همگام با سایت)، دستور **`/card`** برای صدور کارت سود `۱۶:۹` و **`۹:۱۶ استوری`** در ۸ بازه زمانی (از `24H` تا `6M` و تک‌معامله `TRADE`), تحلیل چارت با ارسال عکس به ربات، مدیریت پوزیشن‌های باز و بسته‌کردن دستی، پشتیبانی آنلاین با ارسال عکس، و `My AI`.
+- **`admin-menu.ts`:** پنل مدیریت ۹-بخشی کامل در تلگرام قفل‌شده روی شناسه مالک (`944021185`) با تایم‌اوت ۱۵ دقیقه‌ای، ثبت/ویرایش لحظه‌ای کلیدهای `Google OAuth` و خروجی مستقیم فایل‌های CSV/Excel و JSON.
 - **`publisher.ts` & `formatter.ts`:** ارسال خودکار سیگنال‌های تاییدشده، کارت‌های بسته‌شدن معامله (`TP1/TP2/TP3` و `SL` با ساعت تهران)، اخبار و هشدارهای AI با **کنترل مستقل روشن/خاموش برای کانال‌ها در برابر پی‌وی ربات کاربران** (`publish_signals_to_channels` / `publish_signals_to_bot_users`).
 - **`group-moderator.ts`:** نظارت خودکار بر گروه‌های تلگرامی، اخطار و کنترل اسپم (`telegram_group_warnings`).
 
 ---
 
-## ۱۰. معماری فرانت‌اند و اکستنشن کروم MV3
+## ۱۰. معماری فرانت‌اند و اکستنشن کروم MV3 (`V11.7.2`)
 
 - **صفحات فرانت‌اند (`18` صفحه در `apps/web/src/pages/`):**
-  `LandingPage` · `AuthPage` · `OverviewPage` (ساده + حرفه‌ای) · `DexTrustPage` · `CopyConnectPage` · `SniperPage` · `MarketsPage` · `TerminalPage` · `RadarLabPage` · `MyAiPage` · `AiChatPage` · `PortfolioPage` · `SubscriptionPage` (کارمزد ۳٪ + رفرال) · `ServicesPage` (پروفایل + 2FA) · `WeeklyCardPage` · `VerifyCardPage` · `FaqPage` · `AdminPage` (مرکز فرماندهی مالک + مدیریت D1).
-- **کامپوننت‌های اختصاصی کلیدی (`36` مورد):** `Layout` (هدر شیشه‌ای چسبان + داک خمیده iOS موبایل) · `ProDropdown` (جایگزین کامل تمام `<select>`های بومی) · `SmoothSlider` · `FloatingAiChat` (گوی AssistiveTouch هوشمند در کل سایت) · `TreasuryBankingHub` (سقف سرمایه روی ولت شخصی + پرداخت کارمزد ۳٪) · `SmartCopyProHub` · `DexScreenerRadarPanel` · `SniperWorkbench` · `OnboardingAcademyModal` (آکادمی تعاملی چندمرحله‌ای) · `CompleteProfileGate` · `CandlestickChart` · `StrategyIdePanel` · `CoinIcon` & `BrandLogos`.
+  `LandingPage` (بروزرسانی کامل V11.7.2 با بخش `#whats-new`, `#live-markets` تعاملی، ۵ موتور، کپی‌ترید V2، مدل ۰٪ اشتراک و کارمزد ۳٪، سوالات متداول و فوتر) · `AuthPage` (ثبت‌نام مستقیم DApps تراست‌ولت + Google + Telegram) · `OverviewPage` (ساده ۵-کارته + حرفه‌ای) · `DexTrustPage` · `CopyConnectPage` · `SniperPage` · `MarketsPage` (با کارت تمرکز اختصاصی `market-spotlight-card` و پین خودکار ارز برگزیده از نوار قیمت) · `TerminalPage` (با سوییچر `%` و `$` برای SL/TP1-3) · `RadarLabPage` (ویرایشگر گرافیکی کامل Pine Script v4/v5/v6 + Python + Visual) · `MyAiPage` · `AiChatPage` · `PortfolioPage` · `SubscriptionPage` (کارمزد ۳٪ + رفرال) · `ServicesPage` (پروفایل، ۲FA، تنظیمات اعلان/ارز و صفرسازی حساب مدیریتی) · `WeeklyCardPage` (استودیو کارت سود `16:9` و `9:16` در ۸ بازه) · `VerifyCardPage` · `FaqPage` · `AdminPage` (مرکز فرماندهی مالک، ابطال کارت سود، مانیتورینگ ربات‌ها، صفرسازی ۰ و مدیریت D1).
+- **نوار قیمت زنده پیوسته (`LiveTickerBar.tsx` + `index.css`):**
+  - با رندر دو ردیف هم‌تراز (`>= 16` ارز دیجیتال برتر در هر ردیف با اولویت `BTC, ETH, SOL, BNB, XRP, DOGE, TON, ADA, AVAX, SUI, LINK, DOT, TRX, NEAR, LTC, ARB, OP`) داخل کانتینر `dir="ltr" overflow-hidden` و انیمیشن سخت‌افزاری `translate3d(-50%, 0, 0)` چرخش کاملاً نرم و **بدون هرگونه فضای سفید انتهای چرخه** در دسکتاپ، موبایل و پنل کناری دارد.
+  - در هر دو حالت **ساده** و **حرفه‌ای** (و صفحه معرفی) قابل کلیک است و در داشبورد با کلیک روی هر ارز، مستقیماً `MarketsPage` را با تمرکز روی همان ارز باز می‌کند.
+- **کامپوننت‌های اختصاصی کلیدی (`38+` مورد):** `LiveTickerBar` · `TpSlModeSwitch` · `Layout` · `ProDropdown` · `SmoothSlider` · `FloatingAiChat` · `TreasuryBankingHub` · `SmartCopyProHub` · `DexScreenerRadarPanel` · `SniperWorkbench` · `OnboardingAcademyModal` · `CompleteProfileGate` · `CandlestickChart` · `StrategyIdePanel` · `TrustWalletConnectInline` · `PerpDexPanel` · `CoinIcon` & `BrandLogos`.
 - **تم روز و شب (`paper` و `cosmic`):** ذخیره در `dollarino_look` و همگام‌سازی فوری با `data-theme` و کلاس `.theme-light` / `.dark`.
-- **اکستنشن مرورگر (`apps/extension/`, Manifest V3 v11.6):** پکیج آماده نصب در Chrome/Edge/Brave شامل ۴ تب (ربات، بازارها، رادار DEX، اتصال و رفرال)، احراز با کلید اختصاصی `X-Dollarino-Extension-Key`، اسکن لحظه‌ای AI و Kill Switch اضطراری.
+- **اکستنشن مرورگر (`apps/extension/`, Manifest V3 `11.7.2` · `Native Chrome Side Panel`):**
+  - استفاده از API بومی `chrome.sidePanel` (`side_panel: { default_path: "sidepanel.html" }` + `openPanelOnActionClick: true`) تا دلارینو دقیقاً مانند Trust Wallet کنار پنجره مرورگر Chrome چسبیده بماند.
+  - قفل اجباری روی **حالت ساده اختصاصی (`?ui_mode=simple&embed=sidepanel`)** بدون نمایش دکمه حالت حرفه‌ای یا پاپ‌آپ مزاحم، با پشتیبانی از فایل آماده دانلود در `/downloads/dollarino-extension.zip`.
 
 ---
 
@@ -238,19 +272,19 @@ Dollarino/
 
 | فایل روتر | پیشوند مسیر | وظیفه و اندپوینت‌های اصلی |
 | :--- | :--- | :--- |
-| `auth.ts` + `index.ts` | `/api/auth/*`, `/api/public/*` | `login`, `register`, `google`, `telegram-magic-login`, `session`, `profile`, `avatar`, `totp/setup|verify|disable`, `creator`, `health`, `verify-card/:cardId`, `ai-models`, `ai-chat` |
-| `trustwallet.ts` | `/api/trustwallet/*` | `nonce`, `connect`, `status`, `balances`, `sync-all`, `budget` (تنظیم سقف سرمایه ربات روی ولت خود کاربر) |
+| `auth.ts` + `index.ts` | `/api/auth/*`, `/api/public/*` | `login`, `register`, `google`, `wallet/nonce`, `wallet/verify`, `complete-profile`, `telegram-magic-login`, `session`, `profile`, `avatar`, `DELETE /account` (صفرسازی امن برای مدیر), `totp/*`, `creator`, `health`, `verify-card/:cardId`, `market-snapshot` (۱۶ ارز برتر), `ai-models`, `ai-chat` |
+| `trustwallet.ts` | `/api/trustwallet/*` | `nonce`, `connect`, `status`, `balances`, `sync-all`, `budget`, `build-solana-fund-tx` (شارژ خزانه سولانا) |
 | `dex.ts` | `/api/dex/*` | `radar`, `ai-analyze`, `build-swap-tx`, `perp-approve-agent`, `perp-connect`, `positions`, `track-trade` |
-| `trading.ts` | `/api/trading/*` | `dashboard` (`?lite=1`), `bot/toggle`, `bot/config`, `orders/manual`, `positions/close`, `ai-scan-now`, `strategies/*`, `alerts/*`, `cards/*`, `notes/*`, `live-ticks`, `events/stream` |
+| `trading.ts` | `/api/trading/*` | `dashboard` (`?lite=1`), `bot/start` (ذخیره خودکار موتور)، `bot/toggle`, `bot/config`, `orders/manual`, `positions/close`, `ai-scan-now`, `sniper/scan-now`, `strategies/*`, `alerts/*`, `cards/*` (۱۶:۹ و ۹:۱۶ + ۸ بازه), `notes/*`, `live-ticks` (`?poll=1`), `events/stream` |
 | `copy-trade.ts` | `/api/copy/*` | `traders`, `follow`, `unfollow`, `smart-wallets`, `top-whales`, `vaults/*` (تنظیمات و کلید اختصاصی کاربر) |
 | `connections.ts` | `/api/connections/*` | مدیریت اتصالات شبیه‌ساز/والت، کلیدهای اکستنشن و وضعیت همگام‌سازی |
 | `my-ai.ts` | `/api/my-ai/*` | آموزش پروفایل شخصی، گفتگو با مربی استراتژی و فعال‌سازی روی ربات |
 | `ai-assistant.ts` | `/api/ai-assistant/*` | چت چندمدلی با تاریخچه جلسات، انتخاب مدل، تحلیل تصویر چارت و تبدیل به سیگنال |
 | `chart-ai.ts` | `/api/chart-ai/*` | تحلیل تکنیکال چارت روی نماد/تایم‌فریم زنده در ترمینال |
-| `subscriptions.ts` | `/api/subscriptions/*` | دفترکل کارمزد ۳٪، پرداخت یا شارژ اختیاری اعتبار کارمزد، کشف تراکنش، باشگاه رفرال و برداشت پاداش |
+| `subscriptions.ts` | `/api/subscriptions/*` | دفترکل کارمزد ۳٪ (معافیت مدیر)، پرداخت یا شارژ اختیاری اعتبار کارمزد، کشف تراکنش، باشگاه رفرال و برداشت پاداش |
 | `support.ts` | `/api/support/*` | ارسال تیکت متنی/تصویری، سوئیچ `AI ⇄ HUMAN_ADMIN` و پاسخ آنی پشتیبانی |
 | `webhooks.ts` | `/api/webhook/*` | وب‌هوک تلگرام، وب‌هوک TradingView Alerts و تایید سیگنال‌ها |
-| `admin.ts` | `/api/admin/*` | مرکز فرماندهی مالک: `overview`, `users/*`, `signal-controls`, `ai-engines/*`, `payments/*`, `broadcasts/*`, `banners/*`, `founder-profile`, `database/{stats,backup,restore,wipe}`, `prune-logs` |
+| `admin.ts` | `/api/admin/*` | مرکز فرماندهی مالک: `overview`, `users/*` (incl. `POST /users/:id/reset-account`), `signal-controls`, `profit-cards/*` (incl. `revoke`), `active-bots`, `users/:id/bot-stop`, `ai-engines/*`, `payments/*`, `broadcasts/*`, `banners/*`, `founder-profile`, `database/{stats,backup,restore,wipe}`, `prune-logs` |
 
 ---
 
@@ -273,12 +307,15 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put HILINKUP_API_KEY
 ```
 
-### ۳. استقرار نهایی روی Cloudflare Workers
+### ۳. استقرار نهایی همزمان روی Cloudflare Workers و Cloudflare Pages
 ```bash
+npx wrangler d1 migrations apply dollarino-db --remote
 npx wrangler deploy
+npx wrangler pages deploy apps/web/dist --project-name=dollarino
 ```
 
 ### ۴. بررسی سلامت پس از استقرار
-- `GET /api/health` باید `"ok": true` و `"paidSubscriptions": false` را برگرداند.
-- هدرهای `/`, `/index.html`, `/sw.js` باید `Cache-Control: no-cache, no-store, must-revalidate` باشند تا مرورگر و PWA کاربران همواره آخرین بیلد را بدون کش قدیمی دریافت کنند.
+- `GET /api/health` باید `"ok": true`, `"version": "11.7.2"` و `"paidSubscriptions": false` را برگرداند.
+- `GET /api/public/market-snapshot?symbol=BTCUSDT` باید تا `16` جفت‌ارز برتر کریپتویی برگرداند.
+- هدرهای `/`, `/index.html`, `/sw.js` باید `Cache-Control: no-cache, no-store, must-revalidate` و بدون هرگونه `X-Frame-Options` باشند تا PWA و Chrome Side Panel بدون تداخل کش کار کنند.
 - از بخش **مدیریت ← دیتابیس (بکاپ/پاکسازی)** می‌توانید در هر لحظه از D1 بکاپ کامل `.json` تهیه کنید یا لاگ‌های قدیمی بالای ۳۰ روز را هرس نمایید.

@@ -42,8 +42,12 @@ export async function enforceRateLimit(
   env: Env,
   bucketKey: string,
   maxHits: number,
-  windowSeconds: number
+  windowSeconds: number,
+  opts?: { bypass?: boolean }
 ): Promise<{ allowed: boolean; remaining: number; retryAfterSec: number }> {
+  if (opts?.bypass) {
+    return { allowed: true, remaining: 999_999, retryAfterSec: 0 };
+  }
   const nowSec = Math.floor(Date.now() / 1000);
   const windowStart = Math.floor(nowSec / windowSeconds) * windowSeconds;
   const memKey = `${bucketKey}:${windowStart}`;

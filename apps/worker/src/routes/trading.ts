@@ -29,9 +29,18 @@ import {
   type StrategyKey,
   type Timeframe,
 } from '@dollarino/core';
-import { requireAuth, type AppVariables } from '../auth.js';
+import { ensureUserDefaults, requireAuth, type AppVariables } from '../auth.js';
 import { getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
-import { buildProfitCardSvg, renderProfitCardPng } from '../cards/renderer.js';
+import { buildProfitCardSvg, renderProfitCardPng, type ProfitCardRenderInput } from '../cards/renderer.js';
+import {
+  buildTokenDisplayIconUrl,
+  listUnifiedClosedTrades,
+  normalizeCardPeriod,
+  normalizeCardSource,
+  resolveTokenLogoPngDataUri,
+  type ProfitCardPeriod,
+  type ProfitCardTradeSource,
+} from '../services/profit-cards.js';
 import { decryptVaultJson, hmacSha256Hex, randomId, sha256Hex } from '../crypto.js';
 import { enforceRateLimit } from '../security.js';
 import {
@@ -45,6 +54,7 @@ import {
   discoverListingAndBoomCandidates,
   executeSniperBuyForCandidate,
   runNewListingAndMemeSniperForUser,
+  type SniperAdvancedFilters,
   type SniperCandidate,
   type SniperTargetType,
 } from '../engine/listing-sniper.js';
@@ -87,6 +97,38 @@ function resolveTradeSourceInfo(strategyKey?: string | null): {
     return { sourceKey: 'MANUAL', sourceLabelFa: 'ترمینال دستی', sourceLabelEn: 'Manual Terminal' };
   }
   return { sourceKey: 'BOT', sourceLabelFa: 'ربات استراتژی', sourceLabelEn: 'Strategy Bot' };
+}
+
+const LIVE_TICKS_POLL_CACHE = new WeakMap<
+  object,
+  Map<string, { ts: number; hasPositions: boolean; payload: Record<string, unknown> }>
+>();
+const TICKER_QUOTE_CACHE = new Map<string, { ts: number; price: number }>();
+const DEX_QUOTE_CACHE = new Map<string, { ts: number; price: number }>();
+
+export function invalidateLiveTicksCache(db: D1Database, userId?: string): void {
+  const map = LIVE_TICKS_POLL_CACHE.get(db as unknown as object);
+  if (!map) return;
+  if (userId) map.delete(userId);
+  else map.clear();
+}
+
+async function getCachedTickerPrice(
+  adapter: Awaited<ReturnType<typeof resolveUserExchangeAdapter>>['adapter'],
+  sym: string,
+  timeoutMs = 2000
+): Promise<number> {
+  const key = `${adapter.provider}:${sym}`;
+  const now = Date.now();
+  const hit = TICKER_QUOTE_CACHE.get(key);
+  if (hit && now - hit.ts < 3_000) return hit.price;
+  const px = Number(await withFastTimeout(adapter.getTickerPrice(sym), timeoutMs, '0'));
+  if (Number.isFinite(px) && px > 0) {
+    if (TICKER_QUOTE_CACHE.size > 400) TICKER_QUOTE_CACHE.clear();
+    TICKER_QUOTE_CACHE.set(key, { ts: now, price: px });
+    return px;
+  }
+  return 0;
 }
 
 async function withFastTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -231,12 +273,11 @@ async function buildLivePositionsSnapshot(
   await Promise.all(
     uniqueCexSymbols.slice(0, 12).map(async (sym) => {
       if (isLitePoll) {
-        const px = await withFastTimeout(adapter.getTickerPrice(sym), 2000, '0');
-        const num = Number(px);
+        const num = await getCachedTickerPrice(adapter, sym, 2000);
         if (num > 0) priceCache.set(sym, num);
       } else {
         const k = await withFastTimeout(adapter.getKlines(sym, '5m', 24), 2500, []);
-        const last = k.length ? k[k.length - 1]!.close : Number(await withFastTimeout(adapter.getTickerPrice(sym), 2000, '0'));
+        const last = k.length ? k[k.length - 1]!.close : await getCachedTickerPrice(adapter, sym, 2000);
         if (last > 0) {
           priceCache.set(sym, last);
           sparkCache.set(sym, k.length ? k.map((c) => c.close) : [last]);
@@ -290,9 +331,19 @@ async function buildLivePositionsSnapshot(
   }
   await Promise.all(
     [...uniqueDexTokens.values()].slice(0, 8).map(async (item) => {
+      const k = `${item.chainId}:${item.tokenAddress}`;
+      const hit = DEX_QUOTE_CACHE.get(k);
+      if (hit && Date.now() - hit.ts < 5_000) {
+        dexPriceMap.set(k, hit.price);
+        return;
+      }
       const pools = await withFastTimeout(getDexTokenPools(item.chainId, item.tokenAddress), 2200, []);
       const px = Number(pools[0]?.priceUsd || 0);
-      if (px > 0) dexPriceMap.set(`${item.chainId}:${item.tokenAddress}`, px);
+      if (px > 0) {
+        if (DEX_QUOTE_CACHE.size > 300) DEX_QUOTE_CACHE.clear();
+        DEX_QUOTE_CACHE.set(k, { ts: Date.now(), price: px });
+        dexPriceMap.set(k, px);
+      }
     })
   );
 
@@ -354,7 +405,7 @@ async function buildLivePositionsSnapshot(
     perpOpenSymbols.slice(0, 8).map(async (sym) => {
       const cleanBase = sym.toUpperCase().replace(/-PERP$/i, '').replace(/\/USDT$|USDT$/i, '');
       const pairSym = `${cleanBase}USDT`;
-      const px = priceCache.get(pairSym) ?? Number(await withFastTimeout(adapter.getTickerPrice(pairSym), 1800, '0'));
+      const px = priceCache.get(pairSym) ?? (await getCachedTickerPrice(adapter, pairSym, 1800));
       if (px > 0) perpPriceMap.set(sym, px);
     })
   );
@@ -395,7 +446,8 @@ async function resolveModeAwareWalletAndBalance(
   env: Env,
   userId: string,
   cfg: Pick<UserBotConfigRow, 'trading_mode' | 'market_type' | 'paper_balance'> | null,
-  activeProvider: ExchangeProviderId | undefined
+  activeProvider: ExchangeProviderId | undefined,
+  opts?: { skipWalletSummary?: boolean; usePollCache?: boolean }
 ) {
   const effectiveMode: 'PAPER' | 'LIVE' = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
   const effectiveProvider: ExchangeProviderId | undefined =
@@ -408,37 +460,57 @@ async function resolveModeAwareWalletAndBalance(
           : undefined;
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(env, userId, effectiveProvider);
+  const demoCfgBal = Number(cfg?.paper_balance ?? 10000) || 0;
+  const needTrustWalletCheck = !opts?.skipWalletSummary || (effectiveMode === 'LIVE' && provider === 'paper');
 
-  const [demoCfgBal, openLiveMarginRow, openPaperMarginRow, openDexPaperRow, openDexLiveRow, liveReadiness] = await Promise.all([
-    Promise.resolve(Number(cfg?.paper_balance ?? 10000) || 0),
+  const [tradesMarginRow, dexMarginRow, liveReadiness] = await Promise.all([
     env.DB.prepare(
-      `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used
-       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = 'LIVE'`
-    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
-    env.DB.prepare(
-      `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used
-       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = 'PAPER'`
-    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
-    env.DB.prepare(
-      `SELECT COALESCE(SUM(amount_usd), 0) AS used
-       FROM dex_trades WHERE user_id = ? AND status = 'OPEN' AND tx_hash LIKE 'PAPER_%'`
-    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
-    env.DB.prepare(
-      `SELECT COALESCE(SUM(amount_usd), 0) AS used
-       FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN') AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%')`
-    ).bind(userId).first<{ used: number }>().catch(() => ({ used: 0 })),
-    getTrustWalletLiveTotalUsd(env.DB, userId).catch(() => ({
-      hasWallet: false,
-      totalUsd: 0,
-      rpcReachable: false,
-      meetsMinimum: false,
-      minRequiredUsd: 10,
-      breakdown: {} as Record<string, number>,
+      `SELECT
+         COALESCE(SUM(CASE WHEN mode = 'LIVE' THEN CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL))) ELSE 0 END), 0) AS live_used,
+         COALESCE(SUM(CASE WHEN mode = 'PAPER' THEN CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL))) ELSE 0 END), 0) AS paper_used,
+         COALESCE(SUM(CASE WHEN mode = 'PAPER' THEN CAST(margin_used AS REAL) ELSE 0 END), 0) AS paper_full_used
+       FROM trades WHERE user_id = ? AND status = 'OPEN'`
+    ).bind(userId).first<{ live_used: number; paper_used: number; paper_full_used: number }>().catch(() => ({
+      live_used: 0,
+      paper_used: 0,
+      paper_full_used: 0,
     })),
+    env.DB.prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status = 'OPEN' AND tx_hash LIKE 'PAPER_%' THEN amount_usd ELSE 0 END), 0) AS dex_paper_used,
+         COALESCE(SUM(CASE WHEN status IN ('OPEN', 'PENDING_SIGN') AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%') THEN amount_usd ELSE 0 END), 0) AS dex_live_used,
+         COALESCE(SUM(CASE WHEN status = 'OPEN' AND note LIKE '%شکارچی دمو%' THEN CAST(amount_usd AS REAL) ELSE 0 END), 0) AS sniper_paper_used
+       FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN')`
+    ).bind(userId).first<{ dex_paper_used: number; dex_live_used: number; sniper_paper_used: number }>().catch(() => ({
+      dex_paper_used: 0,
+      dex_live_used: 0,
+      sniper_paper_used: 0,
+    })),
+    needTrustWalletCheck
+      ? getTrustWalletLiveTotalUsd(env.DB, userId, { useFullCache: opts?.usePollCache }).catch(() => ({
+          hasWallet: false,
+          totalUsd: 0,
+          rpcReachable: false,
+          meetsMinimum: false,
+          minRequiredUsd: 10,
+          breakdown: {} as Record<string, number>,
+        }))
+      : Promise.resolve({
+          hasWallet: false,
+          totalUsd: 0,
+          rpcReachable: false,
+          meetsMinimum: false,
+          minRequiredUsd: 10,
+          breakdown: {} as Record<string, number>,
+        }),
   ]);
 
-  const openDexPaperUsd = Math.max(0, Number(openDexPaperRow?.used || 0));
-  const openDexLiveUsd = Math.max(0, Number(openDexLiveRow?.used || 0));
+  const openLiveMargin = Math.max(0, Number(tradesMarginRow?.live_used || 0));
+  const openPaperMargin = Math.max(0, Number(tradesMarginRow?.paper_used || 0));
+  const openPaperFullMargin = Math.max(0, Number(tradesMarginRow?.paper_full_used || 0));
+  const openDexPaperUsd = Math.max(0, Number(dexMarginRow?.dex_paper_used || 0));
+  const openDexLiveUsd = Math.max(0, Number(dexMarginRow?.dex_live_used || 0));
+  const openSniperPaperUsd = Math.max(0, Number(dexMarginRow?.sniper_paper_used || 0));
 
   let balance: { free: string; used: string; total: string; currency: string };
   let displayProvider = provider;
@@ -447,7 +519,7 @@ async function resolveModeAwareWalletAndBalance(
   if (effectiveMode === 'LIVE' && provider === 'paper') {
     // Non-custodial Trust Wallet LIVE mode without CEX/Hyperliquid keys:
     // NEVER return Demo/Paper balance here — always reflect real Trust Wallet balance!
-    const usedLive = Math.max(0, Number(openLiveMarginRow?.used || 0) + openDexLiveUsd);
+    const usedLive = Math.max(0, openLiveMargin + openDexLiveUsd);
     const liveTotal = Math.max(0, Number(liveReadiness.totalUsd || 0));
     const freeLive = Math.max(0, liveTotal - usedLive);
     balance = {
@@ -460,6 +532,15 @@ async function resolveModeAwareWalletAndBalance(
     displayLabel = liveReadiness.hasWallet
       ? 'Trust Wallet (حساب واقعی)'
       : 'Trust Wallet (متصل نشده)';
+  } else if (effectiveMode === 'PAPER' && provider === 'paper') {
+    const usedNum = Math.max(0, openPaperFullMargin + openDexPaperUsd);
+    const freeNum = Math.max(0, demoCfgBal);
+    balance = {
+      free: freeNum.toFixed(2),
+      used: usedNum.toFixed(2),
+      total: (freeNum + usedNum).toFixed(2),
+      currency: 'USDT',
+    };
   } else {
     balance = await adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => ({
       free: effectiveMode === 'LIVE' ? '0.00' : demoCfgBal.toFixed(2),
@@ -479,7 +560,7 @@ async function resolveModeAwareWalletAndBalance(
     }
   }
 
-  const usedPaper = Math.max(0, Number(openPaperMarginRow?.used || 0) + openDexPaperUsd);
+  const usedPaper = Math.max(0, openPaperMargin + openDexPaperUsd);
   const demoTotalUsd = Math.max(0, demoCfgBal + usedPaper);
   const liveBalanceUsd =
     effectiveMode === 'LIVE' && provider !== 'paper'
@@ -492,6 +573,10 @@ async function resolveModeAwareWalletAndBalance(
     provider: displayProvider,
     label: displayLabel,
     balance,
+    prefetchedCapital: {
+      usedTradesMarginUsd: effectiveMode === 'LIVE' ? openLiveMargin : openPaperMargin,
+      usedSniperUsd: effectiveMode === 'PAPER' ? openSniperPaperUsd : 0,
+    },
     walletSummary: {
       activeMode: effectiveMode,
       demoBalanceUsd: Number(demoTotalUsd.toFixed(2)),
@@ -581,21 +666,27 @@ tradingRoutes.get('/overview', async (c) => {
 
 tradingRoutes.get('/dashboard', async (c) => {
   const user = c.get('user');
-  const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
-    .bind(user.id).first<UserBotConfigRow & {
-      margin_mode?: string;
-      mixer_threshold?: number;
-      mixer_weights_json?: string;
-      strategy_flow_json?: string;
-      kbos_params_json?: string;
-      risk_profile_json?: string;
-      trailing_stop_enabled?: number;
-      trailing_stop_pct?: number;
-      trail_after_tp1?: number;
-      started_at?: string | null;
-    }>();
+  const isLitePoll = c.req.query('lite') === '1';
+  const [cfg, activeRow] = await Promise.all([
+    c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
+      .bind(user.id).first<UserBotConfigRow & {
+        margin_mode?: string;
+        mixer_threshold?: number;
+        mixer_weights_json?: string;
+        strategy_flow_json?: string;
+        kbos_params_json?: string;
+        risk_profile_json?: string;
+        trailing_stop_enabled?: number;
+        trailing_stop_pct?: number;
+        trail_after_tp1?: number;
+        started_at?: string | null;
+      }>(),
+    c.env.DB.prepare(
+      `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
+    ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>(),
+  ]);
 
-  if (cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE') {
+  if (!isLitePoll && (cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE')) {
     const doId = c.env.TRADING_BOT_DO.idFromName('global-coordinator');
     const doStub = c.env.TRADING_BOT_DO.get(doId);
     const keepTick = doStub.fetch(`https://do/tick?userId=${encodeURIComponent(user.id)}`).catch(() => {});
@@ -606,14 +697,10 @@ tradingRoutes.get('/dashboard', async (c) => {
     }
   }
 
-  const activeRow = await c.env.DB.prepare(
-    `SELECT provider, label FROM exchange_connections WHERE user_id = ? AND is_active = 1 ORDER BY updated_at DESC LIMIT 1`
-  ).bind(user.id).first<{ provider: ExchangeProviderId; label: string }>();
-
-  const { effectiveMode, adapter, provider, label, balance, walletSummary } =
-    await resolveModeAwareWalletAndBalance(c.env, user.id, cfg ?? null, activeRow?.provider);
-
-  const isLitePoll = c.req.query('lite') === '1';
+  const { effectiveMode, adapter, provider, label, balance, walletSummary, prefetchedCapital } =
+    await resolveModeAwareWalletAndBalance(c.env, user.id, cfg ?? null, activeRow?.provider, {
+      usePollCache: isLitePoll,
+    });
 
   const [
     positionsSnap,
@@ -866,7 +953,7 @@ tradingRoutes.get('/dashboard', async (c) => {
     getUserServerFeeSummary(c.env.DB, user.id).catch(() => null),
     c.env.DB.prepare(`SELECT risk_terms_accepted_at FROM users WHERE id = ?`).bind(user.id).first<{ risk_terms_accepted_at: string | null }>().catch(() => null),
     c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 12`).all().catch(() => ({ results: [] })),
-    resolveUserCapitalSummary(c.env.DB, user.id, cfg ?? null, balance).catch(() => null),
+    resolveUserCapitalSummary(c.env.DB, user.id, cfg ?? null, balance, prefetchedCapital).catch(() => null),
   ]);
 
   if (capitalSummary) {
@@ -1021,7 +1108,7 @@ tradingRoutes.post('/engines/toggle', async (c) => {
   return c.json({ ok: true, activeEngine: state });
 });
 
-const ALLOWED_SNIPER_CHAINS = new Set(['solana', 'bsc', 'base', 'ethereum', 'ton', 'arbitrum']);
+const ALLOWED_SNIPER_CHAINS = new Set(['solana', 'bsc', 'base', 'ethereum', 'ton', 'arbitrum', 'polygon', 'sui']);
 
 function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
   let networks: string[] = ['solana', 'bsc', 'base'];
@@ -1032,6 +1119,17 @@ function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
     }
   } catch { /* ignore */ }
   if (networks.length === 0) networks = ['solana', 'bsc', 'base'];
+  let advancedFilters: SniperAdvancedFilters = {};
+  try {
+    if (cfg?.sniper_advanced_filters_json) {
+      advancedFilters = JSON.parse(cfg.sniper_advanced_filters_json) as SniperAdvancedFilters;
+    }
+  } catch { /* ignore */ }
+  const maxPairAgeHours = Number(cfg?.sniper_max_pair_age_hours ?? 24);
+  const maxPairAgeMinutes = Math.max(
+    1,
+    Math.min(43200, Number(cfg?.sniper_max_pair_age_minutes ?? Math.round(maxPairAgeHours * 60)))
+  );
   return {
     enabled: Boolean(cfg?.sniper_enabled),
     targetType: (cfg?.sniper_target_type === 'CEX_NEW_LISTING' || cfg?.sniper_target_type === 'DEX_BOOM_MEME'
@@ -1040,14 +1138,16 @@ function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
     budgetUsd: Number(cfg?.sniper_budget_usd ?? 25),
     minSafetyScore: Number(cfg?.sniper_min_safety_score ?? 75),
     minLiquidityUsd: Number(cfg?.sniper_min_liquidity_usd ?? 25000),
-    maxPairAgeHours: Number(cfg?.sniper_max_pair_age_hours ?? 24),
+    maxPairAgeHours,
+    maxPairAgeMinutes,
+    advancedFilters,
     maxTaxPct: Number(cfg?.sniper_max_tax_pct ?? 5),
     tpPct: Number(cfg?.sniper_tp_pct ?? 35),
     slPct: Number(cfg?.sniper_sl_pct ?? 15),
     trailingEnabled: cfg?.sniper_trailing_enabled === undefined ? true : Boolean(cfg.sniper_trailing_enabled),
     trailingPct: Number(cfg?.sniper_trailing_pct ?? 8),
     maxOpenPositions: Number(cfg?.sniper_max_open_positions ?? 3),
-    autoExecute: cfg?.sniper_auto_execute === undefined ? true : Boolean(cfg.sniper_auto_execute),
+    autoExecute: cfg?.sniper_auto_execute === undefined ? false : Boolean(cfg.sniper_auto_execute),
     slippagePct: Number(cfg?.sniper_slippage_pct ?? 3),
     networks,
   };
@@ -1064,13 +1164,15 @@ tradingRoutes.get('/sniper', async (c) => {
               COALESCE(sniper_target_type, 'BOTH') AS sniper_target_type,
               COALESCE(sniper_min_liquidity_usd, 25000) AS sniper_min_liquidity_usd,
               COALESCE(sniper_max_pair_age_hours, 24) AS sniper_max_pair_age_hours,
+              COALESCE(sniper_max_pair_age_minutes, 1440) AS sniper_max_pair_age_minutes,
+              COALESCE(sniper_advanced_filters_json, '{}') AS sniper_advanced_filters_json,
               COALESCE(sniper_max_tax_pct, 5) AS sniper_max_tax_pct,
               COALESCE(sniper_tp_pct, 35) AS sniper_tp_pct,
               COALESCE(sniper_sl_pct, 15) AS sniper_sl_pct,
               COALESCE(sniper_trailing_enabled, 1) AS sniper_trailing_enabled,
               COALESCE(sniper_trailing_pct, 8) AS sniper_trailing_pct,
               COALESCE(sniper_max_open_positions, 3) AS sniper_max_open_positions,
-              COALESCE(sniper_auto_execute, 1) AS sniper_auto_execute,
+              COALESCE(sniper_auto_execute, 0) AS sniper_auto_execute,
               COALESCE(sniper_slippage_pct, 3) AS sniper_slippage_pct
        FROM bot_configs WHERE user_id = ?`
     )
@@ -1085,8 +1187,10 @@ tradingRoutes.get('/sniper', async (c) => {
     allowedChains: settings.networks,
     minSafetyScore: Math.min(85, settings.minSafetyScore),
     minLiquidityUsd: Math.min(50_000, settings.minLiquidityUsd),
-    maxPairAgeHours: Math.max(24, settings.maxPairAgeHours),
+    maxPairAgeHours: settings.maxPairAgeHours,
+    maxPairAgeMinutes: settings.maxPairAgeMinutes,
     targetType: settings.targetType,
+    advancedFilters: settings.advancedFilters,
   }).catch(() => []);
   return c.json({
     ok: true,
@@ -1107,6 +1211,8 @@ tradingRoutes.post('/sniper', async (c) => {
     minSafetyScore?: number;
     minLiquidityUsd?: number;
     maxPairAgeHours?: number;
+    maxPairAgeMinutes?: number;
+    advancedFilters?: SniperAdvancedFilters;
     maxTaxPct?: number;
     tpPct?: number;
     slPct?: number;
@@ -1128,15 +1234,27 @@ tradingRoutes.post('/sniper', async (c) => {
       : prev.targetType;
   const nextBudget = Math.max(5, Math.min(5000, Number(body.budgetUsd ?? prev.budgetUsd) || 25));
   const rawSafety = body.minSafetyScore ?? body.minSafety ?? prev.minSafetyScore;
-  const nextSafety = Math.max(40, Math.min(98, Math.round(Number(rawSafety) || 75)));
-  const nextLiq = Math.max(5000, Math.min(10_000_000, Math.round(Number(body.minLiquidityUsd ?? prev.minLiquidityUsd) || 25000)));
-  const nextAge = Math.max(1, Math.min(720, Number(body.maxPairAgeHours ?? prev.maxPairAgeHours) || 24));
+  const nextSafety = Math.max(30, Math.min(98, Math.round(Number(rawSafety) || 75)));
+  const nextLiq = Math.max(1000, Math.min(10_000_000, Math.round(Number(body.minLiquidityUsd ?? prev.minLiquidityUsd) || 25000)));
+  let nextAgeMinutes = prev.maxPairAgeMinutes;
+  let nextAge = prev.maxPairAgeHours;
+  if (body.maxPairAgeMinutes !== undefined) {
+    nextAgeMinutes = Math.max(1, Math.min(43200, Math.round(Number(body.maxPairAgeMinutes) || 1440)));
+    nextAge = Number((nextAgeMinutes / 60).toFixed(3));
+  } else if (body.maxPairAgeHours !== undefined) {
+    nextAge = Math.max(0.05, Math.min(720, Number(body.maxPairAgeHours) || 24));
+    nextAgeMinutes = Math.max(1, Math.min(43200, Math.round(nextAge * 60)));
+  }
+  const nextAdvFilters: SniperAdvancedFilters = body.advancedFilters
+    ? { ...prev.advancedFilters, ...body.advancedFilters, maxPairAgeMinutes: nextAgeMinutes }
+    : { ...prev.advancedFilters, maxPairAgeMinutes: nextAgeMinutes };
   const nextTax = Math.max(0, Math.min(25, Number(body.maxTaxPct ?? prev.maxTaxPct) ?? 5));
   const nextTp = Math.max(5, Math.min(500, Number(body.tpPct ?? prev.tpPct) || 35));
   const nextSl = Math.max(3, Math.min(80, Number(body.slPct ?? prev.slPct) || 15));
   const nextTrailEn = body.trailingEnabled !== undefined ? Boolean(body.trailingEnabled) : prev.trailingEnabled;
   const nextTrailPct = Math.max(2, Math.min(50, Number(body.trailingPct ?? prev.trailingPct) || 8));
-  const nextMaxPos = Math.max(1, Math.min(12, Math.round(Number(body.maxOpenPositions ?? prev.maxOpenPositions) || 3)));
+  const isPrivilegedSniper = user.role === 'owner' || user.role === 'admin';
+  const nextMaxPos = Math.max(1, Math.min(isPrivilegedSniper ? 999 : 12, Math.round(Number(body.maxOpenPositions ?? prev.maxOpenPositions) || 3)));
   const nextAutoExec = body.autoExecute !== undefined ? Boolean(body.autoExecute) : prev.autoExecute;
   const nextSlip = Math.max(0.5, Math.min(25, Number(body.slippagePct ?? prev.slippagePct) || 3));
   const nextNets = Array.isArray(body.networks)
@@ -1152,6 +1270,8 @@ tradingRoutes.post('/sniper', async (c) => {
          sniper_min_safety_score = ?,
          sniper_min_liquidity_usd = ?,
          sniper_max_pair_age_hours = ?,
+         sniper_max_pair_age_minutes = ?,
+         sniper_advanced_filters_json = ?,
          sniper_max_tax_pct = ?,
          sniper_tp_pct = ?,
          sniper_sl_pct = ?,
@@ -1171,6 +1291,8 @@ tradingRoutes.post('/sniper', async (c) => {
       nextSafety,
       nextLiq,
       nextAge,
+      nextAgeMinutes,
+      JSON.stringify(nextAdvFilters),
       nextTax,
       nextTp,
       nextSl,
@@ -1197,6 +1319,8 @@ tradingRoutes.post('/sniper', async (c) => {
       minSafetyScore: nextSafety,
       minLiquidityUsd: nextLiq,
       maxPairAgeHours: nextAge,
+      maxPairAgeMinutes: nextAgeMinutes,
+      advancedFilters: nextAdvFilters,
       maxTaxPct: nextTax,
       tpPct: nextTp,
       slPct: nextSl,
@@ -1212,7 +1336,23 @@ tradingRoutes.post('/sniper', async (c) => {
 
 tradingRoutes.post('/sniper/scan-now', async (c) => {
   const user = c.get('user');
-  const body = await c.req.json<{ execute?: boolean }>().catch(() => ({ execute: true }));
+  const body = await c.req.json<{
+    execute?: boolean;
+    maxPairAgeMinutes?: number;
+    minLiquidityUsd?: number;
+    minSafetyScore?: number;
+    targetType?: SniperTargetType;
+    networks?: string[];
+    advancedFilters?: SniperAdvancedFilters;
+  }>().catch(() => ({ execute: true } as {
+    execute?: boolean;
+    maxPairAgeMinutes?: number;
+    minLiquidityUsd?: number;
+    minSafetyScore?: number;
+    targetType?: SniperTargetType;
+    networks?: string[];
+    advancedFilters?: SniperAdvancedFilters;
+  }));
   const shouldExecute = body.execute !== false;
 
   const cfg = await c.env.DB.prepare(`SELECT * FROM bot_configs WHERE user_id = ?`).bind(user.id).first<UserBotConfigRow>();
@@ -1225,16 +1365,27 @@ tradingRoutes.post('/sniper/scan-now', async (c) => {
     if (!gate.ok) {
       return c.json({ error: gate.error, code: gate.code, boughtCount: 0, scannedCount: 0, candidates: [] }, 403);
     }
-    const res = await runNewListingAndMemeSniperForUser(c.env, user.id, cfg);
+    const res = await runNewListingAndMemeSniperForUser(c.env, user.id, cfg, { forceExecute: shouldExecute });
     return c.json(res);
   }
 
+  const scanChains = Array.isArray(body.networks) && body.networks.length
+    ? body.networks.map((x) => x.toLowerCase()).filter((x) => ALLOWED_SNIPER_CHAINS.has(x))
+    : settings.networks;
+  const scanAgeMin = body.maxPairAgeMinutes ?? settings.maxPairAgeMinutes;
+  const scanLiq = body.minLiquidityUsd ?? settings.minLiquidityUsd;
+  const scanSafety = body.minSafetyScore ?? settings.minSafetyScore;
+  const scanTarget = body.targetType ?? settings.targetType;
+  const scanAdv = body.advancedFilters ? { ...settings.advancedFilters, ...body.advancedFilters } : settings.advancedFilters;
+
   const candidates = await discoverListingAndBoomCandidates({
-    allowedChains: settings.networks,
-    minSafetyScore: Math.max(40, settings.minSafetyScore),
-    minLiquidityUsd: settings.minLiquidityUsd,
-    maxPairAgeHours: settings.maxPairAgeHours,
-    targetType: settings.targetType,
+    allowedChains: scanChains.length ? scanChains : settings.networks,
+    minSafetyScore: Math.max(30, scanSafety),
+    minLiquidityUsd: scanLiq,
+    maxPairAgeHours: Number((scanAgeMin / 60).toFixed(3)),
+    maxPairAgeMinutes: scanAgeMin,
+    targetType: scanTarget,
+    advancedFilters: scanAdv,
   }).catch(() => []);
 
   for (const cand of candidates.slice(0, 5)) {
@@ -1336,6 +1487,8 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     trade_execution_mode: 'trade_execution_mode',
     margin_mode: 'margin_mode',
     notifications_enabled: 'notifications_enabled',
+    notification_prefs_json: 'notification_prefs_json',
+    display_currency: 'display_currency',
     symbol: 'symbol',
     auto_scan_top: 'auto_scan_top',
     scan_scope: 'scan_scope',
@@ -1378,6 +1531,8 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
     sniper_target_type: 'sniper_target_type',
     sniper_min_liquidity_usd: 'sniper_min_liquidity_usd',
     sniper_max_pair_age_hours: 'sniper_max_pair_age_hours',
+    sniper_max_pair_age_minutes: 'sniper_max_pair_age_minutes',
+    sniper_advanced_filters_json: 'sniper_advanced_filters_json',
     sniper_max_tax_pct: 'sniper_max_tax_pct',
     sniper_tp_pct: 'sniper_tp_pct',
     sniper_sl_pct: 'sniper_sl_pct',
@@ -1438,6 +1593,9 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
       }
       let val = typeof body[k] === 'object' && body[k] !== null ? JSON.stringify(body[k]) : body[k];
       if (k === 'hedge_mode' || k === 'sniper_enabled' || k === 'sniper_trailing_enabled' || k === 'sniper_auto_execute') val = body[k] ? 1 : 0;
+      if (k === 'display_currency') {
+        val = String(body[k]).toUpperCase() === 'IRT' ? 'IRT' : 'USD';
+      }
       if (k === 'market_type') val = String(body[k]).toUpperCase() === 'SPOT' ? 'SPOT' : 'FUTURES';
       if (k === 'direction_mode') {
         const d = String(body[k]).toUpperCase();
@@ -1447,17 +1605,20 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
         val = Math.max(5, Math.min(5000, Number(body[k]) || 25));
       }
       if (k === 'sniper_min_safety_score') {
-        val = Math.max(40, Math.min(98, Math.round(Number(body[k]) || 75)));
+        val = Math.max(30, Math.min(98, Math.round(Number(body[k]) || 75)));
       }
       if (k === 'sniper_target_type') {
         const t = String(body[k]).toUpperCase();
         val = t === 'CEX_NEW_LISTING' || t === 'DEX_BOOM_MEME' ? t : 'BOTH';
       }
       if (k === 'sniper_min_liquidity_usd') {
-        val = Math.max(5000, Math.min(10_000_000, Math.round(Number(body[k]) || 25000)));
+        val = Math.max(1000, Math.min(10_000_000, Math.round(Number(body[k]) || 25000)));
       }
       if (k === 'sniper_max_pair_age_hours') {
-        val = Math.max(1, Math.min(720, Number(body[k]) || 24));
+        val = Math.max(0.05, Math.min(720, Number(body[k]) || 24));
+      }
+      if (k === 'sniper_max_pair_age_minutes') {
+        val = Math.max(1, Math.min(43200, Math.round(Number(body[k]) || 1440)));
       }
       if (k === 'sniper_max_tax_pct') {
         val = Math.max(0, Math.min(25, Number(body[k]) ?? 5));
@@ -1723,9 +1884,10 @@ tradingRoutes.post('/bot/start', async (c) => {
     sets.push(`scan_scope = ?`, `auto_scan_top = ?`);
     vals.push(body.scanScope, body.scanScope === 'SINGLE' ? 0 : 1);
   }
+  const isPrivilegedCfg = user.role === 'owner' || user.role === 'admin';
   if (typeof body.maxOpenPositions === 'number') {
     sets.push(`max_open_positions = ?`);
-    vals.push(Math.max(1, Math.min(20, Math.round(body.maxOpenPositions))));
+    vals.push(Math.max(1, Math.min(isPrivilegedCfg ? 999 : 20, Math.round(body.maxOpenPositions))));
   }
   if (typeof body.allowAutoFlip === 'boolean') {
     sets.push(`allow_auto_flip = ?`);
@@ -1733,7 +1895,7 @@ tradingRoutes.post('/bot/start', async (c) => {
   }
   if (typeof body.maxLeverage === 'number' && resolvedMarketType !== 'SPOT') {
     sets.push(`max_leverage = ?`);
-    vals.push(Math.max(1, Math.min(50, Math.round(body.maxLeverage))));
+    vals.push(Math.max(1, Math.min(isPrivilegedCfg ? 125 : 50, Math.round(body.maxLeverage))));
   }
   if (typeof body.dailyMaxLossPct === 'number') {
     sets.push(`daily_max_loss_pct = ?`);
@@ -1790,10 +1952,28 @@ tradingRoutes.post('/bot/start', async (c) => {
     resolvedEngines = st.activeEngines;
   } else {
     const st = await getActiveEngineState(c.env.DB, user.id);
-    resolvedEngines = st.activeEngines.length > 0 ? st.activeEngines : ['CENTRAL_AI'];
+    if (st.activeEngines.length > 0) {
+      resolvedEngines = st.activeEngines;
+    } else {
+      const defaultEngine: Exclude<TradingEngineChoice, 'LISTING_SNIPER'> =
+        targetStrategy === 'ai_autonomous_agent'
+          ? 'CENTRAL_AI'
+          : targetStrategy === 'my_custom_ai'
+            ? 'MY_AI'
+            : targetStrategy === 'copy_trade'
+              ? 'COPY_TRADE'
+              : 'STRATEGY';
+      const activated = await setActiveTradingEngines(c.env.DB, user.id, [defaultEngine], {
+        strategyKey: targetStrategy,
+        customStrategyId: typeof body.customStrategyId === 'string' ? (body.customStrategyId || null) : undefined,
+        auditSource: 'bot_start_auto_default',
+      });
+      resolvedEngines = activated.activeEngines;
+    }
   }
 
   await c.env.DB.prepare(`UPDATE bot_configs SET ${sets.join(', ')} WHERE user_id = ?`).bind(...vals).run();
+  invalidateLiveTicksCache(c.env.DB, user.id);
 
   if (resolvedEngines.includes('COPY_TRADE')) {
     await c.env.DB.prepare(`UPDATE copy_subscriptions SET auto_mirror = 1, updated_at = datetime('now') WHERE user_id = ? AND is_active = 1`)
@@ -1830,6 +2010,7 @@ tradingRoutes.post('/bot/start', async (c) => {
     ok: true,
     bot_state: nextState,
     strategy_key: targetStrategy,
+    activeEngines: resolvedEngines,
     activeExchangeProvider: activeExProvider,
     requiresAgentApproval,
     executionNote: requiresAgentApproval
@@ -1880,9 +2061,7 @@ tradingRoutes.post('/config/reset-defaults', async (c) => {
   const preset: CapitalPresetId =
     body.preset === 'conservative' || body.preset === 'aggressive' ? body.preset : 'balanced';
 
-  await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
-  ).bind(user.id, randomId('wh')).run().catch(() => {});
+  await ensureUserDefaults(c.env.DB, user.id).catch(() => {});
 
   const cfg = await c.env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?')
     .bind(user.id)
@@ -2071,6 +2250,7 @@ tradingRoutes.post('/bot/stop', async (c) => {
 
   await c.env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`)
     .bind(user.id).run();
+  invalidateLiveTicksCache(c.env.DB, user.id);
 
   const startedIso = cfg?.started_at ? (cfg.started_at.includes('T') ? cfg.started_at : cfg.started_at.replace(' ', 'T')) + 'Z' : '';
   const durationSec = startedIso ? Math.max(0, Math.floor((Date.now() - Date.parse(startedIso)) / 1000)) : 0;
@@ -2293,11 +2473,23 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
   }).catch(() => {});
 
   await logAudit(c.env.DB, user.id, 'ORDER', 'INFO', `Manual close ${t.symbol} @ ${cls.filledPrice} (PnL ${totalRealized.toFixed(2)})`, t.symbol);
+  invalidateLiveTicksCache(c.env.DB, user.id);
   return c.json({ ok: true, exitPrice: cls.filledPrice, realizedPnl: totalRealized });
 });
 
 tradingRoutes.get('/live-ticks', async (c) => {
   const user = c.get('user');
+  const isPoll = c.req.query('poll') === '1';
+  const now = Date.now();
+  let pollMap = LIVE_TICKS_POLL_CACHE.get(c.env.DB as unknown as object);
+  if (isPoll) {
+    const cached = pollMap?.get(user.id);
+    const ttlMs = cached?.hasPositions ? 4_000 : 15_000;
+    if (cached && now - cached.ts < ttlMs) {
+      return c.json({ ...cached.payload, serverTime: new Date().toISOString() });
+    }
+  }
+
   const [cfg, activeRow] = await Promise.all([
     c.env.DB.prepare('SELECT trading_mode, market_type, paper_balance FROM bot_configs WHERE user_id = ?')
       .bind(user.id)
@@ -2312,13 +2504,15 @@ tradingRoutes.get('/live-ticks', async (c) => {
     c.env,
     user.id,
     cfg ?? null,
-    activeRow?.provider
+    activeRow?.provider,
+    { skipWalletSummary: true, usePollCache: isPoll }
   );
   const snap = await buildLivePositionsSnapshot(c.env, user.id, effectiveMode, cfg ?? null, adapter, Number(balance.total ?? 0), {
     lite: true,
     includeClosed: false,
   });
-  return c.json({
+
+  const payload = {
     ok: true,
     serverTime: new Date().toISOString(),
     tradingMode: effectiveMode,
@@ -2328,7 +2522,23 @@ tradingRoutes.get('/live-ticks', async (c) => {
     smartCopyPositions: snap.smartCopyPositions,
     perpOrders: snap.perpOrders,
     totalUnrealizedPnl: Number(snap.totalUnrealizedPnl.toFixed(2)),
-  });
+  };
+
+  if (isPoll) {
+    const hasPositions =
+      snap.openTrades.length > 0 ||
+      snap.dexTrades.some((d) => d.status === 'OPEN' || d.status === 'PENDING_SIGN') ||
+      snap.smartCopyPositions.some((p) => p.status === 'OPEN' || p.status === 'PENDING_TRUST_SIGN') ||
+      snap.perpOrders.some((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED');
+    if (!pollMap) {
+      pollMap = new Map();
+      LIVE_TICKS_POLL_CACHE.set(c.env.DB as unknown as object, pollMap);
+    }
+    if (pollMap.size > 500) pollMap.clear();
+    pollMap.set(user.id, { ts: now, hasPositions, payload });
+  }
+
+  return c.json(payload);
 });
 
 tradingRoutes.post('/positions/close-batch', async (c) => {
@@ -2480,6 +2690,7 @@ tradingRoutes.post('/positions/close-batch', async (c) => {
   }
 
   if (closedItems.length > 0) {
+    invalidateLiveTicksCache(c.env.DB, user.id);
     await logAudit(
       c.env.DB,
       user.id,
@@ -2500,7 +2711,8 @@ tradingRoutes.post('/positions/close-batch', async (c) => {
 
 tradingRoutes.post('/orders/manual', async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `order:${user.id}`, 30, 60);
+  const isPrivileged = user.role === 'owner' || user.role === 'admin';
+  const rl = await enforceRateLimit(c.env, `order:${user.id}`, 30, 60, { bypass: isPrivileged });
   if (!rl.allowed) {
     return c.json({ ok: false, error: `تعداد سفارش‌ها زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   }
@@ -2743,8 +2955,16 @@ tradingRoutes.get('/market/overview', async (c) => {
     id: string;
     title: string;
     language: CustomStrategyLanguage;
-    plots: Array<{ title: string; color: string; overlay: boolean; points: Array<{ time: number; value: number }> }>;
-    markers: Array<{ time: number; position: 'belowBar' | 'aboveBar'; color: string; shape: 'arrowUp' | 'arrowDown'; text: string }>;
+    plots: unknown[];
+    markers: unknown[];
+    hlines?: unknown[];
+    fills?: unknown[];
+    bgcolors?: unknown[];
+    barcolors?: unknown[];
+    labels?: unknown[];
+    lines?: unknown[];
+    boxes?: unknown[];
+    tables?: unknown[];
     latestSignal: unknown;
   } | null = null;
 
@@ -2762,6 +2982,14 @@ tradingRoutes.get('/market/overview', async (c) => {
           language: customRow.language,
           plots: ev.plots,
           markers: ev.markers,
+          hlines: ev.hlines,
+          fills: ev.fills,
+          bgcolors: ev.bgcolors,
+          barcolors: ev.barcolors,
+          labels: ev.labels,
+          lines: ev.lines,
+          boxes: ev.boxes,
+          tables: ev.tables,
           latestSignal: ev.latestSignal,
         };
       }
@@ -3265,58 +3493,62 @@ tradingRoutes.get('/cards', async (c) => {
   return c.json({ cards: rows.results });
 });
 
+tradingRoutes.get('/cards/eligible-trades', async (c) => {
+  const user = c.get('user');
+  const modeQ = c.req.query('mode');
+  const mode: 'LIVE' | 'PAPER' | 'ALL' = modeQ === 'LIVE' ? 'LIVE' : modeQ === 'PAPER' ? 'PAPER' : 'ALL';
+  const tradeSource = normalizeCardSource(c.req.query('tradeSource'));
+  const trades = await listUnifiedClosedTrades(c.env.DB, user.id, {
+    mode,
+    tradeSource,
+    period: 'ALL',
+    limit: 120,
+  });
+  return c.json({ ok: true, trades: [...trades].reverse() });
+});
+
 tradingRoutes.post('/cards/issue', async (c) => {
   const user = c.get('user');
   const body = await c.req.json<{
     mode?: 'LIVE' | 'PAPER';
-    period?: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
+    period?: ProfitCardPeriod;
+    tradeSource?: ProfitCardTradeSource;
     tradeId?: string;
-    cardStyle?: 'dark' | 'gold' | 'emerald';
-  }>().catch(() => ({} as { mode?: 'LIVE' | 'PAPER'; period?: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE'; tradeId?: string; cardStyle?: 'dark' | 'gold' | 'emerald' }));
+    cardStyle?: 'dark' | 'gold' | 'emerald' | 'violet';
+  }>().catch(() => ({} as {
+    mode?: 'LIVE' | 'PAPER';
+    period?: ProfitCardPeriod;
+    tradeSource?: ProfitCardTradeSource;
+    tradeId?: string;
+    cardStyle?: 'dark' | 'gold' | 'emerald' | 'violet';
+  }));
 
   const requestedMode = body.mode === 'PAPER' ? 'PAPER' : 'LIVE';
-  const period = body.period && ['24H', '7D', '30D', '1Y', 'ALL', 'TRADE'].includes(body.period) ? body.period : '7D';
+  const period = normalizeCardPeriod(body.period);
+  const tradeSource = normalizeCardSource(body.tradeSource);
+  const cardStyle =
+    body.cardStyle === 'gold' || body.cardStyle === 'emerald' || body.cardStyle === 'violet'
+      ? body.cardStyle
+      : 'dark';
 
-  const whereClause = [`user_id = ?`, `status = 'CLOSED'`, `mode = ?`];
-  const binds: unknown[] = [user.id, requestedMode];
-
-  if (period === 'TRADE') {
-    if (!body.tradeId) {
-      return c.json({ error: 'شناسه معامله برای صدور کارت تک‌معامله الزامی است.' }, 400);
-    }
-    whereClause.push(`id = ?`);
-    binds.push(body.tradeId);
-  } else if (period === '24H') {
-    whereClause.push(`closed_at >= datetime('now', '-24 hours')`);
-  } else if (period === '7D') {
-    whereClause.push(`closed_at >= datetime('now', '-7 days')`);
-  } else if (period === '30D') {
-    whereClause.push(`closed_at >= datetime('now', '-30 days')`);
-  } else if (period === '1Y') {
-    whereClause.push(`closed_at >= datetime('now', '-365 days')`);
+  if (period === 'TRADE' && !body.tradeId) {
+    return c.json({ error: 'شناسه معامله برای صدور کارت تک‌معامله الزامی است.' }, 400);
   }
 
-  const tradesRes = await c.env.DB.prepare(
-    `SELECT id, symbol, direction, exchange_provider, strategy_key, realized_pnl, margin_used, closed_at
-     FROM trades WHERE ${whereClause.join(' AND ')} ORDER BY closed_at ASC`
-  ).bind(...binds).all<{
-    id: string;
-    symbol: string;
-    direction: string;
-    exchange_provider: string;
-    strategy_key: string | null;
-    realized_pnl: string;
-    margin_used: string;
-    closed_at: string;
-  }>();
+  const trades = await listUnifiedClosedTrades(c.env.DB, user.id, {
+    mode: requestedMode,
+    tradeSource: period === 'TRADE' ? 'ALL' : tradeSource,
+    period,
+    tradeId: body.tradeId,
+    limit: 200,
+  });
 
-  const trades = tradesRes.results;
   if (!trades.length) {
     return c.json({
       error:
         requestedMode === 'LIVE'
-          ? 'هنوز هیچ معامله واقعی (Live) بسته شده‌ای در این بازه زمانی برای حساب شما ثبت نشده است. کارت سود تاییدشده فقط بر اساس معاملات واقعی تسویه‌شده صادر می‌شود.'
-          : 'هیچ معامله شبیه‌ساز بسته شده‌ای در این بازه زمانی ثبت نشده است.',
+          ? 'هنوز هیچ معامله واقعی (Live) بسته شده‌ای در این بازه و نوع معامله ثبت نشده است.'
+          : 'هیچ معامله شبیه‌ساز بسته شده‌ای در این بازه و نوع معامله ثبت نشده است.',
       code: 'NO_SETTLED_TRADES',
     }, 400);
   }
@@ -3328,10 +3560,12 @@ tradingRoutes.post('/cards/issue', async (c) => {
   let totalMarginUsed = 0;
   const providerCounts = new Map<string, number>();
   const strategyCounts = new Map<string, number>();
+  const signalCounts = new Map<string, number>();
+  let bestTrade = trades[0]!;
 
   for (const t of trades) {
-    const pnl = Number(t.realized_pnl || 0);
-    const margin = Math.max(0, Number(t.margin_used || 0));
+    const pnl = Number(t.realizedPnlUsd || 0);
+    const margin = Math.max(0, Number(t.marginUsd || 0));
     netPnlUsd += pnl;
     totalMarginUsed += margin;
     if (pnl > 0) {
@@ -3340,10 +3574,15 @@ tradingRoutes.post('/cards/issue', async (c) => {
     } else if (pnl < 0) {
       grossLosses += Math.abs(pnl);
     }
-    const prov = (t.exchange_provider || 'TOOBIT').toUpperCase();
+    if (t.roiPct > bestTrade.roiPct || (t.roiPct === bestTrade.roiPct && pnl > bestTrade.realizedPnlUsd)) {
+      bestTrade = t;
+    }
+    const prov = (t.exchangeProvider || 'TOOBIT').toUpperCase();
     providerCounts.set(prov, (providerCounts.get(prov) ?? 0) + 1);
-    const strat = t.strategy_key || 'dollarino_v01';
+    const strat = t.engineLabel || 'هوش مصنوعی دلارینو';
     strategyCounts.set(strat, (strategyCounts.get(strat) ?? 0) + 1);
+    const sig = t.signalName || strat;
+    signalCounts.set(sig, (signalCounts.get(sig) ?? 0) + 1);
   }
 
   const tradesCount = trades.length;
@@ -3351,7 +3590,7 @@ tradingRoutes.post('/cards/issue', async (c) => {
   const profitFactor = grossLosses > 0 ? Number((grossWins / grossLosses).toFixed(2)) : grossWins > 0 ? 99 : 0;
 
   let baseCapital = totalMarginUsed;
-  if (requestedMode === 'PAPER') {
+  if (period !== 'TRADE' && requestedMode === 'PAPER') {
     const cfgRow = await c.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
       .bind(user.id).first<{ paper_balance: string }>();
     const currentPaper = Number(cfgRow?.paper_balance ?? 10000);
@@ -3360,15 +3599,27 @@ tradingRoutes.post('/cards/issue', async (c) => {
     const avgMargin = totalMarginUsed / Math.max(1, tradesCount);
     baseCapital = Math.max(avgMargin, totalMarginUsed);
   }
-  const roiPct = baseCapital > 0 ? Number(((netPnlUsd / baseCapital) * 100).toFixed(2)) : 0;
+  const roiPct =
+    period === 'TRADE' && trades[0]!.roiPct !== 0
+      ? Number(trades[0]!.roiPct.toFixed(2))
+      : baseCapital > 0
+        ? Number(((netPnlUsd / baseCapital) * 100).toFixed(2))
+        : 0;
 
-  const topProvider = Array.from(providerCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'TOOBIT';
-  const topStrategyRaw = Array.from(strategyCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'dollarino_v01';
-  const topStrategy = resolveEngineDisplayLabel(topStrategyRaw);
-  const startDate = trades[0]!.closed_at;
-  const endDate = trades[trades.length - 1]!.closed_at;
+  const single = period === 'TRADE' ? trades[0]! : null;
+  const topProvider = single
+    ? single.exchangeProvider
+    : Array.from(providerCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'TOOBIT';
+  const topStrategy = single
+    ? single.engineLabel
+    : Array.from(strategyCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'هوش مصنوعی دلارینو';
+  const topSignal = single
+    ? single.signalName
+    : Array.from(signalCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || topStrategy;
 
-  const tradesDigestInput = trades.map((t) => `${t.id}:${t.realized_pnl}:${t.closed_at}`).join(';');
+  const startDate = trades[0]!.closedAt;
+  const endDate = trades[trades.length - 1]!.closedAt;
+  const tradesDigestInput = trades.map((t) => `${t.tradeSource}:${t.id}:${t.realizedPnlUsd}:${t.closedAt}`).join(';');
   const tradesHash = await sha256Hex(tradesDigestInput);
 
   const cardId = `DLR-${randomId('').slice(0, 10).toUpperCase()}`;
@@ -3394,10 +3645,28 @@ tradingRoutes.post('/cards/issue', async (c) => {
   });
   const hmacSignature = await hmacSha256Hex(canonical, cardSecret);
 
+  const resolvedTradeSource: ProfitCardTradeSource = single ? single.tradeSource : tradeSource;
+  const resolvedBase = single ? single.baseSymbol : bestTrade.baseSymbol;
+  const resolvedTokenImageUrl = single
+    ? single.tokenImageUrl || buildTokenDisplayIconUrl(single.baseSymbol, single.chainId, single.tokenAddress)
+    : bestTrade.tokenImageUrl || buildTokenDisplayIconUrl(bestTrade.baseSymbol, bestTrade.chainId, bestTrade.tokenAddress);
+
   const payloadSnapshot = JSON.stringify({
-    cardStyle: body.cardStyle || 'dark',
-    symbol: period === 'TRADE' ? trades[0]!.symbol : undefined,
-    direction: period === 'TRADE' ? trades[0]!.direction : undefined,
+    cardStyle,
+    tradeSource: resolvedTradeSource,
+    symbol: single ? single.symbol : undefined,
+    baseSymbol: resolvedBase,
+    direction: single ? single.direction : undefined,
+    leverage: single ? single.leverage : undefined,
+    entryPrice: single ? single.entryPrice : undefined,
+    exitPrice: single ? single.exitPrice : undefined,
+    signalName: topSignal,
+    engineKey: single ? single.engineKey : bestTrade.engineKey,
+    tokenAddress: single ? single.tokenAddress : bestTrade.tokenAddress,
+    chainId: single ? single.chainId : bestTrade.chainId,
+    tokenImageUrl: resolvedTokenImageUrl,
+    bestSymbol: bestTrade.baseSymbol,
+    bestRoiPct: bestTrade.roiPct,
     isVerifiedReal: requestedMode === 'LIVE',
     grossWins: Number(grossWins.toFixed(2)),
     grossLosses: Number(grossLosses.toFixed(2)),
@@ -3408,8 +3677,9 @@ tradingRoutes.post('/cards/issue', async (c) => {
     `INSERT INTO verified_profit_cards (
       id, user_id, mode, period, start_date, end_date,
       trades_count, win_rate, net_pnl_usd, roi_pct, profit_factor,
-      exchange_provider, strategy_name, payload_json, hmac_signature, issued_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      exchange_provider, strategy_name, payload_json, hmac_signature, issued_at,
+      trade_source, entry_price, exit_price, signal_name, token_address, chain_id, token_image_url, revoked
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
   ).bind(
     cardId,
     user.id,
@@ -3426,7 +3696,14 @@ tradingRoutes.post('/cards/issue', async (c) => {
     topStrategy,
     payloadSnapshot,
     hmacSignature,
-    issuedAt
+    issuedAt,
+    resolvedTradeSource,
+    single ? single.entryPrice : null,
+    single ? single.exitPrice : null,
+    topSignal,
+    single?.tokenAddress || bestTrade.tokenAddress || null,
+    single?.chainId || bestTrade.chainId || null,
+    resolvedTokenImageUrl
   ).run();
 
   return c.json({
@@ -3437,6 +3714,7 @@ tradingRoutes.post('/cards/issue', async (c) => {
       displayName: user.username,
       mode: requestedMode,
       isVerifiedReal: requestedMode === 'LIVE',
+      tradeSource: resolvedTradeSource,
       period,
       startDate,
       endDate,
@@ -3447,15 +3725,91 @@ tradingRoutes.post('/cards/issue', async (c) => {
       profitFactor,
       exchangeProvider: topProvider,
       strategyName: topStrategy,
-      cardStyle: body.cardStyle || 'dark',
-      symbol: period === 'TRADE' ? trades[0]!.symbol : undefined,
-      direction: period === 'TRADE' ? trades[0]!.direction : undefined,
+      engineKey: single ? single.engineKey : bestTrade.engineKey,
+      cardStyle,
+      symbol: single ? single.symbol : undefined,
+      baseSymbol: resolvedBase,
+      direction: single ? single.direction : undefined,
+      leverage: single ? single.leverage : undefined,
+      entryPrice: single ? single.entryPrice : null,
+      exitPrice: single ? single.exitPrice : null,
+      signalName: topSignal,
+      tokenAddress: single?.tokenAddress || bestTrade.tokenAddress,
+      chainId: single?.chainId || bestTrade.chainId,
+      tokenImageUrl: resolvedTokenImageUrl,
+      bestSymbol: bestTrade.baseSymbol,
+      bestRoiPct: bestTrade.roiPct,
       hmacSignature,
       verifyPath: `/verify-card/${cardId}`,
       issuedAt,
     },
   });
 });
+
+function buildCardRenderInputFromRow(
+  row: {
+    id: string;
+    username?: string | null;
+    mode: 'LIVE' | 'PAPER';
+    period: string;
+    trades_count: number;
+    win_rate: number;
+    net_pnl_usd: number;
+    roi_pct: number;
+    profit_factor: number;
+    exchange_provider: string;
+    strategy_name: string;
+    payload_json?: string | null;
+    trade_source?: string | null;
+    entry_price?: number | null;
+    exit_price?: number | null;
+    signal_name?: string | null;
+    token_address?: string | null;
+    chain_id?: string | null;
+    token_image_url?: string | null;
+    issued_at: string;
+  },
+  layout: 'horizontal' | 'vertical',
+  tokenLogoDataUri?: string | null
+): ProfitCardRenderInput {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = row.payload_json ? (JSON.parse(row.payload_json) as Record<string, unknown>) : {};
+  } catch {
+    parsed = {};
+  }
+  const srcRaw = String(row.trade_source || parsed.tradeSource || 'ALL').toUpperCase();
+  const tradeSource =
+    srcRaw === 'PERP' || srcRaw === 'DEX' || srcRaw === 'COPY' ? srcRaw : 'ALL';
+  return {
+    cardId: row.id,
+    displayName: row.username || 'Dollarino Trader',
+    mode: row.mode,
+    period: row.period,
+    tradeSource,
+    tradesCount: row.trades_count,
+    winRate: row.win_rate,
+    netPnlUsd: row.net_pnl_usd,
+    roiPct: row.roi_pct,
+    profitFactor: row.profit_factor,
+    exchangeProvider: row.exchange_provider,
+    strategyName: row.strategy_name,
+    engineKey: typeof parsed.engineKey === 'string' ? parsed.engineKey : undefined,
+    cardStyle: typeof parsed.cardStyle === 'string' ? parsed.cardStyle : 'dark',
+    symbol: typeof parsed.symbol === 'string' ? parsed.symbol : undefined,
+    baseSymbol: typeof parsed.baseSymbol === 'string' ? parsed.baseSymbol : undefined,
+    direction: typeof parsed.direction === 'string' ? parsed.direction : undefined,
+    leverage: typeof parsed.leverage === 'number' ? parsed.leverage : undefined,
+    entryPrice: row.entry_price ?? (typeof parsed.entryPrice === 'number' ? parsed.entryPrice : null),
+    exitPrice: row.exit_price ?? (typeof parsed.exitPrice === 'number' ? parsed.exitPrice : null),
+    signalName: row.signal_name ?? (typeof parsed.signalName === 'string' ? parsed.signalName : undefined),
+    bestSymbol: typeof parsed.bestSymbol === 'string' ? parsed.bestSymbol : undefined,
+    bestRoiPct: typeof parsed.bestRoiPct === 'number' ? parsed.bestRoiPct : undefined,
+    tokenLogoDataUri: tokenLogoDataUri ?? null,
+    issuedAt: row.issued_at,
+    layout,
+  };
+}
 
 tradingRoutes.get('/cards/:id/image', async (c) => {
   const user = c.get('user');
@@ -3477,26 +3831,34 @@ tradingRoutes.get('/cards/:id/image', async (c) => {
     profit_factor: number;
     exchange_provider: string;
     strategy_name: string;
+    payload_json: string;
+    trade_source?: string | null;
+    entry_price?: number | null;
+    exit_price?: number | null;
+    signal_name?: string | null;
+    token_address?: string | null;
+    chain_id?: string | null;
+    token_image_url?: string | null;
     issued_at: string;
   }>();
 
   if (!row) return c.json({ error: 'Profit card not found' }, 404);
 
-  const renderInput = {
-    cardId: row.id,
-    displayName: row.username || 'Dollarino Trader',
-    mode: row.mode,
-    period: row.period,
-    tradesCount: row.trades_count,
-    winRate: row.win_rate,
-    netPnlUsd: row.net_pnl_usd,
-    roiPct: row.roi_pct,
-    profitFactor: row.profit_factor,
-    exchangeProvider: row.exchange_provider,
-    strategyName: row.strategy_name,
-    issuedAt: row.issued_at,
-    layout,
-  } as const;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(row.payload_json || '{}') as Record<string, unknown>;
+  } catch { /* ignore */ }
+
+  const tokenLogoDataUri = await resolveTokenLogoPngDataUri({
+    baseSymbol: (typeof parsed.baseSymbol === 'string' ? parsed.baseSymbol : undefined) ||
+      (typeof parsed.symbol === 'string' ? parsed.symbol : undefined) ||
+      (typeof parsed.bestSymbol === 'string' ? parsed.bestSymbol : undefined),
+    chainId: row.chain_id || (typeof parsed.chainId === 'string' ? parsed.chainId : undefined),
+    tokenAddress: row.token_address || (typeof parsed.tokenAddress === 'string' ? parsed.tokenAddress : undefined),
+    tokenImageUrl: row.token_image_url || (typeof parsed.tokenImageUrl === 'string' ? parsed.tokenImageUrl : undefined),
+  }).catch(() => null);
+
+  const renderInput = buildCardRenderInputFromRow(row, layout, tokenLogoDataUri);
 
   if (format === 'png') {
     const png = await renderProfitCardPng(renderInput);
@@ -3544,28 +3906,43 @@ tradingRoutes.post('/cards/:id/send-telegram', async (c) => {
     profit_factor: number;
     exchange_provider: string;
     strategy_name: string;
+    payload_json: string;
+    trade_source?: string | null;
+    entry_price?: number | null;
+    exit_price?: number | null;
+    signal_name?: string | null;
+    token_address?: string | null;
+    chain_id?: string | null;
+    token_image_url?: string | null;
     issued_at: string;
   }>();
 
   if (!row) return c.json({ error: 'Card not found' }, 404);
+
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(row.payload_json || '{}') as Record<string, unknown>;
+  } catch { /* ignore */ }
+
+  const tokenLogoDataUri = await resolveTokenLogoPngDataUri({
+    baseSymbol: (typeof parsed.baseSymbol === 'string' ? parsed.baseSymbol : undefined) ||
+      (typeof parsed.symbol === 'string' ? parsed.symbol : undefined) ||
+      (typeof parsed.bestSymbol === 'string' ? parsed.bestSymbol : undefined),
+    chainId: row.chain_id || (typeof parsed.chainId === 'string' ? parsed.chainId : undefined),
+    tokenAddress: row.token_address || (typeof parsed.tokenAddress === 'string' ? parsed.tokenAddress : undefined),
+    tokenImageUrl: row.token_image_url || (typeof parsed.tokenImageUrl === 'string' ? parsed.tokenImageUrl : undefined),
+  }).catch(() => null);
+
+  const layout = body.layout === 'vertical' ? 'vertical' : 'horizontal';
+  const ri = buildCardRenderInputFromRow(row, layout, tokenLogoDataUri);
   const ok = await publishProfitCardToTelegram(
     c.env,
     user.telegramId,
     {
+      ...ri,
       id: row.id,
-      displayName: row.username || 'Dollarino Trader',
-      mode: row.mode,
-      period: row.period,
-      tradesCount: row.trades_count,
-      winRate: row.win_rate,
-      netPnlUsd: row.net_pnl_usd,
-      roiPct: row.roi_pct,
-      profitFactor: row.profit_factor,
-      exchangeProvider: row.exchange_provider,
-      strategyName: row.strategy_name,
-      issuedAt: row.issued_at,
     },
-    body.layout === 'vertical' ? 'vertical' : 'horizontal'
+    layout
   );
   return c.json({ ok });
 });
@@ -3643,10 +4020,19 @@ tradingRoutes.post('/strategies/evaluate', async (c) => {
     valid: res.valid,
     title: res.title,
     language: res.language,
+    overlay: res.overlay,
     errors: res.errors,
     warnings: res.warnings,
     plots: res.plots,
     markers: res.markers,
+    hlines: res.hlines ?? [],
+    fills: res.fills ?? [],
+    bgcolors: res.bgcolors ?? [],
+    barcolors: res.barcolors ?? [],
+    labels: res.labels ?? [],
+    lines: res.lines ?? [],
+    boxes: res.boxes ?? [],
+    tables: res.tables ?? [],
     latestSignal: res.latestSignal,
     candles,
     backtestSummary,
@@ -3737,7 +4123,8 @@ tradingRoutes.post('/strategies/:id/activate', async (c) => {
 // =========================================================================
 tradingRoutes.post('/ai-scan-now', async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `aiscan:${user.id}`, 10, 180);
+  const isPrivileged = user.role === 'owner' || user.role === 'admin';
+  const rl = await enforceRateLimit(c.env, `aiscan:${user.id}`, 10, 180, { bypass: isPrivileged });
   if (!rl.allowed) {
     return c.json({ ok: false, error: `لطفاً برای اسکن مجدد هوشمند ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   }

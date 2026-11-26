@@ -19,10 +19,12 @@ import type { Lang } from '../lib/i18n';
 import {
   approveErc20SpenderInDapp,
   approveHyperliquidAgentInDapp,
+  buildTrustWalletDappOpenUrl,
   connectAndPersistAllTrustWallets,
   DEX_ROUTER_SPENDERS,
-  fundCopyVaultFromDapp,
+  fundCopyVaultSmart,
   hasAnyInjectedWallet,
+  isMobileWalletPlatform,
   isTrustWalletEnvironment,
   launchTrustWalletUrl,
   requestTrustWalletDappHandoff,
@@ -79,7 +81,8 @@ export function TrustWalletConnectInline({
   const [agentSaving, setAgentSaving] = useState(false);
   const [dappBusy, setDappBusy] = useState(false);
   const [vaultEvmAddr, setVaultEvmAddr] = useState<string>('');
-  const [allowanceNet, setAllowanceNet] = useState<'bsc' | 'arbitrum' | 'base' | 'ethereum'>('bsc');
+  const [vaultSolAddr, setVaultSolAddr] = useState<string>('');
+  const [allowanceNet, setAllowanceNet] = useState<'bsc' | 'arbitrum' | 'base' | 'ethereum' | 'solana'>('bsc');
   const [allowanceCapUsd, setAllowanceCapUsd] = useState<number>(100);
   const [twModalOpen, setTwModalOpen] = useState(false);
   const [twHandoff, setTwHandoff] = useState<TrustWalletDappHandoff | null>(null);
@@ -95,10 +98,9 @@ export function TrustWalletConnectInline({
 
   const load = useCallback(async () => {
     try {
-      const [em, tw, vRes] = await Promise.all([
+      const [em, tw] = await Promise.all([
         apiFetch<ExecutionModeState>('/api/trustwallet/execution-mode'),
         apiFetch<TrustStatusState>('/api/trustwallet/status'),
-        apiFetch<{ vault?: { evmAddress?: string } }>('/api/copy-trade/vault').catch(() => null),
       ]);
       setExecState(em);
       setTwStatus(tw);
@@ -106,10 +108,15 @@ export function TrustWalletConnectInline({
       if (tw.wallet.solanaAddress) setSolanaAddress(tw.wallet.solanaAddress);
       if (tw.wallet.tonAddress) setTonAddress(tw.wallet.tonAddress);
       if (tw.wallet.tronAddress) setTronAddress(tw.wallet.tronAddress);
-      if (vRes?.vault?.evmAddress) setVaultEvmAddr(vRes.vault.evmAddress);
     } catch {
       // ignore initial error
     }
+    void apiFetch<{ vault?: { evmAddress?: string; solanaAddress?: string } }>('/api/copy-trade/vault')
+      .then((vRes) => {
+        if (vRes?.vault?.evmAddress) setVaultEvmAddr(vRes.vault.evmAddress);
+        if (vRes?.vault?.solanaAddress) setVaultSolAddr(vRes.vault.solanaAddress);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -287,23 +294,46 @@ export function TrustWalletConnectInline({
   };
 
   const handleQuickFundVault = async (usdApprox: number) => {
-    if (!vaultEvmAddr) {
-      onMsg(isFa ? 'ابتدا روی دکمه «تنظیم یک‌باره مجوز ۲۴/۷» بزنید تا خزانه شما ساخته شود.' : 'Initialize Copy-Vault first.', true);
-      return;
-    }
+    const isSol = allowanceNet === 'solana';
     setDappBusy(true);
     try {
-      const nativeAmt = allowanceNet === 'bsc' ? Number((usdApprox / 600).toFixed(4)) : Number((usdApprox / 3000).toFixed(4));
-      const txHash = await fundCopyVaultFromDapp({
+      let targetVault = isSol ? vaultSolAddr : vaultEvmAddr;
+      if (!targetVault) {
+        const vRes = await apiFetch<{ vault?: { evmAddress?: string; solanaAddress?: string } }>('/api/copy-trade/vault').catch(() => null);
+        if (vRes?.vault?.evmAddress) setVaultEvmAddr(vRes.vault.evmAddress);
+        if (vRes?.vault?.solanaAddress) setVaultSolAddr(vRes.vault.solanaAddress);
+        targetVault = isSol ? (vRes?.vault?.solanaAddress || '') : (vRes?.vault?.evmAddress || '');
+      }
+      if (!targetVault) {
+        onMsg(isFa ? 'ابتدا روی دکمه «تنظیم یک‌باره مجوز ۲۴/۷» بزنید تا خزانه شما ساخته شود.' : 'Initialize Copy-Vault first.', true);
+        return;
+      }
+      const nativeAmt = isSol
+        ? undefined
+        : allowanceNet === 'bsc'
+          ? Number((usdApprox / 600).toFixed(4))
+          : Number((usdApprox / 3000).toFixed(4));
+      const res = await fundCopyVaultSmart({
         networkKey: allowanceNet,
-        vaultAddress: vaultEvmAddr,
+        vaultAddress: targetVault,
         amountNative: nativeAmt,
+        amountUsd: usdApprox,
+        fallbackSolAddress: solanaAddress || twStatus?.wallet?.solanaAddress || null,
       });
-      onMsg(
-        isFa
-          ? `شارژ خزانه ۲۴/۷ (~$${usdApprox}) مستقیم از Trust Wallet ارسال شد! TX: ${txHash.slice(0, 14)}...`
-          : `Copy-Vault funded (~$${usdApprox}) directly from Trust Wallet! TX: ${txHash.slice(0, 14)}...`
-      );
+      if (res.mode === 'ONCHAIN_TX') {
+        onMsg(
+          isFa
+            ? `شارژ خزانه ۲۴/۷ (~$${usdApprox} · ${res.amountLabel}) روی ${isSol ? 'سولانا' : allowanceNet.toUpperCase()} ارسال شد! TX: ${res.txHash.slice(0, 14)}...`
+            : `Copy-Vault funded (~$${usdApprox} · ${res.amountLabel}) on ${allowanceNet.toUpperCase()}! TX: ${res.txHash.slice(0, 14)}...`
+        );
+      } else {
+        launchTrustWalletUrl(res.sendDeepLink, res.sendDeepLink);
+        onMsg(
+          isFa
+            ? `لینک انتقال ${res.amountLabel} به خزانه سولانا (${res.vaultAddress.slice(0, 8)}...) در Trust Wallet باز شد.`
+            : `Trust Wallet Solana transfer (${res.amountLabel}) opened for vault ${res.vaultAddress.slice(0, 8)}...`
+        );
+      }
       await load();
     } catch (e) {
       onMsg(e instanceof Error ? e.message : 'Vault funding failed', true);
@@ -313,6 +343,17 @@ export function TrustWalletConnectInline({
   };
 
   const handleRouterAllowance = async (revoke: boolean) => {
+    if (allowanceNet === 'solana') {
+      const jupUrl = 'https://jup.ag/swap/SOL-USDC';
+      const targetUrl = isMobileWalletPlatform() ? buildTrustWalletDappOpenUrl(jupUrl, 501) : jupUrl;
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      onMsg(
+        isFa
+          ? 'روتر Jupiter روی شبکه Solana به‌صورت اتمیک اجرا می‌شود و نیازی به Approve / Revoke ندارد.'
+          : 'Jupiter on Solana executes atomic swaps with no lingering ERC-20 router approval needed.'
+      );
+      return;
+    }
     setDappBusy(true);
     try {
       const spec = DEX_ROUTER_SPENDERS[allowanceNet];
@@ -529,7 +570,7 @@ export function TrustWalletConnectInline({
             </div>
           </div>
 
-          {hasAnyInjectedWallet() && (
+          {(hasAnyInjectedWallet() || Boolean(vaultEvmAddr || vaultSolAddr)) && (
             <div className="pt-2 border-t hairline space-y-2.5 text-[11px]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -545,7 +586,7 @@ export function TrustWalletConnectInline({
                 </div>
                 <select
                   value={allowanceNet}
-                  onChange={(e) => setAllowanceNet(e.target.value as 'bsc' | 'arbitrum' | 'base' | 'ethereum')}
+                  onChange={(e) => setAllowanceNet(e.target.value as 'bsc' | 'arbitrum' | 'base' | 'ethereum' | 'solana')}
                   dir="ltr"
                   className="surface-soft border hairline rounded-xl px-2 py-1 text-[10px] font-bold text-main"
                 >
@@ -553,6 +594,7 @@ export function TrustWalletConnectInline({
                   <option value="arbitrum">Arbitrum (ETH / USDC)</option>
                   <option value="base">Base (ETH / USDC)</option>
                   <option value="ethereum">Ethereum (ETH / USDT)</option>
+                  <option value="solana">Solana (SOL / USDC · Jupiter)</option>
                 </select>
               </div>
 
@@ -561,43 +603,77 @@ export function TrustWalletConnectInline({
                   <button
                     key={amt}
                     type="button"
-                    disabled={dappBusy || !vaultEvmAddr}
+                    disabled={dappBusy}
                     onClick={() => void handleQuickFundVault(amt)}
                     className="btn-cobalt px-2.5 py-1.5 rounded-xl text-[10px] font-black disabled:opacity-50"
                   >
-                    <span dir="ltr">+${amt}</span> {isFa ? 'شارژ خزانه' : 'Fund Vault'}
+                    <span dir="ltr">+${amt}</span>{' '}
+                    {allowanceNet === 'solana'
+                      ? isFa
+                        ? 'شارژ خزانه (SOL)'
+                        : 'Fund Vault (SOL)'
+                      : isFa
+                        ? 'شارژ خزانه'
+                        : 'Fund Vault'}
                   </button>
                 ))}
 
-                <div className="flex items-center gap-1 ms-auto">
-                  <span className="text-[10px] text-dim">{isFa ? 'سقف روتر:' : 'Cap $:'}</span>
-                  <input
-                    type="number"
-                    min={10}
-                    max={5000}
-                    value={allowanceCapUsd}
-                    onChange={(e) => setAllowanceCapUsd(Math.max(10, Number(e.target.value || 100)))}
-                    dir="ltr"
-                    className="input-field w-16 py-1 px-2 rounded-xl text-[10px] text-center font-num"
-                  />
-                  <button
-                    type="button"
-                    disabled={dappBusy}
-                    onClick={() => void handleRouterAllowance(false)}
-                    className="btn-gold px-2.5 py-1.5 rounded-xl text-[10px] font-black disabled:opacity-50"
-                  >
-                    {isFa ? 'تایید سقف روتر' : 'Approve Cap'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={dappBusy}
-                    onClick={() => void handleRouterAllowance(true)}
-                    className="btn-ghost px-2.5 py-1.5 rounded-xl text-[10px] font-bold text-loss disabled:opacity-50"
-                  >
-                    {isFa ? 'لغو (Revoke)' : 'Revoke'}
-                  </button>
-                </div>
+                {allowanceNet === 'solana' ? (
+                  <div className="flex flex-wrap items-center gap-1.5 ms-auto">
+                    <span className="px-2 py-1 rounded-xl bg-violet-500/15 text-violet-300 border border-violet-500/30 font-bold text-[10px]">
+                      {isFa ? 'سولانا اتمیک (بدون مجوز Approve)' : 'Solana Atomic (No Approve Needed)'}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={dappBusy}
+                      onClick={() => void handleRouterAllowance(false)}
+                      className="btn-gold px-2.5 py-1.5 rounded-xl text-[10px] font-black inline-flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>{isFa ? 'باز کردن Jupiter (SOL)' : 'Open Jupiter (SOL)'}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 ms-auto">
+                    <span className="text-[10px] text-dim">{isFa ? 'سقف روتر:' : 'Cap $:'}</span>
+                    <input
+                      type="number"
+                      min={10}
+                      max={5000}
+                      value={allowanceCapUsd}
+                      onChange={(e) => setAllowanceCapUsd(Math.max(10, Number(e.target.value || 100)))}
+                      dir="ltr"
+                      className="input-field w-16 py-1 px-2 rounded-xl text-[10px] text-center font-num"
+                    />
+                    <button
+                      type="button"
+                      disabled={dappBusy}
+                      onClick={() => void handleRouterAllowance(false)}
+                      className="btn-gold px-2.5 py-1.5 rounded-xl text-[10px] font-black disabled:opacity-50"
+                    >
+                      {isFa ? 'تایید سقف روتر' : 'Approve Cap'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={dappBusy}
+                      onClick={() => void handleRouterAllowance(true)}
+                      className="btn-ghost px-2.5 py-1.5 rounded-xl text-[10px] font-bold text-loss disabled:opacity-50"
+                    >
+                      {isFa ? 'لغو (Revoke)' : 'Revoke'}
+                    </button>
+                  </div>
+                )}
               </div>
+              {allowanceNet === 'solana' && vaultSolAddr && (
+                <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-[10px]">
+                  <span className="text-sub">
+                    {isFa ? 'آدرس خزانه ۲۴/۷ سولانا (SOL / SPL):' : 'Solana 24/7 Copy-Vault Address:'}
+                  </span>
+                  <code dir="ltr" className="font-mono text-main select-all">
+                    {vaultSolAddr}
+                  </code>
+                </div>
+              )}
             </div>
           )}
         </div>

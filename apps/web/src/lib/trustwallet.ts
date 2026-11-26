@@ -753,13 +753,102 @@ export async function approveHyperliquidAgentInDapp(agentName = 'Dollarino24x7')
 }
 
 /**
- * Fund user's isolated 24/7 Copy-Vault directly from their connected Trust Wallet via eth_sendTransaction.
+ * Fund user's isolated 24/7 Copy-Vault directly from their connected Trust Wallet (EVM eth_sendTransaction or Solana signAndSendTransaction).
  */
-export async function fundCopyVaultFromDapp(params: {
-  networkKey: 'bsc' | 'ethereum' | 'base' | 'arbitrum';
+export async function fundCopyVaultSmart(params: {
+  networkKey: 'bsc' | 'ethereum' | 'base' | 'arbitrum' | 'solana';
   vaultAddress: string;
-  amountNative: number;
-}): Promise<string> {
+  amountNative?: number;
+  amountUsd?: number;
+  fallbackSolAddress?: string | null;
+}): Promise<
+  | { mode: 'ONCHAIN_TX'; txHash: string; amountLabel: string }
+  | { mode: 'DEEP_LINK'; sendDeepLink: string; vaultAddress: string; amountLabel: string; note?: string }
+> {
+  if (params.networkKey === 'solana') {
+    const solProv = getInjectedSolanaProvider();
+    let fromAddress = params.fallbackSolAddress || '';
+    if (solProv) {
+      const resp = await solProv.connect().catch(() => null);
+      fromAddress = resp?.publicKey?.toString() || solProv.publicKey?.toString() || fromAddress;
+    }
+
+    const built = await apiFetch<{
+      ok: boolean;
+      kind: 'SOLANA_TX' | 'DAPP_URL';
+      vaultSolanaAddress: string;
+      txBase64?: string;
+      amountSol: number;
+      sendDeepLink: string;
+      note?: string;
+    }>('/api/trustwallet/build-solana-fund-tx', {
+      method: 'POST',
+      body: JSON.stringify({
+        fromAddress: fromAddress || undefined,
+        vaultAddress: params.vaultAddress || undefined,
+        amountUsd: params.amountUsd,
+        amountSol: params.amountNative,
+      }),
+    });
+
+    const solLabel = `${built.amountSol} SOL`;
+
+    if (built.kind === 'SOLANA_TX' && built.txBase64) {
+      if (solProv?.request) {
+        try {
+          const solRes = await solProv.request({
+            method: 'signAndSendTransaction',
+            params: { message: built.txBase64 },
+          });
+          const sig = typeof solRes === 'string' ? solRes : solRes?.signature;
+          if (sig) return { mode: 'ONCHAIN_TX', txHash: sig, amountLabel: solLabel };
+        } catch (err) {
+          const code = (err as { code?: number })?.code;
+          if (code === 4001) throw err;
+        }
+      }
+      // Wallet Standard solana:signAndSendTransaction fallback (for Trust Wallet Desktop Extension)
+      const solStandard =
+        discoveredStandardWallets.find(
+          (w) => /trust/i.test(w.name || '') && w.chains?.some((c) => c.startsWith('solana:'))
+        ) || discoveredStandardWallets.find((w) => w.chains?.some((c) => c.startsWith('solana:')));
+      const stdSignAndSend = solStandard?.features?.['solana:signAndSendTransaction'] as
+        | { signAndSendTransaction?: (input: unknown) => Promise<Array<{ signature?: Uint8Array }> | { signature?: Uint8Array }> }
+        | undefined;
+      if (solStandard && stdSignAndSend?.signAndSendTransaction) {
+        try {
+          const raw = atob(built.txBase64);
+          const txBytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) txBytes[i] = raw.charCodeAt(i);
+          const acct = solStandard.accounts?.[0];
+          const res = await stdSignAndSend.signAndSendTransaction({
+            transaction: txBytes,
+            account: acct,
+            chain: 'solana:mainnet',
+          });
+          const first = Array.isArray(res) ? res[0] : res;
+          if (first?.signature) {
+            return {
+              mode: 'ONCHAIN_TX',
+              txHash: Array.from(first.signature).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32),
+              amountLabel: solLabel,
+            };
+          }
+        } catch {
+          // fallback cleanly to deep link below
+        }
+      }
+    }
+
+    return {
+      mode: 'DEEP_LINK',
+      sendDeepLink: built.sendDeepLink,
+      vaultAddress: built.vaultSolanaAddress || params.vaultAddress,
+      amountLabel: solLabel,
+      note: built.note,
+    };
+  }
+
   const provider = getInjectedTrustProvider();
   if (!provider) throw new Error('NO_INJECTED_WALLET');
   const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
@@ -768,7 +857,8 @@ export async function fundCopyVaultFromDapp(params: {
 
   await switchEvmNetwork(params.networkKey);
 
-  const wei = BigInt(Math.max(1, Math.round(params.amountNative * 1e9))) * 1_000_000_000n;
+  const amountNative = Number(params.amountNative || 0.04);
+  const wei = BigInt(Math.max(1, Math.round(amountNative * 1e9))) * 1_000_000_000n;
   const txHash = (await provider.request({
     method: 'eth_sendTransaction',
     params: [
@@ -780,7 +870,23 @@ export async function fundCopyVaultFromDapp(params: {
     ],
   })) as string;
 
-  return txHash;
+  return {
+    mode: 'ONCHAIN_TX',
+    txHash,
+    amountLabel: `${amountNative} ${params.networkKey === 'bsc' ? 'BNB' : 'ETH'}`,
+  };
+}
+
+export async function fundCopyVaultFromDapp(params: {
+  networkKey: 'bsc' | 'ethereum' | 'base' | 'arbitrum' | 'solana';
+  vaultAddress: string;
+  amountNative: number;
+  amountUsd?: number;
+}): Promise<string> {
+  const res = await fundCopyVaultSmart(params);
+  if (res.mode === 'ONCHAIN_TX') return res.txHash;
+  launchTrustWalletUrl(res.sendDeepLink, res.sendDeepLink);
+  return 'DEEP_LINK_OPENED';
 }
 
 /**

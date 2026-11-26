@@ -145,8 +145,9 @@ export function TradingViewAlertsHub({
       {/* Header Banner */}
       <div className="panel rounded-3xl p-5 flex flex-col md:flex-row items-center gap-4 border hairline">
         <img
-          src="/images/transparent/tv-chart-3d.png"
+          src="/images/transparent/tv-chart-3d.webp"
           alt="TradingView Free Alerts"
+          decoding="async"
           className="h-20 w-20 object-contain shrink-0"
         />
         <div className="flex-1 text-center md:text-start space-y-1">

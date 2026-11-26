@@ -78,6 +78,8 @@ export interface UserBotConfigRow {
   sniper_target_type?: 'BOTH' | 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME';
   sniper_min_liquidity_usd?: number;
   sniper_max_pair_age_hours?: number;
+  sniper_max_pair_age_minutes?: number;
+  sniper_advanced_filters_json?: string | null;
   sniper_max_tax_pct?: number;
   sniper_tp_pct?: number;
   sniper_sl_pct?: number;
@@ -89,6 +91,8 @@ export interface UserBotConfigRow {
   bot_budget_mode?: 'FULL_BALANCE' | 'FIXED_USD' | 'PERCENT_OF_BALANCE';
   bot_budget_usd?: number;
   bot_budget_pct?: number;
+  notification_prefs_json?: string;
+  display_currency?: 'USD' | 'IRT';
 }
 
 export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
@@ -167,16 +171,19 @@ export async function notifyUserTelegram(
   text: string,
   inlineKeyboard?: Array<
     Array<{ text: string; callback_data?: string; url?: string; web_app?: { url: string }; style?: 'primary' | 'success' | 'danger' }>
-  >
+  >,
+  options?: { bypassNotificationsPref?: boolean }
 ) {
   try {
     const user = await env.DB.prepare('SELECT telegram_id FROM users WHERE id = ?')
       .bind(userId).first<{ telegram_id: string | null }>();
     if (!user?.telegram_id) return;
 
-    const cfg = await env.DB.prepare('SELECT notifications_enabled FROM bot_configs WHERE user_id = ?')
-      .bind(userId).first<{ notifications_enabled: number }>();
-    if (cfg && !cfg.notifications_enabled) return;
+    if (!options?.bypassNotificationsPref) {
+      const cfg = await env.DB.prepare('SELECT notifications_enabled FROM bot_configs WHERE user_id = ?')
+        .bind(userId).first<{ notifications_enabled: number }>();
+      if (cfg && !cfg.notifications_enabled) return;
+    }
 
     // Prefer user's own active bot token; fallback to instance global bot
     const botRow = await env.DB.prepare(
@@ -864,30 +871,41 @@ export async function resolveUserCapitalSummary(
   db: D1Database,
   userId: string,
   cfg: Pick<UserBotConfigRow, 'trading_mode' | 'bot_budget_mode' | 'bot_budget_usd' | 'bot_budget_pct' | 'paper_balance' | 'risk_profile_json'> | null,
-  balance?: { free?: string | number; total?: string | number } | null
+  balance?: { free?: string | number; total?: string | number } | null,
+  prefetched?: { usedTradesMarginUsd?: number; usedSniperUsd?: number }
 ): Promise<UserCapitalSummary> {
   const mode = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
-  const openMarginRow = await db
-    .prepare(
-      `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used_margin
-       FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ?`
-    )
-    .bind(userId, mode)
-    .first<{ used_margin: number }>()
-    .catch(() => ({ used_margin: 0 }));
+  let usedTrades = prefetched?.usedTradesMarginUsd;
+  let usedSniper = prefetched?.usedSniperUsd;
 
-  const openSniperRow = await db
-    .prepare(
-      `SELECT COALESCE(SUM(CAST(amount_usd AS REAL)), 0) AS sniper_used
-       FROM dex_trades WHERE user_id = ? AND status = 'OPEN' AND note LIKE '%شکارچی دمو%'`
-    )
-    .bind(userId)
-    .first<{ sniper_used: number }>()
-    .catch(() => ({ sniper_used: 0 }));
+  if (usedTrades === undefined || (mode === 'PAPER' && usedSniper === undefined)) {
+    const [openMarginRow, openSniperRow] = await Promise.all([
+      usedTrades === undefined
+        ? db
+            .prepare(
+              `SELECT COALESCE(SUM(CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL)))), 0) AS used_margin
+               FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ?`
+            )
+            .bind(userId, mode)
+            .first<{ used_margin: number }>()
+            .catch(() => ({ used_margin: 0 }))
+        : Promise.resolve({ used_margin: usedTrades }),
+      mode === 'PAPER' && usedSniper === undefined
+        ? db
+            .prepare(
+              `SELECT COALESCE(SUM(CAST(amount_usd AS REAL)), 0) AS sniper_used
+               FROM dex_trades WHERE user_id = ? AND status = 'OPEN' AND note LIKE '%شکارچی دمو%'`
+            )
+            .bind(userId)
+            .first<{ sniper_used: number }>()
+            .catch(() => ({ sniper_used: 0 }))
+        : Promise.resolve({ sniper_used: usedSniper ?? 0 }),
+    ]);
+    usedTrades = Math.max(0, Number(openMarginRow?.used_margin ?? 0));
+    usedSniper = mode === 'PAPER' ? Math.max(0, Number(openSniperRow?.sniper_used ?? 0)) : 0;
+  }
 
-  const usedTrades = Math.max(0, Number(openMarginRow?.used_margin ?? 0));
-  const usedSniper = mode === 'PAPER' ? Math.max(0, Number(openSniperRow?.sniper_used ?? 0)) : 0;
-  const usedMarginUsd = Math.round((usedTrades + usedSniper) * 100) / 100;
+  const usedMarginUsd = Math.round((Math.max(0, usedTrades) + (mode === 'PAPER' ? Math.max(0, usedSniper ?? 0) : 0)) * 100) / 100;
 
   const fallbackFree = mode === 'LIVE' ? 0 : (Number(cfg?.paper_balance ?? 10000) || 10000);
   const hasExplicitFree = balance?.free !== undefined && balance?.free !== null;

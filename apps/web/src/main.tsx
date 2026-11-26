@@ -4,14 +4,17 @@ import { App } from './App';
 import './index.css';
 
 if (typeof window !== 'undefined') {
-  // Purge legacy v9/v10 caches immediately so updated UI & transparent 3D icons appear without manual hard-refresh
+  const SW_CACHE_NAME = 'dollarino-pwa-v11.7.2';
+  const RELOAD_KEY = 'dollarino_sw_reloaded_v1172';
+
   if ('caches' in window) {
     window.caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== 'dollarino-pwa-v11.6.5').map((k) => window.caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== SW_CACHE_NAME).map((k) => window.caches.delete(k))))
       .catch(() => {});
   }
   if ('serviceWorker' in navigator) {
+    const hadController = Boolean(navigator.serviceWorker.controller);
     window.addEventListener('load', () => {
       navigator.serviceWorker
         .register('/sw.js', { updateViaCache: 'none' })
@@ -31,9 +34,11 @@ if (typeof window !== 'undefined') {
         .catch(() => {});
       let reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (reloading || sessionStorage.getItem('dollarino_sw_reloaded_v1165')) return;
+        // Never force a double-reload on initial first-visit SW install
+        if (!hadController) return;
+        if (reloading || sessionStorage.getItem(RELOAD_KEY)) return;
         reloading = true;
-        sessionStorage.setItem('dollarino_sw_reloaded_v1165', '1');
+        sessionStorage.setItem(RELOAD_KEY, '1');
         window.location.reload();
       });
     });

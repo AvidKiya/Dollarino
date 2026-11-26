@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bot,
@@ -21,6 +21,7 @@ import {
   buildTrustWalletDappOpenUrl,
   connectAllWalletChains,
   hasAnyInjectedWallet,
+  isMobileWalletPlatform,
   signTrustWalletNonce,
 } from '../lib/trustwallet';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
@@ -81,13 +82,25 @@ export function AuthPage({
   const [walletLoading, setWalletLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [twDappDeepLink, setTwDappDeepLink] = useState<string | null>(null);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
-  const [providers, setProviders] = useState<{ googleConfigured: boolean; googleClientId?: string | null }>({
+  const [providers, setProviders] = useState<{
+    googleConfigured: boolean;
+    googleClientId?: string | null;
+    defaultAdminReferralCode?: string | null;
+  }>({
     googleConfigured: false,
   });
   const [challengeToken, setChallengeToken] = useState<string | null>(initial2faToken);
   const [totpCode, setTotpCode] = useState('');
   const [verifying2fa, setVerifying2fa] = useState(false);
+  const autoTwSignupTriggeredRef = useRef(false);
+
+  const isSidePanelEmbed =
+    typeof window !== 'undefined' &&
+    (new URLSearchParams(window.location.search).get('embed') === 'sidepanel' ||
+      sessionStorage.getItem('dollarino_embed_sidepanel') === '1' ||
+      window.self !== window.top);
 
   useEffect(() => {
     setMode(initialMode);
@@ -101,11 +114,17 @@ export function AuthPage({
     apiFetch<{ ok: boolean }>('/api/health')
       .then((r) => setApiReady(Boolean(r.ok)))
       .catch(() => setApiReady(false));
-    apiFetch<{ googleConfigured?: boolean; googleEnabled?: boolean; googleClientId?: string | null }>('/api/auth/providers')
+    apiFetch<{
+      googleConfigured?: boolean;
+      googleEnabled?: boolean;
+      googleClientId?: string | null;
+      defaultAdminReferralCode?: string | null;
+    }>('/api/auth/providers')
       .then((p) =>
         setProviders({
           googleConfigured: Boolean(p.googleConfigured ?? p.googleEnabled),
           googleClientId: p.googleClientId ?? null,
+          defaultAdminReferralCode: p.defaultAdminReferralCode ?? null,
         })
       )
       .catch(() => {});
@@ -116,19 +135,29 @@ export function AuthPage({
     ? `https://t.me/Dollarino_bot?start=${encodeURIComponent(`web_auth__REF_${cleanRef}`)}`
     : 'https://t.me/Dollarino_bot?start=web_auth';
 
-  const handleWalletAuth = async () => {
+  const handleWalletAuth = useCallback(async () => {
     setError(null);
+    setTwDappDeepLink(null);
     setWalletLoading(true);
     try {
       if (!hasAnyInjectedWallet()) {
-        const dappUrl = buildTrustWalletDappOpenUrl(
-          typeof window !== 'undefined' ? window.location.href : 'https://dollarino.app'
-        );
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dollarino.pages.dev';
+        const target = new URL(origin);
+        target.searchParams.set('auth_screen', '1');
+        target.searchParams.set('auth_mode', 'register');
+        target.searchParams.set('tw_signup', '1');
+        if (cleanRef) target.searchParams.set('ref', cleanRef);
+        const dappUrl = buildTrustWalletDappOpenUrl(target.toString());
+        setTwDappDeepLink(dappUrl);
+        if (isMobileWalletPlatform() && !isSidePanelEmbed) {
+          window.location.href = dappUrl;
+          return;
+        }
         window.open(dappUrl, '_blank', 'noopener,noreferrer');
         setError(
           isFa
-            ? 'افزونه کیف‌پول در این مرورگر یافت نشد؛ صفحه ورود در Trust Wallet برای شما باز شد. در موبایل با مرورگر Trust Wallet ادامه دهید.'
-            : 'No browser wallet extension detected; opened in Trust Wallet DApp Browser.'
+            ? 'برای ثبت‌نام مستقیم با کیف‌پول، سایت مستقیماً در مرورگر DApps تراست‌ولت باز شد. داخل Trust Wallet گزینه Confirm / Sign را بزنید.'
+            : 'Opened Dollarino directly inside Trust Wallet DApp Browser. Confirm the wallet signature there to complete registration.'
         );
         return;
       }
@@ -183,7 +212,19 @@ export function AuthPage({
     } finally {
       setWalletLoading(false);
     }
-  };
+  }, [cleanRef, isFa, isSidePanelEmbed, onSuccess]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || autoTwSignupTriggeredRef.current) return;
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get('tw_signup') !== '1') return;
+    if (!hasAnyInjectedWallet()) return;
+    autoTwSignupTriggeredRef.current = true;
+    qp.delete('tw_signup');
+    const nextQ = qp.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${nextQ ? `?${nextQ}` : ''}`);
+    void handleWalletAuth();
+  }, [handleWalletAuth]);
 
   const handleGoogleAuth = () => {
     setError(null);
@@ -199,7 +240,13 @@ export function AuthPage({
     const params = new URLSearchParams();
     if (cleanRef) params.set('ref', cleanRef);
     const qs = params.toString();
-    window.location.href = `/api/auth/google/start${qs ? `?${qs}` : ''}`;
+    const startUrl = `/api/auth/google/start${qs ? `?${qs}` : ''}`;
+    if (isSidePanelEmbed) {
+      window.open(`${window.location.origin}${startUrl}`, '_blank', 'noopener,noreferrer');
+      setGoogleLoading(false);
+      return;
+    }
+    window.location.href = startUrl;
   };
 
   const submitPasswordLogin = async (e: React.FormEvent) => {
@@ -309,8 +356,19 @@ export function AuthPage({
           </div>
 
           {shownError && (
-            <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-bold text-loss">
-              {shownError}
+            <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-bold text-loss space-y-2">
+              <p>{shownError}</p>
+              {twDappDeepLink && (
+                <a
+                  href={twDappDeepLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-jade border border-emerald-500/40 text-[11px] font-black"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'باز کردن مستقیم در DApps تراست‌ولت' : 'Open Directly in Trust Wallet DApps'}</span>
+                </a>
+              )}
             </div>
           )}
 
@@ -493,10 +551,15 @@ export function AuthPage({
                         dir="ltr"
                         value={referralCode}
                         onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                        placeholder="DLRXHSOW"
+                        placeholder={providers.defaultAdminReferralCode || 'DLRXHSOW'}
                         className="field pl-10 pr-3.5 text-xs font-mono-num text-left"
                       />
                     </div>
+                    <p className="text-[10px] text-dim">
+                      {isFa
+                        ? `در صورت خالی ماندن، به‌صورت خودکار کد معرف مدیر${providers.defaultAdminReferralCode ? ` (${providers.defaultAdminReferralCode})` : ''} ثبت می‌شود.`
+                        : `If left empty, the admin referral code${providers.defaultAdminReferralCode ? ` (${providers.defaultAdminReferralCode})` : ''} is applied automatically.`}
+                    </p>
                   </div>
                 </div>
               ) : (

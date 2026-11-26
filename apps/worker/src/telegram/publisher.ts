@@ -4,7 +4,18 @@ import {
   type Direction,
   type DollarinoSignal,
 } from '@dollarino/core';
-import { renderProfitCardPng, renderSignalClosedCardPng } from '../cards/renderer.js';
+import { renderProfitCardPng, renderSignalClosedCardPng, type ProfitCardRenderInput } from '../cards/renderer.js';
+
+function isUserNotifCategoryOn(prefsJson: string | null | undefined, category: 'signals' | 'open_close' | 'tp_sl' | 'dex_sniper' | 'cards_reports'): boolean {
+  if (!prefsJson) return true;
+  try {
+    const parsed = JSON.parse(prefsJson) as Record<string, unknown>;
+    if (category in parsed && typeof parsed[category] === 'boolean') {
+      return Boolean(parsed[category]);
+    }
+  } catch { /* fallback true */ }
+  return true;
+}
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import {
@@ -276,7 +287,7 @@ export async function publishSignalBroadcast(
 
   if (params.notifySubscribers && cfg.signalsToBotEnabled) {
     const subs = await env.DB.prepare(
-      `SELECT DISTINCT u.telegram_id
+      `SELECT DISTINCT u.telegram_id, bc.notification_prefs_json
        FROM users u
        LEFT JOIN bot_configs bc ON bc.user_id = u.id
        WHERE u.telegram_id IS NOT NULL AND u.telegram_id != ''
@@ -285,16 +296,17 @@ export async function publishSignalBroadcast(
          AND (COALESCE(u.phone_verified, 0) = 1 OR bc.bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE'))
        ORDER BY u.last_active_at DESC
        LIMIT 100`
-    ).all<{ telegram_id: string }>().catch(() => ({ results: [] }));
+    ).all<{ telegram_id: string; notification_prefs_json?: string | null }>().catch(() => ({ results: [] }));
 
+    const eligibleSubs = subs.results.filter((s) => isUserNotifCategoryOn(s.notification_prefs_json, 'signals'));
     const inlineKb = channelSignalInlineButtons({
       signalId,
       botUsername: cfg.botUsername,
       webAppUrl: cfg.webAppUrl,
       forChannel: false,
     });
-    for (let i = 0; i < subs.results.length; i += 10) {
-      const batch = subs.results.slice(i, i + 10);
+    for (let i = 0; i < eligibleSubs.length; i += 10) {
+      const batch = eligibleSubs.slice(i, i + 10);
       const settled = await Promise.allSettled(
         batch.map((s) => tg.sendMessage(s.telegram_id, formattedText, { inlineKeyboard: inlineKb }))
       );
@@ -409,12 +421,16 @@ export async function publishSignalClosedCard(
 
   // 1. Send card to user's private Telegram if notifications enabled
   const userRow = await env.DB.prepare(
-    `SELECT u.telegram_id, bc.notifications_enabled
+    `SELECT u.telegram_id, bc.notifications_enabled, bc.notification_prefs_json
      FROM users u LEFT JOIN bot_configs bc ON bc.user_id = u.id
      WHERE u.id = ? LIMIT 1`
-  ).bind(params.userId).first<{ telegram_id: string | null; notifications_enabled: number | null }>().catch(() => null);
+  ).bind(params.userId).first<{ telegram_id: string | null; notifications_enabled: number | null; notification_prefs_json?: string | null }>().catch(() => null);
 
-  if (userRow?.telegram_id && userRow.notifications_enabled !== 0) {
+  if (
+    userRow?.telegram_id &&
+    userRow.notifications_enabled !== 0 &&
+    isUserNotifCategoryOn(userRow.notification_prefs_json, 'tp_sl')
+  ) {
     try {
       if (pngBytes) {
         await tg.sendPhotoBuffer(userRow.telegram_id, pngBytes, `dollarino-result-${params.symbol}.png`, caption);
@@ -502,29 +518,27 @@ export async function publishSignalClosedCard(
 export async function publishProfitCardToTelegram(
   env: Env,
   chatId: string | number,
-  card: {
-    id: string;
-    displayName: string;
-    mode: 'LIVE' | 'PAPER';
-    period: string;
-    tradesCount: number;
-    winRate: number;
-    netPnlUsd: number;
-    roiPct: number;
-    profitFactor: number;
-    exchangeProvider: string;
-    strategyName: string;
-    issuedAt: string;
-  },
+  card: Omit<ProfitCardRenderInput, 'cardId'> & { id: string },
   layout: 'horizontal' | 'vertical' = 'horizontal'
 ): Promise<boolean> {
   const botToken = await resolveTelegramBotToken(env);
   if (!botToken) return false;
   const tg = new TelegramBotClient(botToken);
   const pngBytes = await renderProfitCardPng({ ...card, cardId: card.id, layout }).catch(() => null);
+  const ratioLabel = layout === 'vertical' ? '۹:۱۶ استوری' : '۱۶:۹ افقی';
+  const tradeLine =
+    card.symbol
+      ? `🪙 نماد: ${card.symbol}${card.direction ? ` (${card.direction}${card.leverage && card.leverage > 1 ? ` ${card.leverage}x` : ''})` : ''}\n`
+      : '';
+  const priceLine =
+    card.entryPrice && card.exitPrice
+      ? `🎯 ورود: $${Number(card.entryPrice).toLocaleString('en-US', { maximumFractionDigits: 4 })} ➔ خروج: $${Number(card.exitPrice).toLocaleString('en-US', { maximumFractionDigits: 4 })}\n`
+      : '';
   const caption =
-    `🏆 کارت سود رسمی دلارینو (${card.mode === 'LIVE' ? 'حساب واقعی ✅' : 'حساب دمو 🧪'})\n` +
-    `📊 دوره: ${card.period} | وین‌ریت: ${card.winRate}%\n` +
+    `🏆 کارت سود رسمی دلارینو (${card.mode === 'LIVE' ? 'حساب واقعی ✅' : 'حساب دمو 🧪'} · ${ratioLabel})\n` +
+    tradeLine +
+    priceLine +
+    `📊 دوره: ${card.period} | موتور: ${card.strategyName}${card.signalName ? ` | سیگنال: ${card.signalName}` : ''}\n` +
     `💰 سود خالص: ${card.netPnlUsd >= 0 ? '+' : '-'}$${Math.abs(card.netPnlUsd).toFixed(2)} (${card.roiPct >= 0 ? '+' : '-'}${Math.abs(card.roiPct).toFixed(2)}%)\n` +
     `🆔 @Dollarino_official`;
 

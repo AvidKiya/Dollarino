@@ -1,16 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { LookId } from './components/AppearanceModal';
 import { AppInlineTabLoader, AppSplashLoader } from './components/AppSplashLoader';
-import { CompleteProfileGate } from './components/CompleteProfileGate';
 import { FloatingAiChat } from './components/FloatingAiChat';
 import { FloatingToastHost } from './components/FloatingToastHost';
 import { Layout, type UiMode } from './components/Layout';
-import { OnboardingAcademyModal } from './components/OnboardingAcademyModal';
-import { PwaInstallModal } from './components/PwaInstallModal';
 import { QuickLauncherModal } from './components/QuickWidgetsBar';
-import { SupportModal } from './components/SupportModal';
 import type { ExchangeMarket } from './components/SymbolPickerModal';
-import { TrustWalletDirectModal } from './components/TrustWalletDirectModal';
 import { apiFetch, ApiError, setStoredToken } from './lib/api';
 import { setLiveUsdtIrt } from './lib/format';
 import type { Lang } from './lib/i18n';
@@ -24,10 +19,15 @@ import {
   type TrustWalletDappHandoff,
 } from './lib/trustwallet';
 import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
-import { AuthPage } from './pages/AuthPage';
-import { LandingPage } from './pages/LandingPage';
-import { OverviewPage } from './pages/OverviewPage';
 
+const AuthPage = lazy(() => import('./pages/AuthPage').then((m) => ({ default: m.AuthPage })));
+const LandingPage = lazy(() => import('./pages/LandingPage').then((m) => ({ default: m.LandingPage })));
+const OverviewPage = lazy(() => import('./pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
+const CompleteProfileGate = lazy(() => import('./components/CompleteProfileGate').then((m) => ({ default: m.CompleteProfileGate })));
+const OnboardingAcademyModal = lazy(() => import('./components/OnboardingAcademyModal').then((m) => ({ default: m.OnboardingAcademyModal })));
+const PwaInstallModal = lazy(() => import('./components/PwaInstallModal').then((m) => ({ default: m.PwaInstallModal })));
+const SupportModal = lazy(() => import('./components/SupportModal').then((m) => ({ default: m.SupportModal })));
+const TrustWalletDirectModal = lazy(() => import('./components/TrustWalletDirectModal').then((m) => ({ default: m.TrustWalletDirectModal })));
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
 const AiChatPage = lazy(() => import('./pages/AiChatPage').then((m) => ({ default: m.AiChatPage })));
 const CopyConnectPage = lazy(() => import('./pages/CopyConnectPage').then((m) => ({ default: m.CopyConnectPage })));
@@ -55,6 +55,14 @@ function applyLookToRoot(look: LookId) {
 }
 
 export function App() {
+  const [isSidePanelEmbed] = useState<boolean>(() => {
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get('embed') === 'sidepanel' || qp.get('simple_only') === '1') {
+      sessionStorage.setItem('dollarino_embed_sidepanel', '1');
+      return true;
+    }
+    return sessionStorage.getItem('dollarino_embed_sidepanel') === '1';
+  });
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('dollarino_lang') === 'en' ? 'en' : 'fa'));
   const [look, setLook] = useState<LookId>(() => {
     const saved = localStorage.getItem('dollarino_look');
@@ -63,6 +71,10 @@ export function App() {
     return 'paper';
   });
   const [uiMode, setUiMode] = useState<UiMode>(() => {
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get('embed') === 'sidepanel' || qp.get('simple_only') === '1' || qp.get('ui_mode') === 'simple' || sessionStorage.getItem('dollarino_embed_sidepanel') === '1') {
+      return 'simple';
+    }
     const saved = localStorage.getItem('dollarino_ui_mode');
     if (saved === 'simple' || saved === 'pro') return saved;
     return 'simple';
@@ -71,8 +83,14 @@ export function App() {
   const [user, setUser] = useState<AuthUserInfo | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>('landing');
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>(() => {
+    const qp = new URLSearchParams(window.location.search);
+    return qp.get('auth_screen') === '1' || qp.get('tw_signup') === '1' ? 'auth' : 'landing';
+  });
+  const [authMode, setAuthMode] = useState<'login' | 'register'>(() => {
+    const qp = new URLSearchParams(window.location.search);
+    return qp.get('auth_mode') === 'login' ? 'login' : 'register';
+  });
   const [pending2faToken, setPending2faToken] = useState<string | null>(null);
   const [supportOpen, setSupportOpen] = useState(false);
   const [academyOpen, setAcademyOpen] = useState(false);
@@ -96,6 +114,7 @@ export function App() {
       sessionStorage.setItem('dollarino_copy_subtab', 'sniper');
       return 'copy';
     }
+    if (tab === 'cards') return 'card';
     if (tab && ['overview', 'aichat', 'myai', 'terminal', 'markets', 'dex', 'radar', 'copy', 'portfolio', 'services', 'card', 'pricing', 'faq', 'admin'].includes(tab)) {
       return tab as NavTab;
     }
@@ -107,6 +126,8 @@ export function App() {
   });
   const [marketType, setMarketType] = useState<'SPOT' | 'FUTURES'>('FUTURES');
   const [terminalSymbol, setTerminalSymbol] = useState('BTCUSDT');
+  const [marketFocusSymbol, setMarketFocusSymbol] = useState<string | null>(null);
+  const [marketFocusNonce, setMarketFocusNonce] = useState(0);
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
 
@@ -127,7 +148,7 @@ export function App() {
   }, [look]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || isSidePanelEmbed) return;
     const qp = new URLSearchParams(window.location.search);
     if (qp.get('tw_autoconnect') === '1') return;
     const hasTw = Boolean(
@@ -137,7 +158,7 @@ export function App() {
     if (!hasTw && !localStorage.getItem(seenKey) && activeTab !== 'admin') {
       setAcademyOpen(true);
     }
-  }, [user, activeTab]);
+  }, [user, activeTab, isSidePanelEmbed]);
 
   const handleSetLang = (l: Lang) => {
     setLang(l);
@@ -145,6 +166,10 @@ export function App() {
   };
 
   const handleSetUiMode = (next: UiMode) => {
+    if (isSidePanelEmbed) {
+      setUiMode('simple');
+      return;
+    }
     setUiMode(next);
     localStorage.setItem('dollarino_ui_mode', next);
     if (user) {
@@ -272,11 +297,15 @@ export function App() {
         return;
       }
       setUser(me.user);
-      if (me.user.ui_mode === 'simple' || me.user.ui_mode === 'pro') {
+      if (isSidePanelEmbed) {
+        setUiMode('simple');
+      } else if (me.user.ui_mode === 'simple' || me.user.ui_mode === 'pro') {
         setUiMode(me.user.ui_mode);
         localStorage.setItem('dollarino_ui_mode', me.user.ui_mode);
       }
-      const dash = await apiFetch<DashboardPayload>('/api/trading/dashboard');
+      const dashPromise = apiFetch<DashboardPayload>('/api/trading/dashboard');
+      const futuresMktsPromise = apiFetch<{ markets: ExchangeMarket[] }>('/api/trading/markets?marketType=FUTURES').catch(() => ({ markets: [] }));
+      const dash = await dashPromise;
       if (dash.iranRate?.usdtIrt) {
         setLiveUsdtIrt(dash.iranRate.usdtIrt, dash.iranRate.source);
       } else {
@@ -288,10 +317,14 @@ export function App() {
       }
       const activeMkt: 'SPOT' | 'FUTURES' = dash.config?.market_type === 'SPOT' ? 'SPOT' : 'FUTURES';
       setMarketType(activeMkt);
-      const mkts = await apiFetch<{ markets: ExchangeMarket[] }>(`/api/trading/markets?marketType=${activeMkt}`).catch(() => ({ markets: [] }));
       setDashboard(dash);
       if (dash.config?.symbol) setTerminalSymbol((prev) => prev || dash.config.symbol);
-      if (mkts.markets.length) setMarkets(mkts.markets);
+      void (activeMkt === 'FUTURES'
+        ? futuresMktsPromise
+        : apiFetch<{ markets: ExchangeMarket[] }>('/api/trading/markets?marketType=SPOT').catch(() => ({ markets: [] }))
+      ).then((mkts) => {
+        if (mkts.markets.length) setMarkets(mkts.markets);
+      });
     } catch (err) {
       setUser(null);
       setDashboard(null);
@@ -306,46 +339,86 @@ export function App() {
     void loadSessionAndDashboard();
   }, [loadSessionAndDashboard]);
 
+  const hasActivePositionsRef = useRef(false);
+  const lastTickSigRef = useRef('');
+  useEffect(() => {
+    hasActivePositionsRef.current = Boolean(
+      dashboard &&
+        (dashboard.openTrades.length > 0 ||
+          dashboard.dexTrades?.some((d) => d.status === 'OPEN') ||
+          dashboard.smartCopyPositions?.some((p) => p.status === 'OPEN') ||
+          dashboard.perpOrders?.some((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED'))
+    );
+  }, [dashboard]);
+
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     let tickInFlight = false;
-    const tickIv = setInterval(() => {
-      if (tickInFlight) return;
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      tickInFlight = true;
-      void apiFetch<{
-        ok: boolean;
-        balance?: DashboardPayload['balance'];
-        openTrades?: DashboardPayload['openTrades'];
-        dexTrades?: DashboardPayload['dexTrades'];
-        smartCopyPositions?: DashboardPayload['smartCopyPositions'];
-        perpOrders?: DashboardPayload['perpOrders'];
-        totalUnrealizedPnl?: number;
-      }>('/api/trading/live-ticks')
-        .then((t) => {
-          if (!t?.ok) return;
-          setDashboard((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  balance: t.balance ?? prev.balance,
-                  openTrades: t.openTrades ?? prev.openTrades,
-                  dexTrades: t.dexTrades ?? prev.dexTrades,
-                  smartCopyPositions: t.smartCopyPositions ?? prev.smartCopyPositions,
-                  perpOrders: t.perpOrders ?? prev.perpOrders,
-                  stats: {
-                    ...prev.stats,
-                    unrealizedPnl: t.totalUnrealizedPnl ?? prev.stats.unrealizedPnl,
-                  },
-                }
-              : prev
-          );
-        })
-        .catch(() => {})
-        .finally(() => {
-          tickInFlight = false;
-        });
-    }, 1_500);
+    let tickTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleTick = () => {
+      if (cancelled) return;
+      const delayMs = hasActivePositionsRef.current ? 3_000 : 15_000;
+      tickTimer = setTimeout(() => {
+        if (cancelled) return;
+        if (tickInFlight || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) {
+          scheduleTick();
+          return;
+        }
+        tickInFlight = true;
+        void apiFetch<{
+          ok: boolean;
+          balance?: DashboardPayload['balance'];
+          openTrades?: DashboardPayload['openTrades'];
+          dexTrades?: DashboardPayload['dexTrades'];
+          smartCopyPositions?: DashboardPayload['smartCopyPositions'];
+          perpOrders?: DashboardPayload['perpOrders'];
+          totalUnrealizedPnl?: number;
+        }>('/api/trading/live-ticks?poll=1')
+          .then((t) => {
+            if (cancelled || !t?.ok) return;
+            const sig = JSON.stringify([
+              t.balance?.free,
+              t.balance?.total,
+              t.totalUnrealizedPnl ?? 0,
+              t.openTrades?.length ?? 0,
+              t.dexTrades?.length ?? 0,
+              t.smartCopyPositions?.length ?? 0,
+              t.perpOrders?.length ?? 0,
+            ]);
+            const hasAny =
+              (t.openTrades?.length ?? 0) > 0 ||
+              (t.dexTrades?.length ?? 0) > 0 ||
+              (t.smartCopyPositions?.length ?? 0) > 0 ||
+              (t.perpOrders?.length ?? 0) > 0;
+            if (!hasAny && sig === lastTickSigRef.current) return;
+            lastTickSigRef.current = sig;
+            setDashboard((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    balance: t.balance ?? prev.balance,
+                    openTrades: t.openTrades ?? prev.openTrades,
+                    dexTrades: t.dexTrades ?? prev.dexTrades,
+                    smartCopyPositions: t.smartCopyPositions ?? prev.smartCopyPositions,
+                    perpOrders: t.perpOrders ?? prev.perpOrders,
+                    stats: {
+                      ...prev.stats,
+                      unrealizedPnl: t.totalUnrealizedPnl ?? prev.stats.unrealizedPnl,
+                    },
+                  }
+                : prev
+            );
+          })
+          .catch(() => {})
+          .finally(() => {
+            tickInFlight = false;
+            scheduleTick();
+          });
+      }, delayMs);
+    };
+    scheduleTick();
 
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
@@ -359,43 +432,30 @@ export function App() {
           );
         })
         .catch(() => {});
-    }, 30_000);
+    }, 45_000);
     return () => {
-      clearInterval(tickIv);
+      cancelled = true;
+      if (tickTimer) clearTimeout(tickTimer);
       clearInterval(iv);
     };
   }, [user]);
 
-  // Real-time Tether/Toman rate polling (45s while tab is visible to minimize edge/D1 load)
+  // Public Tether/Toman rate polling while unauthenticated (logged-in users already receive iranRate via /dashboard?lite=1)
   useEffect(() => {
+    if (user) return;
     const pollRate = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      void apiFetch<{ usdtIrt?: number; usdtIrr?: number; source?: string; updatedAt?: string }>(
-        '/api/public/usdt-irt-rate?refresh=1'
-      )
+      void apiFetch<{ usdtIrt?: number; usdtIrr?: number; source?: string }>('/api/public/usdt-irt-rate')
         .then((r) => {
           if (r?.usdtIrt && r.usdtIrt >= 30_000) {
             setLiveUsdtIrt(r.usdtIrt, r.source);
-            setDashboard((cur) =>
-              cur
-                ? {
-                    ...cur,
-                    iranRate: {
-                      usdtIrt: r.usdtIrt!,
-                      usdtIrr: r.usdtIrr || r.usdtIrt! * 10,
-                      source: r.source || 'arzdigital',
-                      updatedAt: r.updatedAt || new Date().toISOString(),
-                    },
-                  }
-                : cur
-            );
           }
         })
         .catch(() => {});
     };
-    const rateIv = setInterval(pollRate, 45_000);
+    const rateIv = setInterval(pollRate, 90_000);
     return () => clearInterval(rateIv);
-  }, []);
+  }, [user]);
 
   const handleLogout = async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
@@ -570,6 +630,13 @@ export function App() {
     setActiveTab('terminal');
   };
 
+  const openMarketsWithSymbol = (sym: string) => {
+    setTerminalSymbol(sym);
+    setMarketFocusSymbol(sym);
+    setMarketFocusNonce((n) => n + 1);
+    setActiveTab('markets');
+  };
+
   if (verifyCardId) {
     return (
       <Suspense fallback={<AppSplashLoader lang={lang} stage="card" />}>
@@ -592,6 +659,7 @@ export function App() {
   if (!user) {
     return (
       <>
+        <Suspense fallback={<AppSplashLoader lang={lang} stage="auth" />}>
         {publicScreen === 'landing' ? (
           <LandingPage
             lang={lang}
@@ -623,17 +691,22 @@ export function App() {
             }}
           />
         )}
-        <SupportModal
-          open={supportOpen}
-          lang={lang}
-          authenticated={false}
-          onClose={() => setSupportOpen(false)}
-          onGoToAuth={() => {
-            setSupportOpen(false);
-            setAuthMode('login');
-            setPublicScreen('auth');
-          }}
-        />
+        </Suspense>
+        {supportOpen && (
+          <Suspense fallback={null}>
+            <SupportModal
+              open={supportOpen}
+              lang={lang}
+              authenticated={false}
+              onClose={() => setSupportOpen(false)}
+              onGoToAuth={() => {
+                setSupportOpen(false);
+                setAuthMode('login');
+                setPublicScreen('auth');
+              }}
+            />
+          </Suspense>
+        )}
         <FloatingAiChat
           lang={lang}
           authenticated={false}
@@ -649,15 +722,17 @@ export function App() {
 
   if (Number(user.profile_completed ?? 1) === 0) {
     return (
-      <CompleteProfileGate
-        lang={lang}
-        user={user}
-        onCompleted={(updated) => {
-          setUser(updated);
-          void loadSessionAndDashboard();
-        }}
-        onLogout={handleLogout}
-      />
+      <Suspense fallback={<AppSplashLoader lang={lang} stage="desk" />}>
+        <CompleteProfileGate
+          lang={lang}
+          user={user}
+          onCompleted={(updated) => {
+            setUser(updated);
+            void loadSessionAndDashboard();
+          }}
+          onLogout={handleLogout}
+        />
+      </Suspense>
     );
   }
 
@@ -671,12 +746,16 @@ export function App() {
           onRetry={() => void loadSessionAndDashboard()}
           onBack={() => void handleLogout()}
         />
-        <SupportModal
-          open={supportOpen}
-          lang={lang}
-          authenticated={Boolean(user)}
-          onClose={() => setSupportOpen(false)}
-        />
+        {supportOpen && (
+          <Suspense fallback={null}>
+            <SupportModal
+              open={supportOpen}
+              lang={lang}
+              authenticated={Boolean(user)}
+              onClose={() => setSupportOpen(false)}
+            />
+          </Suspense>
+        )}
         <FloatingAiChat
           lang={lang}
           authenticated={Boolean(user)}
@@ -693,8 +772,8 @@ export function App() {
       setLang={handleSetLang}
       currentLook={look}
       onSelectLook={handleSelectLook}
-      uiMode={uiMode}
-      onToggleUiMode={handleSetUiMode}
+      uiMode={isSidePanelEmbed ? 'simple' : uiMode}
+      onToggleUiMode={isSidePanelEmbed ? undefined : handleSetUiMode}
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       user={user}
@@ -714,6 +793,7 @@ export function App() {
       onStartStop={handleTopbarStartStop}
       onKillSwitch={handleKillSwitch}
       onSelectSymbolForTerminal={openTerminalWithSymbol}
+      onSelectSymbolForMarket={openMarketsWithSymbol}
       onRefresh={loadSessionAndDashboard}
       onOpenSupport={() => setSupportOpen(true)}
       onOpenAcademy={() => setAcademyOpen(true)}
@@ -725,8 +805,8 @@ export function App() {
       {activeTab === 'overview' && (
         <OverviewPage
           lang={lang}
-          uiMode={uiMode}
-          onToggleUiMode={handleSetUiMode}
+          uiMode={isSidePanelEmbed ? 'simple' : uiMode}
+          onToggleUiMode={isSidePanelEmbed ? undefined : handleSetUiMode}
           user={user}
           data={dashboard}
           markets={markets}
@@ -740,6 +820,8 @@ export function App() {
       {activeTab === 'aichat' && (
         <AiChatPage
           lang={lang}
+          data={dashboard}
+          onRefresh={loadSessionAndDashboard}
           onNavigate={setActiveTab}
           onSelectSymbolForTerminal={(sym) => openTerminalWithSymbol(sym)}
         />
@@ -762,8 +844,8 @@ export function App() {
       {activeTab === 'terminal' && (
         <TerminalPage
           lang={lang}
-          uiMode={uiMode}
-          onToggleUiMode={handleSetUiMode}
+          uiMode={isSidePanelEmbed ? 'simple' : uiMode}
+          onToggleUiMode={isSidePanelEmbed ? undefined : handleSetUiMode}
           symbol={terminalSymbol}
           setSymbol={setTerminalSymbol}
           marketType={marketType}
@@ -776,11 +858,14 @@ export function App() {
       {activeTab === 'markets' && (
         <MarketsPage
           lang={lang}
-          uiMode={uiMode}
+          uiMode={isSidePanelEmbed ? 'simple' : uiMode}
           markets={markets}
           iranRate={dashboard.iranRate?.usdtIrt}
           marketType={marketType}
           walletEvmAddress={user.trust_wallet_address}
+          focusSymbol={marketFocusSymbol}
+          focusNonce={marketFocusNonce}
+          onClearFocus={() => setMarketFocusSymbol(null)}
           onChangeMarketType={handleChangeMarketType}
           onTradeSymbol={(sym) => openTerminalWithSymbol(sym, marketType)}
           onRefresh={loadSessionAndDashboard}
@@ -818,14 +903,15 @@ export function App() {
       {activeTab === 'services' && (
         <ServicesPage
           lang={lang}
-          uiMode={uiMode}
-          onToggleUiMode={handleSetUiMode}
+          uiMode={isSidePanelEmbed ? 'simple' : uiMode}
+          onToggleUiMode={isSidePanelEmbed ? undefined : handleSetUiMode}
           currentLook={look}
           onToggleDaylight={handleToggleDaylight}
           user={user}
           data={dashboard}
           onNavigate={setActiveTab}
           onUpdateUser={(u) => setUser(u)}
+          onRefresh={loadSessionAndDashboard}
           onOpenSupport={() => setSupportOpen(true)}
           onLogout={handleLogout}
         />
@@ -846,19 +932,27 @@ export function App() {
       )}
       </Suspense>
     </Layout>
-    <SupportModal
-      open={supportOpen}
-      lang={lang}
-      authenticated
-      onClose={() => setSupportOpen(false)}
-    />
-    <OnboardingAcademyModal
-      open={academyOpen}
-      lang={lang}
-      user={user}
-      onClose={() => setAcademyOpen(false)}
-      onDone={loadSessionAndDashboard}
-    />
+    {supportOpen && (
+      <Suspense fallback={null}>
+        <SupportModal
+          open={supportOpen}
+          lang={lang}
+          authenticated
+          onClose={() => setSupportOpen(false)}
+        />
+      </Suspense>
+    )}
+    {academyOpen && (
+      <Suspense fallback={null}>
+        <OnboardingAcademyModal
+          open={academyOpen}
+          lang={lang}
+          user={user}
+          onClose={() => setAcademyOpen(false)}
+          onDone={loadSessionAndDashboard}
+        />
+      </Suspense>
+    )}
     <FloatingAiChat
       lang={lang}
       authenticated
@@ -867,18 +961,20 @@ export function App() {
       onSelectSymbolForTerminal={(sym) => openTerminalWithSymbol(sym)}
     />
     {installOpen && (
-      <PwaInstallModal
-        lang={lang}
-        onClose={() => {
-          setInstallOpen(false);
-          const qp = new URLSearchParams(window.location.search);
-          if (qp.has('install')) {
-            qp.delete('install');
-            const qs = qp.toString();
-            window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
-          }
-        }}
-      />
+      <Suspense fallback={null}>
+        <PwaInstallModal
+          lang={lang}
+          onClose={() => {
+            setInstallOpen(false);
+            const qp = new URLSearchParams(window.location.search);
+            if (qp.has('install')) {
+              qp.delete('install');
+              const qs = qp.toString();
+              window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+            }
+          }}
+        />
+      </Suspense>
     )}
     <QuickLauncherModal
       action={quickAction}
@@ -897,33 +993,37 @@ export function App() {
         }
       }}
     />
-    <TrustWalletDirectModal
-      open={twModalOpen}
-      lang={lang}
-      handoff={twHandoff}
-      mobileLaunched={twMobileLaunched}
-      busyRetry={walletConnecting}
-      errorText={twModalError}
-      onRetryInjected={handleDirectConnectWallet}
-      onConnected={async () => {
-        await loadSessionAndDashboard();
-        setTwModalOpen(false);
-        setAcademyOpen(false);
-        pushFloatingToast(
-          lang === 'fa'
-            ? 'کیف‌پول Trust Wallet همگام‌سازی و متصل شد!'
-            : 'Trust Wallet synced and connected!',
-          'success',
-          5500
-        );
-        setActiveTab('dex');
-      }}
-      onGoToWalletPage={() => {
-        setTwModalOpen(false);
-        setActiveTab('dex');
-      }}
-      onClose={() => setTwModalOpen(false)}
-    />
+    {twModalOpen && (
+      <Suspense fallback={null}>
+        <TrustWalletDirectModal
+          open={twModalOpen}
+          lang={lang}
+          handoff={twHandoff}
+          mobileLaunched={twMobileLaunched}
+          busyRetry={walletConnecting}
+          errorText={twModalError}
+          onRetryInjected={handleDirectConnectWallet}
+          onConnected={async () => {
+            await loadSessionAndDashboard();
+            setTwModalOpen(false);
+            setAcademyOpen(false);
+            pushFloatingToast(
+              lang === 'fa'
+                ? 'کیف‌پول Trust Wallet همگام‌سازی و متصل شد!'
+                : 'Trust Wallet synced and connected!',
+              'success',
+              5500
+            );
+            setActiveTab('dex');
+          }}
+          onGoToWalletPage={() => {
+            setTwModalOpen(false);
+            setActiveTab('dex');
+          }}
+          onClose={() => setTwModalOpen(false)}
+        />
+      </Suspense>
+    )}
     <FloatingToastHost dir={lang === 'fa' ? 'rtl' : 'ltr'} />
     </>
   );

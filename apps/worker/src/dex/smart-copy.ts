@@ -2082,6 +2082,116 @@ export async function withdrawCopyVaultToTrustWallet(
   };
 }
 
+function toFixed32Bytes(decoded: Uint8Array): Uint8Array {
+  if (decoded.length === 32) return decoded;
+  const out = new Uint8Array(32);
+  if (decoded.length > 32) {
+    out.set(decoded.slice(decoded.length - 32), 0);
+  } else {
+    out.set(decoded, 32 - decoded.length);
+  }
+  return out;
+}
+
+export async function estimateSolPriceUsd(): Promise<number> {
+  try {
+    const solPools = await getDexTokenPools('solana', 'So11111111111111111111111111111111111111112');
+    const px = Number(solPools[0]?.priceUsd || 0);
+    if (Number.isFinite(px) && px >= 10 && px <= 25_000) return px;
+  } catch {
+    // fallback below
+  }
+  return 180;
+}
+
+export async function buildUnsignedSolanaTransferTx(
+  env: Env,
+  params: { fromAddress: string; toAddress: string; amountSol: number }
+): Promise<{
+  txBase64: string;
+  blockhash: string;
+  lamports: number;
+  amountSol: number;
+}> {
+  const from = params.fromAddress.trim();
+  const to = params.toAddress.trim();
+  if (!isValidSolana(from)) throw new Error('آدرس مبدا سولانا نامعتبر است.');
+  if (!isValidSolana(to)) throw new Error('آدرس مقصد سولانا نامعتبر است.');
+  const cleanSol = Number(Math.max(0.0001, params.amountSol).toFixed(6));
+  const lamports = Math.max(100_000, Math.round(cleanSol * 1e9));
+
+  const helius = await resolveOnchainApiKey(env, 'helius').catch(() => ({ apiKey: null, isActive: false }));
+  const rpcCandidates = [
+    ...(helius.isActive && helius.apiKey
+      ? [`https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(helius.apiKey)}`]
+      : []),
+    'https://api.mainnet-beta.solana.com',
+    'https://solana-rpc.publicnode.com',
+  ];
+
+  let blockhash = '';
+  for (const rpcUrl of rpcCandidates) {
+    try {
+      const bhRes = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestBlockhash', params: [{ commitment: 'finalized' }] }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const bhJson = (await bhRes.json().catch(() => ({}))) as { result?: { value?: { blockhash?: string } } };
+      if (bhJson.result?.value?.blockhash) {
+        blockhash = bhJson.result.value.blockhash;
+        break;
+      }
+    } catch {
+      // try next RPC
+    }
+  }
+  if (!blockhash) {
+    throw new Error('دریافت بلاک‌هش شبکه سولانا ناموفق بود.');
+  }
+
+  const fromPub = toFixed32Bytes(decodeBase58(from));
+  const toPub = toFixed32Bytes(decodeBase58(to));
+  const sysProg = new Uint8Array(32); // 11111111111111111111111111111111
+  const bhBytes = toFixed32Bytes(decodeBase58(blockhash));
+
+  const ixData = new Uint8Array(12);
+  const view = new DataView(ixData.buffer);
+  view.setUint32(0, 2, true); // SystemProgram::Transfer
+  view.setBigUint64(4, BigInt(lamports), true);
+
+  const msg = new Uint8Array(3 + 1 + 32 * 3 + 32 + 1 + 1 + 3 + 1 + 12);
+  let off = 0;
+  msg.set([1, 0, 1], off); off += 3;
+  msg[off++] = 3;
+  msg.set(fromPub, off); off += 32;
+  msg.set(toPub, off); off += 32;
+  msg.set(sysProg, off); off += 32;
+  msg.set(bhBytes, off); off += 32;
+  msg[off++] = 1;
+  msg[off++] = 2;
+  msg[off++] = 2;
+  msg[off++] = 0;
+  msg[off++] = 1;
+  msg[off++] = 12;
+  msg.set(ixData, off);
+
+  // Legacy Transaction wire format with 1 empty 64-byte signature slot for wallet signAndSendTransaction
+  const fullTx = new Uint8Array(1 + 64 + msg.length);
+  fullTx[0] = 1;
+  fullTx.set(msg, 65);
+
+  let bin = '';
+  for (let i = 0; i < fullTx.length; i++) bin += String.fromCharCode(fullTx[i]!);
+  return {
+    txBase64: btoa(bin),
+    blockhash,
+    lamports,
+    amountSol: cleanSol,
+  };
+}
+
 async function evaluateAiGuardForToken(
   env: Env,
   pair: DexTokenEnriched,

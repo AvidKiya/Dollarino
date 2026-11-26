@@ -49,7 +49,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
           ],
         },
         {
-          img: '/images/referral-invite-banner.png?v=105',
+          img: '/images/referral-invite-banner.webp?v=1166',
           badge: 'آموزش ۵ · باشگاه دعوت و اعتبار پیش‌پرداخت کارمزد ۳٪',
           title: 'ساخت بنر اختصاصی دعوت و کسب اعتبار کارمزد بدون اشتراک',
           steps: [
@@ -111,7 +111,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
           ],
         },
         {
-          img: '/images/referral-invite-banner.png?v=105',
+          img: '/images/referral-invite-banner.webp?v=1166',
           badge: 'GUIDE 5 · NON-WITHDRAWABLE REFERRAL FEE CREDITS',
           title: 'Invite Real Traders & Offset Your 3% Profit Fees',
           steps: [

@@ -12,9 +12,22 @@ interface CompleteProfileGateProps {
   onLogout: () => void;
 }
 
+function normalizePhoneClient(raw: string): string {
+  const ascii = raw
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .trim();
+  const hasPlus = ascii.startsWith('+');
+  const digits = ascii.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 16) return '';
+  return `${hasPlus ? '+' : ''}${digits}`;
+}
+
 export function CompleteProfileGate({ lang, user, onCompleted, onLogout }: CompleteProfileGateProps) {
   const isFa = lang === 'fa';
+  const isPhoneLocked = Boolean(user.phone_verified && user.phone_number);
   const [displayName, setDisplayName] = useState(user.display_name || user.telegram_first_name || '');
+  const [phoneNumber, setPhoneNumber] = useState(user.phone_number || '');
   const [username, setUsername] = useState(() => {
     const raw = user.username || '';
     if (/^(wallet_|tg_)/.test(raw)) return '';
@@ -67,7 +80,12 @@ export function CompleteProfileGate({ lang, user, onCompleted, onLogout }: Compl
     e.preventDefault();
     setError(null);
     if (displayName.trim().length < 2) {
-      setError(isFa ? 'لطفاً نام و نام خانوادگی (حداقل ۲ حرف) را وارد کنید.' : 'Enter your full name (at least 2 chars).');
+      setError(isFa ? 'لطفاً اسم مستعار یا نام نمایشی (حداقل ۲ حرف) را وارد کنید.' : 'Enter your nickname / display name (at least 2 chars).');
+      return;
+    }
+    const cleanPhone = normalizePhoneClient(phoneNumber);
+    if (!isPhoneLocked && !cleanPhone) {
+      setError(isFa ? 'لطفاً شماره تماس معتبر (۷ تا ۱۶ رقم) را وارد کنید.' : 'Enter a valid phone number (7–16 digits).');
       return;
     }
     if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(username.trim())) {
@@ -93,6 +111,7 @@ export function CompleteProfileGate({ lang, user, onCompleted, onLogout }: Compl
         method: 'POST',
         body: JSON.stringify({
           displayName: displayName.trim(),
+          phoneNumber: cleanPhone || phoneNumber.trim(),
           username: username.trim(),
           password,
           ...(email.trim() ? { email: email.trim() } : {}),
@@ -148,8 +167,8 @@ export function CompleteProfileGate({ lang, user, onCompleted, onLogout }: Compl
 
         <p className="text-xs text-dim leading-relaxed">
           {isFa
-            ? 'برای ورود به میز کار معاملاتی و فعال‌سازی ورود با نام کاربری و رمز عبور، لطفاً نام، نام کاربری یکتا و رمز عبور شخصی خود را تعیین کنید.'
-            : 'Please choose your display name, a unique username, and a personal password so you can also sign in directly anytime.'}
+            ? 'برای ورود به میز کار معاملاتی، لطفاً شماره تماس، اسم مستعار (نام نمایشی)، نام کاربری یکتا و رمز عبور شخصی خود را تعیین کنید.'
+            : 'Please enter your phone number, nickname/display name, a unique username, and a personal password to finish registration.'}
         </p>
 
         {user.trust_wallet_address && (
@@ -163,15 +182,36 @@ export function CompleteProfileGate({ lang, user, onCompleted, onLogout }: Compl
 
         <form onSubmit={handleSubmit} className="space-y-3.5">
           <div>
+            <label className="text-[11px] font-bold text-dim flex items-center justify-between gap-2 mb-1">
+              <span>{isFa ? 'شماره تماس (موبایل)' : 'Phone Number'}</span>
+              {isPhoneLocked && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-jade">
+                  {isFa ? 'تاییدشده از تلگرام' : 'Telegram Verified'}
+                </span>
+              )}
+            </label>
+            <input
+              type="tel"
+              dir="ltr"
+              required={!isPhoneLocked}
+              readOnly={isPhoneLocked}
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              placeholder="+98 912 345 6789"
+              className={`w-full rounded-xl px-3.5 py-2.5 text-sm field font-mono ${isPhoneLocked ? 'opacity-75 cursor-not-allowed' : ''}`}
+            />
+          </div>
+
+          <div>
             <label className="text-[11px] font-bold text-dim block mb-1">
-              {isFa ? 'نام و نام خانوادگی (نام نمایشی)' : 'Full Name / Display Name'}
+              {isFa ? 'اسم مستعار / نام نمایشی' : 'Nickname / Display Name'}
             </label>
             <input
               type="text"
               required
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder={isFa ? 'مثلاً: آوید کیا' : 'e.g. Alex Trader'}
+              placeholder={isFa ? 'مثلاً: آوید تریدر' : 'e.g. Alex Trader'}
               className="w-full rounded-xl px-3.5 py-2.5 text-sm field"
             />
           </div>

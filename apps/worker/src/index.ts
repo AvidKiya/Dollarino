@@ -7,6 +7,7 @@ import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-inte
 import { pollWatchedWalletsForNewTrades, reconcileCopyPositionsV2 } from './dex/smart-copy.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
+import { getExchangeMarkets, MAJOR_LIQUID_COINS } from './exchanges/markets.js';
 import {
   DOLLARINO_CREATOR_INFO,
   listSelectableAIModels,
@@ -15,7 +16,8 @@ import {
 import { buildClientFingerprints, enforceRateLimit } from './security.js';
 import { adminRoutes, dispatchDueScheduledBroadcasts } from './routes/admin.js';
 import { aiAssistantRoutes } from './routes/ai-assistant.js';
-import { buildProfitCardSvg, renderProfitCardPng } from './cards/renderer.js';
+import { buildProfitCardSvg, renderProfitCardPng, type ProfitCardRenderInput } from './cards/renderer.js';
+import { resolveTokenLogoPngDataUri } from './services/profit-cards.js';
 import { chartAiRoutes } from './routes/chart-ai.js';
 import { connectionRoutes } from './routes/connections.js';
 import { copyTradeRoutes } from './routes/copy-trade.js';
@@ -114,7 +116,7 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '11.6.0',
+    version: '11.7.2',
     openSource: false,
     paidSubscriptions: false,
     profitShareFeePct: SERVER_PROFIT_FEE_PCT,
@@ -289,6 +291,14 @@ app.get('/api/public/verify-card/:cardId', async (c) => {
     payload_json: string;
     hmac_signature: string;
     issued_at: string;
+    trade_source?: string | null;
+    entry_price?: number | null;
+    exit_price?: number | null;
+    signal_name?: string | null;
+    token_address?: string | null;
+    chain_id?: string | null;
+    token_image_url?: string | null;
+    revoked?: number | null;
     username: string | null;
     telegram_username: string | null;
   }>();
@@ -297,9 +307,9 @@ app.get('/api/public/verify-card/:cardId', async (c) => {
     return c.json({ valid: false, error: 'کارت سود با این شناسه در سرور دلارینو ثبت نشده است (احتمالاً جعلی یا نامعتبر است).' }, 404);
   }
 
-  let parsedPayload: { tradesHash?: string; cardStyle?: string; symbol?: string; direction?: string; isVerifiedReal?: boolean } = {};
+  let parsedPayload: Record<string, unknown> = {};
   try {
-    parsedPayload = JSON.parse(row.payload_json || '{}');
+    parsedPayload = JSON.parse(row.payload_json || '{}') as Record<string, unknown>;
   } catch {
     parsedPayload = {};
   }
@@ -319,19 +329,24 @@ app.get('/api/public/verify-card/:cardId', async (c) => {
     profitFactor: Number(row.profit_factor),
     exchangeProvider: row.exchange_provider,
     strategyName: row.strategy_name,
-    tradesHash: parsedPayload.tradesHash || '',
+    tradesHash: typeof parsedPayload.tradesHash === 'string' ? parsedPayload.tradesHash : '',
     issuedAt: row.issued_at,
   });
   const expectedSig = await hmacSha256Hex(expectedCanonical, cardSecret);
-  const signatureValid = expectedSig === row.hmac_signature;
+  const isRevoked = Number(row.revoked || 0) === 1;
+  const signatureValid = expectedSig === row.hmac_signature && !isRevoked;
 
   return c.json({
     valid: signatureValid,
+    revoked: isRevoked,
+    error: isRevoked ? 'این کارت توسط مدیریت دلارینو ابطال شده است.' : undefined,
     card: {
       id: row.id,
       displayName: row.username || (row.telegram_username ? `@${row.telegram_username}` : 'Dollarino Trader'),
       mode: row.mode,
       isVerifiedReal: row.mode === 'LIVE' && signatureValid,
+      revoked: isRevoked,
+      tradeSource: row.trade_source || (typeof parsedPayload.tradeSource === 'string' ? parsedPayload.tradeSource : 'ALL'),
       period: row.period,
       startDate: row.start_date,
       endDate: row.end_date,
@@ -342,9 +357,19 @@ app.get('/api/public/verify-card/:cardId', async (c) => {
       profitFactor: row.profit_factor,
       exchangeProvider: row.exchange_provider,
       strategyName: row.strategy_name,
-      cardStyle: parsedPayload.cardStyle || 'dark',
-      symbol: parsedPayload.symbol,
-      direction: parsedPayload.direction,
+      engineKey: typeof parsedPayload.engineKey === 'string' ? parsedPayload.engineKey : undefined,
+      cardStyle: typeof parsedPayload.cardStyle === 'string' ? parsedPayload.cardStyle : 'dark',
+      symbol: typeof parsedPayload.symbol === 'string' ? parsedPayload.symbol : undefined,
+      baseSymbol: typeof parsedPayload.baseSymbol === 'string' ? parsedPayload.baseSymbol : undefined,
+      direction: typeof parsedPayload.direction === 'string' ? parsedPayload.direction : undefined,
+      leverage: typeof parsedPayload.leverage === 'number' ? parsedPayload.leverage : undefined,
+      entryPrice: row.entry_price ?? (typeof parsedPayload.entryPrice === 'number' ? parsedPayload.entryPrice : null),
+      exitPrice: row.exit_price ?? (typeof parsedPayload.exitPrice === 'number' ? parsedPayload.exitPrice : null),
+      signalName: row.signal_name ?? (typeof parsedPayload.signalName === 'string' ? parsedPayload.signalName : undefined),
+      tokenAddress: row.token_address ?? (typeof parsedPayload.tokenAddress === 'string' ? parsedPayload.tokenAddress : undefined),
+      chainId: row.chain_id ?? (typeof parsedPayload.chainId === 'string' ? parsedPayload.chainId : undefined),
+      tokenImageUrl: row.token_image_url ?? (typeof parsedPayload.tokenImageUrl === 'string' ? parsedPayload.tokenImageUrl : undefined),
+      bestSymbol: typeof parsedPayload.bestSymbol === 'string' ? parsedPayload.bestSymbol : undefined,
       signaturePrefix: row.hmac_signature.slice(0, 16),
       issuedAt: row.issued_at,
     },
@@ -353,7 +378,7 @@ app.get('/api/public/verify-card/:cardId', async (c) => {
 
 app.get('/api/public/card-image/:cardId', async (c) => {
   const rawId = c.req.param('cardId').replace(/\.png$/i, '');
-  const layout = c.req.query('layout') === 'vertical' ? 'vertical' : 'horizontal';
+  const layout: 'horizontal' | 'vertical' = c.req.query('layout') === 'vertical' ? 'vertical' : 'horizontal';
   const row = await c.env.DB.prepare(
     `SELECT vc.*, u.username, u.telegram_username
      FROM verified_profit_cards vc LEFT JOIN users u ON vc.user_id = u.id
@@ -362,7 +387,7 @@ app.get('/api/public/card-image/:cardId', async (c) => {
     id: string;
     user_id: string;
     mode: 'LIVE' | 'PAPER';
-    period: '24H' | '7D' | '30D' | '1Y' | 'ALL' | 'TRADE';
+    period: string;
     trades_count: number;
     win_rate: number;
     net_pnl_usd: number;
@@ -371,24 +396,42 @@ app.get('/api/public/card-image/:cardId', async (c) => {
     exchange_provider: string;
     strategy_name: string;
     payload_json: string;
+    trade_source?: string | null;
+    entry_price?: number | null;
+    exit_price?: number | null;
+    signal_name?: string | null;
+    token_address?: string | null;
+    chain_id?: string | null;
+    token_image_url?: string | null;
     issued_at: string;
     username: string | null;
     telegram_username: string | null;
   }>();
   if (!row) return c.json({ error: 'Card not found' }, 404);
 
-  let parsedPayload: { symbol?: string; direction?: string } = {};
+  let parsedPayload: Record<string, unknown> = {};
   try {
-    parsedPayload = JSON.parse(row.payload_json || '{}');
+    parsedPayload = JSON.parse(row.payload_json || '{}') as Record<string, unknown>;
   } catch {
     parsedPayload = {};
   }
 
-  const renderInput = {
+  const tokenLogoDataUri = await resolveTokenLogoPngDataUri({
+    baseSymbol: (typeof parsedPayload.baseSymbol === 'string' ? parsedPayload.baseSymbol : undefined) ||
+      (typeof parsedPayload.symbol === 'string' ? parsedPayload.symbol : undefined) ||
+      (typeof parsedPayload.bestSymbol === 'string' ? parsedPayload.bestSymbol : undefined),
+    chainId: row.chain_id || (typeof parsedPayload.chainId === 'string' ? parsedPayload.chainId : undefined),
+    tokenAddress: row.token_address || (typeof parsedPayload.tokenAddress === 'string' ? parsedPayload.tokenAddress : undefined),
+    tokenImageUrl: row.token_image_url || (typeof parsedPayload.tokenImageUrl === 'string' ? parsedPayload.tokenImageUrl : undefined),
+  }).catch(() => null);
+
+  const srcRaw = String(row.trade_source || parsedPayload.tradeSource || 'ALL').toUpperCase();
+  const renderInput: ProfitCardRenderInput = {
     cardId: row.id,
     displayName: row.username || (row.telegram_username ? `@${row.telegram_username}` : 'Dollarino Trader'),
     mode: row.mode,
     period: row.period,
+    tradeSource: srcRaw === 'PERP' || srcRaw === 'DEX' || srcRaw === 'COPY' ? srcRaw : 'ALL',
     netPnlUsd: Number(row.net_pnl_usd || 0),
     roiPct: Number(row.roi_pct || 0),
     tradesCount: Number(row.trades_count || 0),
@@ -396,8 +439,20 @@ app.get('/api/public/card-image/:cardId', async (c) => {
     profitFactor: Number(row.profit_factor || 0),
     exchangeProvider: row.exchange_provider,
     strategyName: row.strategy_name,
+    engineKey: typeof parsedPayload.engineKey === 'string' ? parsedPayload.engineKey : undefined,
+    cardStyle: typeof parsedPayload.cardStyle === 'string' ? parsedPayload.cardStyle : 'dark',
+    symbol: typeof parsedPayload.symbol === 'string' ? parsedPayload.symbol : undefined,
+    baseSymbol: typeof parsedPayload.baseSymbol === 'string' ? parsedPayload.baseSymbol : undefined,
+    direction: typeof parsedPayload.direction === 'string' ? parsedPayload.direction : undefined,
+    leverage: typeof parsedPayload.leverage === 'number' ? parsedPayload.leverage : undefined,
+    entryPrice: row.entry_price ?? (typeof parsedPayload.entryPrice === 'number' ? parsedPayload.entryPrice : null),
+    exitPrice: row.exit_price ?? (typeof parsedPayload.exitPrice === 'number' ? parsedPayload.exitPrice : null),
+    signalName: row.signal_name ?? (typeof parsedPayload.signalName === 'string' ? parsedPayload.signalName : undefined),
+    bestSymbol: typeof parsedPayload.bestSymbol === 'string' ? parsedPayload.bestSymbol : undefined,
+    bestRoiPct: typeof parsedPayload.bestRoiPct === 'number' ? parsedPayload.bestRoiPct : undefined,
+    tokenLogoDataUri,
     issuedAt: row.issued_at,
-    layout: layout as 'horizontal' | 'vertical',
+    layout,
   };
   const png = await renderProfitCardPng(renderInput);
 
@@ -448,30 +503,100 @@ app.get('/api/public/market-snapshot', async (c) => {
     ? { proxyUrl: c.env.TOOBIT_PROXY_URL, proxySecret: c.env.EXCHANGE_PROXY_SECRET }
     : undefined;
 
-  const watchlist = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'];
-  const [candles, orderBook, ...tickers] = await Promise.all([
+  const coreWatchlist = MAJOR_LIQUID_COINS;
+  const [candles, orderBook, selectedTicker, universe] = await Promise.all([
     fetchPublicKlines(symbol, '15m', 48, proxyCfg).catch(() => []),
     fetchPublicOrderBook(symbol, 10, proxyCfg).catch(() => ({ bids: [], asks: [] })),
-    ...watchlist.map(async (sym) => {
-      const m = await fetchPublicMarket24h(sym, proxyCfg).catch(() => null);
-      const rawVol = Number(String(m?.volume24h ?? '0').replace(/,/g, ''));
-      return {
-        symbol: sym,
-        lastPrice: Number(m?.lastPrice ?? 0),
-        changePct24h: Number(m?.changePct24h ?? 0),
-        volume24hUsd: Number.isFinite(rawVol) ? rawVol : 0,
-        high24h: Number(m?.high24h ?? 0),
-        low24h: Number(m?.low24h ?? 0),
-        fundingRate: m?.fundingRate ?? '0.0001',
-      };
-    }),
+    fetchPublicMarket24h(symbol, proxyCfg).catch(() => null),
+    getExchangeMarkets('paper', proxyCfg, 'FUTURES').catch(() => []),
   ]);
+
+  const bySymbol = new Map<
+    string,
+    {
+      symbol: string;
+      base: string;
+      lastPrice: number;
+      changePct24h: number;
+      volume24hUsd: number;
+      high24h: number;
+      low24h: number;
+      fundingRate: string;
+    }
+  >();
+
+  for (const m of universe) {
+    const px = Number(m.lastPrice ?? 0);
+    if (!Number.isFinite(px) || px <= 0) continue;
+    bySymbol.set(m.symbol, {
+      symbol: m.symbol,
+      base: m.base || m.symbol.replace(/USDT$/, ''),
+      lastPrice: px,
+      changePct24h: Number(m.changePct24h ?? 0),
+      volume24hUsd: Number.isFinite(Number(m.volume24h)) ? Number(m.volume24h) : 0,
+      high24h: Number(m.high24h ?? px),
+      low24h: Number(m.low24h ?? px),
+      fundingRate: '0.0085%',
+    });
+  }
+
+  if (selectedTicker && Number(selectedTicker.lastPrice) > 0) {
+    const rawVol = Number(String(selectedTicker.volume24h ?? '0').replace(/,/g, ''));
+    const px = Number(selectedTicker.lastPrice);
+    bySymbol.set(symbol, {
+      symbol,
+      base: symbol.replace(/USDT$/, ''),
+      lastPrice: px,
+      changePct24h: Number(selectedTicker.changePct24h ?? 0),
+      volume24hUsd: Number.isFinite(rawVol) ? rawVol : 0,
+      high24h: Number(selectedTicker.high24h ?? px),
+      low24h: Number(selectedTicker.low24h ?? px),
+      fundingRate: selectedTicker.fundingRate ?? '0.0085%',
+    });
+  }
+
+  if (bySymbol.size < 5) {
+    const fallbackWatchlist = coreWatchlist.slice(0, 8);
+    const fetched = await Promise.all(
+      fallbackWatchlist.map((sym) => fetchPublicMarket24h(sym, proxyCfg).catch(() => null))
+    );
+    fetched.forEach((m, i) => {
+      const sym = fallbackWatchlist[i]!;
+      const px = Number(m?.lastPrice ?? 0);
+      if (!m || px <= 0 || bySymbol.has(sym)) return;
+      const rawVol = Number(String(m.volume24h ?? '0').replace(/,/g, ''));
+      bySymbol.set(sym, {
+        symbol: sym,
+        base: sym.replace(/USDT$/, ''),
+        lastPrice: px,
+        changePct24h: Number(m.changePct24h ?? 0),
+        volume24hUsd: Number.isFinite(rawVol) ? rawVol : 0,
+        high24h: Number(m.high24h ?? px),
+        low24h: Number(m.low24h ?? px),
+        fundingRate: m.fundingRate ?? '0.0085%',
+      });
+    });
+  }
+
+  const priorityRank = new Map<string, number>(coreWatchlist.map((s, idx) => [s, idx]));
+  const nonCryptoBaseRe = /^(SOXL|SOXS|SNDK|XAU|XAG|PAXG|SPX|NDX|NVDA|TSLA|AAPL|AMZN|MSFT|GOOG|META|COIN|MSTR)/i;
+  const markets = Array.from(bySymbol.values())
+    .filter((m) => m.symbol.endsWith('USDT') && !nonCryptoBaseRe.test(m.base || m.symbol))
+    .sort((a, b) => {
+      const ra = priorityRank.get(a.symbol);
+      const rb = priorityRank.get(b.symbol);
+      if (ra !== undefined && rb !== undefined) return ra - rb;
+      if (ra !== undefined) return -1;
+      if (rb !== undefined) return 1;
+      return b.volume24hUsd - a.volume24hUsd;
+    })
+    .slice(0, 16);
 
   return c.json({
     symbol,
     candles,
     orderBook,
-    markets: tickers.filter((t) => t.lastPrice > 0),
+    markets,
     timestamp: new Date().toISOString(),
   });
 });
@@ -550,7 +675,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // Runs every 5 minutes (*/5): check lightweight indexed flags first so idle periods consume minimal D1 Rows Read
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '11.6.0').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, '11.7.2').catch(() => {});
 
       const activity = await env.DB.prepare(
         `SELECT
@@ -561,7 +686,7 @@ export default {
            EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos,
            EXISTS(SELECT 1 FROM tradingview_free_alerts WHERE is_active = 1) AS has_tv_alert,
            EXISTS(SELECT 1 FROM scheduled_broadcasts WHERE status = 'SCHEDULED') AS has_sched_bc,
-           EXISTS(SELECT 1 FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') AND COALESCE(sniper_enabled, 0) = 1) AS has_sniper`
+           EXISTS(SELECT 1 FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') AND (COALESCE(sniper_enabled, 0) = 1 OR COALESCE(active_engines_json, '') LIKE '%LISTING_SNIPER%')) AS has_sniper`
       )
         .first<{
           has_bot: number;
@@ -591,9 +716,9 @@ export default {
         await dispatchDueScheduledBroadcasts(env).catch(() => {});
       }
 
-      // Auto top-traders aggregation is heavy; throttle to once every 30 minutes
+      // Auto top-traders aggregation is heavy; throttle to once every 60 minutes
       const lastTopSyncMs = Number(await getCachedSystemSetting(env.DB, 'intel_last_top_traders_sync', '0')) || 0;
-      if (Date.now() - lastTopSyncMs >= 30 * 60_000) {
+      if (Date.now() - lastTopSyncMs >= 60 * 60_000) {
         await setCachedSystemSetting(env.DB, 'intel_last_top_traders_sync', String(Date.now())).catch(() => {});
         await syncAutoTopSiteTraders(env.DB).catch(() => {});
       }
@@ -606,7 +731,7 @@ export default {
       }
 
       // Run CEX New Listing & DEX Booming Meme Sniper only if at least one user enabled sniper or LISTING_SNIPER
-      if (!activity || activity.has_sniper || activity.has_bot) {
+      if (!activity || activity.has_sniper) {
         const sniperUsers = await env.DB.prepare(
           `SELECT * FROM bot_configs
            WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')

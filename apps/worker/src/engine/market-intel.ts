@@ -135,7 +135,6 @@ export async function runAlwaysOnSignalRadar(
     const minsSincePub = minsFromIso(settings['intel_last_signal_at']);
     if (minsSincePub < 45) {
       memLastSignalCheckMs = Date.now();
-      await setSetting(env.DB, 'intel_last_scan_at', new Date().toISOString());
       return { scanned: 0, published: false, reason: 'publish_cooldown' };
     }
   }

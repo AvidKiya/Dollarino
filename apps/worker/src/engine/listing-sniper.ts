@@ -1,12 +1,29 @@
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
-import { fetchDexTrendingOverview, type DexTokenEnriched } from '../dex/screener.js';
+import { fetchUltraFreshSniperPoolFeed, type DexTokenEnriched } from '../dex/screener.js';
 import { executeLiveEvmVaultSwap, executeLiveSolanaVaultJupiterSwap } from '../dex/smart-copy.js';
 import { checkLiveFeeEnforcement } from '../services/server-fee.js';
 import { logAudit, notifyUserTelegram, pushNotification, resolveUserCapitalSummary, type UserBotConfigRow } from './executor.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 
 export type SniperTargetType = 'BOTH' | 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME';
+
+export interface SniperAdvancedFilters {
+  maxPairAgeMinutes?: number;
+  minPairAgeMinutes?: number;
+  minMcapUsd?: number;
+  maxMcapUsd?: number;
+  minVolume5mUsd?: number;
+  minVolume1hUsd?: number;
+  minChange5mPct?: number;
+  minChange1hPct?: number;
+  minBuys5m?: number;
+  minBuySellRatio?: number;
+  requireSocials?: boolean;
+  excludeHighRiskFlags?: boolean;
+  dexFilter?: string;
+  sortBy?: 'SCORE' | 'NEWEST' | 'MOMENTUM_5M' | 'VOLUME_1H' | 'LIQUIDITY' | 'SAFETY';
+}
 
 export interface SniperCandidate {
   symbol: string;
@@ -22,11 +39,18 @@ export interface SniperCandidate {
   change5mPct: number;
   change1hPct: number;
   change24hPct: number;
+  volume5mUsd?: number;
+  volume1hUsd?: number;
   volume24hUsd: number;
+  buys5m?: number;
+  sells5m?: number;
   buys1h: number;
   sells1h: number;
+  buySellRatio1h?: number;
   ageHours: number | null;
+  ageMinutes?: number | null;
   mcapUsd: number | null;
+  hasSocials?: boolean;
   imageUrl?: string | null;
   isOnCentralizedHint: boolean;
   riskFlags: string[];
@@ -41,7 +65,7 @@ async function fetchBinanceRecentListingSymbols(): Promise<string[]> {
     const res = await fetch(
       'https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=48&pageNo=1&pageSize=12',
       {
-        headers: { Accept: 'application/json', 'User-Agent': 'Dollarino/11.4' },
+        headers: { Accept: 'application/json', 'User-Agent': 'Dollarino/11.7' },
         signal: AbortSignal.timeout(1800),
       }
     );
@@ -72,19 +96,27 @@ export async function discoverListingAndBoomCandidates(options?: {
   minSafetyScore?: number;
   minLiquidityUsd?: number;
   maxPairAgeHours?: number;
+  maxPairAgeMinutes?: number;
   targetType?: SniperTargetType;
+  advancedFilters?: SniperAdvancedFilters;
 }): Promise<SniperCandidate[]> {
   const allowedChains = new Set(
     (options?.allowedChains?.length ? options.allowedChains : DEFAULT_SNIPER_CHAINS).map((c) => c.toLowerCase())
   );
-  const minSafety = Math.max(40, Math.min(98, options?.minSafetyScore ?? 75));
-  const minLiquidity = Math.max(5000, options?.minLiquidityUsd ?? 25_000);
-  const maxAgeHours = Math.max(1, Math.min(720, options?.maxPairAgeHours ?? 168));
+  const adv = options?.advancedFilters || {};
+  const minSafety = Math.max(30, Math.min(98, options?.minSafetyScore ?? 75));
+  const minLiquidity = Math.max(1000, options?.minLiquidityUsd ?? 25_000);
+  const rawMaxMin =
+    options?.maxPairAgeMinutes ??
+    adv.maxPairAgeMinutes ??
+    (options?.maxPairAgeHours !== undefined ? Math.round(options.maxPairAgeHours * 60) : 10080);
+  const maxAgeMinutes = Math.max(1, Math.min(43200, rawMaxMin));
+  const minAgeMinutes = Math.max(0, Number(adv.minPairAgeMinutes ?? 0));
   const targetType: SniperTargetType = options?.targetType || 'BOTH';
 
-  const [cexNewSymbols, dexOverview] = await Promise.all([
+  const [cexNewSymbols, poolFeed] = await Promise.all([
     fetchBinanceRecentListingSymbols(),
-    fetchDexTrendingOverview().catch(() => ({ pairs: [] as DexTokenEnriched[], metas: [] })),
+    fetchUltraFreshSniperPoolFeed([...allowedChains]).catch(() => [] as DexTokenEnriched[]),
   ]);
 
   const cexSet = new Set(cexNewSymbols.map((s) => s.toUpperCase()));
@@ -92,31 +124,68 @@ export async function discoverListingAndBoomCandidates(options?: {
   const seen = new Set<string>();
   const nowMs = Date.now();
 
-  for (const p of dexOverview.pairs) {
+  for (const p of poolFeed) {
     const chain = (p.chainId || '').toLowerCase();
     if (!allowedChains.has(chain)) continue;
 
     const sym = (p.baseToken?.symbol || '').toUpperCase().trim();
-    if (!sym || ['USDT', 'USDC', 'WETH', 'WBNB', 'SOL', 'WBTC', 'DAI'].includes(sym)) continue;
+    if (!sym || ['USDT', 'USDC', 'WETH', 'WBNB', 'SOL', 'WBTC', 'DAI', 'WSOL'].includes(sym)) continue;
 
     const liq = Number(p.liquidity?.usd || 0);
     const px = Number(p.priceUsd || 0);
-    const ch1h = Number(p.priceChange?.h1 || 0);
     const ch5m = Number(p.priceChange?.m5 || 0);
+    const ch1h = Number(p.priceChange?.h1 || 0);
     const ch24h = Number(p.priceChange?.h24 || 0);
-    const buys1h = Number(p.txns?.h1?.buys || 0);
-    const sells1h = Number(p.txns?.h1?.sells || 0);
+    const vol5m = Number(p.volume?.m5 || 0);
+    const vol1h = Number(p.volume?.h1 || 0);
+    const vol24h = Number(p.volume?.h24 || 0);
+    const buys5m = Number(p.txns?.m5?.buys || 0);
+    const sells5m = Number(p.txns?.m5?.sells || 0);
+    const buys1h = Number(p.txns?.h1?.buys || buys5m);
+    const sells1h = Number(p.txns?.h1?.sells || sells5m);
+    const mcapUsd = typeof p.marketCap === 'number' ? p.marketCap : typeof p.fdv === 'number' ? p.fdv : null;
+    const hasSocials = Boolean((p.info?.websites?.length || 0) > 0 || (p.info?.socials?.length || 0) > 0);
+    const buySellRatio1h = sells1h > 0 ? Number((buys1h / sells1h).toFixed(2)) : buys1h > 0 ? 5 : 1;
 
     if (!Number.isFinite(px) || px <= 0 || liq < minLiquidity) continue;
     if (p.safetyScore < minSafety) continue;
-    if (sells1h <= 0 || buys1h < Math.max(2, sells1h * 0.7)) continue;
 
-    const ageHours =
+    const minRatio = Number(adv.minBuySellRatio ?? 0.65);
+    if (buys1h + buys5m < 1 || buySellRatio1h < minRatio) continue;
+
+    const ageMinutes =
       typeof p.pairCreatedAt === 'number' && Number.isFinite(p.pairCreatedAt) && p.pairCreatedAt > 0
-        ? Math.max(0.1, Number(((nowMs - p.pairCreatedAt) / 3_600_000).toFixed(1)))
+        ? Math.max(0.5, Number(((nowMs - p.pairCreatedAt) / 60_000).toFixed(1)))
         : null;
+    const ageHours = ageMinutes !== null ? Number((ageMinutes / 60).toFixed(2)) : null;
 
-    if (ageHours !== null && ageHours > maxAgeHours) continue;
+    if (maxAgeMinutes <= 180 && ageMinutes === null) {
+      // When user explicitly filters ultra-fresh launches (<=3h), skip unknown-timestamp legacy pairs
+      continue;
+    }
+    if (ageMinutes !== null) {
+      if (ageMinutes > maxAgeMinutes) continue;
+      if (minAgeMinutes > 0 && ageMinutes < minAgeMinutes) continue;
+    }
+
+    if (adv.minMcapUsd && (mcapUsd === null || mcapUsd < adv.minMcapUsd)) continue;
+    if (adv.maxMcapUsd && mcapUsd !== null && mcapUsd > adv.maxMcapUsd) continue;
+    if (adv.minVolume5mUsd && vol5m < adv.minVolume5mUsd) continue;
+    if (adv.minVolume1hUsd && vol1h < adv.minVolume1hUsd) continue;
+    if (adv.minChange5mPct !== undefined && ch5m < adv.minChange5mPct) continue;
+    if (adv.minChange1hPct !== undefined && ch1h < adv.minChange1hPct) continue;
+    if (adv.minBuys5m && buys5m < adv.minBuys5m) continue;
+    if (adv.requireSocials && !hasSocials) continue;
+    if (adv.excludeHighRiskFlags && (p.riskFlags || []).some((rf) => /honeypot|rug|freeze|mint/i.test(rf))) continue;
+
+    if (adv.dexFilter && adv.dexFilter !== 'ALL') {
+      const dl = (p.dexId || '').toLowerCase();
+      if (adv.dexFilter === 'PUMP_RAYDIUM' && !/(pump|raydium|orca|meteora)/.test(dl)) continue;
+      if (adv.dexFilter === 'PANCAKE' && !dl.includes('pancake')) continue;
+      if (adv.dexFilter === 'UNISWAP' && !dl.includes('uniswap')) continue;
+      if (adv.dexFilter === 'AERODROME' && !dl.includes('aerodrome')) continue;
+      if (adv.dexFilter === 'STONFI_SUN' && !/(ston|dedust|sunswap)/.test(dl)) continue;
+    }
 
     const isCexListed = p.isOnCentralizedHint || cexSet.has(sym);
     const source: 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME' = isCexListed ? 'CEX_NEW_LISTING' : 'DEX_BOOM_MEME';
@@ -124,7 +193,8 @@ export async function discoverListingAndBoomCandidates(options?: {
     if (targetType === 'CEX_NEW_LISTING' && source !== 'CEX_NEW_LISTING') continue;
     if (targetType === 'DEX_BOOM_MEME' && source !== 'DEX_BOOM_MEME') continue;
 
-    const hasMomentum = ch1h >= 4 || ch5m >= 2 || isCexListed;
+    const isUltraFresh = maxAgeMinutes <= 60;
+    const hasMomentum = isUltraFresh ? buys5m >= 2 || ch5m >= -2 || isCexListed : ch1h >= 2 || ch5m >= 1 || buys5m >= 3 || isCexListed;
     if (!hasMomentum) continue;
 
     const dedupKey = `${chain}:${p.baseToken.address.toLowerCase()}`;
@@ -145,11 +215,18 @@ export async function discoverListingAndBoomCandidates(options?: {
       change5mPct: ch5m,
       change1hPct: ch1h,
       change24hPct: ch24h,
-      volume24hUsd: Number(p.volume?.h24 || 0),
+      volume5mUsd: vol5m,
+      volume1hUsd: vol1h,
+      volume24hUsd: vol24h,
+      buys5m,
+      sells5m,
       buys1h,
       sells1h,
+      buySellRatio1h,
       ageHours,
-      mcapUsd: typeof p.marketCap === 'number' ? p.marketCap : typeof p.fdv === 'number' ? p.fdv : null,
+      ageMinutes,
+      mcapUsd,
+      hasSocials,
       imageUrl: p.info?.imageUrl || null,
       isOnCentralizedHint: isCexListed,
       riskFlags: p.riskFlags || [],
@@ -158,13 +235,25 @@ export async function discoverListingAndBoomCandidates(options?: {
     });
   }
 
+  const sortBy = adv.sortBy || (maxAgeMinutes <= 30 ? 'NEWEST' : 'SCORE');
   candidates.sort((a, b) => {
-    const aScore = (a.source === 'CEX_NEW_LISTING' ? 25 : 0) + a.safetyScore + Math.min(40, Math.max(0, a.change1hPct));
-    const bScore = (b.source === 'CEX_NEW_LISTING' ? 25 : 0) + b.safetyScore + Math.min(40, Math.max(0, b.change1hPct));
+    if (sortBy === 'NEWEST') {
+      const aAge = a.ageMinutes ?? 999999;
+      const bAge = b.ageMinutes ?? 999999;
+      return aAge - bAge;
+    }
+    if (sortBy === 'MOMENTUM_5M') return b.change5mPct - a.change5mPct;
+    if (sortBy === 'VOLUME_1H') return (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0);
+    if (sortBy === 'LIQUIDITY') return b.liquidityUsd - a.liquidityUsd;
+    if (sortBy === 'SAFETY') return b.safetyScore - a.safetyScore;
+    const freshnessBoostA = (a.ageMinutes !== null && a.ageMinutes !== undefined && a.ageMinutes <= 15) ? 18 : (a.ageMinutes !== null && a.ageMinutes !== undefined && a.ageMinutes <= 60) ? 10 : 0;
+    const freshnessBoostB = (b.ageMinutes !== null && b.ageMinutes !== undefined && b.ageMinutes <= 15) ? 18 : (b.ageMinutes !== null && b.ageMinutes !== undefined && b.ageMinutes <= 60) ? 10 : 0;
+    const aScore = (a.source === 'CEX_NEW_LISTING' ? 22 : 0) + a.safetyScore + freshnessBoostA + Math.min(35, Math.max(-10, a.change1hPct + a.change5mPct));
+    const bScore = (b.source === 'CEX_NEW_LISTING' ? 22 : 0) + b.safetyScore + freshnessBoostB + Math.min(35, Math.max(-10, b.change1hPct + b.change5mPct));
     return bScore - aScore;
   });
 
-  return candidates.slice(0, 16);
+  return candidates.slice(0, 32);
 }
 
 export async function executeSniperBuyForCandidate(params: {
@@ -416,7 +505,8 @@ export async function executeSniperBuyForCandidate(params: {
 export async function runNewListingAndMemeSniperForUser(
   env: Env,
   userId: string,
-  cfg: UserBotConfigRow
+  cfg: UserBotConfigRow,
+  options?: { forceExecute?: boolean }
 ): Promise<{ ok: boolean; scannedCount: number; boughtCount: number; candidates: SniperCandidate[]; reason?: string }> {
   const onboardingGate = await checkPreTradeOnboardingGate(env.DB, userId);
   if (!onboardingGate.ok) {
@@ -452,9 +542,17 @@ export async function runNewListingAndMemeSniperForUser(
     allowedChains = DEFAULT_SNIPER_CHAINS;
   }
 
-  const minSafetyScore = Math.max(40, Math.min(98, Number(cfg.sniper_min_safety_score ?? 75)));
-  const minLiquidityUsd = Math.max(5000, Math.min(10_000_000, Number(cfg.sniper_min_liquidity_usd ?? 25_000)));
-  const maxPairAgeHours = Math.max(1, Math.min(720, Number(cfg.sniper_max_pair_age_hours ?? 168)));
+  const minSafetyScore = Math.max(30, Math.min(98, Number(cfg.sniper_min_safety_score ?? 75)));
+  const minLiquidityUsd = Math.max(1000, Math.min(10_000_000, Number(cfg.sniper_min_liquidity_usd ?? 25_000)));
+  let advancedFilters: Record<string, unknown> = {};
+  try {
+    if (cfg.sniper_advanced_filters_json) advancedFilters = JSON.parse(cfg.sniper_advanced_filters_json);
+  } catch { /* ignore */ }
+  const maxPairAgeHours = Math.max(0.05, Math.min(720, Number(cfg.sniper_max_pair_age_hours ?? 168)));
+  const maxPairAgeMinutes = Math.max(
+    1,
+    Math.min(43200, Number(cfg.sniper_max_pair_age_minutes ?? Math.round(maxPairAgeHours * 60)))
+  );
   const targetType: SniperTargetType =
     cfg.sniper_target_type === 'CEX_NEW_LISTING' || cfg.sniper_target_type === 'DEX_BOOM_MEME'
       ? cfg.sniper_target_type
@@ -465,7 +563,9 @@ export async function runNewListingAndMemeSniperForUser(
     minSafetyScore,
     minLiquidityUsd,
     maxPairAgeHours,
+    maxPairAgeMinutes,
     targetType,
+    advancedFilters,
   });
 
   if (!candidates.length) {
@@ -493,8 +593,8 @@ export async function runNewListingAndMemeSniperForUser(
       .catch(() => {});
   }
 
-  // If user switched Sniper to alert-only (autoExecute === 0), return candidates without buying
-  if (cfg.sniper_auto_execute === 0) {
+  // If user switched Sniper to alert-only (autoExecute === 0), return candidates without buying unless explicitly triggered via scan-now execute
+  if (cfg.sniper_auto_execute === 0 && !options?.forceExecute) {
     return { ok: true, scannedCount: candidates.length, boughtCount: 0, candidates };
   }
 

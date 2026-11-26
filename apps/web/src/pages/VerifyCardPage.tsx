@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, Lock, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
+import { CoinIcon } from '../components/CoinIcon';
 import type { Lang } from '../lib/i18n';
 import type { VerifiedProfitCard } from '../lib/types';
+
+function fmtVerifyPrice(val: number | null | undefined): string {
+  const n = Number(val || 0);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n < 0.0001) return `$${n.toExponential(2)}`;
+  if (n < 0.01) return `$${n.toPrecision(4)}`;
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
 
 export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; lang: Lang; onBackHome: () => void }) {
   const isFa = lang === 'fa';
@@ -32,7 +41,7 @@ export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; l
     <div className="min-h-screen app-shell flex items-center justify-center p-4">
       <div className="panel rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl relative overflow-hidden">
         <img
-          src="/logo.png"
+          src="/logo-sm.webp"
           alt=""
           aria-hidden="true"
           className="pointer-events-none select-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-60 h-60 object-contain opacity-[0.06]"
@@ -101,8 +110,33 @@ export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; l
                 <span className="font-black text-main text-sm">{card.displayName}</span>
               </div>
               <div className="surface-soft rounded-2xl p-3">
-                <span className="text-dim block">{isFa ? 'صرافی و بازه' : 'Exchange & Period'}</span>
+                <span className="text-dim block">{isFa ? 'صرافی / شبکه و دوره' : 'Venue & Period'}</span>
                 <span className="font-black text-main text-sm">{card.exchangeProvider} · {card.period}</span>
+              </div>
+              {card.symbol && (
+                <div className="surface-soft rounded-2xl p-3 col-span-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <CoinIcon symbol={card.baseSymbol || card.symbol} size={28} imageUrl={card.tokenImageUrl} />
+                    <div>
+                      <span className="text-dim block">{isFa ? 'جفت‌ارز / توکن معامله' : 'Traded Pair'}</span>
+                      <span dir="ltr" className="font-black text-main text-sm">
+                        {card.symbol} ({card.direction || 'LONG'}{card.leverage && card.leverage > 1 ? ` ${card.leverage}x` : ''})
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-end font-mono-num" dir="ltr">
+                    <span className="text-dim block">Entry → Exit</span>
+                    <span className="font-black text-main">{fmtVerifyPrice(card.entryPrice)} → {fmtVerifyPrice(card.exitPrice)}</span>
+                  </div>
+                </div>
+              )}
+              <div className="surface-soft rounded-2xl p-3">
+                <span className="text-dim block">{isFa ? 'موتور فعال' : 'Engine'}</span>
+                <span className="font-black text-main text-xs">{card.strategyName}</span>
+              </div>
+              <div className="surface-soft rounded-2xl p-3">
+                <span className="text-dim block">{isFa ? 'منبع سیگنال' : 'Signal Origin'}</span>
+                <span className="font-black text-main text-xs">{card.signalName || card.strategyName}</span>
               </div>
               <div className="surface-soft rounded-2xl p-3">
                 <span className="text-dim block">{isFa ? 'بازده واقعی' : 'Verified ROI'}</span>

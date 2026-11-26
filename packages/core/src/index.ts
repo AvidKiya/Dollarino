@@ -8,3 +8,4 @@ export * from './strategies.js';
 export * from './risk-engine.js';
 export * from './backtester.js';
 export * from './custom-strategy-engine.js';
+export * from './tpsl.js';

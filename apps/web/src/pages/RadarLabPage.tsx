@@ -70,7 +70,43 @@ export function RadarLabPage({
   onRefresh: () => Promise<void>;
 }) {
   const isFa = lang === 'fa';
-  const [subTab, setSubTab] = useState<'radar' | 'tvalerts' | 'lab' | 'backtest' | 'ide'>('radar');
+  const [subTab, setSubTab] = useState<'radar' | 'tvalerts' | 'lab' | 'backtest' | 'ide'>(() => {
+    try {
+      const saved = sessionStorage.getItem('dollarino_radar_subtab');
+      if (saved === 'radar' || saved === 'tvalerts' || saved === 'lab' || saved === 'backtest' || saved === 'ide') {
+        return saved;
+      }
+    } catch {
+      /* ignore */
+    }
+    return 'radar';
+  });
+
+  useEffect(() => {
+    const clearTimer = window.setTimeout(() => {
+      try {
+        sessionStorage.removeItem('dollarino_radar_subtab');
+      } catch {
+        /* ignore */
+      }
+    }, 450);
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<string>).detail;
+      if (detail === 'radar' || detail === 'tvalerts' || detail === 'lab' || detail === 'backtest' || detail === 'ide') {
+        setSubTab(detail);
+        try {
+          sessionStorage.removeItem('dollarino_radar_subtab');
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    window.addEventListener('dollarino:radar-subtab', handler);
+    return () => {
+      window.clearTimeout(clearTimer);
+      window.removeEventListener('dollarino:radar-subtab', handler);
+    };
+  }, []);
   const [sourceFilter, setSourceFilter] = useState<'ALL' | 'AI' | 'DORNA' | 'TELEGRAM' | 'TRADINGVIEW'>('ALL');
   const [expandedRaw, setExpandedRaw] = useState<Record<string, boolean>>({});
   const [scanning, setScanning] = useState(false);
@@ -575,6 +611,108 @@ export function RadarLabPage({
 
       {subTab === 'lab' && (
         <div className="space-y-6 tab-enter">
+          {/* Quick Preset Strategy Selector & Inspector */}
+          <div className="panel rounded-[26px] p-5 sm:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display font-bold text-lg text-main flex items-center gap-2">
+                  <Target className="w-5 h-5 text-jade" />
+                  <span>{isFa ? 'بررسی و انتخاب سریع استراتژی‌های آماده دلارینو' : 'Dollarino Preset Strategies'}</span>
+                </h3>
+                <p className="text-xs text-dim mt-0.5">
+                  {isFa
+                    ? 'هر استراتژی را می‌توانید انتخاب کنید، پارامترهای آن را ببینید یا مستقیماً بک‌تست ۹۰۰ کندلی بگیرید.'
+                    : 'Inspect rules, activate a preset strategy, or jump directly to 900-candle backtesting.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setSubTab('backtest')} className="btn-cobalt px-3.5 py-2 rounded-xl text-xs font-black inline-flex items-center gap-1.5">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'بک‌تست و مقایسه' : 'Backtest'}</span>
+                </button>
+                <button type="button" onClick={() => setSubTab('ide')} className="btn-ghost px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5">
+                  <Code2 className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'کد شخصی (IDE)' : 'Custom IDE'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              {[
+                {
+                  key: 'dollarino_v01' as StrategyKey,
+                  title: isFa ? 'شکار دُرنا V1 (پیشنهادی)' : 'Dorna V1 Hunter',
+                  tag: isFa ? 'ترند + شکست' : 'Trend + Breakout',
+                  desc: isFa ? 'استراتژی متعادل دلارینو با فیلتر تایم‌فریم بالاتر، حجم و تریلینگ استاپ خودکار.' : 'Balanced multi-TF hunter with volume & auto trailing SL.',
+                },
+                {
+                  key: 'kbos_v11' as StrategyKey,
+                  title: isFa ? 'موتور KBOS V11' : 'KBOS V11 Engine',
+                  tag: isFa ? 'ALMA + ATR + ADX' : 'ALMA + ATR',
+                  desc: isFa ? 'مبتنی بر موج‌های سوپراسموثر ALMA و قدرت روند ADX با حد ضرر پویای ATR.' : 'SuperSmoother ALMA waves + ADX regime filter + ATR trailing.',
+                },
+                {
+                  key: 'sp2l' as StrategyKey,
+                  title: isFa ? 'اسنایپر بازگشتی SP2L' : 'SP2L Reversal',
+                  tag: isFa ? 'نوسان‌گیر دقیق' : 'Reversal Sniper',
+                  desc: isFa ? 'شکار سقف و کف‌های نقدینگی با واگرایی مومنتوم و خروج ۳ مرحله‌ای.' : 'Liquidity sweep reversal with 3-TP partial scaling.',
+                },
+                {
+                  key: 'ema_trend_breakout' as StrategyKey,
+                  title: isFa ? 'شکست کانال EMA' : 'EMA Trend Breakout',
+                  tag: isFa ? 'مومنتوم سریع' : 'Fast Momentum',
+                  desc: isFa ? 'ورود روی شکست ساختار روند کوتاه‌مدت در جفت‌ارزهای پرحجم.' : 'Momentum structure breakout on high-liquidity pairs.',
+                },
+              ].map((st) => {
+                const isSelected = data.config.strategy_key === st.key;
+                return (
+                  <div
+                    key={st.key}
+                    className={`rounded-2xl p-4 border flex flex-col justify-between gap-3 transition ${
+                      isSelected ? 'border-[#059669] bg-emerald-500/10 ring-1 ring-[#059669]/35' : 'surface-soft hairline'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-black text-main">{st.title}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-brand">{st.tag}</span>
+                      </div>
+                      <p className="text-[11px] text-dim leading-relaxed">{st.desc}</p>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await apiFetch('/api/trading/config', {
+                            method: 'PATCH',
+                            body: JSON.stringify({ strategy_key: st.key }),
+                          });
+                          setNotice(isFa ? `استراتژی «${st.title}» فعال شد ✅` : `${st.title} selected`);
+                          await onRefresh();
+                        }}
+                        className={`flex-1 py-2 rounded-xl text-[11px] font-black transition ${
+                          isSelected ? 'bg-[#059669] text-white' : 'btn-cobalt text-white'
+                        }`}
+                      >
+                        {isSelected ? (isFa ? 'انتخاب‌شده ✓' : 'Selected ✓') : isFa ? 'انتخاب استراتژی' : 'Select'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBtStrategy(st.key);
+                          setSubTab('backtest');
+                        }}
+                        className="px-2.5 py-2 rounded-xl btn-ghost text-[11px] font-bold"
+                      >
+                        {isFa ? 'بک‌تست' : 'Test'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <HybridLab lang={lang} onTryDemo={() => void applyHybridModel()} />
 
           <div className="panel rounded-[26px] p-5 sm:p-6 space-y-4">

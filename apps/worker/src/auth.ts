@@ -123,12 +123,44 @@ export type AppVariables = {
   user: AuthUser;
 };
 
+const AUTH_USER_CACHE = new WeakMap<object, Map<string, { ts: number; user: AuthUser }>>();
+const AUTH_EXT_CACHE = new WeakMap<object, Map<string, { ts: number; user: AuthUser }>>();
+const AUTH_CACHE_TTL_MS = 15_000;
+
+export function invalidateAuthUserCache(db: D1Database, userId?: string): void {
+  const userMap = AUTH_USER_CACHE.get(db as unknown as object);
+  if (userMap) {
+    if (userId) userMap.delete(userId);
+    else userMap.clear();
+  }
+  const extMap = AUTH_EXT_CACHE.get(db as unknown as object);
+  if (extMap) {
+    if (userId) {
+      for (const [k, v] of extMap.entries()) {
+        if (v.user.id === userId) extMap.delete(k);
+      }
+    } else {
+      extMap.clear();
+    }
+  }
+}
+
 export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
   const extKey = c.req.header('X-Dollarino-Extension-Key');
   if (extKey && extKey.startsWith('dlr_ext_')) {
+    const trimmedKey = extKey.trim();
+    const now = Date.now();
+    let extMap = AUTH_EXT_CACHE.get(c.env.DB as unknown as object);
+    const extCached = extMap?.get(trimmedKey);
+    if (extCached && now - extCached.ts < AUTH_CACHE_TTL_MS) {
+      c.set('user', extCached.user);
+      await next();
+      return;
+    }
+
     const extRow = await c.env.DB.prepare(
       'SELECT id, email, username, role, is_blocked, telegram_id FROM users WHERE extension_api_key = ? LIMIT 1'
-    ).bind(extKey.trim()).first<{
+    ).bind(trimmedKey).first<{
       id: string;
       email: string;
       username: string;
@@ -138,13 +170,20 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
     }>().catch(() => null);
     if (!extRow) return c.json({ error: 'Invalid Extension Key' }, 401);
     if (extRow.is_blocked) return c.json({ error: 'Account is suspended' }, 403);
-    c.set('user', {
+    const authUser: AuthUser = {
       id: extRow.id,
       email: extRow.email,
       username: extRow.username,
       role: (extRow.role as AuthUser['role']) || 'user',
       telegramId: extRow.telegram_id,
-    });
+    };
+    if (!extMap) {
+      extMap = new Map();
+      AUTH_EXT_CACHE.set(c.env.DB as unknown as object, extMap);
+    }
+    if (extMap.size > 500) extMap.clear();
+    extMap.set(trimmedKey, { ts: now, user: authUser });
+    c.set('user', authUser);
     await next();
     return;
   }
@@ -168,6 +207,20 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
     return c.json({ error: 'Invalid or expired session' }, 401);
   }
 
+  const allowPollCache =
+    (c.req.path === '/api/trading/live-ticks' && c.req.query('poll') === '1') ||
+    (c.req.path === '/api/trading/dashboard' && c.req.query('lite') === '1') ||
+    c.req.header('X-Dollarino-Poll') === '1';
+
+  const now = Date.now();
+  let userMap = AUTH_USER_CACHE.get(c.env.DB as unknown as object);
+  const cachedUser = allowPollCache ? userMap?.get(payload.sub) : undefined;
+  if (cachedUser && now - cachedUser.ts < AUTH_CACHE_TTL_MS) {
+    c.set('user', cachedUser.user);
+    await next();
+    return;
+  }
+
   const row = await c.env.DB.prepare(
     'SELECT id, email, username, role, is_blocked, telegram_id FROM users WHERE id = ?'
   ).bind(payload.sub).first<{
@@ -180,16 +233,141 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
   }>();
 
   if (!row) return c.json({ error: 'User not found' }, 401);
-  if (row.is_blocked) return c.json({ error: 'Account is suspended' }, 403);
+  if (row.is_blocked) {
+    userMap?.delete(payload.sub);
+    return c.json({ error: 'Account is suspended' }, 403);
+  }
 
-  c.set('user', {
+  const authUser: AuthUser = {
     id: row.id,
     email: row.email,
     username: row.username,
     role: (row.role as AuthUser['role']) || 'user',
     telegramId: row.telegram_id,
-  });
+  };
+  if (!userMap) {
+    userMap = new Map();
+    AUTH_USER_CACHE.set(c.env.DB as unknown as object, userMap);
+  }
+  if (userMap.size > 1000) userMap.clear();
+  userMap.set(payload.sub, { ts: now, user: authUser });
+
+  c.set('user', authUser);
   await next();
+}
+
+export function normalizePhoneInput(raw?: string | null): string {
+  if (!raw) return '';
+  const ascii = String(raw)
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .trim();
+  const hasPlus = ascii.startsWith('+');
+  const digits = ascii.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 16) return '';
+  return `${hasPlus ? '+' : ''}${digits}`;
+}
+
+export async function resolveEffectiveReferralCode(
+  db: D1Database,
+  suppliedReferralCode: string | null | undefined,
+  newUserId: string
+): Promise<string | null> {
+  const clean = (suppliedReferralCode ?? '').trim().toUpperCase();
+  if (clean) return clean;
+  const adminRow = await db
+    .prepare(
+      `SELECT id, COALESCE(NULLIF(TRIM(referral_code), ''), 'DLR' || UPPER(SUBSTR(REPLACE(id, '_', ''), -5))) AS ref_code
+       FROM users
+       WHERE id != ? AND LOWER(role) IN ('owner', 'admin')
+       ORDER BY CASE WHEN LOWER(role) = 'owner' THEN 0 ELSE 1 END, created_at ASC
+       LIMIT 1`
+    )
+    .bind(newUserId)
+    .first<{ id: string; ref_code: string }>()
+    .catch(() => null);
+  return adminRow?.ref_code ? adminRow.ref_code.trim().toUpperCase() : null;
+}
+
+export async function resetPrivilegedUserAccountToFreshState(db: D1Database, userId: string): Promise<void> {
+  const cleanups = [
+    db.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED' WHERE user_id = ?`).bind(userId),
+    db
+      .prepare(
+        `DELETE FROM support_messages WHERE user_id = ? OR ticket_id IN (SELECT id FROM support_tickets WHERE user_id = ?)`
+      )
+      .bind(userId, userId),
+    db.prepare(`DELETE FROM support_tickets WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM user_ai_messages WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM user_ai_agents WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM copy_subscriptions WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM copy_positions_v2 WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM copy_follow_rules WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM user_copy_vaults WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM verified_profit_cards WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM price_alerts WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM tradingview_free_alerts WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM notifications WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM gift_redemptions WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM referrals WHERE referrer_user_id = ? OR referred_user_id = ?`).bind(userId, userId),
+    db.prepare(`DELETE FROM referral_withdrawals WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM server_fee_ledger WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM treasury_deposits WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM perp_dex_orders WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM perp_dex_connections WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM dex_trades WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM user_strategies WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM wallet_ledger WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM pending_orders WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM trades WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM signals WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM chart_ai_chats WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM audit_logs WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM bot_configs WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM ai_connections WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM exchange_connections WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM telegram_bots WHERE user_id = ?`).bind(userId),
+    db.prepare(`DELETE FROM user_subscriptions WHERE user_id = ?`).bind(userId),
+  ];
+
+  for (const stmt of cleanups) {
+    await stmt.run().catch(() => {});
+  }
+
+  await db
+    .prepare(
+      `UPDATE users SET
+         wallet_balance_usdt = 0,
+         fee_prepaid_credit_usd = 0,
+         fee_penalty_usd = 0,
+         fee_lock_status = 'ACTIVE',
+         fee_grace_deadline = NULL,
+         referral_balance_usd = 0,
+         referred_by = NULL,
+         trust_wallet_address = NULL,
+         trust_wallet_tron = NULL,
+         trust_wallet_solana = NULL,
+         trust_wallet_ton = NULL,
+         trust_wallet_verified = 0,
+         trust_wallet_connected_at = NULL,
+         risk_terms_accepted_at = NULL,
+         extension_api_key = NULL,
+         display_bio = NULL,
+         avatar_url = NULL,
+         avatar_custom = 0,
+         totp_enabled = 0,
+         totp_secret = NULL,
+         totp_verified_at = NULL,
+         ui_mode = 'simple',
+         mobile_widgets_json = NULL,
+         last_active_at = datetime('now')
+       WHERE id = ?`
+    )
+    .bind(userId)
+    .run();
+
+  await ensureUserDefaults(db, userId);
+  invalidateAuthUserCache(db, userId);
 }
 
 async function resolveGoogleOAuthConfig(env: Env): Promise<{ clientId: string; clientSecret: string }> {
@@ -324,11 +502,11 @@ function isHttpsRequest(c: Context): boolean {
 
 export async function ensureUserDefaults(db: D1Database, userId: string) {
   const webhookSecret = randomId('tv');
-  const rec = computeDynamicRecommendedSettings(10_000, 'balanced');
+  const rec = computeDynamicRecommendedSettings(10_000, 'conservative');
   await db.prepare(
     `INSERT OR IGNORE INTO bot_configs
-     (user_id, strategy_key, margin_pct, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_pct, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, bot_budget_mode, bot_budget_usd, bot_budget_pct, trading_mode_selected, webhook_secret)
-     VALUES (?, 'dollarino_v01', ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 'ALL_MARKET', 1, 'FULL_BALANCE', 0, 100, 0, ?)`
+     (user_id, bot_state, trading_mode, trade_execution_mode, market_type, direction_mode, notifications_enabled, notification_prefs_json, display_currency, strategy_key, active_engines_json, entry_timeframe, higher_timeframe, margin_pct, use_signal_leverage, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_enabled, trailing_stop_pct, trail_after_tp1, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, ai_gate_enabled, ai_min_confidence, sniper_enabled, sniper_auto_execute, sniper_min_safety_score, sniper_min_liquidity_usd, sniper_tp_pct, sniper_sl_pct, sniper_trailing_enabled, sniper_trailing_pct, bot_budget_mode, bot_budget_usd, bot_budget_pct, trading_mode_selected, webhook_secret)
+     VALUES (?, 'STOPPED', 'PAPER', 'MANUAL_CONFIRM', 'FUTURES', 'BOTH', 0, '{"tradeOpen":false,"tpSlHit":false,"aiSignals":false,"whaleCopy":false,"dailyDigest":false}', 'USD', 'dollarino_v01', '[]', '15m', '1h', ?, 0, ?, ?, ?, 1, ?, 1, ?, ?, ?, 1, 1, 0, 'ALL_MARKET', 0, 0, 70, 0, 0, 80, 35000, 35, 15, 1, 8, 'FULL_BALANCE', 0, 100, 0, ?)`
   ).bind(
     userId,
     rec.marginPct,
@@ -401,16 +579,17 @@ authRoutes.post('/register', async (c) => {
   const myReferralCode = generateReferralCode();
   const passwordHash = await hashPassword(password);
   const fp = await buildClientFingerprints(c.req.raw, c.env);
+  const effectiveRefCode = await resolveEffectiveReferralCode(c.env.DB, referralCode, id);
 
   await c.env.DB.prepare(
     `INSERT INTO users (id, email, username, display_name, password_hash, role, auth_provider, profile_completed, referral_code, referred_by, signup_ip_hash, signup_ua_hash)
      VALUES (?, ?, ?, ?, ?, ?, 'email', 1, ?, ?, ?, ?)`
-  ).bind(id, email, username, username, passwordHash, role, myReferralCode, referralCode || null, fp.ipHash, fp.uaHash).run();
+  ).bind(id, email, username, username, passwordHash, role, myReferralCode, effectiveRefCode, fp.ipHash, fp.uaHash).run();
 
   await ensureUserDefaults(c.env.DB, id);
 
-  if (referralCode) {
-    const normalizedRef = referralCode.trim().toUpperCase();
+  if (effectiveRefCode) {
+    const normalizedRef = effectiveRefCode.trim().toUpperCase();
     const referrer = await c.env.DB.prepare(
       `SELECT id, signup_ip_hash FROM users
        WHERE UPPER(COALESCE(referral_code, '')) = ?
@@ -443,7 +622,7 @@ authRoutes.post('/register', async (c) => {
         randomId('ref'),
         referrer.id,
         id,
-        referralCode,
+        effectiveRefCode,
         fraudFlag ? 'FLAGGED_DUPLICATE' : 'REGISTERED',
         fraudFlag,
         fraudReason
@@ -527,6 +706,7 @@ authRoutes.post('/bootstrap-owner', async (c) => {
 authRoutes.get('/providers', async (c) => {
   const google = await resolveGoogleOAuthConfig(c.env);
   const gEnabled = Boolean(google.clientId && google.clientSecret);
+  const defaultAdminReferralCode = await resolveEffectiveReferralCode(c.env.DB, null, '');
   return c.json({
     ok: true,
     walletAuthEnabled: true,
@@ -535,6 +715,7 @@ authRoutes.get('/providers', async (c) => {
     googleEnabled: gEnabled,
     googleConfigured: gEnabled,
     googleClientId: google.clientId || null,
+    defaultAdminReferralCode,
   });
 });
 
@@ -1012,13 +1193,37 @@ authRoutes.post('/telegram-webapp', async (c) => {
     const email = `tg_${tgId}@telegram.dollarino.local`;
     const pwd = await hashPassword(randomId('tg_pwd'));
     const myRefCode = generateReferralCode();
+    const effectiveRefCode = await resolveEffectiveReferralCode(c.env.DB, null, id);
+    const clientIp = getClientIp(c.req.raw);
+    const fp = await buildClientFingerprints(c.req.raw, c.env);
 
     await c.env.DB.prepare(
-      `INSERT INTO users (id, email, username, display_name, auth_provider, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, profile_completed, referral_code)
-       VALUES (?, ?, ?, ?, 'telegram', ?, ?, ?, ?, ?, ?, 0, ?)`
-    ).bind(id, email, username, verified.user.first_name || username, pwd, role, tgId, verified.user.username ?? null, verified.user.first_name ?? null, tgId === ownerId ? 1 : 0, myRefCode).run();
+      `INSERT INTO users (id, email, username, display_name, auth_provider, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, profile_completed, referral_code, referred_by, signup_ip_hash, signup_ua_hash)
+       VALUES (?, ?, ?, ?, 'telegram', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        id,
+        email,
+        username,
+        verified.user.first_name || username,
+        pwd,
+        role,
+        tgId,
+        verified.user.username ?? null,
+        verified.user.first_name ?? null,
+        tgId === ownerId ? 1 : 0,
+        tgId === ownerId ? 1 : 0,
+        myRefCode,
+        effectiveRefCode,
+        fp.ipHash,
+        fp.uaHash
+      )
+      .run();
 
     await ensureUserDefaults(c.env.DB, id);
+    if (effectiveRefCode) {
+      await attachReferralIfProvided(c.env, id, effectiveRefCode, clientIp, fp);
+    }
     row = { id, email, username, display_name: verified.user.first_name || username, role, is_blocked: 0, telegram_id: tgId, avatar_url: null, phone_verified: tgId === ownerId ? 1 : 0, totp_enabled: 0, totp_secret: null };
   }
 
@@ -1171,7 +1376,7 @@ authRoutes.post('/telegram-login-widget', async (c) => {
 // Generate or retrieve personal Browser Extension & Mobile Shortcut API key
 authRoutes.post('/extension-key', requireAuth, async (c) => {
   const u = c.get('user');
-  const rl = await enforceRateLimit(c.env, `extkey:${u.id}`, 15, 300);
+  const rl = await enforceRateLimit(c.env, `extkey:${u.id}`, 15, 300, { bypass: u.role === 'owner' || u.role === 'admin' });
   if (!rl.allowed) {
     return c.json({ error: 'درخواست بیش از حد برای کلید اکستنشن. چند دقیقه دیگر تلاش کنید.' }, 429);
   }
@@ -1206,12 +1411,9 @@ authRoutes.patch('/ui-preferences', requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-// Permanently delete current user account and purge all associated data
+// Permanently delete regular user account, OR reset Admin/Owner account to fresh zero-state while keeping Admin role & access
 authRoutes.delete('/account', requireAuth, async (c) => {
   const u = c.get('user');
-  if (u.role === 'owner') {
-    return c.json({ error: 'حساب مالک اصلی پلتفرم جهت حفظ امنیت سیستم قابل حذف نیست.' }, 403);
-  }
 
   const body = (await c.req.json().catch(() => ({}))) as {
     confirmText?: string;
@@ -1220,19 +1422,20 @@ authRoutes.delete('/account', requireAuth, async (c) => {
   const cleanConfirm = (body.confirmText || '').trim();
   if (cleanConfirm.toUpperCase() !== 'DELETE' && cleanConfirm !== 'حذف' && cleanConfirm !== 'حذف حساب') {
     return c.json(
-      { error: 'برای تایید حذف کامل حساب، لطفاً عبارت DELETE یا «حذف» را به درستی وارد کنید.' },
+      { error: 'برای تایید عملیات، لطفاً عبارت DELETE یا «حذف» را به درستی وارد کنید.' },
       400
     );
   }
 
   const row = await c.env.DB.prepare(
-    `SELECT id, email, password_hash, telegram_id, COALESCE(has_custom_password, 0) as has_custom_password
+    `SELECT id, email, role, password_hash, telegram_id, COALESCE(has_custom_password, 0) as has_custom_password
      FROM users WHERE id = ?`
   )
     .bind(u.id)
     .first<{
       id: string;
       email: string;
+      role: string;
       password_hash: string;
       telegram_id: string | null;
       has_custom_password: number;
@@ -1244,11 +1447,33 @@ authRoutes.delete('/account', requireAuth, async (c) => {
   const hasWebPwd = row.has_custom_password === 1 && !row.email.endsWith('@telegram.dollarino.local');
   if (hasWebPwd) {
     if (!body.password || !(await verifyPassword(body.password, row.password_hash))) {
-      return c.json({ error: 'رمز عبور فعلی جهت تایید حذف حساب صحیح نیست.' }, 401);
+      return c.json({ error: 'رمز عبور فعلی جهت تایید صحیح نیست.' }, 401);
     }
   }
 
+  const isPrivileged = row.role === 'owner' || row.role === 'admin' || u.role === 'owner' || u.role === 'admin';
   const botToken = row.telegram_id ? await resolveTelegramBotToken(c.env) : '';
+
+  if (isPrivileged) {
+    await resetPrivilegedUserAccountToFreshState(c.env.DB, u.id);
+    if (row.telegram_id && botToken) {
+      const bot = new TelegramBotClient(botToken);
+      await bot
+        .sendMessage(
+          row.telegram_id,
+          '♻️ حساب مدیریتی شما در دلارینو کاملاً پاکسازی و به حالت صفر (مانند کاربر تازه‌وارد) بازنشانی شد؛ دسترسی مدیریت و امتیازات ویژه شما همچنان فعال است.'
+        )
+        .catch(() => {});
+    }
+    return c.json({
+      ok: true,
+      deleted: false,
+      resetAdminAccount: true,
+      role: row.role,
+      message: 'تمام موجودی‌ها، معاملات، کیف‌پول‌ها و سوابق حساب مدیریتی به ۰ بازنشانی شد و دسترسی مدیریت حفظ گردید.',
+    });
+  }
+
   if (row.telegram_id && botToken) {
     const bot = new TelegramBotClient(botToken);
     await bot
@@ -1417,6 +1642,7 @@ authRoutes.post('/wallet/verify', async (c) => {
     const pwdHash = await hashPassword(randomId('wl_pwd'));
     const myRefCode = generateReferralCode();
     const fp = await buildClientFingerprints(c.req.raw, c.env);
+    const effectiveRefCode = await resolveEffectiveReferralCode(c.env.DB, body.referralCode, id);
 
     await c.env.DB.prepare(
       `INSERT INTO users (
@@ -1438,14 +1664,14 @@ authRoutes.post('/wallet/verify', async (c) => {
         body.tronAddress?.trim() || null,
         body.tonAddress?.trim() || null,
         myRefCode,
-        body.referralCode?.trim().toUpperCase() || null,
+        effectiveRefCode,
         fp.ipHash,
         fp.uaHash
       )
       .run();
 
     await ensureUserDefaults(c.env.DB, id);
-    await attachReferralIfProvided(c.env, id, body.referralCode, clientIp, fp);
+    await attachReferralIfProvided(c.env, id, effectiveRefCode || undefined, clientIp, fp);
 
     row = {
       id,
@@ -1519,6 +1745,7 @@ async function findOrCreateGoogleUser(
     const pwdHash = await hashPassword(randomId('gg_pwd'));
     const myRefCode = generateReferralCode();
     const fp = await buildClientFingerprints(c.req.raw, c.env);
+    const effectiveRefCode = await resolveEffectiveReferralCode(c.env.DB, gProfile.referralCode, id);
 
     await c.env.DB.prepare(
       `INSERT INTO users (
@@ -1536,14 +1763,14 @@ async function findOrCreateGoogleUser(
         role,
         gProfile.picture || null,
         myRefCode,
-        gProfile.referralCode?.trim().toUpperCase() || null,
+        effectiveRefCode,
         fp.ipHash,
         fp.uaHash
       )
       .run();
 
     await ensureUserDefaults(c.env.DB, id);
-    await attachReferralIfProvided(c.env, id, gProfile.referralCode, clientIp, fp);
+    await attachReferralIfProvided(c.env, id, effectiveRefCode || undefined, clientIp, fp);
 
     row = {
       id,
@@ -1759,13 +1986,21 @@ authRoutes.get('/check-username', async (c) => {
 authRoutes.post('/complete-profile', requireAuth, async (c) => {
   const u = c.get('user');
   const body = await c.req
-    .json<{ displayName?: string; username?: string; password?: string; email?: string }>()
-    .catch(() => ({} as { displayName?: string; username?: string; password?: string; email?: string }));
+    .json<{ displayName?: string; username?: string; password?: string; email?: string; phoneNumber?: string; phone?: string }>()
+    .catch(() => ({} as { displayName?: string; username?: string; password?: string; email?: string; phoneNumber?: string; phone?: string }));
 
   const displayName = (body.displayName || '').trim();
   const username = (body.username || '').trim();
   const password = body.password || '';
   const email = (body.email || '').trim().toLowerCase();
+  const rawPhone = body.phoneNumber ?? body.phone;
+  let normalizedPhone: string | null = null;
+  if (rawPhone !== undefined && String(rawPhone).trim() !== '') {
+    normalizedPhone = normalizePhoneInput(String(rawPhone));
+    if (!normalizedPhone) {
+      return c.json({ error: 'شماره تماس وارد شده معتبر نیست (۷ تا ۱۶ رقم وارد کنید).' }, 400);
+    }
+  }
 
   if (displayName.length < 2 || displayName.length > 50) {
     return c.json({ error: 'نام نمایشی باید بین ۲ تا ۵۰ کاراکتر باشد.' }, 400);
@@ -1802,19 +2037,31 @@ authRoutes.post('/complete-profile', requireAuth, async (c) => {
     nextEmail = email;
   }
 
+  const existingPhoneRow = await c.env.DB.prepare(
+    `SELECT phone_number, COALESCE(phone_verified, 0) as phone_verified FROM users WHERE id = ? LIMIT 1`
+  )
+    .bind(u.id)
+    .first<{ phone_number: string | null; phone_verified: number }>()
+    .catch(() => null);
+  const nextPhone =
+    existingPhoneRow?.phone_verified === 1 && existingPhoneRow.phone_number
+      ? existingPhoneRow.phone_number
+      : normalizedPhone || existingPhoneRow?.phone_number || null;
+
   const passwordHash = await hashPassword(password);
   await c.env.DB.prepare(
     `UPDATE users
      SET display_name = ?,
          username = ?,
          email = ?,
+         phone_number = ?,
          password_hash = ?,
          has_custom_password = 1,
          profile_completed = 1,
          last_active_at = datetime('now')
      WHERE id = ?`
   )
-    .bind(displayName, username, nextEmail, passwordHash, u.id)
+    .bind(displayName, username, nextEmail, nextPhone, passwordHash, u.id)
     .run();
 
   const isHttps = isHttpsRequest(c);

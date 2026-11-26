@@ -290,7 +290,10 @@ function syncModeButtonsUi() {
 }
 
 function syncEnginesUi() {
-  const activeSet = new Set(Array.isArray(state.activeEngines) ? state.activeEngines : []);
+  const normalized = (Array.isArray(state.activeEngines) ? state.activeEngines : []).map((e) =>
+    e === 'PLATFORM_AI' ? 'CENTRAL_AI' : e
+  );
+  const activeSet = new Set(normalized);
   document.querySelectorAll('.engine-chip').forEach((btn) => {
     const eng = btn.dataset.engine || '';
     btn.classList.toggle('active', activeSet.has(eng));
@@ -389,7 +392,7 @@ async function loadOverview() {
   try {
     const [sess, dash] = await Promise.all([
       apiFetch('/api/auth/session'),
-      apiFetch('/api/trading/dashboard?lite=1').catch(() => apiFetch('/api/trading/overview')),
+      apiFetch('/api/trading/dashboard?lite=1&poll=1').catch(() => apiFetch('/api/trading/overview?poll=1')),
     ]);
     const u = sess.user || {};
     const uname = u.username || 'کاربر دلارینو';
@@ -462,7 +465,7 @@ async function loadReferralInfo() {
       state.referralUrl = `${base}/?ref=${code}`;
       els.referralBox.classList.remove('hidden');
       els.refCodeText.textContent = state.referralUrl;
-      if (res.tier?.nameFa) els.refTierBadge.textContent = `${res.tier.nameFa} · ${res.tier.commissionPct}%`;
+      els.refTierBadge.textContent = res.commissionPct ? `${res.commissionPct}٪ کارمزد` : '۳٪ همیشگی';
     }
   } catch {
     // ignore if unavailable

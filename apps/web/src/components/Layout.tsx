@@ -29,8 +29,6 @@ import {
   Sparkles,
   Sprout,
   Sun,
-  TrendingDown,
-  TrendingUp,
   Users,
   Wallet,
   X,
@@ -45,6 +43,7 @@ import type { LookId } from './AppearanceModal';
 import { DollarinoBrandMark } from './BrandGraphics';
 import { WalletLogo } from './BrandLogos';
 import { CoinIcon } from './CoinIcon';
+import { LiveTickerBar } from './LiveTickerBar';
 import { SmoothSlider } from './SmoothSlider';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from './ConfirmTradeSheet';
 import type { ExchangeMarket } from './SymbolPickerModal';
@@ -58,6 +57,7 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'خانه و ربات خودکار', labelEn: 'Home & Auto Bot', icon: Home },
+  { id: 'markets', labelFa: 'بازارها و قیمت لحظه‌ای', labelEn: 'Markets & Live Prices', icon: Globe },
   { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و سرمایه', labelEn: 'Trust Wallet & Capital', icon: Flame },
   { id: 'copy', labelFa: 'رادار، اسنایپر، کپی‌ترید و ریسک', labelEn: 'Radar, Sniper, Copy & Risk', icon: Users },
   { id: 'portfolio', labelFa: 'کیف‌پول و پورتفوی یکپارچه', labelEn: 'Unified Portfolio & Wallet', icon: Wallet },
@@ -353,7 +353,7 @@ function LiquidGlassDock({
         }}
       >
         <img
-          src="/logo.png"
+          src="/logo-sm.webp"
           alt="Dollarino Bot"
           className={`w-[46px] h-[46px] rounded-full object-contain transition-all duration-300 select-none ${
             isRunning ? 'scale-105' : 'grayscale contrast-125 opacity-80'
@@ -419,6 +419,21 @@ function LiquidGlassDock({
   );
 }
 
+function LiveUtcClock({ isFa }: { isFa: boolean }) {
+  const [clock, setClock] = useState(() =>
+    new Date().toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  );
+  useEffect(() => {
+    if (isFa) return;
+    const f = () =>
+      setClock(new Date().toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    f();
+    const iv = setInterval(f, 1000);
+    return () => clearInterval(iv);
+  }, [isFa]);
+  return <span className="font-num">{isFa ? getPersianToday() : clock}</span>;
+}
+
 export function Layout({
   lang,
   setLang,
@@ -440,6 +455,7 @@ export function Layout({
   onStartStop,
   onKillSwitch,
   onSelectSymbolForTerminal,
+  onSelectSymbolForMarket,
   onRefresh,
   onGoLanding,
   onOpenSupport,
@@ -470,6 +486,7 @@ export function Layout({
   onKillSwitch: () => Promise<void>;
   onResetDemo?: () => Promise<void>;
   onSelectSymbolForTerminal?: (sym: string) => void;
+  onSelectSymbolForMarket?: (sym: string) => void;
   onRefresh?: () => Promise<void>;
   onGoLanding?: () => void;
   onOpenSupport?: () => void;
@@ -496,11 +513,12 @@ export function Layout({
   const [qtBusy, setQtBusy] = useState(false);
   const [qtErr, setQtErr] = useState('');
   const [pendingConfirm, setPendingConfirm] = useState<PendingTradeConfirmation | null>(null);
-  const [clock, setClock] = useState('');
 
   const loadNotifications = async () => {
     try {
-      const r = await apiFetch<{ notifications: typeof notifications; unread: number }>('/api/trading/notifications');
+      const r = await apiFetch<{ notifications: typeof notifications; unread: number }>('/api/trading/notifications', {
+        headers: { 'X-Dollarino-Poll': '1' },
+      });
       setNotifications(r.notifications || []);
       setUnreadNotifs(r.unread || 0);
     } catch { /* ignore */ }
@@ -511,7 +529,7 @@ export function Layout({
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       void loadNotifications();
-    }, 60_000);
+    }, 90_000);
     return () => {
       clearInterval(iv);
     };
@@ -521,14 +539,6 @@ export function Layout({
     tgHaptic('light');
     onSelectLook(currentLook === 'paper' ? 'cosmic' : 'paper');
   };
-
-  useEffect(() => {
-    const f = () =>
-      setClock(new Date().toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    f();
-    const iv = setInterval(f, 1000);
-    return () => clearInterval(iv);
-  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -577,7 +587,57 @@ export function Layout({
     setPaletteQ('');
   };
 
-  const tickerCoins = markets.slice(0, 12);
+  const tickerCoins = useMemo(() => {
+    const priorityOrder = [
+      'BTCUSDT',
+      'ETHUSDT',
+      'SOLUSDT',
+      'BNBUSDT',
+      'XRPUSDT',
+      'DOGEUSDT',
+      'TONUSDT',
+      'ADAUSDT',
+      'AVAXUSDT',
+      'SUIUSDT',
+      'LINKUSDT',
+      'DOTUSDT',
+      'TRXUSDT',
+      'NEARUSDT',
+      'LTCUSDT',
+      'ARBUSDT',
+      'OPUSDT',
+      'UNIUSDT',
+      'APTUSDT',
+      'ATOMUSDT',
+    ];
+    const rankMap = new Map<string, number>(priorityOrder.map((sym, idx) => [sym, idx]));
+    const nonCryptoRegex = /^(SOXL|SOXS|SNDK|XAU|XAG|PAXG|SPX|NDX|NVDA|TSLA|AAPL|AMZN|MSFT|GOOG|META|COIN|MSTR)/i;
+    const valid = markets
+      .filter((m) => Number(m.lastPrice || 0) > 0 && m.symbol.endsWith('USDT') && !nonCryptoRegex.test(m.base || m.symbol))
+      .sort((a, b) => {
+        const ra = rankMap.get(a.symbol);
+        const rb = rankMap.get(b.symbol);
+        if (ra !== undefined && rb !== undefined) return ra - rb;
+        if (ra !== undefined) return -1;
+        if (rb !== undefined) return 1;
+        return Number(b.volume24h || 0) - Number(a.volume24h || 0);
+      });
+    const seenBase = new Set<string>();
+    const picked: Array<{ symbol: string; base: string; price: number; changePct24h: number }> = [];
+    for (const m of valid) {
+      const base = (m.base || m.symbol.replace(/USDT$/, '')).toUpperCase();
+      if (seenBase.has(base)) continue;
+      seenBase.add(base);
+      picked.push({
+        symbol: m.symbol,
+        base,
+        price: Number(m.lastPrice || 0),
+        changePct24h: Number(m.changePct24h || 0),
+      });
+      if (picked.length >= 16) break;
+    }
+    return picked;
+  }, [markets]);
 
   const openQuickTradeModal = (sym?: string) => {
     tgHaptic('medium');
@@ -741,27 +801,29 @@ export function Layout({
             })}
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              tgHaptic('medium');
-              onToggleUiMode?.('pro');
-            }}
-            className="mt-5 w-full rounded-2xl p-3.5 text-start surface-soft hover:border-[var(--line-strong)] transition space-y-1.5"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-main flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4" style={{ color: 'var(--gold-soft)' }} />
-                <span>{isFa ? 'حالت حرفه‌ای‌ها' : 'Unlock Pro Desk'}</span>
-                <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
-              </span>
-            </div>
-            <p className="text-[11px] text-dim leading-relaxed">
-              {isFa
-                ? 'چارت کندلی، رادار، بک‌تستر، کپی‌ترید V2 و اتصال چندزنجیره‌ای Trust Wallet'
-                : 'Charts, Radar, Backtester, Smart Copy V2 & Trust Wallet'}
-            </p>
-          </button>
+          {onToggleUiMode && (
+            <button
+              type="button"
+              onClick={() => {
+                tgHaptic('medium');
+                onToggleUiMode('pro');
+              }}
+              className="mt-5 w-full rounded-2xl p-3.5 text-start surface-soft hover:border-[var(--line-strong)] transition space-y-1.5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-main flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4" style={{ color: 'var(--gold-soft)' }} />
+                  <span>{isFa ? 'حالت حرفه‌ای‌ها' : 'Unlock Pro Desk'}</span>
+                  <Zap className="w-3.5 h-3.5 text-[#F59E0B]" />
+                </span>
+              </div>
+              <p className="text-[11px] text-dim leading-relaxed">
+                {isFa
+                  ? 'چارت کندلی، رادار، بک‌تستر، کپی‌ترید V2 و اتصال چندزنجیره‌ای Trust Wallet'
+                  : 'Charts, Radar, Backtester, Smart Copy V2 & Trust Wallet'}
+              </p>
+            </button>
+          )}
 
           <div className="mt-4 grid grid-cols-2 gap-1.5 px-0.5">
             <button
@@ -1174,7 +1236,7 @@ export function Layout({
             onClick={() => setDrawerOpen(false)}
           />
           <aside
-            className={`relative z-10 w-[284px] max-w-[86vw] h-full p-5 border-e border-[var(--glass-border)] overflow-y-auto backdrop-blur-2xl shadow-2xl transition-transform duration-300 ease-out ${
+            className={`relative z-10 w-[284px] max-w-[86vw] h-full p-5 border-e border-[var(--glass-border)] overflow-y-auto lg:backdrop-blur-2xl shadow-2xl transition-transform duration-300 ease-out ${
               drawerOpen
                 ? 'translate-x-0'
                 : isFa
@@ -1191,7 +1253,7 @@ export function Layout({
         <div className="flex-1 flex flex-col min-w-0 overflow-x-clip">
           {/* Unified Consistent Sticky Frosted Header (stays pinned at top as user scrolls) */}
           <header
-            className="sticky top-0 z-40 backdrop-blur-2xl border-b border-[var(--glass-border)]"
+            className="sticky top-0 z-40 backdrop-blur-md lg:backdrop-blur-2xl border-b border-[var(--glass-border)]"
             style={{ background: 'var(--header-glass)' }}
           >
             <div className="mx-auto w-full max-w-[1440px] px-2.5 sm:px-5 py-2 flex items-center justify-between gap-1.5 sm:gap-2">
@@ -1245,7 +1307,7 @@ export function Layout({
                   <div className="hidden sm:block leading-tight shrink-0">
                     <span className="flex items-center gap-1.5 text-[11px] font-bold text-main whitespace-nowrap">
                       <span className={`h-2 w-2 rounded-full shrink-0 ${isRunning ? 'bg-[#10B981] live-dot' : 'bg-slate-400'}`} />
-                      <span className="font-num">{isFa ? getPersianToday() : clock}</span>
+                      <LiveUtcClock isFa={isFa} />
                     </span>
                     <span className="text-[10px] text-dim block max-w-[120px] truncate">{user.username}</span>
                   </div>
@@ -1443,36 +1505,24 @@ export function Layout({
               </div>
             </div>
 
-            {tickerCoins.length > 0 && uiMode === 'pro' && (
-              <div dir="ltr" className="border-t hairline bg-black/5 dark:bg-black/20 overflow-hidden ticker-edge-fade">
-                <div className="flex w-max gap-8 px-5 py-1.5 animate-ticker">
-                  {[...tickerCoins, ...tickerCoins].map((c, idx) => {
-                    const ch = Number(c.changePct24h || 0);
-                    const px = Number(c.lastPrice || 0);
-                    return (
-                      <button
-                        key={`${c.symbol}-${idx}`}
-                        type="button"
-                        onClick={() => {
-                          onSelectSymbolForTerminal?.(c.symbol);
-                          selectTab('terminal');
-                        }}
-                        className="flex items-center gap-2 text-[11px] font-semibold whitespace-nowrap hover:opacity-75 transition"
-                      >
-                        <CoinIcon symbol={c.symbol} size={15} />
-                        <span className="font-bold text-main">{c.base}</span>
-                        <span dir="ltr" className="text-dim tabular font-num">
-                          ${px >= 100 ? px.toLocaleString('en-US', { maximumFractionDigits: 2 }) : px.toFixed(px >= 1 ? 3 : 5)}
-                        </span>
-                        <span dir="ltr" className={`tabular font-bold inline-flex items-center gap-0.5 ${ch >= 0 ? 'text-jade' : 'text-loss'}`}>
-                          {ch >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                          <span>{Math.abs(ch).toFixed(2)}%</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+            {tickerCoins.length > 0 && (
+              <LiveTickerBar
+                compact
+                items={tickerCoins}
+                onSelectCoin={(sym) => {
+                  tgHaptic('light');
+                  if (onSelectSymbolForMarket) {
+                    onSelectSymbolForMarket(sym);
+                  } else {
+                    onSelectSymbolForTerminal?.(sym);
+                    selectTab('markets');
+                  }
+                  if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                    setDrawerOpen(false);
+                  }
+                }}
+                className="border-t hairline bg-black/5 dark:bg-black/20"
+              />
             )}
           </header>
 

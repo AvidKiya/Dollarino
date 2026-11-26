@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { callBYOAI, resolveAIEnsemble } from '../ai/providers.js';
-import { requireAuth } from '../auth.js';
+import { ensureUserDefaults, requireAuth } from '../auth.js';
 import { randomId } from '../crypto.js';
 import {
   buildV2SwapExactEthForTokensCalldata,
@@ -99,7 +99,8 @@ dexRoutes.get('/safety', async (c) => {
 
 dexRoutes.post('/ai-analyze', requireAuth, async (c) => {
   const user = c.get('user');
-  const rl = await enforceRateLimit(c.env, `dexai:${user.id}`, 12, 300);
+  const isPrivileged = user.role === 'owner' || user.role === 'admin';
+  const rl = await enforceRateLimit(c.env, `dexai:${user.id}`, 12, 300, { bypass: isPrivileged });
   if (!rl.allowed) {
     return c.json({ error: `تعداد تحلیل‌های سریع DEX زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   }
@@ -321,9 +322,7 @@ dexRoutes.post('/direct-buy', requireAuth, async (c) => {
     return c.json({ error: 'chainId، tokenAddress و tokenSymbol الزامی هستند.' }, 400);
   }
 
-  await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO bot_configs (user_id, webhook_secret) VALUES (?, ?)`
-  ).bind(user.id, randomId('wh')).run().catch(() => {});
+  await ensureUserDefaults(c.env.DB, user.id).catch(() => {});
 
   const [botCfg, uRow] = await Promise.all([
     c.env.DB.prepare(

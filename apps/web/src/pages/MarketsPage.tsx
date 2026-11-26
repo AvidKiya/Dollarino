@@ -9,8 +9,10 @@ import {
   LayoutGrid,
   List,
   Search,
+  Sparkles,
   Star,
   TrendingUp,
+  X,
   Zap,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
@@ -38,6 +40,9 @@ export function MarketsPage({
   iranRate,
   marketType = 'FUTURES',
   walletEvmAddress,
+  focusSymbol,
+  focusNonce = 0,
+  onClearFocus,
   onChangeMarketType,
   onTradeSymbol,
   onRefresh,
@@ -48,6 +53,9 @@ export function MarketsPage({
   iranRate?: number;
   marketType?: 'SPOT' | 'FUTURES';
   walletEvmAddress?: string | null;
+  focusSymbol?: string | null;
+  focusNonce?: number;
+  onClearFocus?: () => void;
   onChangeMarketType?: (next: 'SPOT' | 'FUTURES') => void;
   onTradeSymbol: (sym: string) => void;
   onRefresh?: () => Promise<void> | void;
@@ -61,6 +69,21 @@ export function MarketsPage({
   const [visibleCount, setVisibleCount] = useState(60);
   const [liveIrt, setLiveIrt] = useState<number>(() => iranRate || getLiveUsdtIrt());
   const [liveIrtSource, setLiveIrtSource] = useState<string>(() => getLiveIranSource());
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(focusSymbol ?? null);
+
+  useEffect(() => {
+    if (!focusSymbol) {
+      setSelectedSymbol(null);
+      return;
+    }
+    setSection('markets');
+    setCategory('all');
+    setQ('');
+    setSelectedSymbol(focusSymbol);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [focusSymbol, focusNonce]);
 
   useEffect(() => {
     if (iranRate && iranRate >= 30_000) {
@@ -72,7 +95,7 @@ export function MarketsPage({
   useEffect(() => {
     const syncRate = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate?refresh=1')
+      apiFetch<{ usdtIrt?: number; source?: string }>('/api/public/usdt-irt-rate')
         .then((res) => {
           if (res?.usdtIrt && res.usdtIrt >= 30_000) {
             setLiveIrt(res.usdtIrt);
@@ -82,11 +105,8 @@ export function MarketsPage({
         })
         .catch(() => {});
     };
-    syncRate();
-    const iv = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      syncRate();
-    }, 45_000);
+    if (!iranRate || iranRate < 30_000) syncRate();
+    const iv = setInterval(syncRate, 60_000);
     return () => clearInterval(iv);
   }, []);
   const [favs, setFavs] = useState<string[]>(() => {
@@ -122,10 +142,100 @@ export function MarketsPage({
     }
     if (sortBy === 'gainers') arr.sort((a, b) => Number(b.changePct24h) - Number(a.changePct24h));
     else if (sortBy === 'losers') arr.sort((a, b) => Number(a.changePct24h) - Number(b.changePct24h));
+    if (selectedSymbol) {
+      const idx = arr.findIndex((m) => m.symbol.toUpperCase() === selectedSymbol.toUpperCase());
+      if (idx > 0) {
+        const [picked] = arr.splice(idx, 1);
+        if (picked) arr.unshift(picked);
+      }
+    }
     return arr;
-  }, [markets, q, sortBy, category, favs]);
+  }, [markets, q, sortBy, category, favs, selectedSymbol]);
+
+  const focusedMarket = useMemo(
+    () =>
+      selectedSymbol
+        ? markets.find((m) => m.symbol.toUpperCase() === selectedSymbol.toUpperCase()) ?? null
+        : null,
+    [markets, selectedSymbol]
+  );
 
   const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount]);
+
+  const focusedMarketCard = focusedMarket ? (() => {
+    const px = Number(focusedMarket.lastPrice || 0);
+    const ch = Number(focusedMarket.changePct24h || 0);
+    const up = ch >= 0;
+    const lo = Number(focusedMarket.low24h || px * 0.97);
+    const hi = Number(focusedMarket.high24h || px * 1.03);
+    const spark = [lo, px * (up ? 0.992 : 1.008), px * (up ? 0.997 : 1.003), px];
+    const isFav = favs.includes(focusedMarket.symbol);
+    return (
+      <div
+        data-testid="market-spotlight-card"
+        className="panel rounded-[26px] p-4 sm:p-5 border-2 border-[var(--gold)] shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      >
+        <div className="flex items-center gap-3.5 min-w-0">
+          <CoinIcon symbol={focusedMarket.symbol} size={44} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[color:color-mix(in_srgb,var(--gold)_14%,transparent)] text-[var(--gold)] text-[10px] font-black">
+                <Sparkles className="w-3 h-3" />
+                <span>{isFa ? 'ارز انتخاب‌شده از نوار قیمت' : 'SELECTED FROM TICKER'}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => toggleFav(focusedMarket.symbol)}
+                className="text-dim hover:text-[#F59E0B]"
+                aria-label="Favorite"
+              >
+                <Star className={`w-4 h-4 ${isFav ? 'fill-[#F59E0B] text-[#F59E0B]' : ''}`} />
+              </button>
+            </div>
+            <h3 className="font-display font-black text-lg sm:text-xl text-main mt-1 flex items-center gap-2">
+              <span dir="ltr">{focusedMarket.symbol}</span>
+              <span className="text-xs font-bold text-dim">· {coinDisplayName(focusedMarket.base, isFa)}</span>
+            </h3>
+            <div className="flex flex-wrap items-center gap-3 text-xs mt-1">
+              <span dir="ltr" className="font-num font-black text-base text-main">${fmtPx(px)}</span>
+              {isFa && px > 0 && <span className="text-dim tabular">{formatTomanEq(px, liveIrt)} تومان</span>}
+              <span dir="ltr" className={`font-num font-black ${up ? 'text-jade' : 'text-loss'}`}>
+                {up ? '+' : ''}{ch.toFixed(2)}%
+              </span>
+              <span dir="ltr" className="text-[11px] text-dim">
+                H: ${fmtPx(hi)} · L: ${fmtPx(lo)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="hidden md:block w-28 h-10">
+            <Sparkline values={spark} height={38} color={up ? '#10d9a3' : '#ff4d6d'} fill />
+          </div>
+          <button
+            type="button"
+            onClick={() => onTradeSymbol(focusedMarket.symbol)}
+            className="btn-gold px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>{isFa ? `معامله ${focusedMarket.base}` : `Trade ${focusedMarket.base}`}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedSymbol(null);
+              onClearFocus?.();
+            }}
+            aria-label={isFa ? 'بستن انتخاب' : 'Clear selection'}
+            className="btn-ghost p-2 rounded-xl text-dim hover:text-main"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  })() : null;
 
   const sectionToggleBar = (
     <div className="tab-bar w-full sm:w-auto">
@@ -168,6 +278,7 @@ export function MarketsPage({
     return (
       <div className="space-y-4 max-w-3xl mx-auto">
         {sectionToggleBar}
+        {focusedMarketCard}
         {/* Top 5 Market Pulse Strip incl. Live Iran Tether/USD */}
         <div className="panel rounded-2xl p-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-center items-center">
           <div className="col-span-2 sm:col-span-1 space-y-0.5 border-b sm:border-b-0 sm:border-e hairline pb-2 sm:pb-0 sm:pe-2">
@@ -440,6 +551,7 @@ export function MarketsPage({
   return (
     <div className="space-y-6">
       {sectionToggleBar}
+      {focusedMarketCard}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-2 flex items-center gap-2" style={{ color: 'var(--gold)' }}>

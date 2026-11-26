@@ -11,9 +11,11 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { CoinIcon } from './CoinIcon';
+import { TpSlModeSwitch } from './TpSlModeSwitch';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
+import { calcPctFromPrice, calcPriceFromPct, calcRoePct, formatLevelPrice, type TpSlInputMode } from '../lib/tpsl';
 import { approveHyperliquidAgentInDapp } from '../lib/trustwallet';
 import type { PerpDappLinkItem, PerpMarketQuoteItem } from '../lib/types';
 
@@ -68,6 +70,11 @@ export function PerpDexPanel({
     tpPrice: '',
     slPrice: '',
   });
+  const [tpSlMode, setTpSlMode] = useState<TpSlInputMode>('PRICE');
+  const [tpPct, setTpPct] = useState('5');
+  const [slPct, setSlPct] = useState('2');
+  const selectedMarket = perpMarkets.find((m) => m.symbol === perpOrderForm.symbol);
+  const selectedMarkPx = Number(selectedMarket?.markPrice || 0);
 
   const loadPerpData = useCallback(async () => {
     try {
@@ -95,6 +102,28 @@ export function PerpDexPanel({
   const placeOrder = async (side: 'LONG' | 'SHORT') => {
     setPerpBusy(true);
     try {
+      let resolvedTp: number | undefined = perpOrderForm.tpPrice.trim() ? Number(perpOrderForm.tpPrice) : undefined;
+      let resolvedSl: number | undefined = perpOrderForm.slPrice.trim() ? Number(perpOrderForm.slPrice) : undefined;
+      if (tpSlMode === 'PCT') {
+        let refPx = selectedMarkPx;
+        if (!(refPx > 0)) {
+          const ov = await apiFetch<{ market24h?: { lastPrice?: string | number } }>(
+            `/api/trading/market/overview?symbol=${encodeURIComponent(perpOrderForm.symbol)}USDT`
+          ).catch(() => null);
+          refPx = Number(ov?.market24h?.lastPrice || 0);
+        }
+        if (refPx > 0) {
+          const tpNum = Number(tpPct);
+          const slNum = Number(slPct);
+          resolvedTp = Number.isFinite(tpNum) && tpNum > 0
+            ? calcPriceFromPct({ entryPrice: refPx, side, kind: 'TP', pct: tpNum }) ?? undefined
+            : undefined;
+          resolvedSl = Number.isFinite(slNum) && slNum > 0
+            ? calcPriceFromPct({ entryPrice: refPx, side, kind: 'SL', pct: slNum }) ?? undefined
+            : undefined;
+        }
+      }
+
       const r = await apiFetch<{ messageFa: string; messageEn: string; dappRedirectUrl?: string }>('/api/dex/perp-order', {
         method: 'POST',
         body: JSON.stringify({
@@ -105,8 +134,8 @@ export function PerpDexPanel({
           marginUsd: perpOrderForm.sizeUsd,
           sizeUsd: perpOrderForm.sizeUsd,
           leverage: perpOrderForm.leverage,
-          tpPrice: perpOrderForm.tpPrice.trim() ? Number(perpOrderForm.tpPrice) : undefined,
-          slPrice: perpOrderForm.slPrice.trim() ? Number(perpOrderForm.slPrice) : undefined,
+          tpPrice: resolvedTp,
+          slPrice: resolvedSl,
         }),
       });
       pushFloatingToast(isFa ? r.messageFa : r.messageEn, 'success');
@@ -249,6 +278,41 @@ export function PerpDexPanel({
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+              <span className="text-[11px] font-bold text-sub">
+                {isFa ? 'تنظیم حد سود و حد ضرر (TP/SL):' : 'Take Profit / Stop Loss:'}
+                {selectedMarkPx > 0 && (
+                  <span dir="ltr" className="ms-2 font-num text-[10px] text-dim">
+                    ({perpOrderForm.symbol} ≈ ${formatLevelPrice(selectedMarkPx)})
+                  </span>
+                )}
+              </span>
+              <TpSlModeSwitch
+                mode={tpSlMode}
+                onChange={(next) => {
+                  if (next === 'PCT' && selectedMarkPx > 0) {
+                    const pTp = calcPctFromPrice({
+                      entryPrice: selectedMarkPx,
+                      side: 'LONG',
+                      kind: 'TP',
+                      targetPrice: Number(perpOrderForm.tpPrice),
+                    });
+                    const pSl = calcPctFromPrice({
+                      entryPrice: selectedMarkPx,
+                      side: 'LONG',
+                      kind: 'SL',
+                      targetPrice: Number(perpOrderForm.slPrice),
+                    });
+                    if (pTp !== null) setTpPct(String(pTp));
+                    if (pSl !== null) setSlPct(String(pSl));
+                  }
+                  setTpSlMode(next);
+                }}
+                isFa={isFa}
+                compact
+              />
+            </div>
+
             <div className="grid sm:grid-cols-3 gap-2.5">
               <div>
                 <label className="text-[10px] text-dim block mb-1">{isFa ? `اهرم (${perpOrderForm.leverage}×)` : `Leverage (${perpOrderForm.leverage}x)`}</label>
@@ -261,30 +325,117 @@ export function PerpDexPanel({
                   className="field w-full rounded-xl px-2.5 py-2 font-num"
                 />
               </div>
-              <div>
-                <label className="text-[10px] text-dim block mb-1">{isFa ? 'حد سود TP ($ اختیاری)' : 'TP Price ($ optional)'}</label>
-                <input
-                  type="number"
-                  step="any"
-                  dir="ltr"
-                  placeholder="Optional"
-                  value={perpOrderForm.tpPrice}
-                  onChange={(e) => setPerpOrderForm((f) => ({ ...f, tpPrice: e.target.value }))}
-                  className="field w-full rounded-xl px-2.5 py-2 font-num"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-dim block mb-1">{isFa ? 'حد ضرر SL ($ اختیاری)' : 'SL Price ($ optional)'}</label>
-                <input
-                  type="number"
-                  step="any"
-                  dir="ltr"
-                  placeholder="Optional"
-                  value={perpOrderForm.slPrice}
-                  onChange={(e) => setPerpOrderForm((f) => ({ ...f, slPrice: e.target.value }))}
-                  className="field w-full rounded-xl px-2.5 py-2 font-num"
-                />
-              </div>
+              {tpSlMode === 'PRICE' ? (
+                <>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'حد سود TP ($ اختیاری)' : 'TP Price ($ optional)'}</label>
+                    <input
+                      type="number"
+                      step="any"
+                      dir="ltr"
+                      placeholder="Optional"
+                      value={perpOrderForm.tpPrice}
+                      onChange={(e) => setPerpOrderForm((f) => ({ ...f, tpPrice: e.target.value }))}
+                      className="field w-full rounded-xl px-2.5 py-2 font-num"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-dim block mb-1">{isFa ? 'حد ضرر SL ($ اختیاری)' : 'SL Price ($ optional)'}</label>
+                    <input
+                      type="number"
+                      step="any"
+                      dir="ltr"
+                      placeholder="Optional"
+                      value={perpOrderForm.slPrice}
+                      onChange={(e) => setPerpOrderForm((f) => ({ ...f, slPrice: e.target.value }))}
+                      className="field w-full rounded-xl px-2.5 py-2 font-num"
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] text-jade font-bold">{isFa ? 'حد سود TP (%)' : 'TP (%)'}</label>
+                      {Number(tpPct) > 0 && (
+                        <span dir="ltr" className="text-[9.5px] font-num text-jade">
+                          ROE +{calcRoePct(Number(tpPct), perpOrderForm.leverage)}%
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      max={500}
+                      dir="ltr"
+                      placeholder="5"
+                      value={tpPct}
+                      onChange={(e) => setTpPct(e.target.value)}
+                      className="field w-full rounded-xl px-2.5 py-2 font-num"
+                    />
+                    <div className="flex gap-1 mt-1" dir="ltr">
+                      {['3', '5', '10', '20'].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setTpPct(p)}
+                          className={`flex-1 py-0.5 rounded text-[9px] font-num font-bold ${
+                            tpPct === p ? 'bg-jade text-slate-950' : 'bg-[var(--panel)] text-dim'
+                          }`}
+                        >
+                          +{p}%
+                        </button>
+                      ))}
+                    </div>
+                    {selectedMarkPx > 0 && Number(tpPct) > 0 && (
+                      <p dir="ltr" className="text-[9.5px] font-num text-dim mt-1">
+                        L ≈ ${formatLevelPrice(calcPriceFromPct({ entryPrice: selectedMarkPx, side: 'LONG', kind: 'TP', pct: Number(tpPct) }) || 0)} · S ≈ ${formatLevelPrice(calcPriceFromPct({ entryPrice: selectedMarkPx, side: 'SHORT', kind: 'TP', pct: Number(tpPct) }) || 0)}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] text-loss font-bold">{isFa ? 'حد ضرر SL (%)' : 'SL (%)'}</label>
+                      {Number(slPct) > 0 && (
+                        <span dir="ltr" className="text-[9.5px] font-num text-loss">
+                          ROE -{calcRoePct(Number(slPct), perpOrderForm.leverage)}%
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      max={95}
+                      dir="ltr"
+                      placeholder="2"
+                      value={slPct}
+                      onChange={(e) => setSlPct(e.target.value)}
+                      className="field w-full rounded-xl px-2.5 py-2 font-num"
+                    />
+                    <div className="flex gap-1 mt-1" dir="ltr">
+                      {['1', '2', '3', '5'].map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setSlPct(p)}
+                          className={`flex-1 py-0.5 rounded text-[9px] font-num font-bold ${
+                            slPct === p ? 'bg-rose-500 text-white' : 'bg-[var(--panel)] text-dim'
+                          }`}
+                        >
+                          -{p}%
+                        </button>
+                      ))}
+                    </div>
+                    {selectedMarkPx > 0 && Number(slPct) > 0 && (
+                      <p dir="ltr" className="text-[9.5px] font-num text-dim mt-1">
+                        L ≈ ${formatLevelPrice(calcPriceFromPct({ entryPrice: selectedMarkPx, side: 'LONG', kind: 'SL', pct: Number(slPct) }) || 0)} · S ≈ ${formatLevelPrice(calcPriceFromPct({ entryPrice: selectedMarkPx, side: 'SHORT', kind: 'SL', pct: Number(slPct) }) || 0)}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex flex-wrap gap-2">

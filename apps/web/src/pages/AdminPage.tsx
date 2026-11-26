@@ -55,9 +55,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatDollarinoSignal } from '@dollarino/core';
+import { TpSlModeSwitch } from '../components/TpSlModeSwitch';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
+import { calcPctFromPrice, calcPriceFromPct, formatLevelPrice, type TpSlInputMode } from '../lib/tpsl';
 import type { FounderProfile, OnchainApiProviderItem, PromoBannerItem } from '../lib/types';
 
 interface PlatformAIEngine {
@@ -412,6 +414,8 @@ export function AdminPage({
     engineKey: 'dollarino_v01',
     note: '',
   });
+  const [channelTpSlMode, setChannelTpSlMode] = useState<TpSlInputMode>('PRICE');
+  const [channelTpSlPcts, setChannelTpSlPcts] = useState({ stopLoss: '1.5', tp1: '2.5', tp2: '5', tp3: '8' });
   const [channelNewsForm, setChannelNewsForm] = useState({
     title: '',
     category: 'MARKET_NEWS',
@@ -531,6 +535,8 @@ export function AdminPage({
     mirrorNow: true,
     note: '',
   });
+  const [traderTpSlMode, setTraderTpSlMode] = useState<TpSlInputMode>('PRICE');
+  const [traderTpSlPcts, setTraderTpSlPcts] = useState({ stopLoss: '1.96', tp1: '3.48', tp2: '5.22', tp3: '7.07' });
 
   // Online Support Admin State
   const [tickets, setTickets] = useState<AdminSupportTicket[]>([]);
@@ -573,10 +579,20 @@ export function AdminPage({
       telegramBotConfigured: boolean;
       aiEngineConfigured: boolean;
       feeReceiverWalletConfigured: boolean;
+      googleOauthConfigured?: boolean;
       allowLiveTrading: boolean;
       publicWebUrl: string;
     };
   } | null>(null);
+  const [googleOauthForm, setGoogleOauthForm] = useState({
+    clientId: '',
+    clientSecret: '',
+    hasSecretSaved: false,
+    configured: false,
+    saving: false,
+    testing: false,
+    copiedUri: false,
+  });
   const [onchainBusy, setOnchainBusy] = useState<string | null>(null);
   const [adminFeeAccounts, setAdminFeeAccounts] = useState<
     Array<{
@@ -637,6 +653,44 @@ export function AdminPage({
     minDepositUsd: '10',
   });
   const [treasuryBusy, setTreasuryBusy] = useState(false);
+  const [adminProfitCards, setAdminProfitCards] = useState<
+    Array<{
+      id: string;
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      mode: string;
+      period: string;
+      trade_source: string | null;
+      trades_count: number;
+      win_rate: number;
+      net_pnl_usd: number;
+      roi_pct: number;
+      strategy_name: string;
+      signal_name: string | null;
+      revoked: number;
+      issued_at: string;
+    }>
+  >([]);
+  const [adminActiveBots, setAdminActiveBots] = useState<
+    Array<{
+      user_id: string;
+      username: string;
+      email: string;
+      bot_state: string;
+      trading_mode: string;
+      trade_execution_mode: string | null;
+      active_engines_json: string | null;
+      strategy_key: string;
+      leverage: number;
+      paper_balance: string;
+      display_currency: string | null;
+      notifications_enabled: number;
+      updated_at: string;
+    }>
+  >([]);
+  const [cardRevokeBusy, setCardRevokeBusy] = useState<string | null>(null);
+  const [botStopBusy, setBotStopBusy] = useState<string | null>(null);
   const [adminTvWebhookUrl, setAdminTvWebhookUrl] = useState('');
   const [adminTvCopied, setAdminTvCopied] = useState(false);
   const [adminTvChannel, setAdminTvChannel] = useState('@Dollarino_official');
@@ -657,7 +711,7 @@ export function AdminPage({
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, topTrRes, chStatusRes, supRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes, feeAdminRes, founderRes, treasuryRes, tvRes] = await Promise.all([
+    const [ov, ordRes, subMe, aiRes, ctRes, topTrRes, chStatusRes, supRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes, feeAdminRes, founderRes, treasuryRes, tvRes, cardsAdminRes, botsAdminRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
       apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
       apiFetch<{ paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
@@ -694,7 +748,11 @@ export function AdminPage({
       apiFetch<{ profile?: FounderProfile }>('/api/admin/founder-profile').catch(() => ({ profile: undefined })),
       apiFetch<{ ok?: boolean } & NonNullable<typeof treasurySummary>>('/api/admin/treasury').catch(() => null),
       apiFetch<{ webhookUrl?: string | null }>('/api/webhook/alerts').catch(() => null),
+      apiFetch<{ cards: typeof adminProfitCards }>('/api/admin/profit-cards').catch(() => ({ cards: [] })),
+      apiFetch<{ bots: typeof adminActiveBots }>('/api/admin/active-bots').catch(() => ({ bots: [] })),
     ]);
+    setAdminProfitCards(cardsAdminRes?.cards || []);
+    setAdminActiveBots(botsAdminRes?.bots || []);
     if (tvRes?.webhookUrl) {
       setAdminTvWebhookUrl(tvRes.webhookUrl);
     }
@@ -802,6 +860,14 @@ export function AdminPage({
     setTickets(supRes.tickets || []);
     setAllTicketMsgs(supRes.messages || []);
     setHelpText((ov.settings.help_text || '').replace(/\\n/g, '\n'));
+    const authProviders = await apiFetch<{ googleConfigured?: boolean; googleClientId?: string | null }>('/api/auth/providers').catch(() => null);
+    setGoogleOauthForm((prev) => ({
+      ...prev,
+      clientId: authProviders?.googleClientId || ov.settings.google_client_id || '',
+      hasSecretSaved: ov.settings.google_client_secret === '********',
+      configured: Boolean(authProviders?.googleConfigured ?? healthRes?.health?.productionChecks?.googleOauthConfigured),
+      clientSecret: '',
+    }));
     if (aiRes) {
       setAiEngines(aiRes.engines || []);
       setConsensusMode(aiRes.consensusMode || 'ENSEMBLE_AUTO');
@@ -821,6 +887,170 @@ export function AdminPage({
             : '@Dollarino_bot',
       });
     }
+  };
+
+  const saveGoogleOauthKeys = async () => {
+    setGoogleOauthForm((p) => ({ ...p, saving: true }));
+    setMsg(null);
+    try {
+      const payload: Record<string, string> = {
+        google_client_id: googleOauthForm.clientId.trim(),
+      };
+      if (googleOauthForm.clientSecret.trim() && googleOauthForm.clientSecret.trim() !== '********') {
+        payload.google_client_secret = googleOauthForm.clientSecret.trim();
+      }
+      await apiFetch('/api/admin/settings', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      const authProviders = await apiFetch<{ googleConfigured?: boolean; googleClientId?: string | null }>('/api/auth/providers').catch(() => null);
+      setGoogleOauthForm((p) => ({
+        ...p,
+        saving: false,
+        clientSecret: '',
+        hasSecretSaved: Boolean(p.hasSecretSaved || payload.google_client_secret),
+        configured: Boolean(authProviders?.googleConfigured),
+      }));
+      setMsg(
+        authProviders?.googleConfigured
+          ? isFa
+            ? 'کلیدهای Google OAuth با موفقیت ذخیره و ورود با گوگل فعال شد ✅'
+            : 'Google OAuth keys saved & Google Sign-In is now LIVE ✅'
+          : isFa
+            ? 'کلید Google OAuth ذخیره شد. برای فعال‌سازی کامل، هر دو مقدار Client ID و Client Secret باید ثبت شوند.'
+            : 'Saved. Provide both Client ID & Client Secret to enable live Google Sign-In.'
+      );
+      await load();
+    } catch (e) {
+      setGoogleOauthForm((p) => ({ ...p, saving: false }));
+      setMsg(e instanceof Error ? e.message : 'Error');
+    }
+  };
+
+  const renderGoogleOauthCard = () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dollarino.app';
+    const callbackUrl = `${origin}/api/auth/google/callback`;
+    return (
+      <div
+        data-testid="admin-google-oauth-card"
+        className="surface-card rounded-3xl p-5 sm:p-6 space-y-4 border-sky-500/35"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-sky-400" />
+              <span>{isFa ? 'احراز هویت و ورود با گوگل (Google OAuth 2.0)' : 'Google Sign-In / OAuth 2.0 Configuration'}</span>
+            </h3>
+            <p className="text-xs text-sub mt-1">
+              {isFa
+                ? 'با وارد کردن Client ID و Client Secret از Google Cloud Console، دکمه «ورود با گوگل» در صفحه لاگین بلافاصله بدون ریستارت سرور فعال می‌شود.'
+                : 'Enter Google Cloud Client ID and Client Secret to immediately enable Sign In with Google on the login screen.'}
+            </p>
+          </div>
+          <span
+            className={`px-3 py-1 rounded-full text-[11px] font-black border ${
+              googleOauthForm.configured
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-jade'
+                : 'bg-amber-500/15 border-amber-500/40 text-amber-400'
+            }`}
+          >
+            {googleOauthForm.configured
+              ? isFa ? 'فعال و متصل ✅' : 'Configured & Active ✅'
+              : isFa ? 'در انتظار تنظیم کلیدها ⏳' : 'Pending OAuth Keys ⏳'}
+          </span>
+        </div>
+
+        <div className="surface-soft rounded-2xl p-3 text-[11px] space-y-1.5 border hairline">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-dim font-bold">{isFa ? 'آدرس Redirect URI مجاز در Google Console:' : 'Authorized Redirect URI (paste into Google Console):'}</span>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard?.writeText(callbackUrl).catch(() => {});
+                setGoogleOauthForm((p) => ({ ...p, copiedUri: true }));
+                setTimeout(() => setGoogleOauthForm((p) => ({ ...p, copiedUri: false })), 2000);
+              }}
+              className="px-2.5 py-1 rounded-lg btn-cobalt text-[10px]"
+            >
+              {googleOauthForm.copiedUri ? (isFa ? 'کپی شد ✅' : 'Copied ✅') : isFa ? 'کپی Redirect URI' : 'Copy Redirect URI'}
+            </button>
+          </div>
+          <code dir="ltr" className="block font-mono text-[11px] text-brand break-all select-all">
+            {callbackUrl}
+          </code>
+          <p className="text-[10px] text-dim">
+            {isFa ? `دامنه JavaScript مجاز (Origin): ` : `Authorized JS Origin: `}
+            <code dir="ltr" className="font-mono text-main">{origin}</code>
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-3 text-xs">
+          <div>
+            <label className="text-dim block mb-1 font-bold">
+              {isFa ? 'Google Client ID (شناسه کلاینت)' : 'Google Client ID'}
+            </label>
+            <input
+              dir="ltr"
+              data-testid="input-google-client-id"
+              value={googleOauthForm.clientId}
+              onChange={(e) => setGoogleOauthForm((p) => ({ ...p, clientId: e.target.value }))}
+              placeholder="1234567890-xxxx.apps.googleusercontent.com"
+              className="field py-2.5 text-xs font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-dim block mb-1 font-bold">
+              {isFa ? 'Google Client Secret (کلید محرمانه)' : 'Google Client Secret'}
+              {googleOauthForm.hasSecretSaved && (
+                <span className="ms-2 text-[10px] text-jade font-bold">
+                  {isFa ? '(کلید قبلی ذخیره شده ✅)' : '(Secret saved ✅)'}
+                </span>
+              )}
+            </label>
+            <input
+              dir="ltr"
+              type="password"
+              data-testid="input-google-client-secret"
+              value={googleOauthForm.clientSecret}
+              onChange={(e) => setGoogleOauthForm((p) => ({ ...p, clientSecret: e.target.value }))}
+              placeholder={googleOauthForm.hasSecretSaved ? '•••••••• (خالی بگذارید تا کلید فعلی بماند)' : 'GOCSPX-...'}
+              className="field py-2.5 text-xs font-mono"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            data-testid="btn-save-google-oauth"
+            disabled={googleOauthForm.saving}
+            onClick={() => void saveGoogleOauthKeys()}
+            className="px-4 py-2.5 rounded-xl btn-cobalt text-xs font-bold"
+          >
+            {googleOauthForm.saving
+              ? isFa ? 'در حال ذخیره...' : 'Saving...'
+              : isFa ? 'ذخیره کلیدهای Google OAuth' : 'Save Google OAuth Keys'}
+          </button>
+          <button
+            type="button"
+            disabled={googleOauthForm.testing}
+            onClick={async () => {
+              setGoogleOauthForm((p) => ({ ...p, testing: true }));
+              const res = await apiFetch<{ googleConfigured?: boolean; googleClientId?: string | null }>('/api/auth/providers').catch(() => null);
+              setGoogleOauthForm((p) => ({ ...p, testing: false, configured: Boolean(res?.googleConfigured) }));
+              setMsg(
+                res?.googleConfigured
+                  ? isFa ? 'تست موفق: Google OAuth آماده و در صفحه ورود فعال است ✅' : 'Verified: Google OAuth is live on AuthPage ✅'
+                  : isFa ? 'هنوز Client ID یا Client Secret کامل ثبت نشده است ⚠️' : 'Google OAuth keys incomplete ⚠️'
+              );
+            }}
+            className="px-4 py-2.5 rounded-xl surface-soft border hairline text-xs font-bold text-main"
+          >
+            {googleOauthForm.testing ? '...' : isFa ? 'بررسی وضعیت زنده OAuth' : 'Verify Live Status'}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -1048,7 +1278,7 @@ export function AdminPage({
                     {currentUser.role === 'owner' ? (isFa ? 'مالک سیستم · OWNER' : 'OWNER') : currentUser.role.toUpperCase()}
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-white/15 border border-white/20 text-white text-[10px] font-bold">
-                    V11.6 Command
+                    V11.7 Command
                   </span>
                 </div>
                 <div className="text-[11px] text-white/80 font-mono-num mt-0.5" dir="ltr">
@@ -1309,10 +1539,10 @@ export function AdminPage({
                       id: 'overview' as const,
                       icon: BrainCircuit,
                       badgeBg: 'bg-[#10B981]',
-                      title: isFa ? 'سلامت سیستم، موتورهای AI و بهینه‌سازی D1' : 'System Health, AI Engines & D1 Housekeeping',
+                      title: isFa ? 'سلامت سیستم، Google OAuth، موتورهای AI و بهینه‌سازی D1' : 'System Health, Google OAuth, AI Engines & D1 Housekeeping',
                       subtitle: isFa
-                        ? `وضعیت زنده موتورهای هوش مصنوعی (${aiEngines.length} مدل) · پاک‌سازی لاگ‌های D1`
-                        : `${aiEngines.length} AI models · live bot telemetry & D1 vacuum`,
+                        ? `وضعیت زنده هوش مصنوعی (${aiEngines.length} مدل) · ورود گوگل (${googleOauthForm.configured ? 'فعال' : 'تنظیم‌نشده'}) · بهینه‌سازی D1`
+                        : `${aiEngines.length} AI models · Google OAuth (${googleOauthForm.configured ? 'Ready' : 'Pending'}) · D1 vacuum`,
                       pill: systemHealth ? `${systemHealth.runningBots ?? 0} Bot` : 'Live',
                     },
                     {
@@ -1433,7 +1663,7 @@ export function AdminPage({
                       id: 'ops' as const,
                       icon: Megaphone,
                       badgeBg: 'bg-[#0EA5E9]',
-                      title: isFa ? 'کانال تلگرام، ربات، لیدربرد کپی‌ترید و تیکت‌های پشتیبانی' : 'Telegram Channel, Copy-Trade Leaders & Support Tickets',
+                      title: isFa ? 'کانال تلگرام، ربات، Google OAuth، لیدربرد کپی‌ترید و پشتیبانی' : 'Telegram Bot, Google OAuth, Copy-Trade Leaders & Support',
                       subtitle: isFa
                         ? `ارسال پیام همگانی، مدیریت تیکت‌ها (${data.stats.openSupportTickets ?? 0} باز) و تایید تریدرهای کپی`
                         : `Broadcasts, support inbox (${data.stats.openSupportTickets ?? 0} open) & copy leaders`,
@@ -1551,11 +1781,12 @@ export function AdminPage({
                   <p className="text-xs font-black text-main">
                     {isFa ? 'چک‌لیست آمادگی واقعی استقرار (Production Readiness)' : 'Production Deployment Readiness Checks'}
                   </p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-[11px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 text-[11px]">
                     {[
                       { ok: systemHealth.productionChecks.jwtSecretOk, label: isFa ? 'کلید امنیتی JWT' : 'JWT Secret' },
                       { ok: systemHealth.productionChecks.encryptionKeyOk, label: isFa ? 'رمزنگاری Vault' : 'AES Vault Key' },
                       { ok: systemHealth.productionChecks.telegramBotConfigured, label: isFa ? 'توکن ربات تلگرام' : 'Telegram Bot' },
+                      { ok: Boolean(systemHealth.productionChecks.googleOauthConfigured ?? googleOauthForm.configured), label: isFa ? 'ورود با گوگل (OAuth)' : 'Google OAuth' },
                       { ok: systemHealth.productionChecks.aiEngineConfigured, label: isFa ? 'موتور هوش مصنوعی' : 'AI Gateway' },
                       { ok: systemHealth.productionChecks.feeReceiverWalletConfigured, label: isFa ? 'ولت خزانه / کارمزد ۳٪' : 'Treasury / 3% Fee Wallet' },
                       { ok: systemHealth.productionChecks.allowLiveTrading, label: isFa ? 'اجازه ترید واقعی' : 'Live Trading' },
@@ -1577,6 +1808,9 @@ export function AdminPage({
               )}
             </div>
           )}
+
+          {/* Google OAuth 2.0 Settings Card */}
+          {renderGoogleOauthCard()}
 
           {/* Centralized Owner Multi-AI Engine (1 to 3 Combined Models) */}
           <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-5 border-[#1464F6]/35">
@@ -3190,7 +3424,7 @@ export function AdminPage({
                           </span>
                           <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
                             {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
-                            <span dir="ltr">{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
+                            <span dir="ltr">{u.phone_number || (u.phone_verified === 1 ? 'Verified' : 'Unverified')}</span>
                           </span>
                         </div>
 
@@ -3256,6 +3490,35 @@ export function AdminPage({
                               {isFa ? 'بخشش ۳٪' : 'Waive 3%'}
                             </button>
                           )}
+                          {(u.role.toLowerCase() === 'owner' || u.role.toLowerCase() === 'admin') &&
+                            (roleLower === 'owner' || u.id === currentUser.id) && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (
+                                    !window.confirm(
+                                      isFa
+                                        ? `حساب مدیریتی ${u.username} بدون حذف شدن و با حفظ نقش ${u.role}، کاملاً به حالت ۰ بازنشانی شود؟`
+                                        : `Reset privileged account ${u.username} to fresh zero state while keeping ${u.role} role?`
+                                    )
+                                  )
+                                    return;
+                                  await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+                                  setMsg(
+                                    isFa
+                                      ? `حساب ${u.username} صفر شد و دسترسی ${u.role} حفظ گردید.`
+                                      : `Reset ${u.username} to 0 (${u.role} preserved)`
+                                  );
+                                  onUserUpdated?.();
+                                  void load();
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-400 font-bold inline-flex items-center gap-1 text-[11px]"
+                                title={isFa ? 'صفرسازی به کاربر جدید با حفظ نقش مدیر' : 'Reset to 0 (Keep Admin)'}
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                <span>{isFa ? 'صفرسازی ۰' : 'Reset 0'}</span>
+                              </button>
+                            )}
                           {u.role.toLowerCase() !== 'owner' && (
                             <>
                               {roleLower === 'owner' && (
@@ -3332,7 +3595,7 @@ export function AdminPage({
                               <div className="flex items-center gap-1.5 mt-0.5">
                                 <span className={`inline-flex items-center gap-1 ${u.phone_verified === 1 ? 'text-jade font-bold' : 'text-amber-400'}`}>
                                   {u.phone_verified === 1 ? <CheckCircle2 className="w-3 h-3" /> : null}
-                                  <span dir="ltr">{u.phone_verified === 1 ? u.phone_number || 'Verified' : 'Unverified'}</span>
+                                  <span dir="ltr">{u.phone_number || (u.phone_verified === 1 ? 'Verified' : 'Unverified')}</span>
                                 </span>
                               </div>
                             </td>
@@ -3407,6 +3670,35 @@ export function AdminPage({
                                   )}
                                 </>
                               )}
+                              {(u.role.toLowerCase() === 'owner' || u.role.toLowerCase() === 'admin') &&
+                                (roleLower === 'owner' || u.id === currentUser.id) && (
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (
+                                        !window.confirm(
+                                          isFa
+                                            ? `حساب مدیریتی ${u.username} بدون حذف شدن و با حفظ نقش ${u.role}، کاملاً به حالت ۰ بازنشانی شود؟`
+                                            : `Reset privileged account ${u.username} to fresh zero state while keeping ${u.role} role?`
+                                        )
+                                      )
+                                        return;
+                                      await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+                                      setMsg(
+                                        isFa
+                                          ? `حساب ${u.username} صفر شد و دسترسی ${u.role} حفظ گردید.`
+                                          : `Reset ${u.username} to 0 (${u.role} preserved)`
+                                      );
+                                      onUserUpdated?.();
+                                      void load();
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-amber-500/20 text-amber-400 font-bold inline-flex items-center gap-1"
+                                    title={isFa ? 'صفرسازی به کاربر جدید با حفظ نقش مدیر' : 'Reset to 0 (Keep Admin)'}
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>{isFa ? 'صفرسازی ۰' : 'Reset 0'}</span>
+                                  </button>
+                                )}
                               {u.role.toLowerCase() !== 'owner' && (
                                 <>
                                   {roleLower === 'owner' && (
@@ -3742,7 +4034,29 @@ export function AdminPage({
                   }}
                   className="space-y-2 pt-3 border-t hairline"
                 >
-                  <p className="font-bold text-sub">{isFa ? 'ثبت معامله برای کپی توسط کاربران:' : 'Publish Trade for Users to Copy:'}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-bold text-sub">{isFa ? 'ثبت معامله برای کپی توسط کاربران:' : 'Publish Trade for Users to Copy:'}</p>
+                    <TpSlModeSwitch
+                      mode={traderTpSlMode}
+                      onChange={(next) => {
+                        if (next === 'PCT' && newTraderTrade.entryPrice > 0) {
+                          const pSl = calcPctFromPrice({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'SL', targetPrice: newTraderTrade.stopLoss });
+                          const p1 = calcPctFromPrice({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'TP', targetPrice: newTraderTrade.tp1 });
+                          const p2 = calcPctFromPrice({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'TP', targetPrice: newTraderTrade.tp2 });
+                          const p3 = calcPctFromPrice({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'TP', targetPrice: newTraderTrade.tp3 });
+                          setTraderTpSlPcts({
+                            stopLoss: pSl !== null ? String(pSl) : '2',
+                            tp1: p1 !== null ? String(p1) : '3.5',
+                            tp2: p2 !== null ? String(p2) : '',
+                            tp3: p3 !== null ? String(p3) : '',
+                          });
+                        }
+                        setTraderTpSlMode(next);
+                      }}
+                      isFa={isFa}
+                      compact
+                    />
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
                     <select value={tradeTargetId || copyTraders[0]?.id} onChange={(e) => setTradeTargetId(e.target.value)} className="surface-input rounded-xl px-2 py-2">
                       {copyTraders.map((t) => (
@@ -3757,12 +4071,80 @@ export function AdminPage({
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                     <input type="number" step="any" value={newTraderTrade.entryPrice} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, entryPrice: Number(e.target.value) })} placeholder="Entry" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                    <input type="number" step="any" value={newTraderTrade.stopLoss} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, stopLoss: Number(e.target.value) })} placeholder="SL" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                    <input type="number" step="any" value={newTraderTrade.tp1} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp1: Number(e.target.value) })} placeholder="TP1" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                    <input type="number" step="any" value={newTraderTrade.tp2} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp2: Number(e.target.value) })} placeholder="TP2" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                    <input type="number" step="any" value={newTraderTrade.tp3} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp3: Number(e.target.value) })} placeholder="TP3" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    {traderTpSlMode === 'PRICE' ? (
+                      <>
+                        <input type="number" step="any" value={newTraderTrade.stopLoss} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, stopLoss: Number(e.target.value) })} placeholder="SL" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                        <input type="number" step="any" value={newTraderTrade.tp1} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp1: Number(e.target.value) })} placeholder="TP1" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                        <input type="number" step="any" value={newTraderTrade.tp2} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp2: Number(e.target.value) })} placeholder="TP2" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                        <input type="number" step="any" value={newTraderTrade.tp3} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, tp3: Number(e.target.value) })} placeholder="TP3" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="number"
+                          step="any"
+                          value={traderTpSlPcts.stopLoss}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTraderTpSlPcts((p) => ({ ...p, stopLoss: v }));
+                            const px = calcPriceFromPct({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'SL', pct: Number(v) });
+                            if (px !== null) setNewTraderTrade((t) => ({ ...t, stopLoss: px }));
+                          }}
+                          placeholder="SL %"
+                          title={isFa ? `حد ضرر درصدی (≈ $${newTraderTrade.stopLoss})` : `SL % (≈ $${newTraderTrade.stopLoss})`}
+                          className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                        />
+                        <input
+                          type="number"
+                          step="any"
+                          value={traderTpSlPcts.tp1}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTraderTpSlPcts((p) => ({ ...p, tp1: v }));
+                            const px = calcPriceFromPct({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'TP', pct: Number(v) });
+                            if (px !== null) setNewTraderTrade((t) => ({ ...t, tp1: px }));
+                          }}
+                          placeholder="TP1 %"
+                          title={isFa ? `TP1 درصدی (≈ $${newTraderTrade.tp1})` : `TP1 % (≈ $${newTraderTrade.tp1})`}
+                          className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                        />
+                        <input
+                          type="number"
+                          step="any"
+                          value={traderTpSlPcts.tp2}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTraderTpSlPcts((p) => ({ ...p, tp2: v }));
+                            const px = calcPriceFromPct({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'TP', pct: Number(v) });
+                            if (px !== null) setNewTraderTrade((t) => ({ ...t, tp2: px }));
+                          }}
+                          placeholder="TP2 %"
+                          title={isFa ? `TP2 درصدی (≈ $${newTraderTrade.tp2})` : `TP2 % (≈ $${newTraderTrade.tp2})`}
+                          className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                        />
+                        <input
+                          type="number"
+                          step="any"
+                          value={traderTpSlPcts.tp3}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTraderTpSlPcts((p) => ({ ...p, tp3: v }));
+                            const px = calcPriceFromPct({ entryPrice: newTraderTrade.entryPrice, side: newTraderTrade.side, kind: 'TP', pct: Number(v) });
+                            if (px !== null) setNewTraderTrade((t) => ({ ...t, tp3: px }));
+                          }}
+                          placeholder="TP3 %"
+                          title={isFa ? `TP3 درصدی (≈ $${newTraderTrade.tp3})` : `TP3 % (≈ $${newTraderTrade.tp3})`}
+                          className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                        />
+                      </>
+                    )}
                     <input type="number" step="0.1" value={newTraderTrade.pnlPct} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, pnlPct: Number(e.target.value) })} placeholder="PnL%" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
                   </div>
+                  {traderTpSlMode === 'PCT' && (
+                    <p dir="ltr" className="text-[10px] font-mono text-dim">
+                      SL ≈ ${newTraderTrade.stopLoss} · TP1 ≈ ${newTraderTrade.tp1} · TP2 ≈ ${newTraderTrade.tp2} · TP3 ≈ ${newTraderTrade.tp3}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-4 text-[11px] font-bold text-sub">
                     <label className="flex items-center gap-1.5">
                       <input type="checkbox" checked={newTraderTrade.askConfirm} onChange={(e) => setNewTraderTrade({ ...newTraderTrade, askConfirm: e.target.checked })} />
@@ -3885,6 +4267,9 @@ export function AdminPage({
               )}
             </div>
           </div>
+
+          {/* Google OAuth 2.0 Settings Card (Also accessible under Ops & Integrations) */}
+          {renderGoogleOauthCard()}
 
           {/* Official Telegram Bot Token, Webhook, 24/7 Auto-Channels & Community Group Studio */}
           <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-5 border-emerald-500/30">
@@ -4467,10 +4852,56 @@ export function AdminPage({
                 }}
                 className="surface-soft rounded-2xl p-4 space-y-2.5 border hairline"
               >
-                <h4 className="font-black text-main flex items-center gap-1.5">
-                  <Megaphone className="w-4 h-4 text-brand" />
-                  <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های تعاملی' : 'Publish Signal to @Dollarino_official'}</span>
-                </h4>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-black text-main flex items-center gap-1.5">
+                    <Megaphone className="w-4 h-4 text-brand" />
+                    <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های تعاملی' : 'Publish Signal to @Dollarino_official'}</span>
+                  </h4>
+                  <TpSlModeSwitch
+                    mode={channelTpSlMode}
+                    onChange={async (next) => {
+                      if (next === 'PCT') {
+                        let refPx = Number(channelSignalForm.entryPrice || 0);
+                        if (!(refPx > 0)) {
+                          const ov = await apiFetch<{ market24h?: { lastPrice?: string | number } }>(
+                            `/api/trading/market/overview?symbol=${encodeURIComponent(channelSignalForm.symbol || 'BTCUSDT')}`
+                          ).catch(() => null);
+                          refPx = Number(ov?.market24h?.lastPrice || 0);
+                          if (refPx > 0) {
+                            setChannelSignalForm((prev) => {
+                              const slPx = calcPriceFromPct({ entryPrice: refPx, side: prev.direction, kind: 'SL', pct: Number(channelTpSlPcts.stopLoss) });
+                              const p1Px = calcPriceFromPct({ entryPrice: refPx, side: prev.direction, kind: 'TP', pct: Number(channelTpSlPcts.tp1) });
+                              const p2Px = calcPriceFromPct({ entryPrice: refPx, side: prev.direction, kind: 'TP', pct: Number(channelTpSlPcts.tp2) });
+                              const p3Px = calcPriceFromPct({ entryPrice: refPx, side: prev.direction, kind: 'TP', pct: Number(channelTpSlPcts.tp3) });
+                              return {
+                                ...prev,
+                                entryPrice: formatLevelPrice(refPx),
+                                stopLoss: slPx !== null ? formatLevelPrice(slPx) : prev.stopLoss,
+                                tp1: p1Px !== null ? formatLevelPrice(p1Px) : prev.tp1,
+                                tp2: p2Px !== null ? formatLevelPrice(p2Px) : prev.tp2,
+                                tp3: p3Px !== null ? formatLevelPrice(p3Px) : prev.tp3,
+                              };
+                            });
+                          }
+                        } else {
+                          const pSl = calcPctFromPrice({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'SL', targetPrice: Number(channelSignalForm.stopLoss) });
+                          const p1 = calcPctFromPrice({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'TP', targetPrice: Number(channelSignalForm.tp1) });
+                          const p2 = calcPctFromPrice({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'TP', targetPrice: Number(channelSignalForm.tp2) });
+                          const p3 = calcPctFromPrice({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'TP', targetPrice: Number(channelSignalForm.tp3) });
+                          setChannelTpSlPcts({
+                            stopLoss: pSl !== null ? String(pSl) : '1.5',
+                            tp1: p1 !== null ? String(p1) : '2.5',
+                            tp2: p2 !== null ? String(p2) : '5',
+                            tp3: p3 !== null ? String(p3) : '8',
+                          });
+                        }
+                      }
+                      setChannelTpSlMode(next);
+                    }}
+                    isFa={isFa}
+                    compact
+                  />
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <input dir="ltr" required value={channelSignalForm.symbol} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, symbol: e.target.value.toUpperCase() })} placeholder="BTCUSDT" className="surface-input rounded-xl px-2.5 py-2 font-mono" />
                   <select value={channelSignalForm.direction} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, direction: e.target.value as 'LONG' | 'SHORT' })} className="surface-input rounded-xl px-2.5 py-2">
@@ -4486,12 +4917,88 @@ export function AdminPage({
                 </div>
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                   <input dir="ltr" value={channelSignalForm.entryPrice} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, entryPrice: e.target.value })} placeholder="Entry (auto)" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                  <input dir="ltr" required value={channelSignalForm.stopLoss} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, stopLoss: e.target.value })} placeholder="SL *" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                  <input dir="ltr" required value={channelSignalForm.tp1} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp1: e.target.value })} placeholder="TP1 *" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                  <input dir="ltr" value={channelSignalForm.tp2} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp2: e.target.value })} placeholder="TP2" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
-                  <input dir="ltr" value={channelSignalForm.tp3} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp3: e.target.value })} placeholder="TP3" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                  {channelTpSlMode === 'PRICE' ? (
+                    <>
+                      <input dir="ltr" required value={channelSignalForm.stopLoss} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, stopLoss: e.target.value })} placeholder="SL *" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                      <input dir="ltr" required value={channelSignalForm.tp1} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp1: e.target.value })} placeholder="TP1 *" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                      <input dir="ltr" value={channelSignalForm.tp2} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp2: e.target.value })} placeholder="TP2" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                      <input dir="ltr" value={channelSignalForm.tp3} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, tp3: e.target.value })} placeholder="TP3" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type="number"
+                        step="any"
+                        dir="ltr"
+                        required
+                        value={channelTpSlPcts.stopLoss}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setChannelTpSlPcts((p) => ({ ...p, stopLoss: v }));
+                          const refPx = Number(channelSignalForm.entryPrice || 0);
+                          const px = calcPriceFromPct({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'SL', pct: Number(v) });
+                          if (px !== null) setChannelSignalForm((f) => ({ ...f, stopLoss: formatLevelPrice(px) }));
+                        }}
+                        placeholder="SL % *"
+                        className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        dir="ltr"
+                        required
+                        value={channelTpSlPcts.tp1}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setChannelTpSlPcts((p) => ({ ...p, tp1: v }));
+                          const refPx = Number(channelSignalForm.entryPrice || 0);
+                          const px = calcPriceFromPct({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'TP', pct: Number(v) });
+                          if (px !== null) setChannelSignalForm((f) => ({ ...f, tp1: formatLevelPrice(px) }));
+                        }}
+                        placeholder="TP1 % *"
+                        className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        dir="ltr"
+                        value={channelTpSlPcts.tp2}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setChannelTpSlPcts((p) => ({ ...p, tp2: v }));
+                          const refPx = Number(channelSignalForm.entryPrice || 0);
+                          const px = calcPriceFromPct({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'TP', pct: Number(v) });
+                          if (px !== null) setChannelSignalForm((f) => ({ ...f, tp2: formatLevelPrice(px) }));
+                        }}
+                        placeholder="TP2 %"
+                        className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        dir="ltr"
+                        value={channelTpSlPcts.tp3}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setChannelTpSlPcts((p) => ({ ...p, tp3: v }));
+                          const refPx = Number(channelSignalForm.entryPrice || 0);
+                          const px = calcPriceFromPct({ entryPrice: refPx, side: channelSignalForm.direction, kind: 'TP', pct: Number(v) });
+                          if (px !== null) setChannelSignalForm((f) => ({ ...f, tp3: formatLevelPrice(px) }));
+                        }}
+                        placeholder="TP3 %"
+                        className="surface-input rounded-xl px-2 py-2 font-mono-num"
+                      />
+                    </>
+                  )}
                   <input type="number" min={1} max={100} value={channelSignalForm.leverage} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, leverage: Number(e.target.value) })} placeholder="Lev" className="surface-input rounded-xl px-2 py-2 font-mono-num" />
                 </div>
+                {channelTpSlMode === 'PCT' && (
+                  <p dir="ltr" className="text-[10px] font-mono text-dim">
+                    {channelSignalForm.entryPrice
+                      ? `SL ≈ $${channelSignalForm.stopLoss || '—'} · TP1 ≈ $${channelSignalForm.tp1 || '—'} · TP2 ≈ $${channelSignalForm.tp2 || '—'} · TP3 ≈ $${channelSignalForm.tp3 || '—'}`
+                      : 'Enter Entry Price above to auto-calculate exact SL/TP prices'}
+                  </p>
+                )}
                 <input value={channelSignalForm.note} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, note: e.target.value })} placeholder={isFa ? 'توضیح تحلیلی کوتاه زیر سیگنال (اختیاری)' : 'Short note (optional)'} className="w-full surface-input rounded-xl px-2.5 py-2" />
                 <button type="submit" className="w-full py-2.5 rounded-xl btn-cobalt font-black">
                   {isFa ? 'انتشار سیگنال در کانال @Dollarino_official' : 'Publish Signal to Channel'}
@@ -5069,6 +5576,150 @@ help - راهنمای کامل و امنیت حساب`}
                 </div>
               </div>
             </div>
+
+              {/* V11.7 Stage 6: Active Running Bots Monitor & Profit Cards Audit/Revoke */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+                <div className="surface-card p-5 space-y-3 overflow-x-auto">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-black text-sm text-main inline-flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-jade" />
+                      <span>{isFa ? 'مانیتورینگ زنده ربات‌ها و موتورهای فعال کاربران' : 'Live Active User Bots Monitor'}</span>
+                    </h3>
+                    <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black">{adminActiveBots.length}</span>
+                  </div>
+                  {adminActiveBots.length === 0 ? (
+                    <p className="text-dim py-4 text-center">{isFa ? 'در حال حاضر ربات فعالی در حال معامله نیست.' : 'No active user bots running right now.'}</p>
+                  ) : (
+                    <div className="space-y-2 max-h-80 overflow-y-auto">
+                      {adminActiveBots.map((b) => {
+                        const isRunning = b.bot_state === 'RUNNING_LIVE' || b.bot_state === 'RUNNING_PAPER';
+                        let enginesList: string[] = [];
+                        try {
+                          enginesList = b.active_engines_json ? (JSON.parse(b.active_engines_json) as string[]) : [];
+                        } catch {
+                          enginesList = [];
+                        }
+                        return (
+                          <div key={b.user_id} className="surface-soft rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 border hairline">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-black text-main">{b.username}</span>
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${isRunning ? 'bg-emerald-500/15 text-jade' : 'surface-card text-dim'}`}>
+                                  {b.bot_state}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono-num bg-[#1652F0]/15 text-brand">
+                                  {b.trading_mode} · {b.trade_execution_mode || 'MANUAL_CONFIRM'} · {b.display_currency || 'USD'}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-dim mt-1 truncate" dir="ltr">
+                                Engines: {enginesList.length ? enginesList.join(', ') : 'NONE'} · {b.leverage}x · {b.email}
+                              </div>
+                            </div>
+                            {isRunning && (
+                              <button
+                                type="button"
+                                disabled={botStopBusy === b.user_id}
+                                onClick={async () => {
+                                  setBotStopBusy(b.user_id);
+                                  try {
+                                    await apiFetch(`/api/admin/users/${b.user_id}/bot-stop`, { method: 'POST' });
+                                    setMsg(isFa ? `ربات کاربر ${b.username} متوقف شد.` : `Stopped bot for ${b.username}.`);
+                                    await load();
+                                  } catch (err) {
+                                    setMsg(err instanceof Error ? err.message : 'Stop failed');
+                                  } finally {
+                                    setBotStopBusy(null);
+                                  }
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-500/15 text-loss font-black text-[10px] hover:bg-rose-500/25 shrink-0"
+                              >
+                                {botStopBusy === b.user_id ? '...' : isFa ? 'توقف اضطراری' : 'Force Stop'}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="surface-card p-5 space-y-3 overflow-x-auto">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-black text-sm text-main inline-flex items-center gap-1.5">
+                      <Trophy className="w-4 h-4 text-amber-400" />
+                      <span>{isFa ? 'ممیزی و ابطال کارت‌های سود صادرشده (Profit Cards)' : 'Issued Profit Cards Audit & Revoke'}</span>
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full surface-soft text-[10px] font-black">{adminProfitCards.length}</span>
+                  </div>
+                  {adminProfitCards.length === 0 ? (
+                    <p className="text-dim py-4 text-center">{isFa ? 'هنوز کارتی صادر نشده است.' : 'No profit cards issued yet.'}</p>
+                  ) : (
+                    <div className="space-y-2 max-h-80 overflow-y-auto">
+                      {adminProfitCards.slice(0, 40).map((pc) => {
+                        const isRev = Number(pc.revoked || 0) === 1;
+                        return (
+                          <div key={pc.id} className="surface-soft rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 border hairline">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <a
+                                  href={`/verify-card/${pc.id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  dir="ltr"
+                                  className="font-mono-num font-black text-brand hover:underline"
+                                >
+                                  {pc.id}
+                                </a>
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${pc.mode === 'LIVE' ? 'bg-emerald-500/15 text-jade' : 'bg-amber-500/15 text-amber-400'}`}>
+                                  {pc.mode}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold surface-card text-dim">
+                                  {pc.period} · {pc.trade_source || 'ALL'}
+                                </span>
+                                {isRev && (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-rose-500/20 text-loss">
+                                    {isFa ? 'ابطال‌شده' : 'REVOKED'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-dim mt-1 truncate">
+                                {pc.username || pc.user_id} · {pc.strategy_name} ·{' '}
+                                <span dir="ltr" className={pc.net_pnl_usd >= 0 ? 'text-jade font-bold' : 'text-loss font-bold'}>
+                                  {pc.roi_pct >= 0 ? '+' : ''}{Number(pc.roi_pct).toFixed(1)}% (${Number(pc.net_pnl_usd).toFixed(2)})
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={cardRevokeBusy === pc.id}
+                              onClick={async () => {
+                                setCardRevokeBusy(pc.id);
+                                try {
+                                  await apiFetch(`/api/admin/profit-cards/${pc.id}/revoke`, {
+                                    method: 'POST',
+                                    body: JSON.stringify({ revoked: !isRev }),
+                                  });
+                                  setMsg(isRev ? (isFa ? `کارت ${pc.id} بازیابی شد.` : `Restored ${pc.id}.`) : isFa ? `کارت ${pc.id} ابطال شد.` : `Revoked ${pc.id}.`);
+                                  await load();
+                                } catch (err) {
+                                  setMsg(err instanceof Error ? err.message : 'Action failed');
+                                } finally {
+                                  setCardRevokeBusy(null);
+                                }
+                              }}
+                              className={`px-2.5 py-1.5 rounded-xl font-black text-[10px] shrink-0 ${
+                                isRev ? 'bg-emerald-500/15 text-jade hover:bg-emerald-500/25' : 'bg-rose-500/15 text-loss hover:bg-rose-500/25'
+                              }`}
+                            >
+                              {cardRevokeBusy === pc.id ? '...' : isRev ? (isFa ? 'رفع ابطال' : 'Restore') : isFa ? 'ابطال کارت' : 'Revoke'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

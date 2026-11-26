@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowRight,
@@ -28,9 +28,12 @@ import {
   Scale,
   Settings2,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Star,
+  Target,
   Trophy,
+  Users,
   Wallet,
   WandSparkles,
   X,
@@ -59,6 +62,8 @@ import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { SetupWizardModal } from '../components/SetupWizardModal';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
+import { TpSlModeSwitch } from '../components/TpSlModeSwitch';
+import { calcPctFromPrice, calcPriceFromPct, calcRoePct, formatLevelPrice, type TpSlInputMode } from '../lib/tpsl';
 import { WeeklyCardPage } from './WeeklyCardPage';
 
 const RISK_PRESET_META = [
@@ -179,6 +184,42 @@ export function OverviewPage({
   // Inline Edit TP/SL state
   const [editPos, setEditPos] = useState<OpenTradeRow | null>(null);
   const [editForm, setEditForm] = useState({ stopLoss: '', tp1: '', tp2: '', tp3: '' });
+  const [editTpSlMode, setEditTpSlMode] = useState<TpSlInputMode>('PRICE');
+  const [editPcts, setEditPcts] = useState({ stopLoss: '1.5', tp1: '2', tp2: '', tp3: '' });
+
+  const openEditTpSlModal = (pos: OpenTradeRow) => {
+    const entryPx = Number(pos.entry_price || 0);
+    setEditPos(pos);
+    setEditForm({
+      stopLoss: pos.current_stop_loss || '',
+      tp1: pos.tp1 || '',
+      tp2: pos.tp2 || '',
+      tp3: pos.tp3 || '',
+    });
+    const pSl = calcPctFromPrice({ entryPrice: entryPx, side: pos.direction, kind: 'SL', targetPrice: Number(pos.current_stop_loss) });
+    const p1 = calcPctFromPrice({ entryPrice: entryPx, side: pos.direction, kind: 'TP', targetPrice: Number(pos.tp1) });
+    const p2 = calcPctFromPrice({ entryPrice: entryPx, side: pos.direction, kind: 'TP', targetPrice: Number(pos.tp2) });
+    const p3 = calcPctFromPrice({ entryPrice: entryPx, side: pos.direction, kind: 'TP', targetPrice: Number(pos.tp3) });
+    setEditPcts({
+      stopLoss: pSl !== null ? String(pSl) : '1.5',
+      tp1: p1 !== null ? String(p1) : '2',
+      tp2: p2 !== null ? String(p2) : '',
+      tp3: p3 !== null ? String(p3) : '',
+    });
+    setEditTpSlMode('PRICE');
+  };
+
+  const updateEditPct = (field: 'stopLoss' | 'tp1' | 'tp2' | 'tp3', rawPct: string) => {
+    setEditPcts((prev) => ({ ...prev, [field]: rawPct }));
+    if (!editPos) return;
+    const entryPx = Number(editPos.entry_price || 0);
+    const num = Number(rawPct);
+    const kind = field === 'stopLoss' ? 'SL' : 'TP';
+    const px = Number.isFinite(num) && num > 0 && entryPx > 0
+      ? calcPriceFromPct({ entryPrice: entryPx, side: editPos.direction, kind, pct: num })
+      : null;
+    setEditForm((prev) => ({ ...prev, [field]: px !== null ? formatLevelPrice(px) : '' }));
+  };
 
   const [simpleTradesTab, setSimpleTradesTab] = useState<'open' | 'closed'>('open');
   const [aiScanBusy, setAiScanBusy] = useState(false);
@@ -430,8 +471,11 @@ export function OverviewPage({
     data.tradingModeSelected === true || Number(data.config.trading_mode_selected ?? 0) === 1;
   const hasAcceptedRisk = Boolean(data.riskTermsAcceptedAt || user.risk_terms_accepted_at);
   const onboardingGateComplete = hasSelectedMode && hasAcceptedRisk;
-  const freeTradesRem = data.serverFeeSummary?.freeTradesRemaining ?? 3;
-  const freeTradesLim = data.serverFeeSummary?.freeTradesLimit ?? 3;
+  const feeExempt = Boolean(
+    data.serverFeeSummary?.feeExempt || user.role === 'owner' || user.role === 'admin'
+  );
+  const freeTradesRem = feeExempt ? 999 : (data.serverFeeSummary?.freeTradesRemaining ?? 3);
+  const freeTradesLim = feeExempt ? 3 : (data.serverFeeSummary?.freeTradesLimit ?? 3);
 
   const completePreTradeOnboarding = async (modeToSave: 'PAPER' | 'LIVE') => {
     setBusy(true);
@@ -524,19 +568,22 @@ export function OverviewPage({
     setRiskModalOpen(true);
   };
 
-  useEffect(() => {
-    const onReqRisk = () => {
-      runWithRiskCheck(async () => {
-        await apiFetch('/api/trading/bot/start', {
-          method: 'POST',
-          body: JSON.stringify({ scanScope: data.config.scan_scope || 'ALL_MARKET' }),
-        });
-        await onRefresh();
+  const onReqRiskRef = useRef<() => void>(() => {});
+  onReqRiskRef.current = () => {
+    runWithRiskCheck(async () => {
+      await apiFetch('/api/trading/bot/start', {
+        method: 'POST',
+        body: JSON.stringify({ scanScope: data.config.scan_scope || 'ALL_MARKET' }),
       });
-    };
+      await onRefresh();
+    });
+  };
+
+  useEffect(() => {
+    const onReqRisk = () => onReqRiskRef.current();
     window.addEventListener('dollarino:require-risk-terms', onReqRisk);
     return () => window.removeEventListener('dollarino:require-risk-terms', onReqRisk);
-  });
+  }, []);
 
   const resetConfigToDefaults = async (preset: CapitalPresetId = 'balanced') => {
     setBusy(true);
@@ -962,7 +1009,7 @@ export function OverviewPage({
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <img src="/images/transparent/capital-vault-3d.png?v=1165" alt="Bot Budget" className="w-10 h-10 object-contain shrink-0" />
+            <img src="/images/transparent/capital-vault-3d.webp?v=1166" alt="Bot Budget" loading="lazy" decoding="async" className="w-10 h-10 object-contain shrink-0" />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 text-xs font-black">
                 <span>
@@ -1308,30 +1355,102 @@ export function OverviewPage({
         createPortal(
           <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => setEditPos(null)}>
             <form onSubmit={saveEditTpSl} className="pop-in panel rounded-[26px] w-full max-w-sm p-6 space-y-3 text-xs" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <h3 className="font-display font-bold text-base text-main">
-                  {isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}
-                </h3>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-display font-bold text-base text-main">
+                    {isFa ? `ویرایش TP/SL · ${editPos.symbol}` : `Edit TP/SL · ${editPos.symbol}`}
+                  </h3>
+                  <p dir="ltr" className="text-[10px] text-dim font-num">
+                    {editPos.direction} · Entry ${editPos.entry_price} · {editPos.leverage}×
+                  </p>
+                </div>
                 <button type="button" onClick={() => setEditPos(null)}><X className="w-4 h-4" /></button>
               </div>
-              <div>
-                <label className="text-dim block mb-1">Stop Loss</label>
-                <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} className="field font-num" required />
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-sub">{isFa ? 'نحوه ورود:' : 'Input Mode:'}</span>
+                <TpSlModeSwitch
+                  mode={editTpSlMode}
+                  onChange={(next) => {
+                    if (next === 'PCT') {
+                      const entryPx = Number(editPos.entry_price || 0);
+                      const pSl = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'SL', targetPrice: Number(editForm.stopLoss) });
+                      const p1 = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'TP', targetPrice: Number(editForm.tp1) });
+                      const p2 = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'TP', targetPrice: Number(editForm.tp2) });
+                      const p3 = calcPctFromPrice({ entryPrice: entryPx, side: editPos.direction, kind: 'TP', targetPrice: Number(editForm.tp3) });
+                      setEditPcts({
+                        stopLoss: pSl !== null ? String(pSl) : '1.5',
+                        tp1: p1 !== null ? String(p1) : '2',
+                        tp2: p2 !== null ? String(p2) : '',
+                        tp3: p3 !== null ? String(p3) : '',
+                      });
+                    }
+                    setEditTpSlMode(next);
+                  }}
+                  isFa={isFa}
+                  compact
+                />
               </div>
-              <div>
-                <label className="text-dim block mb-1">TP 1</label>
-                <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} className="field font-num" required />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-dim block mb-1">TP 2</label>
-                  <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} className="field font-num" />
+              {editTpSlMode === 'PRICE' ? (
+                <>
+                  <div>
+                    <label className="text-dim block mb-1">Stop Loss ($)</label>
+                    <input value={editForm.stopLoss} onChange={(e) => setEditForm((f) => ({ ...f, stopLoss: e.target.value }))} className="field font-num" required />
+                  </div>
+                  <div>
+                    <label className="text-dim block mb-1">TP 1 ($)</label>
+                    <input value={editForm.tp1} onChange={(e) => setEditForm((f) => ({ ...f, tp1: e.target.value }))} className="field font-num" required />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-dim block mb-1">TP 2 ($)</label>
+                      <input value={editForm.tp2} onChange={(e) => setEditForm((f) => ({ ...f, tp2: e.target.value }))} className="field font-num" />
+                    </div>
+                    <div>
+                      <label className="text-dim block mb-1">TP 3 ($)</label>
+                      <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} className="field font-num" />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex justify-between text-[10px] mb-1">
+                      <span className="text-loss font-bold">{isFa ? 'حد ضرر SL (%)' : 'Stop Loss (%)'}</span>
+                      <span dir="ltr" className="font-num text-dim">
+                        ≈ ${editForm.stopLoss || '—'}
+                        {editPos.leverage > 1 && Number(editPcts.stopLoss) > 0 ? ` (ROE -${calcRoePct(Number(editPcts.stopLoss), editPos.leverage)}%)` : ''}
+                      </span>
+                    </div>
+                    <input type="number" step="any" min={0.05} max={95} dir="ltr" value={editPcts.stopLoss} onChange={(e) => updateEditPct('stopLoss', e.target.value)} className="field font-num" required />
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[10px] mb-1">
+                      <span className="text-jade font-bold">{isFa ? 'تارگت ۱ TP1 (%)' : 'TP 1 (%)'}</span>
+                      <span dir="ltr" className="font-num text-dim">
+                        ≈ ${editForm.tp1 || '—'}
+                        {editPos.leverage > 1 && Number(editPcts.tp1) > 0 ? ` (ROE +${calcRoePct(Number(editPcts.tp1), editPos.leverage)}%)` : ''}
+                      </span>
+                    </div>
+                    <input type="number" step="any" min={0.05} max={500} dir="ltr" value={editPcts.tp1} onChange={(e) => updateEditPct('tp1', e.target.value)} className="field font-num" required />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="text-dim">TP 2 (%)</span>
+                        {editForm.tp2 && <span dir="ltr" className="font-num text-dim">≈ ${editForm.tp2}</span>}
+                      </div>
+                      <input type="number" step="any" min={0.05} max={500} dir="ltr" value={editPcts.tp2} onChange={(e) => updateEditPct('tp2', e.target.value)} placeholder="Optional" className="field font-num" />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="text-dim">TP 3 (%)</span>
+                        {editForm.tp3 && <span dir="ltr" className="font-num text-dim">≈ ${editForm.tp3}</span>}
+                      </div>
+                      <input type="number" step="any" min={0.05} max={500} dir="ltr" value={editPcts.tp3} onChange={(e) => updateEditPct('tp3', e.target.value)} placeholder="Optional" className="field font-num" />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-dim block mb-1">TP 3</label>
-                  <input value={editForm.tp3} onChange={(e) => setEditForm((f) => ({ ...f, tp3: e.target.value }))} className="field font-num" />
-                </div>
-              </div>
+              )}
               <button type="submit" disabled={busy} className="btn-gold w-full py-3 rounded-xl font-black">
                 {isFa ? 'ذخیره تغییرات TP/SL' : 'Save TP/SL'}
               </button>
@@ -1402,15 +1521,19 @@ export function OverviewPage({
                       <span>{isFa ? 'حساب واقعی (Trust Wallet)' : 'Real Mode (Trust Wallet)'}</span>
                     </p>
                     <p className="text-[11px] text-dim leading-relaxed">
-                      {isFa ? (
-                        <>
-                          اتصال غیرامانی به کیف‌پول شما (حداقل{' '}
-                          <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>$10</span>
-                          ) · {freeTradesLim} معامله سودده اول ۰٪ کارمزد.
-                        </>
-                      ) : (
-                        `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`
-                      )}
+                      {feeExempt
+                        ? isFa
+                          ? 'اتصال غیرامانی مدیریت (بدون حداقل موجودی و ۰٪ کارمزد سرور).'
+                          : 'Non-custodial Admin Trust Wallet (no min balance · 0% fee).'
+                        : isFa ? (
+                          <>
+                            اتصال غیرامانی به کیف‌پول شما (حداقل{' '}
+                            <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>$10</span>
+                            ) · {freeTradesLim} معامله سودده اول ۰٪ کارمزد.
+                          </>
+                        ) : (
+                          `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`
+                        )}
                     </p>
                   </button>
                 </div>
@@ -1513,8 +1636,10 @@ export function OverviewPage({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
             <img
-              src="/images/transparent/risk-referral-3d.png"
+              src="/images/transparent/risk-referral-3d.webp"
               alt="Onboarding Gate"
+              loading="lazy"
+              decoding="async"
               className="w-12 h-12 sm:w-14 sm:h-14 object-contain shrink-0"
             />
             <div className="space-y-1">
@@ -1588,9 +1713,13 @@ export function OverviewPage({
               {gateTradingMode === 'LIVE' && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
             </div>
             <p className="text-[11px] text-dim">
-              {isFa
-                ? `اتصال غیرامانی با حداقل $10 موجودی · ${freeTradesLim} معامله سودده اول ۰٪ کارمزد.`
-                : `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`}
+              {feeExempt
+                ? isFa
+                  ? 'اتصال مدیریت بدون حداقل موجودی و بدون کارمزد (۰٪ کارمزد · نامحدود).'
+                  : 'Admin Trust Wallet · 0% Fee & No Minimum Balance.'
+                : isFa
+                  ? `اتصال غیرامانی با حداقل $10 موجودی · ${freeTradesLim} معامله سودده اول ۰٪ کارمزد.`
+                  : `Non-custodial Trust Wallet ($10+ min) · first ${freeTradesLim} wins 0% fee.`}
             </p>
           </button>
         </div>
@@ -1766,9 +1895,13 @@ export function OverviewPage({
                   <span className="inline-flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span>
-                      {isFa
-                        ? `نرخ لحظه‌ای تتر (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} ت · ${freeTradesRem > 0 ? `${freeTradesRem}/${freeTradesLim} معامله اول رایگان · ` : ''}فقط ۳٪ از سود واقعی`
-                        : `Live USDT/IRT (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} · ${freeTradesRem}/${freeTradesLim} Free Live Wins · 3% Profit Fee`}
+                      {feeExempt
+                        ? isFa
+                          ? `نرخ لحظه‌ای تتر (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} ت · حساب مدیریت: بدون کارمزد و محدودیت ∞`
+                          : `Live USDT/IRT (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} · Admin Exempt (0% Fee · Unlimited)`
+                        : isFa
+                          ? `نرخ لحظه‌ای تتر (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} ت · ${freeTradesRem > 0 ? `${freeTradesRem}/${freeTradesLim} معامله اول رایگان · ` : ''}فقط ۳٪ از سود واقعی`
+                          : `Live USDT/IRT (${iranSourceLabel}): ${Math.round(liveIranIrt).toLocaleString('en-US')} · ${freeTradesRem}/${freeTradesLim} Free Live Wins · 3% Profit Fee`}
                     </span>
                   </span>
                   {data.config.trading_mode === 'PAPER' && (
@@ -2013,47 +2146,55 @@ export function OverviewPage({
             {[
               {
                 engine: 'CENTRAL_AI' as TradingEngineChoice,
-                img: '/images/transparent/ai-brain-3d.png',
+                img: '/images/transparent/ai-brain-3d.webp',
                 badge: isFa ? 'پیشنهادی' : 'SMART AI',
                 title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino Smart AI',
                 desc: isFa ? 'تحلیل خودکار کل بازار ۲۴ ساعته و شکار امن‌ترین موقعیت‌ها.' : 'Watches the full market 24/7 and picks high-probability entries.',
-                actionLabel: isFa ? 'تنظیمات مدل ←' : 'Model Settings →',
+                actionLabel: isFa ? 'تنظیمات مدل' : 'Model Settings',
+                ActionIcon: SlidersHorizontal,
                 onAction: () => {
-                  setSimpleModel('ai');
-                  if (!activeEngines.includes('CENTRAL_AI')) void toggleEngineChoice('CENTRAL_AI', true);
+                  try {
+                    sessionStorage.setItem('dollarino_aichat_tab', 'models');
+                  } catch { /* ignore */ }
+                  window.dispatchEvent(new CustomEvent('dollarino:aichat-tab', { detail: 'models' }));
+                  onNavigate('aichat');
                 },
               },
               {
                 engine: 'STRATEGY' as TradingEngineChoice,
-                img: '/images/transparent/mascot-astronaut.png',
+                img: '/images/transparent/mascot-astronaut.webp',
                 badge: isFa ? 'آماده و سریع' : 'STRATEGY',
                 title: isFa ? 'استراتژی شکار دُرنا' : 'Dorna Hunter Plan',
                 desc: isFa ? 'بهترین استراتژی‌های تاییدشده دلارینو یا کد شخصی شما.' : 'Pre-tuned Dollarino hunter rules or your custom script.',
-                actionLabel: isFa ? 'بررسی استراتژی ←' : 'View Strategy →',
+                actionLabel: isFa ? 'بررسی استراتژی' : 'View Strategy',
+                ActionIcon: Target,
                 onAction: () => {
-                  setSimpleModel('hunting');
-                  if (!activeEngines.includes('STRATEGY')) void toggleEngineChoice('STRATEGY', true);
+                  try {
+                    sessionStorage.setItem('dollarino_radar_subtab', 'lab');
+                  } catch { /* ignore */ }
+                  window.dispatchEvent(new CustomEvent('dollarino:radar-subtab', { detail: 'lab' }));
+                  onNavigate('radar');
                 },
               },
               {
                 engine: 'MY_AI' as TradingEngineChoice,
-                img: '/images/transparent/my-ai-brain-3d.png?v=1165',
+                img: '/images/transparent/my-ai-brain-3d.webp?v=1166',
                 badge: isFa ? 'قابل آموزش' : 'PERSONAL AI',
                 title: isFa ? 'هوش مصنوعی شخصی من' : 'My Personal AI',
                 desc: isFa ? 'با قوانین و سبک معامله خودت به ربات آموزش بده.' : 'Trades exclusively according to rules you teach in chat.',
-                actionLabel: isFa ? 'آموزش هوش من ←' : 'Train My AI →',
+                actionLabel: isFa ? 'آموزش هوش من' : 'Train My AI',
+                ActionIcon: Sparkles,
                 onAction: () => onNavigate('myai'),
               },
               {
                 engine: 'COPY_TRADE' as TradingEngineChoice,
-                img: '/images/transparent/trophy-copy-3d.png',
+                img: '/images/transparent/trophy-copy-3d.webp',
                 badge: isFa ? 'کپی‌ترید' : 'COPY PROS',
                 title: isFa ? 'کپی از حرفه‌ای‌ها' : 'Verified Copy-Trade',
                 desc: isFa ? 'آینه‌سازی لحظه‌ای معاملات تریدرهای برتر تاییدشده.' : 'Automatically mirror verified top-performing traders.',
-                actionLabel: isFa ? 'تریدرهای برتر ←' : 'Pick Traders →',
+                actionLabel: isFa ? 'تریدرهای برتر' : 'Pick Traders',
+                ActionIcon: Users,
                 onAction: () => {
-                  setSimpleModel('copy');
-                  if (!activeEngines.includes('COPY_TRADE')) void toggleEngineChoice('COPY_TRADE', true);
                   sessionStorage.setItem('dollarino_copy_subtab', 'copy');
                   window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: 'copy' }));
                   onNavigate('copy');
@@ -2061,13 +2202,13 @@ export function OverviewPage({
               },
               {
                 engine: 'LISTING_SNIPER' as TradingEngineChoice,
-                img: '/images/transparent/sniper-rocket-3d.png?v=1165',
+                img: '/images/transparent/sniper-rocket-3d.webp?v=1166',
                 badge: isFa ? 'لیستینگ و میم‌کوین' : 'SNIPER',
                 title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'Listing & Meme Sniper',
                 desc: isFa ? 'رصد لحظه‌ای لیستینگ‌های جدید و میم‌کوین‌های ایمن.' : 'Snipes fresh exchange listings & high-safety DEX gems.',
-                actionLabel: isFa ? 'میز تنظیم و شکار ←' : 'Sniper Hub →',
+                actionLabel: isFa ? 'میز تنظیم و شکار' : 'Sniper Hub',
+                ActionIcon: Crosshair,
                 onAction: () => {
-                  if (!activeEngines.includes('LISTING_SNIPER')) void toggleEngineChoice('LISTING_SNIPER', true);
                   sessionStorage.setItem('dollarino_copy_subtab', 'sniper');
                   window.dispatchEvent(new CustomEvent('dollarino:copy-subtab', { detail: 'sniper' }));
                   onNavigate('copy');
@@ -2075,6 +2216,7 @@ export function OverviewPage({
               },
             ].map((item) => {
               const on = activeEngines.includes(item.engine);
+              const BtnIcon = item.ActionIcon;
               return (
                 <div
                   key={item.engine}
@@ -2101,9 +2243,10 @@ export function OverviewPage({
                       <button
                         type="button"
                         onClick={item.onAction}
-                        className="w-full px-3 py-1.5 rounded-xl bg-sky-500/12 hover:bg-sky-500/20 text-[#0D47A1] dark:text-[#60A5FA] text-[11px] font-black transition text-center"
+                        className="w-full px-3 py-2 rounded-xl border border-[#1652f0]/35 bg-[#1652f0]/12 hover:bg-[#1652f0] hover:text-white text-[#0D47A1] dark:text-[#7FB2FF] text-[11px] font-black transition inline-flex items-center justify-center gap-1.5 shadow-sm"
                       >
-                        {item.actionLabel}
+                        <BtnIcon className="w-3.5 h-3.5 shrink-0" />
+                        <span>{item.actionLabel}</span>
                       </button>
                     </div>
                     <div
@@ -2355,7 +2498,7 @@ export function OverviewPage({
             )
           ) : totalOpenPositionsCount === 0 ? (
             <div className="surface-soft rounded-3xl p-6 text-center flex flex-col items-center gap-3 border hairline">
-              <img src="/images/transparent/piggy-wallet-3d.png" alt="Ready" className="w-16 h-16 object-contain" />
+              <img src="/images/transparent/piggy-wallet-3d.webp" alt="Ready" loading="lazy" decoding="async" className="w-16 h-16 object-contain" />
               <p className="text-xs sm:text-sm font-black text-main">
                 {isRunning
                   ? isFa
@@ -2598,9 +2741,13 @@ export function OverviewPage({
           </h1>
 
           <p className="mt-4 text-dim text-sm leading-relaxed max-w-lg">
-            {isFa
-              ? `اتصال انحصاری به Trust Wallet + کیف‌پول دمو قابل تنظیم: هر ۵ موتور (AI مرکزی، AI شخصی، دُرنا، کپی‌ترید و اسنایپر لیستینگ/میم) همزمان و بدون تداخل کار می‌کنند. ${freeTradesLim} معامله سودده اول ۰٪ کارمزد!`
-              : `Exclusive Trust Wallet + Customizable Demo desk: run all 5 engines simultaneously without mutual exclusion. First ${freeTradesLim} profitable live trades 0% fee!`}
+            {feeExempt
+              ? isFa
+                ? 'اتصال انحصاری به Trust Wallet + کیف‌پول دمو قابل تنظیم: هر ۵ موتور (AI مرکزی، AI شخصی، دُرنا، کپی‌ترید و اسنایپر لیستینگ/میم) همزمان فعال‌اند — دسترسی مدیریت بدون کارمزد و بدون محدودیت!'
+                : 'Exclusive Trust Wallet + Customizable Demo desk: all 5 engines run simultaneously — Admin account with 0% fees and unlimited access!'
+              : isFa
+                ? `اتصال انحصاری به Trust Wallet + کیف‌پول دمو قابل تنظیم: هر ۵ موتور (AI مرکزی، AI شخصی، دُرنا، کپی‌ترید و اسنایپر لیستینگ/میم) همزمان و بدون تداخل کار می‌کنند. ${freeTradesLim} معامله سودده اول ۰٪ کارمزد!`
+                : `Exclusive Trust Wallet + Customizable Demo desk: run all 5 engines simultaneously without mutual exclusion. First ${freeTradesLim} profitable live trades 0% fee!`}
           </p>
 
           <div className="mt-6 flex flex-wrap items-center gap-2.5">
@@ -2921,7 +3068,7 @@ export function OverviewPage({
               id: 'ai' as const,
               engine: 'CENTRAL_AI' as const,
               active: activeEngines.includes('CENTRAL_AI'),
-              img: '/images/transparent/ai-brain-3d.png',
+              img: '/images/transparent/ai-brain-3d.webp',
               roundedImg: false,
               code: isFa ? 'هوش مرکزی' : 'DOLLARINO AI',
               title: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
@@ -2934,7 +3081,7 @@ export function OverviewPage({
               id: 'myai' as const,
               engine: 'MY_AI' as const,
               active: activeEngines.includes('MY_AI'),
-              img: '/images/transparent/my-ai-brain-3d.png?v=1165',
+              img: '/images/transparent/my-ai-brain-3d.webp?v=1166',
               roundedImg: false,
               code: isFa ? 'هوش شخصی' : 'PERSONAL AI',
               title: isFa ? 'هوش مصنوعی شخصی من' : 'Raw Personal AI',
@@ -2947,7 +3094,7 @@ export function OverviewPage({
               id: 'dorna' as const,
               engine: 'STRATEGY' as const,
               active: activeEngines.includes('STRATEGY'),
-              img: '/images/transparent/mascot-astronaut.png',
+              img: '/images/transparent/mascot-astronaut.webp',
               roundedImg: false,
               code: isFa ? 'شکار · ۲ بخش' : 'STRATEGY',
               title: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
@@ -2962,7 +3109,7 @@ export function OverviewPage({
               id: 'copy' as const,
               engine: 'COPY_TRADE' as const,
               active: activeEngines.includes('COPY_TRADE'),
-              img: '/images/transparent/trophy-copy-3d.png',
+              img: '/images/transparent/trophy-copy-3d.webp',
               roundedImg: false,
               code: isFa ? 'کپی‌ترید' : 'COPY TRADE',
               title: isFa ? 'کپی‌ترید تاییدشده دلارینو' : 'Verified Copy-Trade',
@@ -2975,7 +3122,7 @@ export function OverviewPage({
               id: 'sniper' as const,
               engine: 'LISTING_SNIPER' as const,
               active: activeEngines.includes('LISTING_SNIPER'),
-              img: '/images/transparent/sniper-rocket-3d.png?v=1165',
+              img: '/images/transparent/sniper-rocket-3d.webp?v=1166',
               roundedImg: false,
               code: isFa ? 'شکار لیستینگ' : 'SNIPER',
               title: isFa ? 'اسنایپر لیستینگ و میم‌کوین' : 'New Listing & Meme Sniper',
@@ -3187,8 +3334,14 @@ export function OverviewPage({
                   : `Auto-scaled to $${activeCapitalRes.effectiveCapitalUsd.toLocaleString('en-US')} bot cap ($${activeCapitalRes.remainingBudgetUsd.toLocaleString('en-US')} left)`}
               </p>
             </div>
-            <button type="button" onClick={() => onNavigate('copy')} className="text-xs font-bold hover:underline" style={{ color: 'var(--gold)' }}>
-              {isFa ? 'تنظیمات دقیق ریسک ←' : 'Fine-tune Risk →'}
+            <button
+              type="button"
+              onClick={() => onNavigate('copy')}
+              className="px-3 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs font-bold hover:bg-amber-500/20 inline-flex items-center gap-1.5"
+              style={{ color: 'var(--gold)' }}
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>{isFa ? 'تنظیمات دقیق ریسک' : 'Fine-tune Risk'}</span>
             </button>
           </div>
           <div className="grid sm:grid-cols-3 gap-2.5">
@@ -3440,15 +3593,7 @@ export function OverviewPage({
 
                     <button
                       type="button"
-                      onClick={() => {
-                        setEditPos(pos);
-                        setEditForm({
-                          stopLoss: pos.current_stop_loss || '',
-                          tp1: pos.tp1 || '',
-                          tp2: pos.tp2 || '',
-                          tp3: pos.tp3 || '',
-                        });
-                      }}
+                      onClick={() => openEditTpSlModal(pos)}
                       className="px-2.5 py-1.5 rounded-xl btn-ghost text-[11px] font-bold inline-flex items-center gap-1"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
