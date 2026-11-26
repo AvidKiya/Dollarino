@@ -10,6 +10,7 @@ import { apiFetch, ApiError, setStoredToken } from './lib/api';
 import { setLiveUsdtIrt } from './lib/format';
 import type { Lang } from './lib/i18n';
 import { pushFloatingToast } from './lib/toast';
+import { APP_VERSION } from './lib/version';
 import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
 import {
   connectAndPersistAllTrustWallets,
@@ -338,6 +339,59 @@ export function App() {
   useEffect(() => {
     void loadSessionAndDashboard();
   }, [loadSessionAndDashboard]);
+
+  // Deploy-parity guard: the Pages frontend and the Worker API are deployed separately.
+  // When the Worker still runs an older build, brand-new routes 404
+  // (e.g. `/api/trading/accept-risk-terms`) and the UI silently looks broken.
+  // Detect it early, tell the user precisely what to do, and self-heal once.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const health = await apiFetch<{ ok?: boolean; version?: string }>('/api/health');
+        if (cancelled) return;
+        const apiVersion = String(health?.version ?? '').trim();
+        if (!apiVersion || apiVersion === APP_VERSION) return;
+
+        const bannerKey = `dollarino_api_version_mismatch_${apiVersion}`;
+        if (sessionStorage.getItem(bannerKey) === '1') return;
+        sessionStorage.setItem(bannerKey, '1');
+
+        const payload = {
+          uiVersion: APP_VERSION,
+          apiVersion,
+          message: lang === 'fa'
+            ? `سرویس API روی نسخه ${apiVersion} است ولی رابط کاربری ${APP_VERSION} — بخشی از قابلیت‌ها ۴۰۴ می‌دهند.`
+            : `API service is on ${apiVersion} while the UI is ${APP_VERSION} — some features will 404.`,
+        };
+        console.warn('[dollarino] deploy parity mismatch', payload);
+
+        pushFloatingToast(
+          lang === 'fa'
+            ? `نسخه سرور (${apiVersion}) با رابط کاربری (${APP_VERSION}) هم‌خوان نیست. برای رفع موقت، حافظه نهان را پاک کنید یا اپراتور باید Worker را دوباره دیپلوی کند.`
+            : `Server build (${apiVersion}) does not match the UI (${APP_VERSION}). Hard-refresh, or the operator must redeploy the Worker.`,
+          'warn',
+          9000,
+          {
+            label: lang === 'fa' ? 'بروزرسانی اپ' : 'Reload app',
+            onClick: () => {
+              if ('caches' in window) {
+                void window.caches.keys().then((keys) => Promise.all(keys.map((k) => window.caches.delete(k))));
+              }
+              for (const reg of [navigator.serviceWorker?.controller]) reg?.postMessage?.({ type: 'SKIP_WAITING' });
+              window.location.reload();
+            },
+          }
+        );
+      } catch {
+        // `/api/health` itself failing means the Worker/Pages proxy is unreachable;
+        // login and dashboard calls already surface that error.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
 
   const hasActivePositionsRef = useRef(false);
   const lastTickSigRef = useRef('');
