@@ -1,12 +1,22 @@
 name: Deploy Dollarino to Cloudflare
 
+# NOTE: GitHub Actions does NOT allow `secrets.*` inside step-level `if:` conditions.
+# Referencing a secret there makes the whole workflow file invalid, so the run fails
+# instantly (0s, "workflow file issue"). Secrets are therefore promoted to job-level
+# `env` and only tested via `env.*` inside `if:`.
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  test-and-deploy:
+  verify:
+    name: Typecheck, tests & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,25 +31,76 @@ jobs:
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
         run: npm run build
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: |
+            apps/web/dist
+            packages/core/dist
+          retention-days: 3
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy Worker + D1 + Pages
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+
+      - name: Skip notice (Cloudflare secrets not configured)
+        if: ${{ env.CF_API_TOKEN == '' }}
+        run: |
+          echo "::notice title=Deploy skipped::CLOUDFLARE_API_TOKEN is not set."
+          echo "Add CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID as repository secrets to enable auto-deploy."
+
       - name: Apply D1 Migrations (Remote)
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        if: ${{ env.CF_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
           command: d1 migrations apply dollarino-db --remote
-      - name: Deploy Cloudflare Worker (V10.1 API + DO + Assets)
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+
+      - name: Deploy Cloudflare Worker (API + DO + Assets)
+        if: ${{ env.CF_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
           command: deploy
+
       - name: Deploy Cloudflare Pages Frontend + Functions Proxy
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.SKIP_PAGES_DEPLOY != 'true' }}
+        if: ${{ env.CF_API_TOKEN != '' && vars.SKIP_PAGES_DEPLOY != 'true' }}
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ env.CF_API_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
           workingDirectory: apps/web
           command: pages deploy dist --project-name=dollarino
+
+      - name: Smoke-test deployed Worker version
+        if: ${{ env.CF_API_TOKEN != '' }}
+        run: |
+          VERSION=$(node -p "require('./apps/worker/package.json').dollarinoVersion || require('./package.json').version")
+          echo "Expected Dollarino version: $VERSION"
+          for URL in "https://dollarino.pages.dev/api/health" "https://dollarino-worker.workers.dev/api/health"; do
+            BODY=$(curl -fsS --max-time 20 "$URL" || true)
+            if [ -z "$BODY" ]; then echo "::warning title=Health check failed::$URL did not respond"; continue; fi
+            echo "$URL -> $BODY"
+            case "$BODY" in
+              *"\"version\":\"$VERSION\""*) echo "OK: $URL is on $VERSION" ;;
+              *) echo "::warning title=Version mismatch::$URL is not serving $VERSION (possible stale Worker)" ;;
+            esac
+          done

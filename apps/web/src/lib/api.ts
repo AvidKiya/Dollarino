@@ -1,3 +1,5 @@
+import { APP_VERSION } from './version';
+
 const TOKEN_KEY = 'dollarino_token';
 const API_BASE = ((import.meta as unknown as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE || '').replace(/\/+$/, '');
 let memoryToken: string | null = null;
@@ -67,11 +69,12 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
   }
 
   if (!res.ok) {
-    const errObj = json as { error?: string; code?: string };
+    const errObj = json as { error?: string; code?: string; workerVersion?: string; hint?: string };
     const rawMsg = errObj.error || `HTTP ${res.status}`;
     if (res.status === 404 && /route not found/i.test(rawMsg)) {
+      const serverBuild = errObj.workerVersion ? ` نسخه سرور: ${errObj.workerVersion} / نسخه رابط کاربری: ${APP_VERSION}.` : '';
       throw new ApiError(
-        `${rawMsg} — نسخه Worker سرور با رابط کاربری هماهنگ نیست (نیاز به اجرای npx wrangler d1 migrations apply && npx wrangler deploy).`,
+        `${rawMsg} — نسخه Worker سرور با رابط کاربری هماهنگ نیست.${serverBuild} برای رفع: npx wrangler d1 migrations apply dollarino-db --remote && npx wrangler deploy`,
         res.status,
         errObj.code || 'WORKER_OUTDATED'
       );

@@ -48,6 +48,7 @@ import {
   invalidateSettingsCache,
   setCachedSystemSetting,
 } from '../services/settings-cache.js';
+import { DOLLARINO_VERSION } from '../version.js';
 
 function isSystemOwner(user: { role?: string; telegramId?: string | null }, env: Env): boolean {
   const ownerTg = env.OWNER_TELEGRAM_ID || '944021185';
@@ -2239,7 +2240,7 @@ adminRoutes.get('/database/backup', async (c) => {
 
   const payload = {
     format: 'dollarino-d1-backup-v1',
-    version: '11.7.2',
+    version: DOLLARINO_VERSION,
     exportedAt: new Date().toISOString(),
     exportedBy: actor.username,
     excludeSecrets,

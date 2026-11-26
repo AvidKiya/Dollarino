@@ -41,6 +41,7 @@ import {
 } from './services/settings-cache.js';
 import { getSystemSettingValue } from './telegram/publisher.js';
 import { fetchIranUsdtRate } from './exchanges/iran-rate.js';
+import { DOLLARINO_VERSION, DOLLARINO_ASSET_VERSION } from './version.js';
 
 export { TradingBotCoordinator };
 
@@ -106,7 +107,7 @@ app.get('/', (c) => {
   }
   return c.json({
     ok: true,
-    service: 'Dollarino API Worker v9.9.2',
+    service: `Dollarino API Worker v${DOLLARINO_VERSION}`,
     health: '/api/health',
     note: 'Open the Website preview (port 5173) or unified Worker URL to use the full Dollarino UI.',
   });
@@ -116,7 +117,9 @@ app.get('/api/health', (c) => {
   return c.json({
     ok: true,
     platform: 'Dollarino (دلارینو)',
-    version: '11.7.2',
+    version: DOLLARINO_VERSION,
+    assetVersion: DOLLARINO_ASSET_VERSION,
+    buildSurface: 'worker',
     openSource: false,
     paidSubscriptions: false,
     profitShareFeePct: SERVER_PROFIT_FEE_PCT,
@@ -667,7 +670,17 @@ app.all('*', async (c) => {
   if (!c.req.path.startsWith('/api/') && c.env.ASSETS) {
     return serveAssetsWithDynamicOg(c.req.raw, c.env.ASSETS);
   }
-  return c.json({ error: `Route not found: ${c.req.path}` }, 404);
+  // Include the running Worker version so a stale deployment is obvious in logs and
+  // the web client can tell "mistyped route" apart from "Worker not redeployed".
+  return c.json(
+    {
+      error: `Route not found: ${c.req.path}`,
+      code: 'ROUTE_NOT_FOUND',
+      workerVersion: DOLLARINO_VERSION,
+      hint: 'If the UI is newer than this version, redeploy the Worker: npx wrangler d1 migrations apply dollarino-db --remote && npx wrangler deploy',
+    },
+    404
+  );
 });
 
 export default {
@@ -675,7 +688,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // Runs every 5 minutes (*/5): check lightweight indexed flags first so idle periods consume minimal D1 Rows Read
     ctx.waitUntil((async () => {
-      await syncTelegramBotAutoOnVersion(env, '11.7.2').catch(() => {});
+      await syncTelegramBotAutoOnVersion(env, DOLLARINO_VERSION).catch(() => {});
 
       const activity = await env.DB.prepare(
         `SELECT

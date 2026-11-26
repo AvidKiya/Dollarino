@@ -1,11 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { APP_VERSION, ASSET_VERSION } from './lib/version';
 import './index.css';
 
 if (typeof window !== 'undefined') {
-  const SW_CACHE_NAME = 'dollarino-pwa-v11.7.2';
-  const RELOAD_KEY = 'dollarino_sw_reloaded_v1172';
+  const SW_CACHE_NAME = `dollarino-pwa-v${APP_VERSION}`;
+  const RELOAD_KEY = `dollarino_sw_reloaded_v${ASSET_VERSION}`;
 
   if ('caches' in window) {
     window.caches
