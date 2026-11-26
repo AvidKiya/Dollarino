@@ -538,7 +538,7 @@ export function SubscriptionPage({
 
                       ctx.fillStyle = '#93C5FD';
                       ctx.font = '22px monospace';
-                      ctx.fillText('@Dollarino_bot  |  @Dollarino_official', 1135, 540);
+                      ctx.fillText('Dollarino Quant Platform', 1135, 540);
 
                       const a = document.createElement('a');
                       a.download = `dollarino-invite-${referral.referralCode}.png`;

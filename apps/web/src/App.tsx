@@ -25,6 +25,7 @@ const AuthPage = lazy(() => import('./pages/AuthPage').then((m) => ({ default: m
 const LandingPage = lazy(() => import('./pages/LandingPage').then((m) => ({ default: m.LandingPage })));
 const OverviewPage = lazy(() => import('./pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
 const CompleteProfileGate = lazy(() => import('./components/CompleteProfileGate').then((m) => ({ default: m.CompleteProfileGate })));
+const AdminSecuritySetupGate = lazy(() => import('./components/AdminSecuritySetupGate').then((m) => ({ default: m.AdminSecuritySetupGate })));
 const OnboardingAcademyModal = lazy(() => import('./components/OnboardingAcademyModal').then((m) => ({ default: m.OnboardingAcademyModal })));
 const PwaInstallModal = lazy(() => import('./components/PwaInstallModal').then((m) => ({ default: m.PwaInstallModal })));
 const SupportModal = lazy(() => import('./components/SupportModal').then((m) => ({ default: m.SupportModal })));
@@ -149,7 +150,7 @@ export function App() {
   }, [look]);
 
   useEffect(() => {
-    if (!user || isSidePanelEmbed) return;
+    if (!user || Boolean(user.must_change_credentials) || isSidePanelEmbed) return;
     const qp = new URLSearchParams(window.location.search);
     if (qp.get('tw_autoconnect') === '1') return;
     const hasTw = Boolean(
@@ -298,6 +299,10 @@ export function App() {
         return;
       }
       setUser(me.user);
+      if ((me.user.role === 'owner' || me.user.role === 'admin') && Boolean(me.user.must_change_credentials)) {
+        setDashboard(null);
+        return;
+      }
       if (isSidePanelEmbed) {
         setUiMode('simple');
       } else if (me.user.ui_mode === 'simple' || me.user.ui_mode === 'pro') {
@@ -406,14 +411,14 @@ export function App() {
   }, [dashboard]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || Boolean(user.must_change_credentials)) return;
     let cancelled = false;
     let tickInFlight = false;
     let tickTimer: ReturnType<typeof setTimeout> | null = null;
 
     const scheduleTick = () => {
       if (cancelled) return;
-      const delayMs = hasActivePositionsRef.current ? 3_000 : 15_000;
+      const delayMs = hasActivePositionsRef.current ? 10_000 : 45_000;
       tickTimer = setTimeout(() => {
         if (cancelled) return;
         if (tickInFlight || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) {
@@ -486,7 +491,7 @@ export function App() {
           );
         })
         .catch(() => {});
-    }, 45_000);
+    }, 120_000);
     return () => {
       cancelled = true;
       if (tickTimer) clearTimeout(tickTimer);
@@ -771,6 +776,23 @@ export function App() {
         />
         <FloatingToastHost />
       </>
+    );
+  }
+
+  if ((user.role === 'owner' || user.role === 'admin') && Boolean(user.must_change_credentials)) {
+    return (
+      <Suspense fallback={<AppSplashLoader lang={lang} stage="desk" />}>
+        <AdminSecuritySetupGate
+          lang={lang}
+          user={user}
+          onCompleted={(updated) => {
+            setUser(updated);
+            setActiveTab('admin');
+            void loadSessionAndDashboard();
+          }}
+          onLogout={handleLogout}
+        />
+      </Suspense>
     );
   }
 

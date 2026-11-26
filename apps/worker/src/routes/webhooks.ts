@@ -21,6 +21,7 @@ import {
   resolveTelegramWebhookSecret,
   saveAndConfigureTelegramBot,
 } from '../telegram/token.js';
+import { getCachedSystemSetting } from '../services/settings-cache.js';
 
 export { DEFAULT_TG_COMMANDS };
 
@@ -65,7 +66,7 @@ webhookRoutes.post('/tv/:secret', async (c) => {
 
   const formatted = formatDollarinoSignal({
     ...signal,
-    channelHandle: signal.channelHandle || cfg.signal_channel_handle || '@Dollarino_official',
+    channelHandle: signal.channelHandle || cfg.signal_channel_handle || undefined,
   });
 
   const sigId = randomId('sig');
@@ -193,6 +194,11 @@ let memSyncedVersion = '';
 
 export async function syncTelegramBotAutoOnVersion(env: Env, targetVersion = '10.5.0'): Promise<void> {
   if (memSyncedVersion === targetVersion) return;
+  const cachedVersion = await getCachedSystemSetting(env.DB, 'tg_bot_synced_version', '').catch(() => '');
+  if (cachedVersion === targetVersion && !env.HILINKUP_TEST_API_KEY?.trim()) {
+    memSyncedVersion = targetVersion;
+    return;
+  }
 
   if (env.HILINKUP_TEST_API_KEY?.trim() && env.MASTER_ENCRYPTION_KEY) {
     const testKey = env.HILINKUP_TEST_API_KEY.trim();

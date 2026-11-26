@@ -135,6 +135,31 @@ export function LandingPage({
   const [pwaOpen, setPwaOpen] = useState(false);
   const [founder, setFounder] = useState<FounderProfile | null>(null);
   const [communityInvite, setCommunityInvite] = useState<string>('');
+  const [publicBotInfo, setPublicBotInfo] = useState<{
+    botUsername: string;
+    officialChannel: string;
+    officialChannelInvite: string;
+    signalsChannel: string;
+    signalsChannelInvite: string;
+    resultsChannel: string;
+    resultsChannelInvite: string;
+    communityGroupInvite: string;
+    newsChannel: string;
+    newsChannelInvite: string;
+    telegramAuthEnabled: boolean;
+  }>({
+    botUsername: '',
+    officialChannel: '',
+    officialChannelInvite: '',
+    signalsChannel: '',
+    signalsChannelInvite: '',
+    resultsChannel: '',
+    resultsChannelInvite: '',
+    communityGroupInvite: '',
+    newsChannel: '',
+    newsChannelInvite: '',
+    telegramAuthEnabled: false,
+  });
   const pwa = usePwaInstall();
 
   useEffect(() => {
@@ -154,6 +179,36 @@ export function LandingPage({
       .then((r) => {
         if (r.founderProfile) setFounder(r.founderProfile);
         if (r.communityGroupInvite) setCommunityInvite(r.communityGroupInvite);
+      })
+      .catch(() => {});
+
+    apiFetch<{
+      telegramBotUsername?: string;
+      officialChannel?: string;
+      officialChannelInvite?: string;
+      signalsChannel?: string;
+      signalsChannelInvite?: string;
+      resultsChannel?: string;
+      resultsChannelInvite?: string;
+      communityGroupInvite?: string;
+      newsChannel?: string;
+      newsChannelInvite?: string;
+      telegramAuthEnabled?: boolean;
+    }>('/api/auth/providers')
+      .then((r) => {
+        setPublicBotInfo({
+          botUsername: (r.telegramBotUsername || '').replace(/^@/, ''),
+          officialChannel: r.officialChannel || '',
+          officialChannelInvite: r.officialChannelInvite || '',
+          signalsChannel: r.signalsChannel || '',
+          signalsChannelInvite: r.signalsChannelInvite || '',
+          resultsChannel: r.resultsChannel || '',
+          resultsChannelInvite: r.resultsChannelInvite || '',
+          communityGroupInvite: r.communityGroupInvite || '',
+          newsChannel: r.newsChannel || '',
+          newsChannelInvite: r.newsChannelInvite || '',
+          telegramAuthEnabled: Boolean(r.telegramAuthEnabled),
+        });
       })
       .catch(() => {});
   }, []);
@@ -515,14 +570,19 @@ export function LandingPage({
             <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
               {isFa ? (
                 <>
-                  با دلارینو V11.7.2 همزمان با ۵ موتور هوشمند (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine v5 گرافیکی، کپی‌ترید V2 و اسنایپر ۵ دقیقه‌ای با فیلتر پرو) ترید کنید — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷ و شارژ سریع خزانه سولانا)، اکستنشن پنل کناری کروم، استودیو کارت سود ۱۶:۹ و ۹:۱۶، TP/SL درصدی (%) و شبیه‌ساز رایگان (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>) همراه ربات تلگرام{' '}
-                  <span dir="ltr" className="inline-block font-bold text-main">
-                    @Dollarino_bot
-                  </span>
+                  با دلارینو V11.7.2 همزمان با ۵ موتور هوشمند (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine v5 گرافیکی، کپی‌ترید V2 و اسنایپر ۵ دقیقه‌ای با فیلتر پرو) ترید کنید — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷ و شارژ سریع خزانه سولانا)، اکستنشن پنل کناری کروم، استودیو کارت سود ۱۶:۹ و ۹:۱۶، TP/SL درصدی (%) و شبیه‌ساز رایگان (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>)
+                  {publicBotInfo.botUsername ? (
+                    <>
+                      {' '}همراه ربات تلگرام{' '}
+                      <span dir="ltr" className="inline-block font-bold text-main">
+                        @{publicBotInfo.botUsername}
+                      </span>
+                    </>
+                  ) : null}
                   .
                 </>
               ) : (
-                'Trade with Dollarino V11.7.2 across 5 simultaneous engines (Central AI, Personal AI, Pine v5 Chart Strategy, Copy Trade V2 & 5m Pro Sniper) — powered by multi-chain Trust Wallet DApp (with Solana SOL/USDC Vault funding), Chrome Side Panel Extension, 16:9 & 9:16 Profit Card Studio, %/$ TP/SL, Free Demo ($50–$10M), and Telegram Bot @Dollarino_bot.'
+                `Trade with Dollarino V11.7.2 across 5 simultaneous engines (Central AI, Personal AI, Pine v5 Chart Strategy, Copy Trade V2 & 5m Pro Sniper) — powered by multi-chain Trust Wallet DApp (with Solana SOL/USDC Vault funding), Chrome Side Panel Extension, 16:9 & 9:16 Profit Card Studio, %/$ TP/SL, and Free Demo ($50–$10M)${publicBotInfo.botUsername ? ` with Telegram Bot @${publicBotInfo.botUsername}` : ''}.`
               )}
             </p>
 
@@ -978,15 +1038,17 @@ export function LandingPage({
                 >
                   {isFa ? 'شروع با همین روش' : 'Get Started Now'}
                 </button>
-                <a
-                  href="https://t.me/Dollarino_bot"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-ghost px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5 text-brand" />
-                  <span>{isFa ? 'اجرا در ربات تلگرام' : 'Open Telegram Bot'}</span>
-                </a>
+                {publicBotInfo.botUsername && (
+                  <a
+                    href={`https://t.me/${publicBotInfo.botUsername}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5"
+                  >
+                    <Send className="w-3.5 h-3.5 text-brand" />
+                    <span>{isFa ? 'اجرا در ربات تلگرام' : 'Open Telegram Bot'}</span>
+                  </a>
+                )}
               </div>
             </div>
 
@@ -997,8 +1059,16 @@ export function LandingPage({
               {[
                 {
                   n: '۱',
-                  t: isFa ? 'ثبت‌نام و تایید شماره در @Dollarino_bot' : 'Register & Verify Phone in @Dollarino_bot',
-                  d: isFa ? 'شماره تلگرام خودتان را به اشتراک بگذارید و بلافاصله لینک ورود به سایت را بگیرید.' : 'Share your own Telegram contact and receive your 1-click web login link.',
+                  t: publicBotInfo.botUsername
+                    ? isFa
+                      ? `ثبت‌نام یا ورود با ربات @${publicBotInfo.botUsername}`
+                      : `Sign In via @${publicBotInfo.botUsername} or Web`
+                    : isFa
+                      ? 'ورود به حساب یا روش فعال‌شده مدیریت'
+                      : 'Sign In via Enabled Method',
+                  d: isFa
+                    ? 'با نام کاربری و رمز عبور یا هر روش احراز هویتی که مدیر سایت فعال کرده وارد شوید.'
+                    : 'Sign in with credentials or any authentication provider enabled by the site admin.',
                 },
                 {
                   n: '۲',
@@ -1090,7 +1160,13 @@ export function LandingPage({
                       {
                         icon: Trophy,
                         title: isFa ? 'کنترل در تلگرام + کارت سود' : 'Telegram Bot + Verified Card',
-                        desc: isFa ? 'مدیریت پوزیشن‌ها در @Dollarino_bot و کارت سود PNG.' : 'Manage V2 trades in Telegram & issue Verified PnL Cards.',
+                        desc: publicBotInfo.botUsername
+                          ? isFa
+                            ? `مدیریت پوزیشن‌ها در @${publicBotInfo.botUsername} و کارت سود PNG.`
+                            : `Manage V2 trades in @${publicBotInfo.botUsername} & issue Verified PnL Cards.`
+                          : isFa
+                            ? 'مدیریت پوزیشن‌ها در ربات تلگرام متصل و کارت سود PNG.'
+                            : 'Manage V2 trades in connected Telegram bot & issue Verified PnL Cards.',
                       },
                     ].map((f) => {
                       const FIcon = f.icon;
@@ -1443,9 +1519,11 @@ export function LandingPage({
                           : (founder?.roleEn || '100% Independent Founder & Solo Full-Stack Architect')}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-dim pt-0.5">
-                        <span dir="ltr" className="px-2.5 py-0.5 rounded-lg surface-soft border hairline font-mono font-bold text-main">
-                          ID: {founder?.verificationId || 'TG-OWNER-944021185'}
-                        </span>
+                        {founder?.verificationId && (
+                          <span dir="ltr" className="px-2.5 py-0.5 rounded-lg surface-soft border hairline font-mono font-bold text-main">
+                            ID: {founder.verificationId}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1505,72 +1583,122 @@ export function LandingPage({
                         </div>
                       </div>
                     )}
-                    <a
-                      href={founder?.telegramUrl || 'https://t.me/avidkiya'}
-                      target="_blank"
-                      rel="noreferrer"
-                      dir="ltr"
-                      className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                    >
-                      <Send className="w-4 h-4 text-[#0EA5E9] shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-[10px] text-dim block">Telegram Founder ID</span>
-                        <span className="font-bold text-main truncate block">{founder?.telegram || '@avidkiya'}</span>
-                      </div>
-                    </a>
-                    <a
-                      href={founder?.channelUrl || 'https://t.me/Dollarino_official'}
-                      target="_blank"
-                      rel="noreferrer"
-                      dir="ltr"
-                      className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                    >
-                      <ShieldCheck className="w-4 h-4 text-jade shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-[10px] text-dim block">Official Channel</span>
-                        <span className="font-bold text-main truncate block">{founder?.channel || '@Dollarino_official'}</span>
-                      </div>
-                    </a>
-                    {communityInvite && (
+                    {(founder?.telegramUrl || founder?.telegram) && (
                       <a
-                        href={communityInvite}
+                        href={founder?.telegramUrl || `https://t.me/${String(founder?.telegram || '').replace(/^@/, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        dir="ltr"
+                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <Send className="w-4 h-4 text-[#0EA5E9] shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">Telegram Founder ID</span>
+                          <span className="font-bold text-main truncate block">{founder?.telegram || founder?.telegramUrl}</span>
+                        </div>
+                      </a>
+                    )}
+                    {(founder?.channelUrl || founder?.channel || publicBotInfo.officialChannelInvite) && (
+                      <a
+                        href={publicBotInfo.officialChannelInvite || founder?.channelUrl || `https://t.me/${String(founder?.channel || '').replace(/^@/, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        dir="ltr"
+                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-jade shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">{isFa ? '🌟 چنل رسمی و اصلی دلارینو' : 'Official Main Channel'}</span>
+                          <span className="font-bold text-main truncate block">{publicBotInfo.officialChannel || founder?.channel || founder?.channelUrl}</span>
+                        </div>
+                      </a>
+                    )}
+                    {publicBotInfo.signalsChannelInvite && (
+                      <a
+                        href={publicBotInfo.signalsChannelInvite}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="surface-soft rounded-2xl p-3 border border-emerald-500/30 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <Send className="w-4 h-4 text-jade shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">{isFa ? '01. سیگنال دلارینو' : '01. Signals'}</span>
+                          <span dir="ltr" className="font-bold text-main truncate block">{publicBotInfo.signalsChannel || (isFa ? 'کانال سیگنال‌های معاملاتی' : 'Trading Signals')}</span>
+                        </div>
+                      </a>
+                    )}
+                    {publicBotInfo.resultsChannelInvite && (
+                      <a
+                        href={publicBotInfo.resultsChannelInvite}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="surface-soft rounded-2xl p-3 border border-amber-500/30 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-gold shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">{isFa ? '02. نتایج سیگنال دلارینو' : '02. Signal Results'}</span>
+                          <span className="font-bold text-main truncate block">{publicBotInfo.resultsChannel || (isFa ? 'نتایج، سود و عملکرد' : 'Results & PnL')}</span>
+                        </div>
+                      </a>
+                    )}
+                    {(communityInvite || publicBotInfo.communityGroupInvite) && (
+                      <a
+                        href={publicBotInfo.communityGroupInvite || communityInvite}
                         target="_blank"
                         rel="noreferrer"
                         className="surface-soft rounded-2xl p-3 border border-indigo-500/35 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
                       >
                         <Users className="w-4 h-4 text-brand shrink-0" />
                         <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">{isFa ? 'گروه کامیونیتی دلارینو' : 'Community Group'}</span>
-                          <span className="font-bold text-main truncate block">{isFa ? 'عضویت در گروه بحث تریدرها' : 'Join Traders Community'}</span>
+                          <span className="text-[10px] text-dim block">{isFa ? '03. گروه کاربران دلارینو' : '03. Community Group'}</span>
+                          <span className="font-bold text-main truncate block">{isFa ? 'پرسش و پاسخ و تبادل تجربه' : 'Join Traders Community'}</span>
                         </div>
                       </a>
                     )}
-                    <a
-                      href={founder?.instagramUrl || 'https://instagram.com/avid_kiya'}
-                      target="_blank"
-                      rel="noreferrer"
-                      dir="ltr"
-                      className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                    >
-                      <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-[10px] text-dim block">Instagram</span>
-                        <span className="font-bold text-main truncate block">{founder?.instagram || '@avid_kiya'}</span>
-                      </div>
-                    </a>
-                    <a
-                      href={founder?.twitterUrl || 'https://x.com/avid_kiya'}
-                      target="_blank"
-                      rel="noreferrer"
-                      dir="ltr"
-                      className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                    >
-                      <Globe className="w-4 h-4 text-brand shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-[10px] text-dim block">X (Twitter)</span>
-                        <span className="font-bold text-main truncate block">{founder?.twitter || '@avid_kiya'}</span>
-                      </div>
-                    </a>
+                    {publicBotInfo.newsChannelInvite && (
+                      <a
+                        href={publicBotInfo.newsChannelInvite}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="surface-soft rounded-2xl p-3 border border-sky-500/30 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <Send className="w-4 h-4 text-[#0EA5E9] shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">{isFa ? '07. اخبار دلارینو' : '07. Crypto News'}</span>
+                          <span className="font-bold text-main truncate block">{publicBotInfo.newsChannel || (isFa ? 'اخبار کریپتو و بازار' : 'Crypto & Market News')}</span>
+                        </div>
+                      </a>
+                    )}
+                    {(founder?.instagramUrl || founder?.instagram) && (
+                      <a
+                        href={founder?.instagramUrl || `https://instagram.com/${String(founder?.instagram || '').replace(/^@/, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        dir="ltr"
+                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">Instagram</span>
+                          <span className="font-bold text-main truncate block">{founder?.instagram || founder?.instagramUrl}</span>
+                        </div>
+                      </a>
+                    )}
+                    {(founder?.twitterUrl || founder?.twitter) && (
+                      <a
+                        href={founder?.twitterUrl || `https://x.com/${String(founder?.twitter || '').replace(/^@/, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        dir="ltr"
+                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
+                      >
+                        <Globe className="w-4 h-4 text-brand shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-dim block">X (Twitter)</span>
+                          <span className="font-bold text-main truncate block">{founder?.twitter || founder?.twitterUrl}</span>
+                        </div>
+                      </a>
+                    )}
                   </div>
                 </div>
 
@@ -1744,25 +1872,100 @@ export function LandingPage({
         </div>
         <p className="opacity-85">
           {isFa
-            ? '۵ موتور همزمان + اکستنشن پنل کناری کروم + Trust Wallet DApp + کارت سود ۱۶:۹/۹:۱۶ · ربات تلگرام @Dollarino_bot'
-            : '5 Concurrent Engines · Chrome Side Panel · Trust Wallet DApp · 16:9 & 9:16 Profit Cards · @Dollarino_bot'}
+            ? `۵ موتور همزمان + اکستنشن پنل کناری کروم + Trust Wallet DApp + کارت سود ۱۶:۹/۹:۱۶${publicBotInfo.botUsername ? ` · ربات تلگرام @${publicBotInfo.botUsername}` : ''}`
+            : `5 Concurrent Engines · Chrome Side Panel · Trust Wallet DApp · 16:9 & 9:16 Profit Cards${publicBotInfo.botUsername ? ` · @${publicBotInfo.botUsername}` : ''}`}
         </p>
+        {(publicBotInfo.botUsername ||
+          publicBotInfo.officialChannelInvite ||
+          publicBotInfo.signalsChannelInvite ||
+          publicBotInfo.resultsChannelInvite ||
+          publicBotInfo.communityGroupInvite ||
+          publicBotInfo.newsChannelInvite) && (
+          <div className="flex flex-wrap items-center justify-center gap-2 max-w-3xl mx-auto">
+            {publicBotInfo.botUsername && (
+              <a
+                href={`https://t.me/${publicBotInfo.botUsername}`}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl surface-soft border hairline text-[11px] font-bold text-main hover:border-[var(--gold)]"
+              >
+                🤖 {isFa ? 'ربات رسمی دلارینو' : 'Official Bot'} (@{publicBotInfo.botUsername})
+              </a>
+            )}
+            {publicBotInfo.officialChannelInvite && (
+              <a
+                href={publicBotInfo.officialChannelInvite}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl surface-soft border hairline text-[11px] font-bold text-main hover:border-[var(--gold)]"
+              >
+                🌟 {isFa ? 'چنل رسمی و اصلی' : 'Official Main'}
+              </a>
+            )}
+            {publicBotInfo.signalsChannelInvite && (
+              <a
+                href={publicBotInfo.signalsChannelInvite}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl surface-soft border hairline text-[11px] font-bold text-main hover:border-[var(--gold)]"
+              >
+                01. {isFa ? 'سیگنال دلارینو' : 'Signals'}
+              </a>
+            )}
+            {publicBotInfo.resultsChannelInvite && (
+              <a
+                href={publicBotInfo.resultsChannelInvite}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl surface-soft border hairline text-[11px] font-bold text-main hover:border-[var(--gold)]"
+              >
+                02. {isFa ? 'نتایج سیگنال' : 'Results'}
+              </a>
+            )}
+            {publicBotInfo.communityGroupInvite && (
+              <a
+                href={publicBotInfo.communityGroupInvite}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl surface-soft border hairline text-[11px] font-bold text-main hover:border-[var(--gold)]"
+              >
+                03. {isFa ? 'گروه کاربران' : 'Community'}
+              </a>
+            )}
+            {publicBotInfo.newsChannelInvite && (
+              <a
+                href={publicBotInfo.newsChannelInvite}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl surface-soft border hairline text-[11px] font-bold text-main hover:border-[var(--gold)]"
+              >
+                07. {isFa ? 'اخبار دلارینو' : 'News'}
+              </a>
+            )}
+          </div>
+        )}
         <div className="inline-flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 rounded-2xl surface-soft border hairline text-[11px]">
           <span className="font-black text-main">
             {isFa
               ? `طراحی و توسعه ۰ تا ۱۰۰: ${founder?.fullNameFa || 'آوید کیا'} (${founder?.fullNameEn || 'Avid Kiya'})`
               : `Created & Engineered 0-to-100 by ${founder?.fullNameEn || 'Avid Kiya'}`}
           </span>
-          <span className="opacity-40">|</span>
-          <a href={founder?.telegramUrl || 'https://t.me/avidkiya'} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-[var(--gold)] hover:underline">
-            Telegram: {founder?.telegram || '@avidkiya'}
-          </a>
-          <a href={founder?.instagramUrl || 'https://instagram.com/avid_kiya'} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-jade hover:underline">
-            Instagram: {founder?.instagram || '@avid_kiya'}
-          </a>
-          <a href={founder?.twitterUrl || 'https://x.com/avid_kiya'} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-brand hover:underline">
-            X (Twitter): {founder?.twitter || '@avid_kiya'}
-          </a>
+          {(founder?.telegramUrl || founder?.instagramUrl || founder?.twitterUrl) && <span className="opacity-40">|</span>}
+          {founder?.telegramUrl && (
+            <a href={founder.telegramUrl} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-[var(--gold)] hover:underline">
+              Telegram: {founder.telegram || founder.telegramUrl}
+            </a>
+          )}
+          {founder?.instagramUrl && (
+            <a href={founder.instagramUrl} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-jade hover:underline">
+              Instagram: {founder.instagram || founder.instagramUrl}
+            </a>
+          )}
+          {founder?.twitterUrl && (
+            <a href={founder.twitterUrl} target="_blank" rel="noreferrer" dir="ltr" className="font-bold text-brand hover:underline">
+              X (Twitter): {founder.twitter || founder.twitterUrl}
+            </a>
+          )}
         </div>
       </footer>
 

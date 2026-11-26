@@ -131,6 +131,59 @@ export function ServicesPage({
   const [totpInputCode, setTotpInputCode] = useState('');
   const [totpBusy, setTotpBusy] = useState(false);
   const [totpMsg, setTotpMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [publicTgMeta, setPublicTgMeta] = useState<{
+    botUsername: string;
+    officialChannel: string;
+    officialChannelInvite: string;
+    signalsChannel: string;
+    signalsChannelInvite: string;
+    resultsChannel: string;
+    resultsChannelInvite: string;
+    communityGroupInvite: string;
+    newsChannel: string;
+    newsChannelInvite: string;
+  }>({
+    botUsername: '',
+    officialChannel: '',
+    officialChannelInvite: '',
+    signalsChannel: '',
+    signalsChannelInvite: '',
+    resultsChannel: '',
+    resultsChannelInvite: '',
+    communityGroupInvite: '',
+    newsChannel: '',
+    newsChannelInvite: '',
+  });
+
+  useEffect(() => {
+    apiFetch<{
+      telegramBotUsername?: string;
+      officialChannel?: string;
+      officialChannelInvite?: string;
+      signalsChannel?: string;
+      signalsChannelInvite?: string;
+      resultsChannel?: string;
+      resultsChannelInvite?: string;
+      communityGroupInvite?: string;
+      newsChannel?: string;
+      newsChannelInvite?: string;
+    }>('/api/auth/providers')
+      .then((r) =>
+        setPublicTgMeta({
+          botUsername: (r.telegramBotUsername || '').replace(/^@/, ''),
+          officialChannel: r.officialChannel || '',
+          officialChannelInvite: r.officialChannelInvite || '',
+          signalsChannel: r.signalsChannel || '',
+          signalsChannelInvite: r.signalsChannelInvite || '',
+          resultsChannel: r.resultsChannel || '',
+          resultsChannelInvite: r.resultsChannelInvite || '',
+          communityGroupInvite: r.communityGroupInvite || '',
+          newsChannel: r.newsChannel || '',
+          newsChannelInvite: r.newsChannelInvite || '',
+        })
+      )
+      .catch(() => {});
+  }, []);
 
   const parsedNotifPrefs = (() => {
     try {
@@ -253,7 +306,7 @@ export function ServicesPage({
     try {
       await apiFetch<{ ok: boolean }>('/api/auth/2fa/enable', {
         method: 'POST',
-        body: JSON.stringify({ code: totpInputCode.trim() }),
+        body: JSON.stringify({ code: totpInputCode.trim(), clientTimestampMs: Date.now() }),
       });
       setTotpEnabled(true);
       setTotpSetup(null);
@@ -277,7 +330,7 @@ export function ServicesPage({
     try {
       await apiFetch<{ ok: boolean }>('/api/auth/2fa/disable', {
         method: 'POST',
-        body: JSON.stringify({ code: totpInputCode.trim() }),
+        body: JSON.stringify({ code: totpInputCode.trim(), clientTimestampMs: Date.now() }),
       });
       setTotpEnabled(false);
       setTotpInputCode('');
@@ -809,7 +862,15 @@ export function ServicesPage({
                   dir="ltr"
                   required
                   value={totpInputCode}
-                  onChange={(e) => setTotpInputCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={(e) =>
+                    setTotpInputCode(
+                      e.target.value
+                        .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+                        .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+                        .replace(/\D/g, '')
+                        .slice(0, 6)
+                    )
+                  }
                   placeholder="000000"
                   className="field text-xs font-mono-num text-center tracking-widest flex-1"
                 />
@@ -869,7 +930,15 @@ export function ServicesPage({
                     dir="ltr"
                     required
                     value={totpInputCode}
-                    onChange={(e) => setTotpInputCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onChange={(e) =>
+                      setTotpInputCode(
+                        e.target.value
+                          .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+                          .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+                          .replace(/\D/g, '')
+                          .slice(0, 6)
+                      )
+                    }
                     placeholder="123456"
                     className="field text-sm font-mono-num text-center tracking-widest flex-1"
                   />
@@ -1488,11 +1557,18 @@ export function ServicesPage({
             <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
               {isFa ? (
                 <>
-                  اسکن زنده ۸۰۷ جفت‌ارز، بک‌تست ۹۰۰ کندلی و اتصال ۱-کلیکی به{' '}
-                  <span dir="ltr" className="font-bold">@Dollarino_bot</span>
+                  اسکن زنده ۸۰۷ جفت‌ارز، بک‌تست ۹۰۰ کندلی
+                  {publicTgMeta.botUsername ? (
+                    <>
+                      {' '}و اتصال ۱-کلیکی به{' '}
+                      <span dir="ltr" className="font-bold">@{publicTgMeta.botUsername}</span>
+                    </>
+                  ) : (
+                    ' و همگام‌سازی لحظه‌ای با ربات متصل تلگرام'
+                  )}
                 </>
               ) : (
-                '807-pair live scanner, 900-candle backtest & @Dollarino_bot sync'
+                `807-pair live scanner, 900-candle backtest${publicTgMeta.botUsername ? ` & @${publicTgMeta.botUsername} sync` : ' & Telegram sync'}`
               )}
             </p>
             <button
@@ -1639,23 +1715,63 @@ export function ServicesPage({
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>
 
-          <a
-            href="https://t.me/Dollarino_official"
-            target="_blank"
-            rel="noreferrer"
-            className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
-          >
-            <span className="w-10 h-10 rounded-2xl bg-[#0EA5E9]/15 text-[#0284C7] dark:text-[#38BDF8] grid place-items-center shrink-0">
-              <Send className="w-5 h-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <span className="text-xs sm:text-sm font-extrabold text-main block">
-                {isFa ? 'کانال رسمی سیگنال و اخبار دلارینو' : 'Official Dollarino Signals Channel'}
-              </span>
-              <span dir="ltr" className="text-[11px] text-[#0284C7] dark:text-[#38BDF8] font-mono-num font-bold block">@Dollarino_official</span>
-            </div>
-            <ExternalLink className="w-4 h-4 text-dim shrink-0" />
-          </a>
+          {[
+            {
+              show: Boolean(publicTgMeta.botUsername),
+              href: `https://t.me/${publicTgMeta.botUsername}`,
+              title: isFa ? '🤖 ربات رسمی دلارینو' : '🤖 Official Dollarino Bot',
+              sub: `@${publicTgMeta.botUsername} · ${isFa ? 'ثبت‌نام، ورود و حالت ساده سایت داخل تلگرام' : 'Auth, Quick Access & Simple Mode'}`,
+            },
+            {
+              show: Boolean(publicTgMeta.officialChannelInvite),
+              href: publicTgMeta.officialChannelInvite,
+              title: isFa ? '🌟 چنل رسمی و اصلی دلارینو' : '🌟 Official Main Dollarino Channel',
+              sub: publicTgMeta.officialChannel || (isFa ? 'آپدیت‌های قطعی پروژه، اطلاعیه‌ها، قرعه‌کشی و تبلیغات' : 'Project Updates & Announcements'),
+            },
+            {
+              show: Boolean(publicTgMeta.signalsChannelInvite),
+              href: publicTgMeta.signalsChannelInvite,
+              title: isFa ? '01. سیگنال دلارینو' : '01. Dollarino Signals',
+              sub: publicTgMeta.signalsChannel || (isFa ? 'انتشار سیگنال‌های معاملاتی موتورهای پروژه' : 'Live Trading Signals'),
+            },
+            {
+              show: Boolean(publicTgMeta.resultsChannelInvite),
+              href: publicTgMeta.resultsChannelInvite,
+              title: isFa ? '02. نتایج سیگنال دلارینو' : '02. Signal Results',
+              sub: publicTgMeta.resultsChannel || (isFa ? 'نتیجه سیگنال‌ها، سود و زیان و کارت سود' : 'Verified Results & PnL'),
+            },
+            {
+              show: Boolean(publicTgMeta.communityGroupInvite),
+              href: publicTgMeta.communityGroupInvite,
+              title: isFa ? '03. گروه کاربران دلارینو' : '03. Traders Community Group',
+              sub: isFa ? 'ارتباط کاربران، پرسش و پاسخ و تبادل تجربه' : 'User Community & Q&A',
+            },
+            {
+              show: Boolean(publicTgMeta.newsChannelInvite),
+              href: publicTgMeta.newsChannelInvite,
+              title: isFa ? '07. اخبار دلارینو' : '07. Crypto & Market News',
+              sub: publicTgMeta.newsChannel || (isFa ? 'اخبار کریپتو و بازار' : 'Crypto & Market News'),
+            },
+          ]
+            .filter((item) => item.show && item.href)
+            .map((item) => (
+              <a
+                key={item.title}
+                href={item.href}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
+              >
+                <span className="w-10 h-10 rounded-2xl bg-[#0EA5E9]/15 text-[#0284C7] dark:text-[#38BDF8] grid place-items-center shrink-0">
+                  <Send className="w-5 h-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="text-xs sm:text-sm font-extrabold text-main block">{item.title}</span>
+                  <span className="text-[11px] text-[#0284C7] dark:text-[#38BDF8] font-bold block truncate">{item.sub}</span>
+                </div>
+                <ExternalLink className="w-4 h-4 text-dim shrink-0" />
+              </a>
+            ))}
 
           {isAdmin && (
             <button

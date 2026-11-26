@@ -543,7 +543,7 @@ export function buildProfitCardSvg(input: ProfitCardRenderInput): string {
   ${qrBox}
   <text x="102" y="${H - 212}" font-family="Vazirmatn" font-size="26" fill="#ffffff">Verify ID: ${escXml(input.cardId)}</text>
   <text x="102" y="${H - 166}" font-family="Vazirmatn" font-size="22" fill="#10d9a3">HMAC-SHA256 SERVER VERIFIED</text>
-  <text x="102" y="${H - 118}" font-family="Vazirmatn" font-size="24" fill="${palette.accent}">@Dollarino_official · @Dollarino_bot</text>
+  <text x="102" y="${H - 118}" font-family="Vazirmatn" font-size="24" fill="${palette.accent}">Dollarino Quant Platform</text>
   <text x="102" y="${H - 82}" font-family="Vazirmatn" font-size="20" fill="${palette.muted}">dollarino.pages.dev</text>
 </svg>`;
   }
@@ -677,7 +677,7 @@ export function buildProfitCardSvg(input: ProfitCardRenderInput): string {
 
   <!-- Bottom Footer -->
   <text x="56" y="592" font-family="Vazirmatn" font-size="20" fill="#ffffff">Verify ID: ${escXml(input.cardId)}  ·  HMAC-SHA256 VERIFIED</text>
-  <text x="56" y="624" font-family="Vazirmatn" font-size="20" fill="${palette.accent}">@Dollarino_official · @Dollarino_bot · dollarino.pages.dev</text>
+  <text x="56" y="624" font-family="Vazirmatn" font-size="20" fill="${palette.accent}">Dollarino Quant Platform · dollarino.pages.dev</text>
   <text x="${W - 200}" y="624" text-anchor="end" font-family="Vazirmatn" font-size="18" fill="${palette.muted}">${signalTitle}</text>
 </svg>`;
 }
@@ -786,7 +786,7 @@ export function buildSignalClosedCardSvg(input: SignalClosedCardRenderInput): st
   <text x="${W - 110}" y="1592" text-anchor="end" font-family="Vazirmatn" font-size="24" fill="#38bdf8">${escXml(input.closeReason)}</text>
 
   <text x="76" y="${H - 88}" font-family="Vazirmatn" font-size="24" fill="#94a3b8">Card: ${escXml(input.cardId.slice(0, 18))}</text>
-  <text x="${W - 76}" y="${H - 88}" text-anchor="end" font-family="Vazirmatn" font-size="26" fill="#38bdf8">@Dollarino_official · dollarino.pages.dev</text>
+  <text x="${W - 76}" y="${H - 88}" text-anchor="end" font-family="Vazirmatn" font-size="26" fill="#38bdf8">Dollarino · dollarino.pages.dev</text>
 </svg>`;
   }
 
@@ -841,7 +841,7 @@ export function buildSignalClosedCardSvg(input: SignalClosedCardRenderInput): st
   <text x="1017" y="524" text-anchor="middle" font-family="Vazirmatn" font-size="24" fill="${input.trailingActive ? '#38bdf8' : '#cbd5e1'}">${escXml(trailLbl)}</text>
 
   <text x="56" y="618" font-family="Vazirmatn" font-size="19" fill="#94a3b8">${escXml(input.closedAt.slice(0, 19).replace('T', ' '))} UTC · ${escXml(input.closeReason)}</text>
-  <text x="${W - 56}" y="618" text-anchor="end" font-family="Vazirmatn" font-size="22" fill="#38bdf8">@Dollarino_official · dollarino.pages.dev</text>
+  <text x="${W - 56}" y="618" text-anchor="end" font-family="Vazirmatn" font-size="22" fill="#38bdf8">Dollarino · dollarino.pages.dev</text>
 </svg>`;
 }
 

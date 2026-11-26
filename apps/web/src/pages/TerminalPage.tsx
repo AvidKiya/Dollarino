@@ -11,30 +11,23 @@ import {
   CheckCircle2,
   Code2,
   Edit3,
-  Eye,
   History,
   Layers,
-  Play,
   RefreshCw,
-  Rocket,
-  Save,
   Scale,
   Send,
-  Shield,
   ShieldCheck,
   Sparkles,
   Target,
   Trash2,
-  TrendingDown,
-  TrendingUp,
   X,
   Zap,
 } from 'lucide-react';
-import {
-  SAMPLE_CUSTOM_STRATEGIES,
-  type Candle,
-  type CustomStrategyLanguage,
-  type Timeframe,
+import type {
+  Candle,
+  CustomStrategyLanguage,
+  SampleCustomStrategy,
+  Timeframe,
 } from '@dollarino/core';
 import {
   CandlestickChart,
@@ -43,6 +36,9 @@ import {
   type CustomStrategyChartOverlay,
   type KbosChartOverlays,
 } from '../components/CandlestickChart';
+import { MultiChartGrid } from '../components/tv/MultiChartGrid';
+import { PineEditorDock } from '../components/tv/PineEditorDock';
+import { TvSuperChart } from '../components/tv/TvSuperChart';
 import { CoinIcon } from '../components/CoinIcon';
 import { SmoothSlider } from '../components/SmoothSlider';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
@@ -146,14 +142,16 @@ export function TerminalPage({
   const [rightIntel, setRightIntel] = useState<'positions' | 'ai' | 'book' | 'script' | 'tools'>('ai');
   const [snap, setSnap] = useState<OverviewResponse | null>(null);
   const [loadingSymbol, setLoadingSymbol] = useState(false);
-  const [showEma, setShowEma] = useState(true);
+  const [showEma] = useState(true);
   const [showKbos, setShowKbos] = useState(true);
+  const [layoutMode, setLayoutMode] = useState<'1x1' | '2x1' | '2x2'>('1x1');
+  const [pineDockOpen, setPineDockOpen] = useState(false);
+  const [pendingPineSample, setPendingPineSample] = useState<{
+    name: string;
+    language: CustomStrategyLanguage;
+    code: string;
+  } | null>(null);
   const [customChartOverlay, setCustomChartOverlay] = useState<CustomStrategyChartOverlay | null>(null);
-  const [scriptLang, setScriptLang] = useState<CustomStrategyLanguage>('pine');
-  const [scriptName, setScriptName] = useState('Dollarino EMA 9/21 + RSI Momentum');
-  const [scriptCode, setScriptCode] = useState(SAMPLE_CUSTOM_STRATEGIES[0]!.code);
-  const [scriptBusy, setScriptBusy] = useState(false);
-  const [scriptFeedback, setScriptFeedback] = useState<{ ok: boolean; text: string; retPct?: number; wr?: number } | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingTradeConfirmation | null>(null);
 
   // Price Alerts state
@@ -342,7 +340,7 @@ export function TerminalPage({
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       void run(false);
-    }, 15_000);
+    }, 30_000);
     return () => {
       active = false;
       clearInterval(iv);
@@ -553,6 +551,51 @@ export function TerminalPage({
     };
   }, [aiAnalysis, data.openTrades, symbol]);
 
+  const runPineSampleImmediate = async (sample: SampleCustomStrategy) => {
+    const sName = isFa ? sample.nameFa : sample.nameEn;
+    setPendingPineSample({ name: sName, language: sample.language, code: sample.code });
+    setPineDockOpen(true);
+    try {
+      const ev = await apiFetch<
+        CustomStrategyChartOverlay & { valid: boolean; errors?: string[] }
+      >('/api/trading/strategies/evaluate', {
+        method: 'POST',
+        body: JSON.stringify({
+          language: sample.language,
+          code: sample.code,
+          symbol,
+          timeframe: tf,
+          limit: 500,
+        }),
+      });
+      if (ev.valid) {
+        setCustomChartOverlay({
+          title: ev.title || sName,
+          language: sample.language,
+          pineVersion: ev.pineVersion,
+          scriptKind: ev.scriptKind,
+          overlay: ev.overlay,
+          plots: ev.plots,
+          markers: ev.markers,
+          hlines: ev.hlines,
+          fills: ev.fills,
+          bgcolors: ev.bgcolors,
+          barcolors: ev.barcolors,
+          labels: ev.labels,
+          lines: ev.lines,
+          boxes: ev.boxes,
+          tables: ev.tables,
+          polylines: ev.polylines,
+          logs: ev.logs,
+          inputs: ev.inputs,
+          alertsTriggered: ev.alertsTriggered,
+        });
+      }
+    } catch {
+      /* handled inside PineEditorDock */
+    }
+  };
+
   if (uiMode === 'simple') {
     const coinBase = symbol.replace('USDT', '');
     const coinFaTitle = coinDisplayName(coinBase, isFa);
@@ -649,7 +692,7 @@ export function TerminalPage({
                 <span dir="ltr" className="font-num font-bold text-sm text-main">${fmtPx(lastPx)}</span>
               </div>
               <div className="flex gap-1">
-                {(['15m', '1h', '4h', '1d'] as Timeframe[]).map((t) => (
+                {(['15m', '1h', '4h', '1d', '1w'] as Timeframe[]).map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -1004,86 +1047,73 @@ export function TerminalPage({
         </div>
       </div>
 
-      {/* Main Equal-Height Pro Grid: 8 Columns Chart + Live Depth Strip | 4 Columns Order Ticket */}
+      {/* Main Equal-Height Pro Grid: 8 Columns TradingView Superchart + Pine Dock | 4 Columns Order Ticket */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
-        {/* Left 8 Columns: Candlestick Chart + Live Bid/Ask Pressure Strip */}
-        <div className="xl:col-span-8 panel rounded-[26px] p-4 flex flex-col justify-between gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2">
-              <CoinIcon symbol={symbol} size={22} showPair />
-              <span className="font-bold text-main">
-                {symbol} · {marketType === 'SPOT' ? 'Spot' : 'Perpetual'} · {tf}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              <div className="flex gap-1 me-1 bg-[var(--soft)] p-0.5 rounded-xl border hairline">
-                {(['1m', '5m', '15m', '1h', '4h'] as Timeframe[]).map((x) => (
-                  <button
-                    key={x}
-                    type="button"
-                    onClick={() => setTf(x)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${tf === x ? 'btn-gold' : 'text-dim hover:text-main'}`}
-                  >
-                    {x}
-                  </button>
-                ))}
+        {/* Left 8 Columns: TradingView Superchart / Multi-Chart Grid + Pine Dock + Live Bid/Ask Pulse */}
+        <div className="xl:col-span-8 panel rounded-[26px] p-3 sm:p-4 flex flex-col justify-between gap-3">
+          {layoutMode !== '1x1' ? (
+            <MultiChartGrid
+              lang={lang}
+              primarySymbol={symbol}
+              primaryTimeframe={tf}
+              layoutMode={layoutMode}
+              markets={markets}
+              onSelectSymbol={(sym) => setSymbol(sym)}
+              onChangeLayoutMode={setLayoutMode}
+            />
+          ) : snap?.candles?.length ? (
+            <TvSuperChart
+              lang={lang}
+              symbol={symbol}
+              timeframe={tf}
+              candles={snap.candles}
+              markets={markets}
+              provider={data.activeExchange?.provider || 'paper'}
+              marketType={marketType}
+              levels={chartLevels}
+              overlays={chartOverlays}
+              kbosOverlays={snap.kbosOverlays}
+              customOverlays={customChartOverlay ?? snap.customOverlays}
+              layoutMode={layoutMode}
+              showKbos={showKbos}
+              pineDockOpen={pineDockOpen}
+              aiLoading={aiLoading}
+              onChangeSymbol={(sym) => setSymbol(sym)}
+              onChangeTimeframe={(nextTf) => setTf(nextTf)}
+              onChangeMarketType={(m) => void onChangeMarketType?.(m)}
+              onToggleKbos={() => setShowKbos((v) => !v)}
+              onChangeLayoutMode={setLayoutMode}
+              onTogglePineDock={() => setPineDockOpen((v) => !v)}
+              onRunPineSample={(sample) => void runPineSampleImmediate(sample)}
+              onRunAiAnalyze={() => {
+                setRightIntel('ai');
+                void askChartAI();
+              }}
+              onClearCustomOverlay={() => setCustomChartOverlay(null)}
+              height={520}
+            />
+          ) : (
+            <div className="h-[540px] grid place-items-center text-xs text-dim">
+              <div className="flex flex-col items-center gap-2">
+                <RefreshCw className="w-5 h-5 animate-spin text-[var(--gold)]" />
+                <span>{isFa ? `در حال دریافت کندل‌های زنده ${symbol}...` : `Loading live ${symbol} chart...`}</span>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowEma((v) => !v)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showEma ? 'badge-signal' : 'btn-ghost text-dim'}`}
-              >
-                <Eye className="w-3 h-3" /> EMA
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowKbos((v) => !v)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${showKbos ? 'badge-signal' : 'btn-ghost text-dim'}`}
-              >
-                <Eye className="w-3 h-3" /> KBOS
-              </button>
-              <button
-                type="button"
-                onClick={() => setRightIntel('script')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${rightIntel === 'script' || customChartOverlay ? 'btn-lime' : 'btn-ghost text-dim'}`}
-              >
-                <Code2 className="w-3 h-3" /> Pine/Py
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRightIntel('ai');
-                  void askChartAI();
-                }}
-                disabled={aiLoading}
-                className="btn-gold px-3 py-1.5 rounded-xl text-[11px] inline-flex items-center gap-1.5"
-              >
-                <BrainCircuit className="w-3.5 h-3.5" />
-                <span>{aiLoading ? '...' : isFa ? 'تحلیل هوشمند AI' : 'AI Analyze'}</span>
-              </button>
             </div>
-          </div>
+          )}
 
-          <div className="flex-1 min-h-[470px]">
-            {snap?.candles?.length ? (
-              <CandlestickChart
-                candles={snap.candles}
-                overlays={chartOverlays}
-                kbosOverlays={showKbos ? snap.kbosOverlays : undefined}
-                customOverlays={customChartOverlay ?? snap.customOverlays}
-                levels={chartLevels}
-                height={500}
-              />
-            ) : (
-              <div className="h-[500px] grid place-items-center text-xs text-dim">
-                <div className="flex flex-col items-center gap-2">
-                  <RefreshCw className="w-5 h-5 animate-spin text-[var(--gold)]" />
-                  <span>{isFa ? `در حال دریافت کندل‌های زنده ${symbol}...` : `Loading live ${symbol} chart...`}</span>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* TradingView Bottom Pine Script v5/v6 Dock Editor directly under Chart */}
+          {pineDockOpen && (
+            <PineEditorDock
+              lang={lang}
+              symbol={symbol}
+              timeframe={tf}
+              initialScript={pendingPineSample}
+              onAppliedToChart={(overlayObj) => setCustomChartOverlay(overlayObj)}
+              onClearFromChart={() => setCustomChartOverlay(null)}
+              onActivatedOnBot={onRefresh}
+              onClose={() => setPineDockOpen(false)}
+            />
+          )}
 
           {/* Live Orderbook Micro-Pulse & Quick Limit Fill Strip (keeps Chart column aligned with Order Ticket) */}
           <div className="rounded-2xl surface-soft border hairline px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-[11px]">
@@ -1813,147 +1843,15 @@ export function TerminalPage({
             </div>
           </div>
         ) : rightIntel === 'script' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            <div className="lg:col-span-4 space-y-2.5">
-              <div className="grid grid-cols-2 gap-1.5">
-                {(['pine', 'python'] as const).map((lng) => (
-                  <button
-                    key={lng}
-                    type="button"
-                    onClick={() => {
-                      setScriptLang(lng);
-                      const sample = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.language === lng);
-                      if (sample) {
-                        setScriptName(isFa ? sample.nameFa : sample.nameEn);
-                        setScriptCode(sample.code);
-                      }
-                    }}
-                    className={`py-1.5 rounded-lg text-[11px] font-black uppercase ${scriptLang === lng ? 'btn-lime' : 'btn-ghost text-dim'}`}
-                  >
-                    {lng === 'pine' ? 'Pine v5' : 'Python'}
-                  </button>
-                ))}
-              </div>
-
-              <select
-                value=""
-                onChange={(e) => {
-                  const found = SAMPLE_CUSTOM_STRATEGIES.find((s) => s.id === e.target.value);
-                  if (found) {
-                    setScriptLang(found.language);
-                    setScriptName(isFa ? found.nameFa : found.nameEn);
-                    setScriptCode(found.code);
-                  }
-                }}
-                className="field py-1.5 px-2.5 text-[11px]"
-              >
-                <option value="">{isFa ? 'بارگذاری از کتابخانه نمونه...' : 'Load sample script...'}</option>
-                {SAMPLE_CUSTOM_STRATEGIES.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {isFa ? s.nameFa : s.nameEn}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                value={scriptName}
-                onChange={(e) => setScriptName(e.target.value)}
-                placeholder={isFa ? 'نام اسکریپت' : 'Script name'}
-                className="field py-1.5 px-2.5 text-[11px] font-bold"
-              />
-
-              {scriptFeedback && (
-                <div className={`p-2.5 rounded-xl text-[10px] font-bold ${scriptFeedback.ok ? 'badge-signal' : 'bg-rose-500/15 text-loss'}`}>
-                  <div>{scriptFeedback.text}</div>
-                  {scriptFeedback.retPct !== undefined && (
-                    <div dir="ltr" className="font-num mt-0.5">
-                      Return: {scriptFeedback.retPct >= 0 ? '+' : ''}{scriptFeedback.retPct.toFixed(2)}% · WR: {scriptFeedback.wr?.toFixed(1)}%
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  disabled={scriptBusy}
-                  onClick={async () => {
-                    setScriptBusy(true);
-                    setScriptFeedback(null);
-                    try {
-                      const ev = await apiFetch<{
-                        valid: boolean;
-                        title: string;
-                        errors: string[];
-                        plots: CustomStrategyChartOverlay['plots'];
-                        markers: CustomStrategyChartOverlay['markers'];
-                        backtestSummary?: { metrics: { netReturnPct: number; winRatePct: number } };
-                      }>('/api/trading/strategies/evaluate', {
-                        method: 'POST',
-                        body: JSON.stringify({ language: scriptLang, code: scriptCode, symbol, timeframe: tf }),
-                      });
-                      if (ev.valid) {
-                        setCustomChartOverlay({
-                          title: ev.title || scriptName,
-                          language: scriptLang,
-                          plots: ev.plots,
-                          markers: ev.markers,
-                        });
-                        setScriptFeedback({
-                          ok: true,
-                          text: isFa ? `روی چارت رسم شد (${ev.plots.length} خط، ${ev.markers.length} سیگنال)` : `Plotted (${ev.plots.length} lines, ${ev.markers.length} signals)`,
-                          retPct: ev.backtestSummary?.metrics.netReturnPct,
-                          wr: ev.backtestSummary?.metrics.winRatePct,
-                        });
-                      } else {
-                        setScriptFeedback({ ok: false, text: ev.errors[0] || 'Invalid script' });
-                      }
-                    } catch (err) {
-                      setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Error' });
-                    } finally {
-                      setScriptBusy(false);
-                    }
-                  }}
-                  className="btn-cobalt py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>{scriptBusy ? '...' : isFa ? 'اجرا روی چارت' : 'Plot Chart'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={scriptBusy}
-                  onClick={async () => {
-                    setScriptBusy(true);
-                    try {
-                      const saved = await apiFetch<{ strategy: { id: string } }>('/api/trading/strategies', {
-                        method: 'POST',
-                        body: JSON.stringify({ name: scriptName, language: scriptLang, code: scriptCode, timeframe: tf }),
-                      });
-                      await apiFetch(`/api/trading/strategies/${saved.strategy.id}/activate`, { method: 'POST' });
-                      setScriptFeedback({ ok: true, text: isFa ? 'ذخیره و روی ربات خودکار فعال شد' : 'Saved & deployed to auto bot' });
-                      await onRefresh();
-                    } catch (err) {
-                      setScriptFeedback({ ok: false, text: err instanceof Error ? err.message : 'Save failed' });
-                    } finally {
-                      setScriptBusy(false);
-                    }
-                  }}
-                  className="btn-emerald py-2 rounded-xl text-[11px] inline-flex items-center justify-center gap-1"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'فعال‌سازی ربات' : 'Deploy Bot'}</span>
-                </button>
-              </div>
-            </div>
-            <textarea
-              dir="ltr"
-              spellCheck={false}
-              rows={10}
-              value={scriptCode}
-              onChange={(e) => setScriptCode(e.target.value)}
-              className="lg:col-span-8 w-full rounded-2xl p-3 font-mono text-[11px] leading-relaxed bg-[#060d20] text-[#dce8ff] border border-blue-500/30 outline-none"
-            />
-          </div>
+          <PineEditorDock
+            lang={lang}
+            symbol={symbol}
+            timeframe={tf}
+            initialScript={pendingPineSample}
+            onAppliedToChart={(overlayObj) => setCustomChartOverlay(overlayObj)}
+            onClearFromChart={() => setCustomChartOverlay(null)}
+            onActivatedOnBot={onRefresh}
+          />
         ) : (
           /* Clean 12-Col Spacious Live Price Alerts + R:R Summary */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">

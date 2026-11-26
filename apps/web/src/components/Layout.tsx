@@ -529,7 +529,7 @@ export function Layout({
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       void loadNotifications();
-    }, 90_000);
+    }, 180_000);
     return () => {
       clearInterval(iv);
     };

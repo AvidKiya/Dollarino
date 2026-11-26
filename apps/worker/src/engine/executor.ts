@@ -20,7 +20,7 @@ import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { resolveTelegramBotToken } from '../telegram/token.js';
 import { formatTradeOpenedCard } from '../telegram/formatter.js';
-import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard } from '../telegram/publisher.js';
+import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard, publishSystemLogEvent, publishTransactionEvent } from '../telegram/publisher.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 
@@ -135,7 +135,7 @@ export function rowToBotConfig(r: UserBotConfigRow): BotConfig {
     macroBlackout: Boolean(r.macro_blackout),
     aiGateEnabled: Boolean(r.ai_gate_enabled),
     aiMinConfidence: r.ai_min_confidence,
-    signalChannelHandle: r.signal_channel_handle || '@Dollarino_official',
+    signalChannelHandle: r.signal_channel_handle || '',
     mixerThreshold: r.mixer_threshold ?? 65,
     mixerWeights,
     kbosParams,
@@ -272,6 +272,14 @@ export async function executeSignalForUser(
   if (cfgRow.trading_mode === 'LIVE') {
     const feeCheck = await checkLiveFeeEnforcement(env.DB, userId);
     if (!feeCheck.allowed) {
+      await publishTransactionEvent(env, {
+        eventType: 'ACCOUNT_LOCKED',
+        status: 'LOCKED',
+        title: 'محدودیت موقت ورود معامله جدید (معوقات ۳٪)',
+        amountUsd: Number(feeCheck.totalDueUsd || 0),
+        userId,
+        details: 'به دلیل عدم تسویه سررسید ۳٪ سود، ورود جدید LIVE مسدود شد (پوزیشن‌های باز همچنان مدیریت می‌شوند).',
+      }).catch(() => {});
       return {
         ok: false,
         error:
@@ -528,6 +536,15 @@ export async function executeSignalForUser(
     }).catch(() => {});
   }
 
+  await publishSystemLogEvent(env, {
+    category: 'BOT_ACTIVITY',
+    level: 'INFO',
+    source: `Executor:${provider}`,
+    title: `باز شدن معامله ${effectiveSignal.direction} ${effectiveSignal.symbol} (${effectiveMode})`,
+    userId,
+    details: `ورود: $${order.filledPrice} | مارجین: $${decision.marginUsed} | اهرم: ${decision.effectiveLeverage}x | SL: $${effectiveSignal.stopLoss}`,
+  }).catch(() => {});
+
   return { ok: true, tradeId };
 }
 
@@ -567,52 +584,60 @@ interface OpenTradeRow {
  * Monitors pending LIMIT orders and open trades against live market prices and executes exact 3-TP staged exits
  * with automatic Risk-Free (SL->Entry at TP1, SL->TP1 at TP2).
  */
-export async function reconcileOpenPositionsForUser(env: Env, userId: string): Promise<number> {
-  const cfg = await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(userId).first<UserBotConfigRow>();
+export async function reconcileOpenPositionsForUser(
+  env: Env,
+  userId: string,
+  opts?: { prefetchedCfg?: UserBotConfigRow | null; checkPendingOrders?: boolean }
+): Promise<number> {
+  const cfg =
+    opts?.prefetchedCfg ??
+    (await env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(userId).first<UserBotConfigRow>());
   if (!cfg) return 0;
 
   let processed = 0;
 
-  // 0. Check pending LIMIT orders matching the current trading mode (never leak PAPER orders into LIVE or vice versa)
-  const pendingRows = await env.DB.prepare(
-    `SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' AND mode = ?`
-  ).bind(userId, cfg.trading_mode).all<{
-    id: string;
-    symbol: string;
-    direction: Direction;
-    price: string;
-    leverage: number;
-    stop_loss: string;
-    tp1: string;
-    tp2: string | null;
-    tp3: string | null;
-    strategy_key: string;
-  }>();
+  // 0. Check pending LIMIT orders matching the current trading mode (skip D1 query when caller knows none exist)
+  if (opts?.checkPendingOrders !== false) {
+    const pendingRows = await env.DB.prepare(
+      `SELECT * FROM pending_orders WHERE user_id = ? AND status = 'PENDING' AND mode = ?`
+    ).bind(userId, cfg.trading_mode).all<{
+      id: string;
+      symbol: string;
+      direction: Direction;
+      price: string;
+      leverage: number;
+      stop_loss: string;
+      tp1: string;
+      tp2: string | null;
+      tp3: string | null;
+      strategy_key: string;
+    }>();
 
-  for (const po of pendingRows.results) {
-    const { adapter } = await resolveUserExchangeAdapter(env, userId, cfg.trading_mode === 'PAPER' ? 'paper' : undefined);
-    const livePx = Number(await adapter.getTickerPrice(po.symbol));
-    const target = Number(po.price);
-    const filled = po.direction === 'LONG' ? livePx <= target : livePx >= target;
-    if (filled) {
-      await env.DB.prepare(`UPDATE pending_orders SET status = 'FILLED' WHERE id = ?`).bind(po.id).run();
-      await executeSignalForUser(
-        env,
-        userId,
-        {
-          symbol: po.symbol,
-          direction: po.direction,
-          timeframe: cfg.entry_timeframe,
-          price: po.price,
-          stopLoss: po.stop_loss,
-          leverage: po.leverage,
-          tp1: po.tp1,
-          tp2: po.tp2 ?? undefined,
-          tp3: po.tp3 ?? undefined,
-        },
-        { forceBypassState: true, strategyKey: po.strategy_key, marketType: cfg.market_type ?? 'FUTURES' }
-      );
-      processed++;
+    for (const po of pendingRows.results) {
+      const { adapter } = await resolveUserExchangeAdapter(env, userId, cfg.trading_mode === 'PAPER' ? 'paper' : undefined);
+      const livePx = Number(await adapter.getTickerPrice(po.symbol));
+      const target = Number(po.price);
+      const filled = po.direction === 'LONG' ? livePx <= target : livePx >= target;
+      if (filled) {
+        await env.DB.prepare(`UPDATE pending_orders SET status = 'FILLED' WHERE id = ?`).bind(po.id).run();
+        await executeSignalForUser(
+          env,
+          userId,
+          {
+            symbol: po.symbol,
+            direction: po.direction,
+            timeframe: cfg.entry_timeframe,
+            price: po.price,
+            stopLoss: po.stop_loss,
+            leverage: po.leverage,
+            tp1: po.tp1,
+            tp2: po.tp2 ?? undefined,
+            tp3: po.tp3 ?? undefined,
+          },
+          { forceBypassState: true, strategyKey: po.strategy_key, marketType: cfg.market_type ?? 'FUTURES' }
+        );
+        processed++;
+      }
     }
   }
 
@@ -699,7 +724,7 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
           closedAt: new Date().toISOString(),
         }).catch(() => {});
 
-        await recordProfitShareServerFee(env.DB, {
+        const feeRes = await recordProfitShareServerFee(env.DB, {
           userId,
           tradeId: t.id,
           source: 'PERP_LIVE',
@@ -707,7 +732,18 @@ export async function reconcileOpenPositionsForUser(env: Env, userId: string): P
           mode: t.mode,
           realizedPnlUsd: newRealized,
           tradeAmountUsd: Number(t.initial_quantity || 0) * Number(t.entry_price || mark || 0),
-        }).catch(() => {});
+        }).catch(() => null);
+        if (feeRes && feeRes.feeUsd > 0) {
+          await publishTransactionEvent(env, {
+            eventType: 'SERVER_FEE',
+            status: 'DUE',
+            title: `ثبت کارمزد ۳٪ معامله سودده ${t.symbol}`,
+            amountUsd: feeRes.feeUsd,
+            userId,
+            invoiceNo: t.id,
+            details: `سود محقق‌شده: $${Number(newRealized || 0).toFixed(2)} · سهم ۳٪ سرور: $${feeRes.feeUsd.toFixed(4)}`,
+          }).catch(() => {});
+        }
       } else {
         await env.DB.prepare(
           `UPDATE trades SET remaining_quantity = ?, realized_pnl = ?, fees_paid = ? WHERE id = ?`

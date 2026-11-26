@@ -30,6 +30,7 @@ import { trustWalletRoutes } from './routes/trustwallet.js';
 import { evaluateTradingViewFreeAlerts, syncTelegramBotAutoOnVersion, webhookRoutes } from './routes/webhooks.js';
 import { getFounderProfile } from './services/founder-profile.js';
 import { SERVER_PROFIT_FEE_PCT, FREE_PROFITABLE_LIVE_TRADES } from './services/server-fee.js';
+import { publishDatabaseReport, publishSystemLogEvent, publishTransactionEvent } from './telegram/publisher.js';
 import type { UserBotConfigRow } from './engine/executor.js';
 import { runNewListingAndMemeSniperForUser } from './engine/listing-sniper.js';
 import { syncAutoTopSiteTraders } from './services/site-traders.js';
@@ -698,8 +699,7 @@ export default {
            EXISTS(SELECT 1 FROM copy_follow_rules WHERE is_active = 1 AND trader_kind = 'SMART_WALLET') AS has_copy_watch,
            EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos,
            EXISTS(SELECT 1 FROM tradingview_free_alerts WHERE is_active = 1) AS has_tv_alert,
-           EXISTS(SELECT 1 FROM scheduled_broadcasts WHERE status = 'SCHEDULED') AS has_sched_bc,
-           EXISTS(SELECT 1 FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') AND (COALESCE(sniper_enabled, 0) = 1 OR COALESCE(active_engines_json, '') LIKE '%LISTING_SNIPER%')) AS has_sniper`
+           EXISTS(SELECT 1 FROM scheduled_broadcasts WHERE status = 'SCHEDULED') AS has_sched_bc`
       )
         .first<{
           has_bot: number;
@@ -709,7 +709,6 @@ export default {
           has_copy_pos: number;
           has_tv_alert: number;
           has_sched_bc: number;
-          has_sniper: number;
         }>()
         .catch(() => null);
 
@@ -729,12 +728,8 @@ export default {
         await dispatchDueScheduledBroadcasts(env).catch(() => {});
       }
 
-      // Auto top-traders aggregation is heavy; throttle to once every 60 minutes
-      const lastTopSyncMs = Number(await getCachedSystemSetting(env.DB, 'intel_last_top_traders_sync', '0')) || 0;
-      if (Date.now() - lastTopSyncMs >= 60 * 60_000) {
-        await setCachedSystemSetting(env.DB, 'intel_last_top_traders_sync', String(Date.now())).catch(() => {});
-        await syncAutoTopSiteTraders(env.DB).catch(() => {});
-      }
+      // Auto top-traders aggregation is heavy; skip DB reads unless auto-publish or published site traders exist (30m cached throttle inside syncAutoTopSiteTraders)
+      await syncAutoTopSiteTraders(env.DB).catch(() => {});
 
       if (!activity || activity.has_copy_watch) {
         await pollWatchedWalletsForNewTrades(env).catch(() => {});
@@ -743,12 +738,12 @@ export default {
         await reconcileCopyPositionsV2(env).catch(() => {});
       }
 
-      // Run CEX New Listing & DEX Booming Meme Sniper only if at least one user enabled sniper or LISTING_SNIPER
-      if (!activity || activity.has_sniper) {
+      // Run CEX New Listing & DEX Booming Meme Sniper only when at least one bot is actively running
+      if (!activity || activity.has_bot) {
         const sniperUsers = await env.DB.prepare(
           `SELECT * FROM bot_configs
            WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')
-             AND (COALESCE(sniper_enabled, 0) = 1 OR COALESCE(active_engines_json, '') LIKE '%LISTING_SNIPER%')
+             AND (sniper_enabled = 1 OR active_engines_json LIKE '%LISTING_SNIPER%')
            LIMIT 25`
         )
           .all<UserBotConfigRow>()
@@ -756,6 +751,106 @@ export default {
         for (const su of sniperUsers.results) {
           await runNewListingAndMemeSniperForUser(env, su.user_id, su).catch(() => {});
         }
+      }
+
+      // Periodic 05. Database Report (default every 6h)
+      try {
+        const [intervalStr, lastDbReportStr, lastDigestStr] = await Promise.all([
+          getCachedSystemSetting(env.DB, 'database_report_interval_hours', '6'),
+          getCachedSystemSetting(env.DB, 'last_db_channel_report_at', ''),
+          getCachedSystemSetting(env.DB, 'last_settlement_digest_at', ''),
+        ]);
+        const intervalHours = Math.max(1, Math.min(168, Number(intervalStr) || 6));
+        const lastDbMs = lastDbReportStr ? Date.parse(lastDbReportStr) : 0;
+        if (!Number.isFinite(lastDbMs) || Date.now() - lastDbMs >= intervalHours * 3600_000) {
+          const rep = await publishDatabaseReport(env, { eventType: 'PERIODIC_STATUS' });
+          if (rep.ok) {
+            await setCachedSystemSetting(env.DB, 'last_db_channel_report_at', new Date().toISOString()).catch(() => {});
+          }
+        }
+
+        // Daily 06. Transactions Settlement Digest (every 24h when open fee accounts exist)
+        const lastDigMs = lastDigestStr ? Date.parse(lastDigestStr) : 0;
+        if (!Number.isFinite(lastDigMs) || Date.now() - lastDigMs >= 24 * 3600_000) {
+          const [feeAccruedRows, lockedOrPenalizedUsers] = await Promise.all([
+            env.DB.prepare(
+              `SELECT l.user_id, u.username, COALESCE(u.fee_lock_status, 'ACTIVE') AS lock_status,
+                      u.fee_grace_deadline, COALESCE(u.fee_penalty_usd, 0) AS penalty_usd,
+                      SUM(l.fee_usd) AS accrued_usd
+               FROM server_fee_ledger l
+               JOIN users u ON u.id = l.user_id
+               WHERE l.status = 'ACCRUED'
+               GROUP BY l.user_id
+               HAVING accrued_usd > 0
+               ORDER BY accrued_usd DESC
+               LIMIT 25`
+            )
+              .all<{
+                user_id: string;
+                username: string;
+                lock_status: string;
+                fee_grace_deadline: string | null;
+                penalty_usd: number;
+                accrued_usd: number;
+              }>()
+              .catch(() => ({ results: [] })),
+            env.DB.prepare(
+              `SELECT id AS user_id, username, COALESCE(fee_lock_status, 'ACTIVE') AS lock_status,
+                      fee_grace_deadline, COALESCE(fee_penalty_usd, 0) AS penalty_usd
+               FROM users
+               WHERE fee_lock_status != 'ACTIVE' OR fee_penalty_usd > 0
+               LIMIT 25`
+            )
+              .all<{
+                user_id: string;
+                username: string;
+                lock_status: string;
+                fee_grace_deadline: string | null;
+                penalty_usd: number;
+              }>()
+              .catch(() => ({ results: [] })),
+          ]);
+
+          const mergedDue = new Map<
+            string,
+            { user_id: string; username: string; lock_status: string; fee_grace_deadline: string | null; penalty_usd: number; accrued_usd: number }
+          >();
+          for (const r of feeAccruedRows.results) mergedDue.set(r.user_id, r);
+          for (const u of lockedOrPenalizedUsers.results) {
+            if (!mergedDue.has(u.user_id)) {
+              mergedDue.set(u.user_id, { ...u, accrued_usd: 0 });
+            }
+          }
+          const dueList = Array.from(mergedDue.values())
+            .sort((a, b) => Number(b.accrued_usd) + Number(b.penalty_usd) - (Number(a.accrued_usd) + Number(a.penalty_usd)))
+            .slice(0, 25);
+
+          if (dueList.length > 0) {
+            const totalDue = dueList.reduce((s, r) => s + Number(r.accrued_usd || 0) + Number(r.penalty_usd || 0), 0);
+            const summaryTxt = dueList
+              .map(
+                (r, idx) =>
+                  `${idx + 1}. \`${r.username}\` · بدهی: **$${(Number(r.accrued_usd) + Number(r.penalty_usd)).toFixed(2)}** · ${r.lock_status}${r.fee_grace_deadline ? ` · سررسید: ${r.fee_grace_deadline}` : ''}`
+              )
+              .join('\n');
+            await publishTransactionEvent(env, {
+              eventType: 'SETTLEMENT_DIGEST',
+              status: 'DUE',
+              title: 'گزارش خودکار روزانه موعد تسویه کاربران',
+              amountUsd: totalDue,
+              details: summaryTxt,
+            }).catch(() => {});
+          }
+          await setCachedSystemSetting(env.DB, 'last_settlement_digest_at', new Date().toISOString()).catch(() => {});
+        }
+      } catch (cronErr) {
+        await publishSystemLogEvent(env, {
+          category: 'ERROR',
+          level: 'ERROR',
+          source: 'CronScheduled',
+          title: 'خطای اجرای گزارش دوره‌ای کرون',
+          details: cronErr instanceof Error ? cronErr.message : String(cronErr),
+        }).catch(() => {});
       }
     })());
   },

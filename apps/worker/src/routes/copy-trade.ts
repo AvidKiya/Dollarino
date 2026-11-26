@@ -264,7 +264,6 @@ copyTradeRoutes.post('/copy-now/:tradeId', async (c) => {
     tp1: String(tp1),
     tp2: String(Number(tp2.toFixed(4))),
     tp3: String(Number(tp3.toFixed(4))),
-    channelHandle: '@Dollarino_official',
     engineKey: 'copy_trade',
     engineLabel: `🏆 کپی‌ترید تاییدشده · ${trade.display_name}`,
     reason: `کپی معامله از تریدر تاییدشده ${trade.display_name}`,

@@ -391,7 +391,7 @@ export function WeeklyCardPage({
 
     ctx.fillStyle = 'rgba(245,242,232,0.78)';
     ctx.font = '700 20px Manrope, sans-serif';
-    ctx.fillText(`@Dollarino_official · @Dollarino_bot · Verify ID: ${issuedCard.id}`, 64, H - 64);
+    ctx.fillText(`Dollarino Quant Platform · Verify ID: ${issuedCard.id}`, 64, H - 64);
 
     const a = document.createElement('a');
     a.download = `dollarino-profit-card-${issuedCard.id}-${layout}.png`;
@@ -412,7 +412,7 @@ export function WeeklyCardPage({
       setNotice(
         isFa
           ? `تصویر ${layout === 'horizontal' ? 'افقی ۱۶:۹' : 'استوری عمودی ۹:۱۶'} کارت سود مستقیم به تلگرام شما ارسال شد.`
-          : `Profit Card PNG sent to your Telegram (@Dollarino_bot).`
+          : `Profit Card PNG sent to your connected Telegram bot.`
       );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Telegram dispatch failed');
@@ -835,7 +835,7 @@ export function WeeklyCardPage({
                   <div className="pt-2 border-t border-white/15 flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p dir="ltr" className="text-[10px] font-mono-num font-bold truncate">
-                        {issuedCard.id} · @Dollarino_official · @Dollarino_bot
+                        {issuedCard.id} · Dollarino Quant Platform
                       </p>
                       <p className="text-[9px] opacity-75 truncate">
                         {issuedCard.signalName || issuedCard.strategyName} · HMAC-SHA256

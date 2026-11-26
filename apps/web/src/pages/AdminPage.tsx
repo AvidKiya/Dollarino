@@ -275,7 +275,7 @@ export function AdminPage({
     usdtTrc20Wallet: '',
     iranCardNumber: '',
     iranCardHolder: '',
-    telegramSupport: '@Dollarino_bot',
+    telegramSupport: '',
   });
 
   const [adminSection, setAdminSection] = useState<'menu' | 'overview' | 'banners' | 'founder' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'database' | 'all'>('menu');
@@ -319,15 +319,15 @@ export function AdminPage({
     addressEn: '',
     telegram: '@avidkiya',
     telegramUrl: 'https://t.me/avidkiya',
-    channel: '@Dollarino_official',
-    channelUrl: 'https://t.me/Dollarino_official',
+    channel: '',
+    channelUrl: '',
     instagram: '@avid_kiya',
     instagramUrl: 'https://instagram.com/avid_kiya',
     twitter: '@avid_kiya',
     twitterUrl: 'https://x.com/avid_kiya',
     github: '',
     website: '',
-    verificationId: 'TG-OWNER-944021185',
+    verificationId: '',
     independenceFa: 'تمامی بخش‌های دلارینو از صفر تا صد توسط یک نفر (آوید کیا) طراحی، کدنویسی و نگهداری شده و زیر پوشش هیچ شرکت، گروه یا واسطه ثالثی نیست.',
     independenceEn: 'Designed, engineered, and operated 0-to-100 solely by Avid Kiya without any third-party cover, syndicate, or intermediary.',
     bioFa: '',
@@ -343,7 +343,17 @@ export function AdminPage({
   const [showBotFatherGuide, setShowBotFatherGuide] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [userFilter, setUserFilter] = useState<'all' | 'kyc_verified' | 'trust_wallet' | 'unverified'>('all');
-  const [requirePhoneKyc, setRequirePhoneKyc] = useState(true);
+  const [requirePhoneKyc, setRequirePhoneKyc] = useState(false);
+  const [authCfg, setAuthCfg] = useState({
+    ownerTelegramId: '',
+    passwordLoginEnabled: true,
+    publicSignupEnabled: false,
+    walletAuthEnabled: false,
+    telegramAuthEnabled: false,
+    googleAuthEnabled: false,
+    telegramOnlySignup: false,
+    saving: false,
+  });
   const [trustReceivers, setTrustReceivers] = useState({
     evm: '',
     sol: '',
@@ -389,18 +399,53 @@ export function AdminPage({
     channels?: Array<{ key: string; handle: string; enabled: boolean }>;
   } | null>(null);
   const [checkingChannel, setCheckingChannel] = useState(false);
-  const [fiveChannels, setFiveChannels] = useState({
-    signals: '@Dollarino_official',
-    results: '@Dollarino_results',
-    news: '@Dollarino_news',
-    education: '@Dollarino_academy',
-    alerts: '@Dollarino_alerts',
+  const [ecosystemChannels, setEcosystemChannels] = useState({
+    official: '',
+    officialInvite: '',
+    enableOfficial: true,
+    signals: '',
+    signalsInvite: '',
     enableSignals: true,
+    signalsAlsoOfficial: false,
+    results: '',
+    resultsInvite: '',
     enableResults: true,
+    logs: '',
+    enableLogs: true,
+    database: '',
+    enableDatabase: true,
+    databaseReportIntervalHours: 6,
+    transactions: '',
+    enableTransactions: true,
+    news: '',
+    newsInvite: '',
     enableNews: true,
+    education: '',
+    alerts: '',
     enableEdu: true,
     enableAlerts: true,
   });
+  const [savingEcosystem, setSavingEcosystem] = useState(false);
+  const [verifyingAllChannels, setVerifyingAllChannels] = useState(false);
+  const [verifyAllResults, setVerifyAllResults] = useState<Array<{
+    key: string;
+    label: string;
+    target: string;
+    configured: boolean;
+    ok: boolean;
+    chatTitle?: string;
+    memberStatus?: string;
+    error?: string;
+  }> | null>(null);
+  const [officialPostForm, setOfficialPostForm] = useState({
+    kind: 'PROJECT_UPDATE' as 'PROJECT_UPDATE' | 'ANNOUNCEMENT' | 'PROMO' | 'LOTTERY' | 'ADVICE',
+    title: '',
+    body: '',
+    buttonLabel: '',
+    buttonUrl: '',
+    notifyBotUsers: false,
+  });
+  const [publishingOfficial, setPublishingOfficial] = useState(false);
   const [channelSignalForm, setChannelSignalForm] = useState({
     symbol: 'BTCUSDT',
     direction: 'LONG' as 'LONG' | 'SHORT',
@@ -484,7 +529,7 @@ export function AdminPage({
     source: 'db' | 'env' | 'none';
     masked: string;
     botUsername: string;
-  }>({ configured: false, source: 'none', masked: '', botUsername: 'Dollarino_bot' });
+  }>({ configured: false, source: 'none', masked: '', botUsername: '' });
   const [botWebhookInfo, setBotWebhookInfo] = useState<{
     url: string;
     pending_update_count: number;
@@ -576,6 +621,7 @@ export function AdminPage({
     productionChecks?: {
       jwtSecretOk: boolean;
       encryptionKeyOk: boolean;
+      ownerTelegramIdConfigured?: boolean;
       telegramBotConfigured: boolean;
       aiEngineConfigured: boolean;
       feeReceiverWalletConfigured: boolean;
@@ -693,7 +739,7 @@ export function AdminPage({
   const [botStopBusy, setBotStopBusy] = useState<string | null>(null);
   const [adminTvWebhookUrl, setAdminTvWebhookUrl] = useState('');
   const [adminTvCopied, setAdminTvCopied] = useState(false);
-  const [adminTvChannel, setAdminTvChannel] = useState('@Dollarino_official');
+  const [adminTvChannel, setAdminTvChannel] = useState('');
   const [adminTvRawSig, setAdminTvRawSig] = useState(() =>
     formatDollarinoSignal({
       symbol: 'BTCUSDT',
@@ -705,7 +751,6 @@ export function AdminPage({
       tp1: '63500',
       tp2: '65000',
       tp3: '66500',
-      channelHandle: '@Dollarino_official',
     })
   );
 
@@ -756,8 +801,8 @@ export function AdminPage({
     if (tvRes?.webhookUrl) {
       setAdminTvWebhookUrl(tvRes.webhookUrl);
     }
-    if (ov.settings.official_channel) {
-      setAdminTvChannel(ov.settings.official_channel);
+    if (ov.settings.signals_channel_id || ov.settings.official_channel) {
+      setAdminTvChannel(ov.settings.signals_channel_id || ov.settings.official_channel || '');
     }
     if (treasuryRes) {
       setTreasurySummary(treasuryRes);
@@ -792,21 +837,45 @@ export function AdminPage({
     setAuditLogs(logRes.logs || []);
     setAdminReferrals(refAdminRes.referrals || []);
     setRefWithdrawals(refAdminRes.withdrawals || []);
-    setRequirePhoneKyc((ov.settings.require_telegram_phone_kyc ?? 'true') !== 'false');
+    setRequirePhoneKyc(ov.settings.require_telegram_phone_kyc === 'true');
+    setAuthCfg({
+      ownerTelegramId: ov.settings.owner_telegram_id || '',
+      passwordLoginEnabled: (ov.settings.auth_password_login_enabled ?? 'true') !== 'false',
+      publicSignupEnabled: ov.settings.auth_public_signup_enabled === 'true',
+      walletAuthEnabled: ov.settings.auth_wallet_enabled === 'true',
+      telegramAuthEnabled: ov.settings.auth_telegram_enabled === 'true',
+      googleAuthEnabled: ov.settings.auth_google_enabled === 'true',
+      telegramOnlySignup: ov.settings.telegram_only_signup === 'true',
+      saving: false,
+    });
     setTrustReceivers({
       evm: ov.settings.trust_wallet_evm_receiver || '',
       sol: ov.settings.trust_wallet_sol_receiver || '',
       ton: ov.settings.trust_wallet_ton_receiver || '',
     });
-    setFiveChannels({
-      signals: ov.settings.signals_channel_id || ov.settings.official_channel || '@Dollarino_official',
-      results: ov.settings.results_channel_id || '@Dollarino_results',
-      news: ov.settings.news_channel_id || '@Dollarino_news',
-      education: ov.settings.education_channel_id || '@Dollarino_academy',
-      alerts: ov.settings.alerts_channel_id || '@Dollarino_alerts',
+    setEcosystemChannels({
+      official: ov.settings.official_channel || '',
+      officialInvite: ov.settings.official_channel_invite || '',
+      enableOfficial: ov.settings.channel_official_enabled !== 'false',
+      signals: ov.settings.signals_channel_id || '',
+      signalsInvite: ov.settings.signals_channel_invite || '',
       enableSignals: ov.settings.channel_signals_enabled !== 'false',
+      signalsAlsoOfficial: ov.settings.signals_also_official === 'true',
+      results: ov.settings.results_channel_id || '',
+      resultsInvite: ov.settings.results_channel_invite || '',
       enableResults: ov.settings.channel_results_enabled !== 'false',
+      logs: ov.settings.logs_channel_id || '',
+      enableLogs: ov.settings.channel_logs_enabled !== 'false',
+      database: ov.settings.database_channel_id || '',
+      enableDatabase: ov.settings.channel_database_enabled !== 'false',
+      databaseReportIntervalHours: Number(ov.settings.database_report_interval_hours || 6) || 6,
+      transactions: ov.settings.transactions_channel_id || '',
+      enableTransactions: ov.settings.channel_transactions_enabled !== 'false',
+      news: ov.settings.news_channel_id || '',
+      newsInvite: ov.settings.news_channel_invite || '',
       enableNews: ov.settings.channel_news_enabled !== 'false',
+      education: ov.settings.education_channel_id || '',
+      alerts: ov.settings.alerts_channel_id || '',
       enableEdu: ov.settings.channel_education_enabled !== 'false',
       enableAlerts: ov.settings.channel_alerts_enabled !== 'false',
     });
@@ -884,10 +953,150 @@ export function AdminPage({
         telegramSupport:
           subMe.paymentConfig.telegram_support && !/Dollarino_admin|Dollarinoofficial/i.test(subMe.paymentConfig.telegram_support)
             ? subMe.paymentConfig.telegram_support
-            : '@Dollarino_bot',
+            : '',
       });
     }
   };
+
+  const saveAuthProviders = async () => {
+    const cleanOwnerTg = authCfg.ownerTelegramId.trim();
+    if (cleanOwnerTg && !/^\d{5,16}$/.test(cleanOwnerTg)) {
+      setMsg(isFa ? 'آیدی عددی تلگرام مالک باید ۵ تا ۱۶ رقم باشد.' : 'Owner Telegram numeric ID must be 5–16 digits.');
+      return;
+    }
+    setAuthCfg((p) => ({ ...p, saving: true }));
+    setMsg(null);
+    try {
+      await apiFetch('/api/admin/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          owner_telegram_id: cleanOwnerTg,
+          auth_password_login_enabled: authCfg.passwordLoginEnabled ? 'true' : 'false',
+          auth_public_signup_enabled: authCfg.publicSignupEnabled ? 'true' : 'false',
+          auth_wallet_enabled: authCfg.walletAuthEnabled ? 'true' : 'false',
+          auth_telegram_enabled: authCfg.telegramAuthEnabled ? 'true' : 'false',
+          auth_google_enabled: authCfg.googleAuthEnabled ? 'true' : 'false',
+          telegram_only_signup: authCfg.telegramOnlySignup ? 'true' : 'false',
+          require_telegram_phone_kyc: requirePhoneKyc ? 'true' : 'false',
+        }),
+      });
+      setMsg(
+        isFa
+          ? 'تنظیمات روش‌های ورود کاربران و آیدی تلگرام مالک ذخیره شد ✅'
+          : 'User authentication methods & owner Telegram ID saved ✅'
+      );
+      await load();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to save auth provider settings');
+    } finally {
+      setAuthCfg((p) => ({ ...p, saving: false }));
+    }
+  };
+
+  const renderAuthProvidersCard = () => (
+    <div className="surface-card rounded-3xl p-4 sm:p-5 space-y-4 border border-amber-500/25">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-brand" />
+            <span>{isFa ? 'کنترل روش‌های ورود کاربران و شناسه مالک تلگرام' : 'User Authentication Methods & Owner Telegram ID'}</span>
+          </h3>
+          <p className="text-xs text-sub mt-1">
+            {isFa
+              ? 'در حالت پیش‌فرض و خام سایت، تمامی روش‌های ثبت‌نام/ورود عمومی کاربران خاموش هستند؛ هر روشی را که پس از تنظیم می‌خواهید برای کاربران فعال کنید، از اینجا روشن نمایید.'
+              : 'On a clean setup all public user login/signup methods start disabled. Configure integrations and enable each method below.'}
+          </p>
+        </div>
+        <span className="px-3 py-1 rounded-full text-[11px] font-black border bg-emerald-500/10 border-emerald-500/30 text-jade">
+          {[authCfg.publicSignupEnabled, authCfg.walletAuthEnabled, authCfg.telegramAuthEnabled, authCfg.googleAuthEnabled].filter(Boolean).length}{' '}
+          {isFa ? 'روش عمومی فعال' : 'Public Active'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        <div className="surface-soft rounded-2xl p-3 border hairline space-y-1.5">
+          <label className="text-[11px] font-bold text-dim block">
+            {isFa ? 'آیدی عددی تلگرام مالک اصلی (Owner Telegram ID):' : 'Owner Telegram Numeric ID:'}
+          </label>
+          <input
+            dir="ltr"
+            value={authCfg.ownerTelegramId}
+            onChange={(e) => setAuthCfg((p) => ({ ...p, ownerTelegramId: e.target.value.replace(/\D/g, '') }))}
+            placeholder={isFa ? 'خالی — مثال: 123456789 (از @userinfobot)' : 'Blank — e.g. 123456789'}
+            className="field py-2 text-xs font-mono-num"
+          />
+          <p className="text-[10px] text-dim">
+            {isFa
+              ? 'با ثبت آیدی عددی، ربات تلگرام هنگام پیام‌دادن، دسترسی سوپر‌ادمین را به این شناسه متصل می‌کند.'
+              : 'Grants super-admin Telegram bot privileges to this numeric Telegram ID.'}
+          </p>
+        </div>
+
+        <div className="surface-soft rounded-2xl p-3 border hairline space-y-2">
+          <div className="text-[11px] font-bold text-dim">
+            {isFa ? 'وضعیت فعال‌سازی روش‌های ورود و ثبت‌نام کاربران:' : 'Public Login & Registration Toggles:'}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {[
+              {
+                key: 'publicSignupEnabled' as const,
+                label: isFa ? 'ثبت‌نام مستقیم با ایمیل' : 'Direct Email Signup',
+                val: authCfg.publicSignupEnabled,
+              },
+              {
+                key: 'walletAuthEnabled' as const,
+                label: isFa ? 'ورود با کیف‌پول (Wallet)' : 'Trust Wallet / Web3',
+                val: authCfg.walletAuthEnabled,
+              },
+              {
+                key: 'telegramAuthEnabled' as const,
+                label: isFa ? 'ورود با ربات تلگرام' : 'Telegram Bot Auth',
+                val: authCfg.telegramAuthEnabled,
+              },
+              {
+                key: 'googleAuthEnabled' as const,
+                label: isFa ? 'ورود با حساب گوگل' : 'Google OAuth Sign-In',
+                val: authCfg.googleAuthEnabled,
+              },
+              {
+                key: 'passwordLoginEnabled' as const,
+                label: isFa ? 'ورود کاربران با نام‌کاربری/رمز' : 'User Password Login',
+                val: authCfg.passwordLoginEnabled,
+              },
+              {
+                key: 'telegramOnlySignup' as const,
+                label: isFa ? 'الزام ثبت‌نام فقط با ربات' : 'Telegram-Only Signup',
+                val: authCfg.telegramOnlySignup,
+              },
+            ].map((item) => (
+              <label key={item.key} className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-black/15 border hairline cursor-pointer">
+                <span className="text-[11px] font-bold text-main">{item.label}</span>
+                <input
+                  type="checkbox"
+                  checked={item.val}
+                  onChange={(e) => setAuthCfg((p) => ({ ...p, [item.key]: e.target.checked }))}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2.5">
+        <button
+          type="button"
+          data-testid="btn-save-auth-providers"
+          disabled={authCfg.saving}
+          onClick={() => void saveAuthProviders()}
+          className="px-4 py-2.5 rounded-xl btn-gold text-xs font-black"
+        >
+          {authCfg.saving
+            ? isFa ? 'در حال ذخیره...' : 'Saving...'
+            : isFa ? 'ذخیره روش‌های ورود و شناسه مالک' : 'Save Auth Methods & Owner ID'}
+        </button>
+      </div>
+    </div>
+  );
 
   const saveGoogleOauthKeys = async () => {
     setGoogleOauthForm((p) => ({ ...p, saving: true }));
@@ -1785,6 +1994,7 @@ export function AdminPage({
                     {[
                       { ok: systemHealth.productionChecks.jwtSecretOk, label: isFa ? 'کلید امنیتی JWT' : 'JWT Secret' },
                       { ok: systemHealth.productionChecks.encryptionKeyOk, label: isFa ? 'رمزنگاری Vault' : 'AES Vault Key' },
+                      { ok: Boolean(systemHealth.productionChecks.ownerTelegramIdConfigured || authCfg.ownerTelegramId), label: isFa ? 'آیدی تلگرام مالک' : 'Owner Telegram ID' },
                       { ok: systemHealth.productionChecks.telegramBotConfigured, label: isFa ? 'توکن ربات تلگرام' : 'Telegram Bot' },
                       { ok: Boolean(systemHealth.productionChecks.googleOauthConfigured ?? googleOauthForm.configured), label: isFa ? 'ورود با گوگل (OAuth)' : 'Google OAuth' },
                       { ok: systemHealth.productionChecks.aiEngineConfigured, label: isFa ? 'موتور هوش مصنوعی' : 'AI Gateway' },
@@ -1808,6 +2018,9 @@ export function AdminPage({
               )}
             </div>
           )}
+
+          {/* User Authentication Methods & Owner Telegram ID Control */}
+          {renderAuthProvidersCard()}
 
           {/* Google OAuth 2.0 Settings Card */}
           {renderGoogleOauthCard()}
@@ -2999,7 +3212,16 @@ export function AdminPage({
                       <option value="pricing">{isFa ? 'کارمزد ۳٪، درآمد و رفرال (pricing)' : '3% Fees & Referral (pricing)'}</option>
                       <option value="radar">{isFa ? 'رادار و استراتژی شکار (radar)' : 'Radar & IDE (radar)'}</option>
                       <option value="aichat">{isFa ? 'چت هوش مصنوعی و تحلیل عکس چارت (aichat)' : 'AI Vision Chat (aichat)'}</option>
-                      <option value="https://t.me/Dollarino_official">{isFa ? 'کانال رسمی تلگرام' : 'Telegram Channel'}</option>
+                {ecosystemChannels.official && (
+                  <option value={ecosystemChannels.officialInvite || `https://t.me/${ecosystemChannels.official.replace(/^@/, '')}`}>
+                    {isFa ? `چنل رسمی و اصلی (${ecosystemChannels.official})` : `Official Channel (${ecosystemChannels.official})`}
+                  </option>
+                )}
+                {ecosystemChannels.signals && (
+                  <option value={ecosystemChannels.signalsInvite || `https://t.me/${ecosystemChannels.signals.replace(/^@/, '')}`}>
+                    {isFa ? `01. سیگنال دلارینو (${ecosystemChannels.signals})` : `01. Signals (${ecosystemChannels.signals})`}
+                  </option>
+                )}
                     </select>
                   </div>
                   <div>
@@ -4271,63 +4493,125 @@ export function AdminPage({
           {/* Google OAuth 2.0 Settings Card (Also accessible under Ops & Integrations) */}
           {renderGoogleOauthCard()}
 
-          {/* Official Telegram Bot Token, Webhook, 24/7 Auto-Channels & Community Group Studio */}
+          {/* Official DOLLARINO 1+7+1 Ecosystem Hub (Bot + Main Channel + 7 Specialized Channels & Group) */}
           <div className="surface-card rounded-3xl p-5 sm:p-6 space-y-5 border-emerald-500/30">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
                   <Radio className="w-5 h-5 text-jade" />
-                  <span>{isFa ? 'مرکز ربات تلگرام، توکن، وب‌هوک، کانال‌های خودکار و گروه کامیونیتی' : 'Telegram Bot, Token, Webhook, Auto-Channels & Community Group'}</span>
+                  <span>{isFa ? 'ساختار رسمی DOLLARINO (۱ ربات رسمی + ۱ چنل اصلی + ۷ بخش اکوسیستم)' : 'Official DOLLARINO Ecosystem (1 Bot + 1 Main + 7 Sections)'}</span>
                 </h3>
                 <p className="text-xs text-sub mt-1">
                   {isFa
-                    ? 'ست کردن توکن ربات و وب‌هوک، ارسال ۱۰۰٪ خودکار سیگنال/اخبار ۲۴/۷، تنظیم کانال‌ها با آیدی عددی (-100...) و کنترل مبصر گروه کامیونیتی.'
-                    : 'Set Bot Token & Webhook, toggle 24/7 automatic signals/news, route numeric (-100...) channel IDs, and manage Community Group moderation.'}
+                    ? 'توکن ربات را وصل کنید و ربات را در کانال‌ها/گروه ادمین کنید؛ هر بخش یوزرنیم یا آیدی عددی (-100...) خودش را دارد و تمام رویدادها خودکار در کانال متناظر منتشر می‌شوند.'
+                    : 'Connect the Official Bot, make it admin, and configure the Main Channel + 7 ecosystem targets (Public, Group & Private -100... IDs).'}
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={checkingChannel}
-                onClick={async () => {
-                  setCheckingChannel(true);
-                  try {
-                    const res = await apiFetch<{
-                      ok?: boolean;
-                      channelHandle?: string;
-                      status?: string;
-                      canPostMessages?: boolean;
-                      botUsername?: string;
-                      error?: string;
-                      tokenStatus?: typeof botTokenStatus;
-                      webhookInfo?: typeof botWebhookInfo;
-                    }>('/api/admin/telegram/channel-status');
-                    if (res.tokenStatus) setBotTokenStatus(res.tokenStatus);
-                    setBotWebhookInfo(res.webhookInfo ?? null);
-                    setChannelCheck({
-                      ok: res.ok,
-                      channelHandle: res.channelHandle,
-                      botStatus: res.status,
-                      canPostMessages: res.canPostMessages,
-                      message: res.ok
-                        ? `✅ ربات @${res.botUsername || botTokenStatus.botUsername} با دسترسی کامل روی کانال/گروه فعال است (${res.status}).`
-                        : res.error || 'ربات هنوز ادمین نیست یا توکن تنظیم نشده است.',
-                    });
-                  } catch (e) {
-                    setChannelCheck({ ok: false, message: e instanceof Error ? e.message : 'Check failed' });
-                  } finally {
-                    setCheckingChannel(false);
-                  }
-                }}
-                className="px-4 py-2 rounded-xl btn-emerald text-xs font-black inline-flex items-center gap-1.5"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>{checkingChannel ? '...' : isFa ? 'بررسی ادمین ربات و وب‌هوک' : 'Check Bot Admin & Webhook'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={checkingChannel}
+                  onClick={async () => {
+                    setCheckingChannel(true);
+                    try {
+                      const res = await apiFetch<{
+                        ok?: boolean;
+                        channelHandle?: string;
+                        status?: string;
+                        canPostMessages?: boolean;
+                        botUsername?: string;
+                        error?: string;
+                        tokenStatus?: typeof botTokenStatus;
+                        webhookInfo?: typeof botWebhookInfo;
+                      }>('/api/admin/telegram/channel-status');
+                      if (res.tokenStatus) setBotTokenStatus(res.tokenStatus);
+                      setBotWebhookInfo(res.webhookInfo ?? null);
+                      setChannelCheck({
+                        ok: res.ok,
+                        channelHandle: res.channelHandle,
+                        botStatus: res.status,
+                        canPostMessages: res.canPostMessages,
+                        message: res.ok
+                          ? `✅ ربات @${res.botUsername || botTokenStatus.botUsername} متصل و آماده ارسال است (${res.status || 'OK'}).`
+                          : res.error || 'ربات هنوز ادمین نیست یا توکن تنظیم نشده است.',
+                      });
+                    } catch (e) {
+                      setChannelCheck({ ok: false, message: e instanceof Error ? e.message : 'Check failed' });
+                    } finally {
+                      setCheckingChannel(false);
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl btn-emerald text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>{checkingChannel ? '...' : isFa ? 'وضعیت ربات و وب‌هوک' : 'Bot & Webhook Status'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={verifyingAllChannels}
+                  onClick={async () => {
+                    setVerifyingAllChannels(true);
+                    try {
+                      const r = await apiFetch<{
+                        ok: boolean;
+                        results?: NonNullable<typeof verifyAllResults>;
+                        error?: string;
+                      }>('/api/admin/channels/verify-all', { method: 'POST' });
+                      if (r.results) setVerifyAllResults(r.results);
+                      const readyCount = (r.results || []).filter((x) => x.ok).length;
+                      setMsg(
+                        r.ok
+                          ? `بررسی کامل شد: ${readyCount} از ${(r.results || []).length} بخش آماده و دارای دسترسی ادمین ربات هستند.`
+                          : r.error || 'بررسی با خطا مواجه شد'
+                      );
+                    } catch (err) {
+                      setMsg(err instanceof Error ? err.message : 'Verify failed');
+                    } finally {
+                      setVerifyingAllChannels(false);
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl btn-cobalt text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{verifyingAllChannels ? '...' : isFa ? 'بررسی ادمین ربات در همه ۸ بخش' : 'Verify Admin Across All 8'}</span>
+                </button>
+              </div>
             </div>
+
+            {verifyAllResults && (
+              <div className="surface-soft rounded-2xl p-3 border hairline grid sm:grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
+                {verifyAllResults.map((vr) => (
+                  <div
+                    key={vr.key}
+                    className={`rounded-xl p-2 border ${
+                      !vr.configured
+                        ? 'border-zinc-500/20 bg-zinc-500/5 text-dim'
+                        : vr.ok
+                          ? 'border-emerald-500/35 bg-emerald-500/10 text-main'
+                          : 'border-rose-500/35 bg-rose-500/10 text-loss'
+                    }`}
+                  >
+                    <div className="font-black truncate">{vr.label}</div>
+                    <div className="font-mono text-[10px] truncate mt-0.5" dir="ltr">
+                      {vr.configured ? `${vr.target}${vr.chatTitle ? ` (${vr.chatTitle})` : ''}` : isFa ? '— تنظیم‌نشده' : 'Not configured'}
+                    </div>
+                    <div className="text-[10px] mt-0.5 font-bold">
+                      {!vr.configured
+                        ? isFa
+                          ? '⏳ منتظر ورود آیدی'
+                          : 'Pending ID'
+                        : vr.ok
+                          ? `✅ ادمین تاییدشده (${vr.memberStatus})`
+                          : `❌ ${vr.error || 'دسترسی ربات ندارد'}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {channelCheck && (
               <div className={`rounded-2xl p-3 text-xs font-bold border ${channelCheck.canPostMessages ? 'badge-signal' : 'bg-rose-500/10 border-rose-500/35 text-loss'}`}>
-                {channelCheck.message || `Status: ${channelCheck.botStatus || 'unknown'} (${channelCheck.channelHandle || '@Dollarino_official'})`}
+                {channelCheck.message || `Status: ${channelCheck.botStatus || 'unknown'} (${channelCheck.channelHandle || (isFa ? 'تنظیم‌نشده' : 'Unset')})`}
               </div>
             )}
 
@@ -4549,101 +4833,346 @@ export function AdminPage({
               </div>
             </div>
 
-            {/* 3. V10 5-Channel Telegram Matrix (Supports Numeric -100... IDs & @handles) */}
+            {/* 3. 🌟 Official Main Channel (Public) + Official Broadcast Desk */}
+            <div className="surface-soft rounded-2xl p-4 space-y-3 border border-amber-500/30 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="font-black text-main flex items-center gap-1.5">
+                    <Megaphone className="w-4 h-4 text-gold" />
+                    <span>{isFa ? '🌟 چنل رسمی و اصلی دلارینو (عمومی)' : '🌟 Official Main Dollarino Channel (Public)'}</span>
+                  </span>
+                  <p className="text-[11px] text-dim mt-0.5">
+                    {isFa
+                      ? 'ویژه آپدیت‌های قطعی پروژه، اطلاعیه‌ها، تبلیغات، قرعه‌کشی و توصیه‌های رسمی. (از کانال سیگنال‌ها مجزاست)'
+                      : 'Definitive project updates, announcements, promotions, lotteries, and official recommendations.'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-sub cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ecosystemChannels.enableOfficial}
+                      onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableOfficial: e.target.checked }))}
+                    />
+                    <span>{isFa ? 'فعال' : 'Enabled'}</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', {
+                        method: 'POST',
+                        body: JSON.stringify({ channelKey: 'official', customTarget: ecosystemChannels.official }),
+                      }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                      setMsg(r.ok ? `✅ تست ارسال در چنل رسمی «${r.chatTitle || ecosystemChannels.official}» موفق بود!` : `❌ خطا در چنل رسمی: ${r.error}`);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-[#0D47A1] text-white font-bold text-[11px]"
+                  >
+                    {isFa ? 'تست چنل رسمی' : 'Test Main'}
+                  </button>
+                </div>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-2">
+                <input
+                  dir="ltr"
+                  value={ecosystemChannels.official}
+                  onChange={(e) => setEcosystemChannels((p) => ({ ...p, official: e.target.value }))}
+                  placeholder={isFa ? '@Dollarino_Official یا -100...' : 'Official @username or -100...'}
+                  className="surface-input rounded-xl px-3 py-2 font-mono text-[11px]"
+                />
+                <input
+                  dir="ltr"
+                  value={ecosystemChannels.officialInvite}
+                  onChange={(e) => setEcosystemChannels((p) => ({ ...p, officialInvite: e.target.value }))}
+                  placeholder={isFa ? 'لینک دعوت عمومی چنل رسمی (https://t.me/... — اختیاری)' : 'Official Channel Invite URL (optional)'}
+                  className="surface-input rounded-xl px-3 py-2 font-mono text-[11px]"
+                />
+              </div>
+
+              <details className="surface-card rounded-xl p-3 border hairline">
+                <summary className="cursor-pointer font-black text-[11px] text-amber-400">
+                  {isFa ? '📣 ارسال آپدیت پروژه / تبلیغ / قرعه‌کشی / توصیه به چنل رسمی و اصلی' : '📣 Post Project Update / Promo / Lottery / Advice to Official Main Channel'}
+                </summary>
+                <div className="grid gap-2 mt-3">
+                  <div className="grid sm:grid-cols-3 gap-2">
+                    <select
+                      value={officialPostForm.kind}
+                      onChange={(e) =>
+                        setOfficialPostForm((p) => ({
+                          ...p,
+                          kind: e.target.value as 'PROJECT_UPDATE' | 'ANNOUNCEMENT' | 'PROMO' | 'LOTTERY' | 'ADVICE',
+                        }))
+                      }
+                      className="surface-input rounded-xl px-2.5 py-2 text-[11px] font-bold"
+                    >
+                      <option value="PROJECT_UPDATE">{isFa ? '🌟 آپدیت قطعی پروژه' : 'Project Update'}</option>
+                      <option value="ANNOUNCEMENT">{isFa ? '📣 اطلاعیه رسمی' : 'Announcement'}</option>
+                      <option value="PROMO">{isFa ? '🚀 تبلیغ و معرفی ویژه' : 'Promotion'}</option>
+                      <option value="LOTTERY">{isFa ? '🎁 قرعه‌کشی و جایزه' : 'Lottery / Giveaway'}</option>
+                      <option value="ADVICE">{isFa ? '💡 توصیه و راهنمای رسمی' : 'Official Advice'}</option>
+                    </select>
+                    <input
+                      value={officialPostForm.title}
+                      onChange={(e) => setOfficialPostForm((p) => ({ ...p, title: e.target.value }))}
+                      placeholder={isFa ? 'عنوان اطلاعیه / قرعه‌کشی...' : 'Headline...'}
+                      className="sm:col-span-2 surface-input rounded-xl px-2.5 py-2 text-[11px]"
+                    />
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={officialPostForm.body}
+                    onChange={(e) => setOfficialPostForm((p) => ({ ...p, body: e.target.value }))}
+                    placeholder={isFa ? 'متن کامل آپدیت، شرایط قرعه‌کشی، تبلیغ یا توصیه...' : 'Full announcement text...'}
+                    className="surface-input rounded-xl p-2.5 text-[11px]"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-1.5 text-[11px] text-sub cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={officialPostForm.notifyBotUsers}
+                        onChange={(e) => setOfficialPostForm((p) => ({ ...p, notifyBotUsers: e.target.checked }))}
+                      />
+                      <span>{isFa ? 'ارسال همزمان به کاربران ربات تلگرام' : 'Also notify Bot users'}</span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={publishingOfficial}
+                      onClick={async () => {
+                        if (!officialPostForm.title.trim() || !officialPostForm.body.trim()) {
+                          setMsg(isFa ? 'عنوان و متن پیام الزامی است.' : 'Title and body required.');
+                          return;
+                        }
+                        setPublishingOfficial(true);
+                        try {
+                          const r = await apiFetch<{ ok: boolean; channelMessageId?: number; usersNotified?: number; error?: string }>(
+                            '/api/admin/channel/publish-official',
+                            { method: 'POST', body: JSON.stringify(officialPostForm) }
+                          );
+                          if (r.ok) {
+                            setOfficialPostForm((p) => ({ ...p, title: '', body: '' }));
+                            setMsg(`✅ در چنل رسمی و اصلی منتشر شد (Msg #${r.channelMessageId || 'OK'} · اطلاع‌رسانی به ${r.usersNotified ?? 0} کاربر ربات).`);
+                          } else {
+                            setMsg(`❌ خطا در انتشار چنل رسمی: ${r.error || 'Error'}`);
+                          }
+                        } finally {
+                          setPublishingOfficial(false);
+                        }
+                      }}
+                      className="px-4 py-2 rounded-xl btn-gold font-black text-[11px]"
+                    >
+                      {publishingOfficial ? '...' : isFa ? 'انتشار فوری در چنل رسمی و اصلی' : 'Publish to Official Channel'}
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            {/* 4. Official 7-Section Ecosystem Matrix (01..07) */}
             <div className="surface-soft rounded-2xl p-4 space-y-3 border hairline text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="font-black text-main">
-                    {isFa ? '📡 مدیریت ۵ کانال تخصصی تلگرام (با پشتیبانی کامل از آیدی عددی -100... و @username)' : '📡 5-Channel Matrix (Numeric -100... IDs & @handles)'}
+                    {isFa ? '🧩 ماتریس ۷ بخش اکوسیستم DOLLARINO (عمومی / گروه / خصوصی)' : '🧩 7-Section Ecosystem Matrix (Public / Group / Private)'}
                   </span>
                   <p className="text-[11px] text-dim mt-0.5">
                     {isFa
-                      ? 'برای کانال‌های خصوصی یا عمومی، ربات را ادمین کنید و آیدی عددی (مثلاً -1001234567890) یا @آیدی کانال را وارد و تست کنید.'
-                      : 'Enter numeric -100... channel IDs (for private/reliable delivery) or @handles.'}
+                      ? 'برای بخش‌های خصوصی (04 لاگ‌ها، 05 دیتابیس، 06 تراکنش‌ها) ربات را ادمین کنید و آیدی عددی (-100...) کانال خصوصی را وارد کنید؛ این ۳ کانال هرگز برای کاربران نمایش داده نمی‌شوند.'
+                      : 'Private channels (04 Logs, 05 Database, 06 Transactions) require numeric -100... IDs and are never exposed to users.'}
                   </p>
                 </div>
                 <button
                   type="button"
+                  disabled={savingEcosystem}
                   onClick={async () => {
-                    await apiFetch('/api/admin/settings', {
-                      method: 'PUT',
-                      body: JSON.stringify({
-                        official_channel: fiveChannels.signals,
-                        signals_channel_id: fiveChannels.signals,
-                        results_channel_id: fiveChannels.results,
-                        news_channel_id: fiveChannels.news,
-                        education_channel_id: fiveChannels.education,
-                        alerts_channel_id: fiveChannels.alerts,
-                        channel_signals_enabled: fiveChannels.enableSignals ? 'true' : 'false',
-                        channel_results_enabled: fiveChannels.enableResults ? 'true' : 'false',
-                        channel_news_enabled: fiveChannels.enableNews ? 'true' : 'false',
-                        channel_education_enabled: fiveChannels.enableEdu ? 'true' : 'false',
-                        channel_alerts_enabled: fiveChannels.enableAlerts ? 'true' : 'false',
-                      }),
-                    });
-                    setMsg(isFa ? 'تنظیمات ۵ کانال تلگرام با موفقیت ذخیره شد ✅' : '5 Telegram channels saved ✅');
+                    setSavingEcosystem(true);
+                    try {
+                      await apiFetch('/api/admin/settings', {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                          official_channel: ecosystemChannels.official,
+                          official_channel_invite: ecosystemChannels.officialInvite,
+                          channel_official_enabled: ecosystemChannels.enableOfficial ? 'true' : 'false',
+                          signals_channel_id: ecosystemChannels.signals,
+                          signals_channel_invite: ecosystemChannels.signalsInvite,
+                          channel_signals_enabled: ecosystemChannels.enableSignals ? 'true' : 'false',
+                          signals_also_official: ecosystemChannels.signalsAlsoOfficial ? 'true' : 'false',
+                          results_channel_id: ecosystemChannels.results,
+                          results_channel_invite: ecosystemChannels.resultsInvite,
+                          channel_results_enabled: ecosystemChannels.enableResults ? 'true' : 'false',
+                          community_group_id: communityGroupCfg.id.trim(),
+                          community_group_invite: communityGroupCfg.invite.trim(),
+                          channel_community_enabled: communityGroupCfg.id.trim() ? 'true' : 'true',
+                          group_antilink_enabled: communityGroupCfg.antiLink ? 'true' : 'false',
+                          group_antiforward_enabled: communityGroupCfg.antiForward ? 'true' : 'false',
+                          group_antiscam_enabled: communityGroupCfg.antiScam ? 'true' : 'false',
+                          group_ai_assistant_enabled: communityGroupCfg.aiAssistant ? 'true' : 'false',
+                          group_welcome_enabled: communityGroupCfg.welcome ? 'true' : 'false',
+                          logs_channel_id: ecosystemChannels.logs,
+                          channel_logs_enabled: ecosystemChannels.enableLogs ? 'true' : 'false',
+                          database_channel_id: ecosystemChannels.database,
+                          channel_database_enabled: ecosystemChannels.enableDatabase ? 'true' : 'false',
+                          database_report_interval_hours: String(Math.max(1, ecosystemChannels.databaseReportIntervalHours || 6)),
+                          transactions_channel_id: ecosystemChannels.transactions,
+                          channel_transactions_enabled: ecosystemChannels.enableTransactions ? 'true' : 'false',
+                          news_channel_id: ecosystemChannels.news,
+                          news_channel_invite: ecosystemChannels.newsInvite,
+                          channel_news_enabled: ecosystemChannels.enableNews ? 'true' : 'false',
+                          education_channel_id: ecosystemChannels.education,
+                          alerts_channel_id: ecosystemChannels.alerts,
+                          channel_education_enabled: ecosystemChannels.enableEdu ? 'true' : 'false',
+                          channel_alerts_enabled: ecosystemChannels.enableAlerts ? 'true' : 'false',
+                        }),
+                      });
+                      setMsg(isFa ? 'ساختار کامل ۱+۷+۱ کانال‌ها و تنظیمات گروه با موفقیت ذخیره شد ✅' : 'Full 1+7+1 Ecosystem configuration saved ✅');
+                    } finally {
+                      setSavingEcosystem(false);
+                    }
                   }}
-                  className="px-4 py-1.5 rounded-xl btn-emerald font-black"
+                  className="px-4 py-2 rounded-xl btn-emerald font-black"
                 >
-                  {isFa ? 'ذخیره ۵ کانال' : 'Save 5 Channels'}
+                  {savingEcosystem ? '...' : isFa ? 'ذخیره کل ساختار ۱+۷+۱' : 'Save Full 1+7+1 Ecosystem'}
                 </button>
               </div>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-2">
-                {[
-                  { key: 'signals', label: isFa ? '۱. سیگنال‌های معاملاتی' : '1. Signals', val: fiveChannels.signals, onVal: (v: string) => setFiveChannels({ ...fiveChannels, signals: v }), toggle: { checked: fiveChannels.enableSignals, set: (b: boolean) => setFiveChannels({ ...fiveChannels, enableSignals: b }) } },
-                  { key: 'results', label: isFa ? '۲. نتایج و کارت سود' : '2. Results', val: fiveChannels.results, onVal: (v: string) => setFiveChannels({ ...fiveChannels, results: v }), toggle: { checked: fiveChannels.enableResults, set: (b: boolean) => setFiveChannels({ ...fiveChannels, enableResults: b }) } },
-                  { key: 'news', label: isFa ? '۳. اخبار و ماکرو' : '3. News', val: fiveChannels.news, onVal: (v: string) => setFiveChannels({ ...fiveChannels, news: v }), toggle: { checked: fiveChannels.enableNews, set: (b: boolean) => setFiveChannels({ ...fiveChannels, enableNews: b }) } },
-                  { key: 'education', label: isFa ? '۴. آموزش مبتدی‌ها' : '4. Academy', val: fiveChannels.education, onVal: (v: string) => setFiveChannels({ ...fiveChannels, education: v }), toggle: { checked: fiveChannels.enableEdu, set: (b: boolean) => setFiveChannels({ ...fiveChannels, enableEdu: b }) } },
-                  { key: 'alerts', label: isFa ? '۵. آلرت TradingView' : '5. TV Alerts', val: fiveChannels.alerts, onVal: (v: string) => setFiveChannels({ ...fiveChannels, alerts: v }), toggle: { checked: fiveChannels.enableAlerts, set: (b: boolean) => setFiveChannels({ ...fiveChannels, enableAlerts: b }) } },
-                ].map((ch) => (
-                  <div key={ch.key} className="surface-card rounded-xl p-2.5 space-y-1.5 border hairline">
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="font-bold text-[11px] text-main">{ch.label}</span>
-                      {ch.toggle && (
-                        <input
-                          type="checkbox"
-                          checked={ch.toggle.checked}
-                          onChange={(e) => ch.toggle!.set(e.target.checked)}
-                        />
-                      )}
+
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {/* 01. سیگنال دلارینو (عمومی) */}
+                <div className="surface-card rounded-2xl p-3 space-y-2 border hairline">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main">01. سیگنال دلارینو</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-jade">عمومی</span>
+                      <input type="checkbox" checked={ecosystemChannels.enableSignals} onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableSignals: e.target.checked }))} />
                     </div>
-                    <input
-                      dir="ltr"
-                      value={ch.val}
-                      onChange={(e) => ch.onVal(e.target.value)}
-                      placeholder="-100... or @handle"
-                      className="surface-input w-full rounded-lg px-2 py-1 font-mono text-[11px]"
-                    />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', {
-                          method: 'POST',
-                          body: JSON.stringify({ channelKey: ch.key, customTarget: ch.val }),
-                        }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
-                        setMsg(r.ok ? `✅ تست ارسال به «${r.chatTitle || ch.val}» موفق بود!` : `❌ خطا در ${ch.val}: ${r.error}`);
-                      }}
-                      className="w-full py-1 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold"
-                    >
-                      {isFa ? 'تست ارسال پیام' : 'Test Post'}
-                    </button>
                   </div>
-                ))}
+                  <p className="text-[10px] text-dim">انتشار سیگنال‌های معاملاتی و فرصت‌های شناسایی‌شده توسط موتورهای پروژه</p>
+                  <input dir="ltr" value={ecosystemChannels.signals} onChange={(e) => setEcosystemChannels((p) => ({ ...p, signals: e.target.value }))} placeholder="@signals_channel یا -100..." className="surface-input w-full rounded-lg px-2.5 py-1.5 font-mono text-[11px]" />
+                  <input dir="ltr" value={ecosystemChannels.signalsInvite} onChange={(e) => setEcosystemChannels((p) => ({ ...p, signalsInvite: e.target.value }))} placeholder="لینک دعوت عمومی (اختیاری)" className="surface-input w-full rounded-lg px-2.5 py-1 font-mono text-[10px]" />
+                  <label className="flex items-center gap-1.5 text-[10px] text-sub cursor-pointer">
+                    <input type="checkbox" checked={ecosystemChannels.signalsAlsoOfficial} onChange={(e) => setEcosystemChannels((p) => ({ ...p, signalsAlsoOfficial: e.target.checked }))} />
+                    <span>هم‌رسانی سیگنال در چنل رسمی هم انجام شود</span>
+                  </label>
+                  <button type="button" onClick={async () => {
+                    const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', { method: 'POST', body: JSON.stringify({ channelKey: 'signals', customTarget: ecosystemChannels.signals }) }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                    setMsg(r.ok ? `✅ 01. سیگنال دلارینو («${r.chatTitle || ecosystemChannels.signals}») متصل و تست شد!` : `❌ خطا در 01: ${r.error}`);
+                  }} className="w-full py-1.5 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold">تست ارسال به 01. سیگنال</button>
+                </div>
+
+                {/* 02. نتایج سیگنال دلارینو (عمومی) */}
+                <div className="surface-card rounded-2xl p-3 space-y-2 border hairline">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main">02. نتایج سیگنال دلارینو</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-jade">عمومی</span>
+                      <input type="checkbox" checked={ecosystemChannels.enableResults} onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableResults: e.target.checked }))} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-dim">نتیجه سیگنال‌ها، سود و زیان، کارت سود، درصد موفقیت و عملکرد سیستم</p>
+                  <input dir="ltr" value={ecosystemChannels.results} onChange={(e) => setEcosystemChannels((p) => ({ ...p, results: e.target.value }))} placeholder="@results_channel یا -100..." className="surface-input w-full rounded-lg px-2.5 py-1.5 font-mono text-[11px]" />
+                  <input dir="ltr" value={ecosystemChannels.resultsInvite} onChange={(e) => setEcosystemChannels((p) => ({ ...p, resultsInvite: e.target.value }))} placeholder="لینک دعوت عمومی (اختیاری)" className="surface-input w-full rounded-lg px-2.5 py-1 font-mono text-[10px]" />
+                  <button type="button" onClick={async () => {
+                    const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', { method: 'POST', body: JSON.stringify({ channelKey: 'results', customTarget: ecosystemChannels.results }) }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                    setMsg(r.ok ? `✅ 02. نتایج سیگنال («${r.chatTitle || ecosystemChannels.results}») متصل و تست شد!` : `❌ خطا در 02: ${r.error}`);
+                  }} className="w-full py-1.5 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold">تست ارسال به 02. نتایج</button>
+                </div>
+
+                {/* 07. اخبار دلارینو (عمومی) */}
+                <div className="surface-card rounded-2xl p-3 space-y-2 border hairline">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main">07. اخبار دلارینو</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-jade">عمومی</span>
+                      <input type="checkbox" checked={ecosystemChannels.enableNews} onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableNews: e.target.checked }))} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-dim">اخبار کریپتو، داده‌های کلان، تحلیل بازار AI و رویدادهای لحظه‌ای</p>
+                  <input dir="ltr" value={ecosystemChannels.news} onChange={(e) => setEcosystemChannels((p) => ({ ...p, news: e.target.value }))} placeholder="@news_channel یا -100..." className="surface-input w-full rounded-lg px-2.5 py-1.5 font-mono text-[11px]" />
+                  <input dir="ltr" value={ecosystemChannels.newsInvite} onChange={(e) => setEcosystemChannels((p) => ({ ...p, newsInvite: e.target.value }))} placeholder="لینک دعوت عمومی (اختیاری)" className="surface-input w-full rounded-lg px-2.5 py-1 font-mono text-[10px]" />
+                  <button type="button" onClick={async () => {
+                    const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', { method: 'POST', body: JSON.stringify({ channelKey: 'news', customTarget: ecosystemChannels.news }) }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                    setMsg(r.ok ? `✅ 07. اخبار دلارینو («${r.chatTitle || ecosystemChannels.news}») متصل و تست شد!` : `❌ خطا در 07: ${r.error}`);
+                  }} className="w-full py-1.5 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold">تست ارسال به 07. اخبار</button>
+                </div>
+
+                {/* 04. لاگ‌های دلارینو (خصوصی) */}
+                <div className="surface-card rounded-2xl p-3 space-y-2 border border-rose-500/25">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main">04. لاگ‌های دلارینو</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-loss">خصوصی</span>
+                      <input type="checkbox" checked={ecosystemChannels.enableLogs} onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableLogs: e.target.checked }))} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-dim">گزارش فعالیت ربات، خطاهای اجرایی، تصمیمات AI و رویدادهای سیستمی</p>
+                  <input dir="ltr" value={ecosystemChannels.logs} onChange={(e) => setEcosystemChannels((p) => ({ ...p, logs: e.target.value }))} placeholder="-1001234567890 (آیدی کانال خصوصی)" className="surface-input w-full rounded-lg px-2.5 py-1.5 font-mono text-[11px]" />
+                  <button type="button" onClick={async () => {
+                    const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', { method: 'POST', body: JSON.stringify({ channelKey: 'logs', customTarget: ecosystemChannels.logs }) }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                    setMsg(r.ok ? `✅ 04. لاگ‌های دلارینو («${r.chatTitle || ecosystemChannels.logs}») آماده دریافت لاگ است!` : `❌ خطا در 04: ${r.error}`);
+                  }} className="w-full py-1.5 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold">تست ارسال به 04. لاگ‌ها</button>
+                </div>
+
+                {/* 05. دیتابیس دلارینو (خصوصی) */}
+                <div className="surface-card rounded-2xl p-3 space-y-2 border border-rose-500/25">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main">05. دیتابیس دلارینو</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-loss">خصوصی</span>
+                      <input type="checkbox" checked={ecosystemChannels.enableDatabase} onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableDatabase: e.target.checked }))} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-dim">گزارش داده‌ها، وضعیت ذخیره‌سازی D1، بکاپ/پاک‌سازی و آمار مدیریتی</p>
+                  <input dir="ltr" value={ecosystemChannels.database} onChange={(e) => setEcosystemChannels((p) => ({ ...p, database: e.target.value }))} placeholder="-1001234567890 (آیدی کانال خصوصی)" className="surface-input w-full rounded-lg px-2.5 py-1.5 font-mono text-[11px]" />
+                  <div className="flex items-center justify-between gap-2 text-[10px]">
+                    <span className="text-dim">گزارش دوره‌ای خودکار (ساعت):</span>
+                    <input type="number" min={1} max={168} dir="ltr" value={ecosystemChannels.databaseReportIntervalHours} onChange={(e) => setEcosystemChannels((p) => ({ ...p, databaseReportIntervalHours: Number(e.target.value) || 6 }))} className="surface-input w-16 rounded-lg px-2 py-1 font-mono text-center" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button type="button" onClick={async () => {
+                      const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', { method: 'POST', body: JSON.stringify({ channelKey: 'database', customTarget: ecosystemChannels.database }) }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                      setMsg(r.ok ? `✅ 05. دیتابیس متصل و تست شد!` : `❌ خطا در 05: ${r.error}`);
+                    }} className="py-1.5 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold">تست اتصال</button>
+                    <button type="button" onClick={async () => {
+                      const r = await apiFetch<{ ok: boolean; sizeKb?: number; error?: string }>('/api/admin/channels/send-db-report', { method: 'POST', body: JSON.stringify({ attachBackupJson: true }) }).catch((err): { ok: boolean; sizeKb?: number; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Failed' }));
+                      setMsg(r.ok ? `✅ گزارش کامل دیتابیس + اسنپ‌شات JSON (${r.sizeKb || 0} KB) به 05. دیتابیس ارسال شد!` : `❌ ${r.error}`);
+                    }} className="py-1.5 rounded-lg btn-emerald text-[10px] font-bold">ارسال گزارش الان</button>
+                  </div>
+                </div>
+
+                {/* 06. تراکنش‌های دلارینو (خصوصی) */}
+                <div className="surface-card rounded-2xl p-3 space-y-2 border border-rose-500/25">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-main">06. تراکنش‌های دلارینو</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-loss">خصوصی</span>
+                      <input type="checkbox" checked={ecosystemChannels.enableTransactions} onChange={(e) => setEcosystemChannels((p) => ({ ...p, enableTransactions: e.target.checked }))} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-dim">موعد تسویه کاربران، فاکتورها، واریز/برداشت خزانه، رفرال و کارمزد ۳٪</p>
+                  <input dir="ltr" value={ecosystemChannels.transactions} onChange={(e) => setEcosystemChannels((p) => ({ ...p, transactions: e.target.value }))} placeholder="-1001234567890 (آیدی کانال خصوصی)" className="surface-input w-full rounded-lg px-2.5 py-1.5 font-mono text-[11px]" />
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button type="button" onClick={async () => {
+                      const r = await apiFetch<{ ok: boolean; chatTitle?: string; error?: string }>('/api/admin/channels/test', { method: 'POST', body: JSON.stringify({ channelKey: 'transactions', customTarget: ecosystemChannels.transactions }) }).catch((err): { ok: boolean; chatTitle?: string; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Test failed' }));
+                      setMsg(r.ok ? `✅ 06. تراکنش‌ها متصل و تست شد!` : `❌ خطا در 06: ${r.error}`);
+                    }} className="py-1.5 rounded-lg bg-[#0D47A1] text-white text-[10px] font-bold">تست اتصال</button>
+                    <button type="button" onClick={async () => {
+                      const r = await apiFetch<{ ok: boolean; accountsCount?: number; totalDueUsd?: number; error?: string }>('/api/admin/channels/send-settlement-digest', { method: 'POST' }).catch((err): { ok: boolean; accountsCount?: number; totalDueUsd?: number; error?: string } => ({ ok: false, error: err instanceof Error ? err.message : 'Failed' }));
+                      setMsg(r.ok ? `✅ گزارش موعد تسویه (${r.accountsCount || 0} پرونده · $${Number(r.totalDueUsd || 0).toFixed(2)}) به 06. تراکنش‌ها ارسال شد!` : `❌ ${r.error}`);
+                    }} className="py-1.5 rounded-lg btn-gold text-[10px] font-bold">گزارش تسویه‌ها</button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* 4. Community Group Moderator + Group AI Assistant Card */}
+            {/* 5. 03. گروه کاربران دلارینو (مبصر ضدلینک + پاسخگوی هوشمند AI) */}
             <div className="surface-soft rounded-2xl p-4 space-y-3 border border-indigo-500/25 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span className="font-black text-main flex items-center gap-1.5">
                     <Users className="w-4 h-4 text-brand" />
-                    <span>{isFa ? '👥 گروه کامیونیتی دلارینو (مبصر ضدلینک + پاسخگوی هوشمند AI)' : '👥 Community Group Moderator & AI Assistant'}</span>
+                    <span>{isFa ? '👥 03. گروه کاربران دلارینو (گروه · مبصر ضدلینک + پاسخگوی هوشمند AI)' : '👥 03. Community User Group (Moderator & AI Assistant)'}</span>
                   </span>
                   <p className="text-[11px] text-dim mt-0.5">
                     {isFa
-                      ? 'ربات را در گروه ادمین کنید (یا Privacy Mode را در BotFather خاموش کنید). مبصر خودکار لینک و اسکم را پاک می‌کند و با منشن @Bot یا ریپلای، پاسخ می‌دهد.'
-                      : 'Make bot admin in your Community Group. Auto-deletes spam/links (3 warnings = 24h mute) and answers questions via @mention or reply.'}
+                      ? 'ارتباط کاربران، پرسش و پاسخ و تبادل تجربه. ربات را در گروه ادمین کنید تا ضدلینک و پاسخگوی AI خودکار فعال شوند.'
+                      : 'User community, Q&A, and experience sharing. Make bot admin in the group for Anti-Link & AI Q&A.'}
                   </p>
                 </div>
                 <button
@@ -4661,11 +5190,11 @@ export function AdminPage({
                         group_welcome_enabled: communityGroupCfg.welcome ? 'true' : 'false',
                       }),
                     });
-                    setMsg(isFa ? 'تنظیمات گروه کامیونیتی و مبصر هوشمند ذخیره شد ✅' : 'Community group settings saved ✅');
+                    setMsg(isFa ? 'تنظیمات 03. گروه کاربران دلارینو و مبصر هوشمند ذخیره شد ✅' : '03. Community group settings saved ✅');
                   }}
                   className="px-4 py-1.5 rounded-xl btn-cobalt font-black"
                 >
-                  {isFa ? 'ذخیره تنظیمات گروه' : 'Save Group Settings'}
+                  {isFa ? 'ذخیره تنظیمات گروه 03' : 'Save 03. Group'}
                 </button>
               </div>
               <div className="grid sm:grid-cols-3 gap-2">
@@ -4736,7 +5265,7 @@ export function AdminPage({
                     dir="ltr"
                     value={adminTvChannel}
                     onChange={(e) => setAdminTvChannel(e.target.value)}
-                    placeholder="@Dollarino_official"
+                    placeholder={isFa ? '@channel_handle' : '@channel_handle'}
                     className="surface-input rounded-xl px-2.5 py-1.5 font-mono text-[11px]"
                   />
                   <button
@@ -4744,13 +5273,13 @@ export function AdminPage({
                     onClick={async () => {
                       await apiFetch('/api/admin/settings', {
                         method: 'PUT',
-                        body: JSON.stringify({ official_channel: adminTvChannel.trim() || '@Dollarino_official' }),
+                        body: JSON.stringify({ signals_channel_id: adminTvChannel.trim() }),
                       });
-                      setMsg(isFa ? `کانال رسمی سیگنال روی ${adminTvChannel} ذخیره شد ✅` : 'Official channel saved ✅');
+                      setMsg(isFa ? `کانال 01. سیگنال دلارینو (${adminTvChannel.trim() || 'پاک شد'}) ذخیره شد ✅` : '01. Signals channel saved ✅');
                     }}
                     className="px-3 py-1.5 rounded-xl btn-ghost font-bold shrink-0"
                   >
-                    {isFa ? 'ذخیره کانال' : 'Save Channel'}
+                    {isFa ? 'ذخیره کانال سیگنال' : 'Save Signals Channel'}
                   </button>
                 </div>
               </div>
@@ -4845,7 +5374,7 @@ export function AdminPage({
                         note: channelSignalForm.note || undefined,
                       }),
                     });
-                    setMsg(isFa ? 'سیگنال با دکمه‌های تعاملی در کانال @Dollarino_official منتشر شد.' : 'Signal published to channel.');
+                    setMsg(isFa ? 'سیگنال با دکمه‌های تعاملی در کانال متصل منتشر شد.' : 'Signal published to channel.');
                   } catch (err) {
                     setMsg(err instanceof Error ? err.message : 'Publish signal failed');
                   }
@@ -4855,7 +5384,7 @@ export function AdminPage({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="font-black text-main flex items-center gap-1.5">
                     <Megaphone className="w-4 h-4 text-brand" />
-                    <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های تعاملی' : 'Publish Signal to @Dollarino_official'}</span>
+                    <span>{isFa ? 'ارسال سیگنال رسمی به کانال با دکمه‌های تعاملی' : 'Publish Signal to Channel'}</span>
                   </h4>
                   <TpSlModeSwitch
                     mode={channelTpSlMode}
@@ -5001,7 +5530,7 @@ export function AdminPage({
                 )}
                 <input value={channelSignalForm.note} onChange={(e) => setChannelSignalForm({ ...channelSignalForm, note: e.target.value })} placeholder={isFa ? 'توضیح تحلیلی کوتاه زیر سیگنال (اختیاری)' : 'Short note (optional)'} className="w-full surface-input rounded-xl px-2.5 py-2" />
                 <button type="submit" className="w-full py-2.5 rounded-xl btn-cobalt font-black">
-                  {isFa ? 'انتشار سیگنال در کانال @Dollarino_official' : 'Publish Signal to Channel'}
+                  {isFa ? 'انتشار سیگنال در کانال متصل' : 'Publish Signal to Channel'}
                 </button>
               </form>
 
@@ -5023,7 +5552,7 @@ export function AdminPage({
                       }),
                     });
                     setChannelNewsForm({ ...channelNewsForm, title: '', summary: '', analysis: '' });
-                    setMsg(isFa ? 'خبر و تحلیل فاندامنتال در کانال @Dollarino_official منتشر شد.' : 'News published to channel.');
+                    setMsg(isFa ? 'خبر و تحلیل فاندامنتال در کانال متصل منتشر شد.' : 'News published to channel.');
                     void load();
                   } catch (err) {
                     setMsg(err instanceof Error ? err.message : 'Publish news failed');
@@ -5049,7 +5578,7 @@ export function AdminPage({
                   <input dir="ltr" value={channelNewsForm.symbolsText} onChange={(e) => setChannelNewsForm({ ...channelNewsForm, symbolsText: e.target.value })} placeholder="BTCUSDT, ETHUSDT" className="surface-input rounded-xl px-2.5 py-2 font-mono" />
                 </div>
                 <button type="submit" className="w-full py-2.5 rounded-xl btn-gold font-black">
-                  {isFa ? 'انتشار خبر فوری در کانال @Dollarino_official' : 'Broadcast News to Channel'}
+                  {isFa ? 'انتشار خبر فوری در کانال متصل' : 'Broadcast News to Channel'}
                 </button>
                 {channelNewsList.length > 0 && (
                   <div className="text-[11px] text-dim pt-1 space-y-1 max-h-24 overflow-y-auto">
@@ -5201,7 +5730,11 @@ export function AdminPage({
               <div>
                 <h3 className="font-black text-sm flex items-center gap-2 text-main">
                   <Bot className="w-4 h-4 text-[#0EA5E9]" />
-                  <span>{isFa ? 'پیکربندی ربات @Dollarino_bot و BotFather' : '@Dollarino_bot & BotFather Control'}</span>
+                  <span>
+                    {isFa
+                      ? `پیکربندی ربات ${botTokenStatus.botUsername ? `@${botTokenStatus.botUsername}` : 'تلگرام'} و BotFather`
+                      : `${botTokenStatus.botUsername ? `@${botTokenStatus.botUsername}` : 'Telegram Bot'} & BotFather Control`}
+                  </span>
                 </h3>
                 <p className="text-[11px] text-sub mt-0.5">
                   {isFa

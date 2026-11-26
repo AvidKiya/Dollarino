@@ -108,6 +108,7 @@ export function StrategyIdePanel({
   const [evalRes, setEvalRes] = useState<{
     valid: boolean;
     title: string;
+    pineVersion?: 4 | 5 | 6;
     errors: string[];
     warnings: string[];
     plots: CustomStrategyChartOverlay['plots'];
@@ -120,6 +121,8 @@ export function StrategyIdePanel({
     lines?: CustomStrategyChartOverlay['lines'];
     boxes?: CustomStrategyChartOverlay['boxes'];
     tables?: CustomStrategyChartOverlay['tables'];
+    polylines?: CustomStrategyChartOverlay['polylines'];
+    logs?: CustomStrategyChartOverlay['logs'];
     candles: Candle[];
     latestSignal: { signal: string; price: number; rsi: number } | null;
     backtestSummary: {
@@ -172,6 +175,7 @@ export function StrategyIdePanel({
           id: editingId,
           title: res.title || name,
           language,
+          pineVersion: res.pineVersion,
           plots: res.plots,
           markers: res.markers,
           hlines: res.hlines,
@@ -182,8 +186,10 @@ export function StrategyIdePanel({
           lines: res.lines,
           boxes: res.boxes,
           tables: res.tables,
+          polylines: res.polylines,
+          logs: res.logs,
         });
-        const gfxCount = (res.boxes?.length || 0) + (res.lines?.length || 0) + (res.labels?.length || 0) + (res.fills?.length || 0) + (res.tables?.length || 0);
+        const gfxCount = (res.boxes?.length || 0) + (res.lines?.length || 0) + (res.labels?.length || 0) + (res.fills?.length || 0) + (res.polylines?.length || 0) + (res.tables?.length || 0);
         setMsg({
           ok: true,
           text: isFa
@@ -311,6 +317,7 @@ export function StrategyIdePanel({
           id: editingId,
           title: evalRes.title || name,
           language,
+          pineVersion: evalRes.pineVersion,
           plots: evalRes.plots,
           markers: evalRes.markers,
           hlines: evalRes.hlines,
@@ -321,6 +328,8 @@ export function StrategyIdePanel({
           lines: evalRes.lines,
           boxes: evalRes.boxes,
           tables: evalRes.tables,
+          polylines: evalRes.polylines,
+          logs: evalRes.logs,
         }
       : null;
 

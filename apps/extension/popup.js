@@ -356,8 +356,9 @@ function startLiveTickLoop() {
   if (!state.extKey) return;
   state.liveTickTimer = setInterval(async () => {
     if (!state.extKey || state.activeTab !== 'bot') return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
     try {
-      const ticks = await apiFetch('/api/trading/live-ticks');
+      const ticks = await apiFetch('/api/trading/live-ticks?poll=1');
       const totalBal = Number(ticks.balance?.total || 0);
       els.balanceTotal.textContent = `$${totalBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       els.balanceIrt.textContent = `معادل ~ ${formatToman(totalBal)} تومان`;
@@ -365,7 +366,7 @@ function startLiveTickLoop() {
     } catch {
       // silent background tick ignore
     }
-  }, 2500);
+  }, 12_000);
 }
 
 async function loadOverview() {

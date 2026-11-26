@@ -1,10 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, ShieldCheck, Sparkles } from 'lucide-react';
+import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 
 export function FaqPage({ lang }: { lang: Lang }) {
   const isFa = lang === 'fa';
   const [open, setOpen] = useState<number | null>(0);
+  const [botHandle, setBotHandle] = useState('');
+  const [channelHandle, setChannelHandle] = useState('');
+
+  useEffect(() => {
+    apiFetch<{ telegramBotUsername?: string; officialChannel?: string }>('/api/auth/providers')
+      .then((r) => {
+        const b = (r.telegramBotUsername || '').replace(/^@/, '');
+        const ch = (r.officialChannel || '').replace(/^@/, '');
+        if (b) setBotHandle(`@${b}`);
+        if (ch) setChannelHandle(`@${ch}`);
+      })
+      .catch(() => {});
+  }, []);
+
+  const botDisplayFa = botHandle ? `ربات ${botHandle}` : 'ربات تلگرام متصل سیستم';
+  const botDisplayEn = botHandle ? botHandle : 'the connected Telegram bot';
+  const channelDisplayFa = channelHandle ? `کانال ${channelHandle}` : 'کانال رسمی معرفی‌شده در پنل';
+  const channelDisplayEn = channelHandle ? channelHandle : 'the official channel configured by Admin';
 
   const tutorials = isFa
     ? [
@@ -35,7 +54,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
           steps: [
             '۱. «هوش مصنوعی دلارینو» برای ترید کاملاً خودکار است و فقط با انتخاب سطح ریسک معامله می‌کند.',
             '۲. در تب «هوش مصنوعی من»، مثل چت معمولی به AI استراتژی و اندیکاتورهای خودتان را یاد بدهید تا دقیقاً مثل شما ترید کند.',
-            '۳. از دکمه شناور پایین صفحه یا /ai در @Dollarino_bot عکس چارت بفرستید تا ورود، SL و ۳ تارگت استخراج شود.',
+            `۳. از دکمه شناور پایین صفحه یا دستور /ai در ${botDisplayFa} عکس چارت بفرستید تا ورود، SL و ۳ تارگت استخراج شود.`,
           ],
         },
         {
@@ -97,7 +116,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
           steps: [
             '1. Dollarino AI trades autonomously once you choose your risk profile.',
             '2. Teach your blank My AI agent in plain chat with your indicators, timeframe, and risk targets.',
-            '3. Paste or upload any chart screenshot into Floating AI Chat or /ai in @Dollarino_bot to extract Entry, SL & 3 TPs.',
+            `3. Paste or upload any chart screenshot into Floating AI Chat or /ai in ${botDisplayEn} to extract Entry, SL & 3 TPs.`,
           ],
         },
         {
@@ -148,7 +167,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         ],
         [
           'چت هوش مصنوعی اختصاصی دلارینو و تحلیل عکس چارت چطور کار می‌کند؟',
-          'از دکمه شناور پایین صفحه یا صفحه اختصاصی «چت هوش مصنوعی AI» می‌توانید دقیقاً مثل یک هوش مصنوعی کامل گفتگو کنید، از لیست بالا مدل دلخواهتان را انتخاب کنید (مدل‌های متصل سیستم یا کلیدهای شخصی خودتان)، و حتی عکس چارت بفرستید یا Paste کنید تا هوش مصنوعی ساختار چارت را تحلیل کرده و ستاپ دقیق (ورود، حد ضرر و ۳ تارگت) ارائه دهد. همین قابلیت مستقیماً داخل ربات تلگرام @Dollarino_bot با دستور /ai یا ارسال مستقیم عکس چارت نیز فعال است.',
+          `از دکمه شناور پایین صفحه یا صفحه اختصاصی «چت هوش مصنوعی AI» می‌توانید دقیقاً مثل یک هوش مصنوعی کامل گفتگو کنید، از لیست بالا مدل دلخواهتان را انتخاب کنید (مدل‌های متصل سیستم یا کلیدهای شخصی خودتان)، و حتی عکس چارت بفرستید یا Paste کنید تا هوش مصنوعی ساختار چارت را تحلیل کرده و ستاپ دقیق (ورود، حد ضرر و ۳ تارگت) ارائه دهد. همین قابلیت مستقیماً داخل ${botDisplayFa} با دستور /ai یا ارسال مستقیم عکس چارت نیز فعال است.`,
         ],
         [
           'تفاوت ۵ موتور معاملاتی دلارینو و اجرای همزمان (Multi-Engine) چیست؟',
@@ -172,7 +191,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         ],
         [
           'کانال و ربات رسمی دلارینو کدامند و چطور از کلاهبرداری در امان بمانیم؟',
-          'تنها کانال رسمی دلارینو @Dollarino_official و تنها ربات و پشتیبانی رسمی @Dollarino_bot (و تیکت آنلاین داخل همین وب‌اپ) هستند. دلارینو هیچ آیدی پشتیبانی متفرقه یا ادمینی که اول پیام بدهد ندارد و هرگز کلید خصوصی کیف‌پول شخصی یا دسترسی برداشت صرافی را نمی‌خواهد.',
+          `تنها مرجع رسمی دلارینو، ${channelDisplayFa} و ${botDisplayFa} (و تیکت آنلاین داخل همین وب‌اپ) است. دلارینو هیچ آیدی پشتیبانی متفرقه یا ادمینی که اول پیام بدهد ندارد و هرگز کلید خصوصی کیف‌پول شخصی یا دسترسی برداشت صرافی را نمی‌خواهد.`,
         ],
         [
           'تفاوت «تایید دستی» و «تمام‌اتوترید ۲۴/۷» روی Trust Wallet چیست؟',
@@ -202,7 +221,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         ],
         [
           'What are the 4 Dollarino trading engines?',
-          '1) Dollarino AI (autonomous chart & position AI), 2) My Trainable AI (teach your personal agent via chat), 3) Hunting Engine / Dorna V1 (precision 3-TP + trailing SL scanner), and 4) Verified Copy-Trade (mirror admin-vetted live traders). The same 4 engines are synced across Web and @Dollarino_bot.',
+          `1) Dollarino AI (autonomous chart & position AI), 2) My Trainable AI (teach your personal agent via chat), 3) Hunting Engine / Dorna V1 (precision 3-TP + trailing SL scanner), and 4) Verified Copy-Trade (mirror admin-vetted live traders). The same engines sync across Web and ${botDisplayEn}.`,
         ],
         [
           'How do Verified Profit Cards & Signal Closed cards work?',
@@ -218,7 +237,7 @@ export function FaqPage({ lang }: { lang: Lang }) {
         ],
         [
           'Which handles are official and how do I stay safe from impersonators?',
-          'Our ONLY official bot & support handle is @Dollarino_bot and our official channel is @Dollarino_official (plus the in-app Online Support modal). Dollarino staff never DM you first or ask for seed phrases.',
+          `Our ONLY official bot & channel are ${botDisplayEn} and ${channelDisplayEn} (plus the in-app Online Support modal). Dollarino staff never DM you first or ask for seed phrases.`,
         ],
         [
           'Are my Trust Wallet funds safe?',

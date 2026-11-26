@@ -46,15 +46,15 @@ export const DEFAULT_FOUNDER_PROFILE: FounderProfile = {
   addressEn: '',
   telegram: DOLLARINO_CREATOR_INFO.telegram,
   telegramUrl: DOLLARINO_CREATOR_INFO.telegramUrl,
-  channel: '@Dollarino_official',
-  channelUrl: 'https://t.me/Dollarino_official',
+  channel: '',
+  channelUrl: '',
   instagram: DOLLARINO_CREATOR_INFO.instagram,
   instagramUrl: DOLLARINO_CREATOR_INFO.instagramUrl,
   twitter: DOLLARINO_CREATOR_INFO.twitter,
   twitterUrl: DOLLARINO_CREATOR_INFO.twitterUrl,
   github: '',
   website: 'https://dollarino.pages.dev',
-  verificationId: 'TG-OWNER-944021185',
+  verificationId: '',
   independenceFa:
     '۰ تا ۱۰۰ طراحی، معماری سرور، هوش مصنوعی و کدنویسی دلارینو به‌صورت کاملاً مستقل توسط شخص سازنده انجام شده و تحت پوشش یا مالکیت هیچ شرکت، نهاد یا شخص ثالثی نیست.',
   independenceEn:

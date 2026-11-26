@@ -98,6 +98,16 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
         await db.prepare(stmt).run();
       }
     }
+    for (const [k, v] of [
+      ['auth_telegram_enabled', 'true'],
+      ['require_telegram_phone_kyc', 'true'],
+      ['bot_username', 'Dollarino_bot'],
+      ['official_channel', '@Dollarino_official'],
+      ['signals_channel_id', '-1002263982097'],
+      ['signals_also_official', 'true'],
+    ]) {
+      await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)`).bind(k, v).run();
+    }
 
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -612,7 +622,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       update_id: 30,
       message: { message_id: 40, from: { id: 1002009 }, chat: { id: 1002009, type: 'private' }, text: 'افزودن مدیر 🔑' },
     });
-    expect(tgCalls[0]?.body.text).toContain('فقط مدیر اصلی سیستم (944021185)');
+    expect(tgCalls[0]?.body.text).toContain('فقط مدیر اصلی سیستم');
 
     // User buys pro_monthly plan -> verify -> submits TXID
     tgCalls = [];
@@ -684,7 +694,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       update_id: 41,
       callback_query: { id: 'cq_blocked', from: { id: 1002009 }, message: { chat: { id: 1002009 }, message_id: 53 }, data: 'adm:admins' },
     });
-    expect(tgCalls[0]?.body.text).toContain('فقط مدیر اصلی (944021185)');
+    expect(tgCalls[0]?.body.text).toContain('فقط مدیر اصلی سیستم');
 
     // Test 15-min admin idle session expiration
     await db.prepare(`UPDATE users SET admin_panel_last_active_at = datetime('now', '-20 minutes') WHERE telegram_id = '944021185'`).run();

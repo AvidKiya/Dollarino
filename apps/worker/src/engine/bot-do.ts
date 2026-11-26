@@ -67,7 +67,7 @@ export class TradingBotCoordinator implements DurableObject {
   }
 
   async alarm() {
-    const [runningUsers, openUsers, alertUsers] = await Promise.all([
+    const [runningUsers, openUsers, pendingUsers, alertUsers] = await Promise.all([
       this.env.DB.prepare(
         `SELECT * FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') LIMIT 200`
       ).all<UserBotConfigRow>(),
@@ -75,19 +75,24 @@ export class TradingBotCoordinator implements DurableObject {
         `SELECT DISTINCT user_id FROM trades WHERE status = 'OPEN' LIMIT 200`
       ).all<{ user_id: string }>(),
       this.env.DB.prepare(
+        `SELECT DISTINCT user_id FROM pending_orders WHERE status = 'PENDING' LIMIT 200`
+      ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
+      this.env.DB.prepare(
         `SELECT DISTINCT user_id FROM price_alerts WHERE is_active = 1 LIMIT 200`
       ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
     ]);
 
     const runningMap = new Map(runningUsers.results.map((r) => [r.user_id, r]));
     const openSet = new Set(openUsers.results.map((r) => r.user_id));
+    const pendingSet = new Set(pendingUsers.results.map((r) => r.user_id));
     const alertSet = new Set(alertUsers.results.map((r) => r.user_id));
-    const allUserIds = new Set([...runningMap.keys(), ...openSet, ...alertSet]);
+    const allUserIds = new Set([...runningMap.keys(), ...openSet, ...pendingSet, ...alertSet]);
 
     for (const userId of allUserIds) {
       await this.runUserTick(userId, {
         isBotRunning: runningMap.has(userId),
         hasOpenTrades: openSet.has(userId),
+        hasPendingOrders: pendingSet.has(userId),
         hasAlerts: alertSet.has(userId),
         prefetchedCfg: runningMap.get(userId),
       }).catch(() => {});
@@ -104,8 +109,8 @@ export class TradingBotCoordinator implements DurableObject {
     }
 
     if (allUserIds.size > 0) {
-      // Check every 45s when open trades exist for tight TP/SL control; otherwise every 120s to minimize D1 Rows Read
-      const nextDelay = openSet.size > 0 ? 45_000 : 120_000;
+      // Check every 60s when open trades/pending orders exist; otherwise every 180s to preserve D1 quota
+      const nextDelay = openSet.size > 0 || pendingSet.size > 0 ? 60_000 : 180_000;
       await this.state.storage.setAlarm(Date.now() + nextDelay);
     }
   }
@@ -221,11 +226,14 @@ export class TradingBotCoordinator implements DurableObject {
 
   private async runUserTick(
     userId: string,
-    hints?: { isBotRunning?: boolean; hasOpenTrades?: boolean; hasAlerts?: boolean; prefetchedCfg?: UserBotConfigRow }
+    hints?: { isBotRunning?: boolean; hasOpenTrades?: boolean; hasPendingOrders?: boolean; hasAlerts?: boolean; prefetchedCfg?: UserBotConfigRow }
   ) {
-    // 1. Only query & reconcile open positions if user actually has open trades (or manual /tick trigger)
-    if (!hints || hints.hasOpenTrades) {
-      await reconcileOpenPositionsForUser(this.env, userId);
+    // 1. Only query & reconcile open positions/pending orders when present (or manual /tick trigger)
+    if (!hints || hints.hasOpenTrades || hints.hasPendingOrders) {
+      await reconcileOpenPositionsForUser(this.env, userId, {
+        prefetchedCfg: hints?.prefetchedCfg,
+        checkPendingOrders: hints ? Boolean(hints.hasPendingOrders) : true,
+      });
     }
 
     // 1B. Only check price alerts when user actually has active alerts (or manual /tick trigger)
@@ -357,28 +365,57 @@ export class TradingBotCoordinator implements DurableObject {
     const marketType: MarketType = cfg.market_type ?? 'FUTURES';
     const hedgeMode = marketType === 'FUTURES' && Boolean(cfg.hedge_mode);
 
-    const [{ adapter }, openRows] = await Promise.all([
+    const [{ adapter }, openRows, prefetchedAgent, prefetchedCustomStrat] = await Promise.all([
       resolveUserExchangeAdapter(
         this.env,
         userId,
         cfg.trading_mode === 'PAPER' ? 'paper' : undefined
       ),
-      this.env.DB.prepare(
-        `SELECT id, symbol, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode, market_type
-         FROM trades WHERE user_id = ? AND status = 'OPEN'`
-      ).bind(userId).all<{
-        id: string;
-        symbol: string;
-        direction: Direction;
-        entry_price: string;
-        current_stop_loss: string;
-        tp1: string;
-        remaining_quantity: string;
-        margin_used: string;
-        realized_pnl: string;
-        mode: string;
-        market_type?: MarketType;
-      }>(),
+      hints && !hints.hasOpenTrades && !hints.hasPendingOrders
+        ? Promise.resolve({
+            results: [] as Array<{
+              id: string;
+              symbol: string;
+              direction: Direction;
+              entry_price: string;
+              current_stop_loss: string;
+              tp1: string;
+              remaining_quantity: string;
+              margin_used: string;
+              realized_pnl: string;
+              mode: string;
+              market_type?: MarketType;
+            }>,
+          })
+        : this.env.DB.prepare(
+            `SELECT id, symbol, direction, entry_price, current_stop_loss, tp1, remaining_quantity, margin_used, realized_pnl, mode, market_type
+             FROM trades WHERE user_id = ? AND status = 'OPEN'`
+          ).bind(userId).all<{
+            id: string;
+            symbol: string;
+            direction: Direction;
+            entry_price: string;
+            current_stop_loss: string;
+            tp1: string;
+            remaining_quantity: string;
+            margin_used: string;
+            realized_pnl: string;
+            mode: string;
+            market_type?: MarketType;
+          }>(),
+      runMyAi
+        ? this.env.DB.prepare(`SELECT name, system_rules_json FROM user_ai_agents WHERE user_id = ? LIMIT 1`)
+            .bind(userId)
+            .first<{ name: string; system_rules_json: string }>()
+            .catch(() => null)
+        : Promise.resolve(null),
+      runStrategy && cfg.active_custom_strategy_id &&
+      (cfg.strategy_key === 'custom_pine' || cfg.strategy_key === 'custom_python' || cfg.strategy_key === 'custom_visual')
+        ? this.env.DB.prepare(`SELECT language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`)
+            .bind(cfg.active_custom_strategy_id, userId)
+            .first<{ language: CustomStrategyLanguage; code: string }>()
+            .catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     const openByKey = new Map<string, (typeof openRows.results)[number]>();
@@ -409,7 +446,8 @@ export class TradingBotCoordinator implements DurableObject {
             scanSymbol,
             { long: openLong, short: openShort, hedgeMode },
             liveOpenCount,
-            { centralAi: runCentralAi, myAi: runMyAi, strategy: runStrategy }
+            { centralAi: runCentralAi, myAi: runMyAi, strategy: runStrategy },
+            { agentRow: prefetchedAgent, customStratRow: prefetchedCustomStrat }
           ).catch(async (err) => {
             const msg = err instanceof Error ? err.message : 'Scan error';
             await logAudit(this.env.DB, userId, 'SIGNAL', 'WARN', `خطا در بررسی ${scanSymbol}: ${msg}`, scanSymbol).catch(() => {});
@@ -556,7 +594,11 @@ export class TradingBotCoordinator implements DurableObject {
       hedgeMode: boolean;
     },
     openCount: number,
-    activeScanModes: { centralAi: boolean; myAi: boolean; strategy: boolean }
+    activeScanModes: { centralAi: boolean; myAi: boolean; strategy: boolean },
+    prefetched?: {
+      agentRow?: { name: string; system_rules_json: string } | null;
+      customStratRow?: { language: CustomStrategyLanguage; code: string } | null;
+    }
   ): Promise<boolean> {
     const marketType: MarketType = cfg.market_type ?? 'FUTURES';
     const directionMode: DirectionMode = cfg.direction_mode ?? 'BOTH';
@@ -817,7 +859,7 @@ export class TradingBotCoordinator implements DurableObject {
               tp1: String(decision.tp1),
               tp2: String(decision.tp2),
               tp3: String(decision.tp3),
-              channelHandle: cfg.signal_channel_handle || '@Dollarino_official',
+              channelHandle: cfg.signal_channel_handle || undefined,
               engineKey: 'ai_autonomous_agent',
               engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
               reason: decision.thesis,
@@ -880,9 +922,13 @@ export class TradingBotCoordinator implements DurableObject {
 
       let outputs: StrategySignalOutput[] = [];
       if (modeKind === 'MY_AI') {
-        const agentRow = await this.env.DB.prepare(
-          `SELECT name, system_rules_json FROM user_ai_agents WHERE user_id = ? LIMIT 1`
-        ).bind(userId).first<{ name: string; system_rules_json: string }>().catch(() => null);
+        const agentRow =
+          prefetched?.agentRow !== undefined
+            ? prefetched.agentRow
+            : await this.env.DB.prepare(`SELECT name, system_rules_json FROM user_ai_agents WHERE user_id = ? LIMIT 1`)
+                .bind(userId)
+                .first<{ name: string; system_rules_json: string }>()
+                .catch(() => null);
         if (agentRow) {
           let rules: TrainedAIRules = DEFAULT_TRAINED_RULES;
           try {
@@ -900,11 +946,12 @@ export class TradingBotCoordinator implements DurableObject {
           effectiveStratKey === 'custom_visual') &&
         cfg.active_custom_strategy_id
       ) {
-        const customRow = await this.env.DB.prepare(
-          `SELECT language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`
-        )
-          .bind(cfg.active_custom_strategy_id, userId)
-          .first<{ language: CustomStrategyLanguage; code: string }>();
+        const customRow =
+          prefetched?.customStratRow !== undefined
+            ? prefetched.customStratRow
+            : await this.env.DB.prepare(`SELECT language, code FROM user_strategies WHERE id = ? AND user_id = ? LIMIT 1`)
+                .bind(cfg.active_custom_strategy_id, userId)
+                .first<{ language: CustomStrategyLanguage; code: string }>();
 
         if (customRow?.code) {
           const evalRes = evaluateCustomStrategy(customRow.language, customRow.code, ltfClosed, cfg.entry_timeframe);
@@ -990,7 +1037,7 @@ export class TradingBotCoordinator implements DurableObject {
         cfg.entry_timeframe,
         marketType === 'SPOT' ? 1 : Math.max(1, cfg.max_leverage),
         latest,
-        cfg.signal_channel_handle || '@Dollarino_official',
+        cfg.signal_channel_handle || undefined,
         effectiveStratKey
       );
       if (!sig) continue;

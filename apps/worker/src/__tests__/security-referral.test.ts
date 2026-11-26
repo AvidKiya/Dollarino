@@ -5,8 +5,9 @@ import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../index.js';
 import type { Env } from '../env.js';
-import { encryptVaultJson } from '../crypto.js';
+import { encryptVaultJson, signJwt } from '../crypto.js';
 import { resolveAIEnsemble, resolvePlatformAIEngines } from '../ai/providers.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 
 let mf: Miniflare;
 let db: D1Database;
@@ -160,7 +161,8 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
   });
 
   beforeEach(async () => {
-    await db.exec("DELETE FROM rate_limits; DELETE FROM referral_withdrawals; DELETE FROM referrals; DELETE FROM user_subscriptions; DELETE FROM gift_redemptions; DELETE FROM gift_codes; DELETE FROM users; INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'true');");
+    await db.exec("DELETE FROM rate_limits; DELETE FROM referral_withdrawals; DELETE FROM referrals; DELETE FROM user_subscriptions; DELETE FROM gift_redemptions; DELETE FROM gift_codes; DELETE FROM users; INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'true'), ('auth_public_signup_enabled', 'false'), ('auth_telegram_enabled', 'true'), ('bot_username', 'Dollarino_bot');");
+    invalidateSettingsCache(db);
   });
 
   it('blocks direct web email signup by default, verifies Telegram Login Widget, and lets user edit profile while locking verified phone', async () => {
@@ -299,10 +301,11 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
 
   it('prevents self-referral IP farming, blocks $0 gift commission unlock, and processes legitimate tiered payout + refund', async () => {
     const env = makeEnv();
-    // Temporarily disable telegram_only_signup & allow_direct_email_signup inside this anti-fraud unit test to exercise IP/UA duplicate registration checks directly
-    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false'), ('allow_direct_email_signup', 'true');`);
+    // Temporarily enable direct email signup inside this anti-fraud unit test to exercise IP/UA duplicate registration checks directly
+    await db.exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('telegram_only_signup', 'false'), ('allow_direct_email_signup', 'true'), ('auth_public_signup_enabled', 'true');`);
+    invalidateSettingsCache(db);
 
-    // 1. Register Referrer (first user becomes owner/admin automatically)
+    // 1. Register Referrer (first public signup stays ordinary 'user', NEVER auto-promoted to owner!)
     const reg1 = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/auth/register', {
         method: 'POST',
@@ -316,7 +319,8 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
       env
     );
     expect(reg1.status).toBe(201);
-    const u1 = (await reg1.json()) as { token: string; user: { id: string } };
+    const u1 = (await reg1.json()) as { token: string; user: { id: string; role: string } };
+    expect(u1.user.role).toBe('user');
     const refCode = `DLR-${u1.user.id.slice(-6).toUpperCase()}`;
 
     // 2. Register Duplicate Abuser from SAME IP + SAME User-Agent
@@ -410,10 +414,26 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     expect(chkRes.status).toBe(201);
     const chkJson = (await chkRes.json()) as { orderId: string };
 
-    const reviewRes = await worker.fetch(
+    // Non-admin public user Alice MUST get 403 on admin review; only owner/admin can approve
+    const userReviewRes = await worker.fetch(
       new Request(`https://dollarino.pages.dev/api/subscriptions/admin/orders/${chkJson.orderId}/review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${u1.token}` },
+        body: JSON.stringify({ decision: 'APPROVE', adminNote: 'Self attempt' }),
+      }),
+      env
+    );
+    expect(userReviewRes.status).toBe(403);
+
+    await db
+      .prepare(`INSERT OR IGNORE INTO users (id, email, username, password_hash, role, phone_verified) VALUES ('usr_sec_owner', 'secowner@dollarino.local', 'secowner', 'x', 'owner', 1)`)
+      .run();
+    const ownerToken = await signJwt({ sub: 'usr_sec_owner', email: 'secowner@dollarino.local', role: 'owner' }, env.SESSION_JWT_SECRET);
+
+    const reviewRes = await worker.fetch(
+      new Request(`https://dollarino.pages.dev/api/subscriptions/admin/orders/${chkJson.orderId}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
         body: JSON.stringify({ decision: 'APPROVE', adminNote: 'Paid verified' }),
       }),
       env
@@ -466,7 +486,7 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
 
     const adminRef = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/admin/referrals', {
-        headers: { Authorization: `Bearer ${u1.token}` },
+        headers: { Authorization: `Bearer ${ownerToken}` },
       }),
       env
     );
@@ -475,7 +495,7 @@ describe('Dollarino v9.6 Security, Rate-Limiting, Anti-Fraud Referral & DEX Fall
     const rejectRes = await worker.fetch(
       new Request(`https://dollarino.pages.dev/api/admin/referrals/withdrawals/${withdrawalId}/decide`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${u1.token}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
         body: JSON.stringify({ decision: 'REJECT', adminNote: 'Test refund' }),
       }),
       env

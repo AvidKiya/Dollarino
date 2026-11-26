@@ -6,7 +6,12 @@ import {
   type ExtractedChartSetup,
 } from '../ai/assistant.js';
 import { generateSupportAIReply, getPlatformAISummary, resolveAIEnsemble, runAutonomousAITrader } from '../ai/providers.js';
-import { ensureUserDefaults, resolveEffectiveReferralCode, syncTelegramAvatarForUser } from '../auth.js';
+import {
+  ensureUserDefaults,
+  resolveAuthProviderToggles,
+  resolveEffectiveReferralCode,
+  syncTelegramAvatarForUser,
+} from '../auth.js';
 import { encryptVaultJson, generateReferralCode, hashPassword, hmacSha256Hex, maskSecret, randomId, sha256Hex } from '../crypto.js';
 import {
   annotateRoutesWithLivePools,
@@ -69,6 +74,7 @@ import {
   type AdminStepState,
 } from './admin-menu.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
+import { resolveOwnerTelegramId } from './token.js';
 import {
   handleGroupModCallback,
   handleTelegramGroupMessage,
@@ -157,7 +163,7 @@ async function sendFounderAboutCard(
   ]);
   const cleanWeb = webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
   const name = fp?.fullNameFa || DOLLARINO_CREATOR_INFO.nameFa;
-  const verId = fp?.verificationId || 'TG-OWNER-944021185';
+  const verId = fp?.verificationId || 'تنظیم‌نشده';
   const lines = [
     `🛡 **شفافیت کامل بنیان‌گذار، استقلال ۱۰۰٪ و تاییدیه ضدپانزی دلارینو**`,
     ``,
@@ -362,13 +368,12 @@ function getUserUiMode(user: ProvisionedUserRow): 'simple' | 'pro' {
   return user.ui_mode === 'pro' ? 'pro' : 'simple';
 }
 
-function isSuperAdminUser(telegramId: string, role: string, env: Env): boolean {
-  const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
-  return telegramId === ownerId || role === 'owner';
+function isSuperAdminUser(telegramId: string, role: string, ownerId: string): boolean {
+  return (Boolean(ownerId) && telegramId === ownerId) || role === 'owner';
 }
 
-function isUserAdmin(telegramId: string, role: string, env: Env): boolean {
-  return isSuperAdminUser(telegramId, role, env) || role === 'admin';
+function isUserAdmin(telegramId: string, role: string, ownerId: string): boolean {
+  return isSuperAdminUser(telegramId, role, ownerId) || role === 'admin';
 }
 
 async function buildTelegramOnboardingGatePayload(env: Env, userId: string): Promise<{
@@ -641,7 +646,7 @@ async function runInstantAiAutoTradeForTelegram(params: {
           tp1: String(decision.tp1),
           tp2: String(decision.tp2),
           tp3: String(decision.tp3),
-          channelHandle: cfg?.signal_channel_handle || '@Dollarino_official',
+          channelHandle: cfg?.signal_channel_handle || undefined,
           engineKey: 'ai_autonomous_agent',
           engineLabel: resolveEngineDisplayLabel('ai_autonomous_agent'),
           reason: decision.thesis,
@@ -705,10 +710,12 @@ async function runInstantAiAutoTradeForTelegram(params: {
 
 async function getOrProvisionTelegramUser(
   env: Env,
-  tgUser: { id: number; first_name?: string; username?: string }
-): Promise<ProvisionedUserRow> {
+  tgUser: { id: number; first_name?: string; username?: string },
+  options?: { allowLinkBypass?: boolean; ownerId?: string }
+): Promise<ProvisionedUserRow | null> {
   const tgId = String(tgUser.id);
-  const ownerId = env.OWNER_TELEGRAM_ID || '944021185';
+  const ownerId = options?.ownerId ?? (await resolveOwnerTelegramId(env));
+  const isConfiguredOwner = Boolean(ownerId && tgId === ownerId);
 
   let row = await env.DB.prepare(
     `SELECT id, email, username, role, is_blocked, telegram_state, telegram_admin_perms, admin_panel_last_active_at,
@@ -718,8 +725,14 @@ async function getOrProvisionTelegramUser(
   ).bind(tgId).first<ProvisionedUserRow>();
 
   if (!row) {
+    if (!isConfiguredOwner && !options?.allowLinkBypass) {
+      const toggles = await resolveAuthProviderToggles(env.DB);
+      if (!toggles.telegramAuthEnabled) {
+        return null;
+      }
+    }
     const id = randomId('usr');
-    const role = tgId === ownerId ? 'owner' : 'user';
+    const role = isConfiguredOwner ? 'owner' : 'user';
     const username = tgUser.username || tgUser.first_name || `tg_${tgId}`;
     const pseudoEmail = `tg_${tgId}@telegram.dollarino.local`;
     const pwd = await hashPassword(randomId('pwd'));
@@ -729,7 +742,7 @@ async function getOrProvisionTelegramUser(
       `INSERT INTO users (id, email, username, display_name, auth_provider, password_hash, role, telegram_id, telegram_username, telegram_first_name, phone_verified, profile_completed, ui_mode, referral_code, has_custom_password)
        VALUES (?, ?, ?, ?, 'telegram', ?, ?, ?, ?, ?, ?, ?, 'simple', ?, 0)`
     )
-      .bind(id, pseudoEmail, username, tgUser.first_name || username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, tgId === ownerId ? 1 : 0, tgId === ownerId ? 1 : 0, myRefCode)
+      .bind(id, pseudoEmail, username, tgUser.first_name || username, pwd, role, tgId, tgUser.username ?? null, tgUser.first_name ?? null, isConfiguredOwner ? 1 : 0, isConfiguredOwner ? 1 : 0, myRefCode)
       .run();
 
     await ensureUserDefaults(env.DB, id);
@@ -744,7 +757,7 @@ async function getOrProvisionTelegramUser(
       admin_panel_last_active_at: null,
       wallet_balance_usdt: 0,
       phone_number: null,
-      phone_verified: tgId === ownerId ? 1 : 0,
+      phone_verified: isConfiguredOwner ? 1 : 0,
       trust_wallet_address: null,
       trust_wallet_tron: null,
       trust_wallet_solana: null,
@@ -753,7 +766,7 @@ async function getOrProvisionTelegramUser(
       extension_api_key: null,
     };
   } else {
-    if (tgId === ownerId && row.role !== 'owner') {
+    if (isConfiguredOwner && row.role !== 'owner') {
       await env.DB.prepare(`UPDATE users SET role = 'owner', phone_verified = 1 WHERE id = ?`).bind(row.id).run();
       row.role = 'owner';
       row.phone_verified = 1;
@@ -769,8 +782,8 @@ async function getOrProvisionTelegramUser(
   return row;
 }
 
-function buildAdminActor(user: ProvisionedUserRow, tgId: string, env: Env): AdminActor {
-  const superAdmin = isSuperAdminUser(tgId, user.role, env);
+function buildAdminActor(user: ProvisionedUserRow, tgId: string, ownerId: string): AdminActor {
+  const superAdmin = isSuperAdminUser(tgId, user.role, ownerId);
   return {
     id: user.id,
     telegramId: tgId,
@@ -919,11 +932,11 @@ async function showAccountCard(env: Env, bot: TelegramBotClient, chatId: string 
   await bot.sendMessage(chatId, card, { inlineKeyboard: kb });
 }
 
-async function isPhoneKycRequiredForUser(env: Env, user: ProvisionedUserRow, tgId: string): Promise<boolean> {
-  if (isUserAdmin(tgId, user.role, env)) return false;
+async function isPhoneKycRequiredForUser(env: Env, user: ProvisionedUserRow, tgId: string, ownerId: string): Promise<boolean> {
+  if (isUserAdmin(tgId, user.role, ownerId)) return false;
   if (Number(user.phone_verified ?? 0) === 1) return false;
-  const kycSetting = await getSystemSetting(env.DB, 'require_telegram_phone_kyc', 'true');
-  return kycSetting !== 'false';
+  const kycSetting = await getSystemSetting(env.DB, 'require_telegram_phone_kyc', 'false');
+  return kycSetting === 'true';
 }
 
 function normalizePhoneNumber(raw: string): string {
@@ -1337,15 +1350,16 @@ async function showFreeTradingViewAlertsMenu(
   webAppUrl: string,
   editMsgId?: number
 ) {
-  const [alerts, cfg, uRow] = await Promise.all([
+  const [alerts, cfg, uRow, ownerId] = await Promise.all([
     env.DB.prepare(`SELECT id, name, symbol, timeframe, trigger_count, is_active FROM tradingview_free_alerts WHERE user_id = ? ORDER BY created_at DESC LIMIT 8`).bind(userId).all<{
       id: string; name: string; symbol: string; timeframe: string; trigger_count: number; is_active: number;
     }>().catch(() => ({ results: [] })),
     env.DB.prepare(`SELECT webhook_secret FROM bot_configs WHERE user_id = ?`).bind(userId).first<{ webhook_secret: string }>(),
     env.DB.prepare(`SELECT role, telegram_id FROM users WHERE id = ?`).bind(userId).first<{ role: string; telegram_id: string | null }>().catch(() => null),
+    resolveOwnerTelegramId(env),
   ]);
   const isAdminUser =
-    uRow?.role === 'owner' || uRow?.role === 'admin' || uRow?.telegram_id === (env.OWNER_TELEGRAM_ID || '944021185');
+    uRow?.role === 'owner' || uRow?.role === 'admin' || Boolean(ownerId && uRow?.telegram_id === ownerId);
   const hookUrl = cfg?.webhook_secret ? `${webAppUrl}/api/webhook/tv/${cfg.webhook_secret}` : `${webAppUrl}/api/webhook/tv/...`;
   const lines = alerts.results.length
     ? alerts.results.map((a, i) => `${i + 1}. ${a.is_active ? '🟢' : '⏸'} ${a.name} (${a.symbol} · ${a.timeframe}) — اجرا: ${a.trigger_count}`).join('\n')
@@ -1449,7 +1463,7 @@ async function showTradeQuantitiesMenu(env: Env, bot: TelegramBotClient, chatId:
     `• 🎯 تقسیم تارگت‌ها: TP1=${cfg?.tp1_close_pct ?? 50}% | TP2=${cfg?.tp2_close_pct ?? 25}% | TP3=${cfg?.tp3_close_pct ?? 25}%\n` +
     `• 🛡 ریسک‌فری خودکار TP1 (SL→Entry): ${cfg?.auto_breakeven_on_tp1 ? '✅ فعال' : '❌ غیرفعال'}\n` +
     `• 🛡 انتقال SL به TP1 روی TP2: ${cfg?.move_sl_to_tp1_on_tp2 ? '✅ فعال' : '❌ غیرفعال'}\n` +
-    `• 📡 کانال سیگنال متصل: ${cfg?.signal_channel_handle ?? '@Dollarino_official'}`;
+    `• 📡 کانال سیگنال متصل: ${cfg?.signal_channel_handle || 'تنظیم‌نشده'}`;
 
   const kb: InlineKeyboardButton[][] = [
     [
@@ -1737,7 +1751,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   const bot = new TelegramBotClient(botToken);
   const webAppUrl = (env.PUBLIC_WEB_URL || 'https://dollarino.pages.dev').replace(/\/$/, '');
 
-  // 0. Auto-detect when @Dollarino_bot is promoted to Admin in any Channel or Community Group
+  // 0. Auto-detect when the bot is promoted to Admin in any Channel or Community Group
   if (update.my_chat_member) {
     const mcm = update.my_chat_member;
     const status = mcm.new_chat_member?.status;
@@ -1748,13 +1762,22 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         env,
         `📡 ربات در کانال **«${chTitle}»** ادمین شد!\n` +
           `🆔 شناسه عددی کانال: \`${chId}\`\n\n` +
-          `این کانال را برای کدام بخش ثبت کنم؟`,
+          `این کانال متعلق به کدام بخش از اکوسیستم رسمی DOLLARINO است؟`,
         {
           inlineKeyboard: [
-            [{ text: '📡 ثبت به‌عنوان کانال سیگنال‌ها', callback_data: `adm_bind_ch:signals:${chId}`, style: 'success' }],
-            [{ text: '🏆 ثبت به‌عنوان کانال نتیجه سیگنال‌ها', callback_data: `adm_bind_ch:results:${chId}`, style: 'primary' }],
-            [{ text: '📰 ثبت به‌عنوان کانال اخبار', callback_data: `adm_bind_ch:news:${chId}` }],
-            [{ text: '📢 ثبت به‌عنوان کانال اصلی دلارینو', callback_data: `adm_bind_ch:official:${chId}` }],
+            [{ text: '🌟 چنل رسمی و اصلی دلارینو (عمومی)', callback_data: `adm_bind_ch:official:${chId}`, style: 'primary' }],
+            [
+              { text: '01. سیگنال دلارینو', callback_data: `adm_bind_ch:signals:${chId}`, style: 'success' },
+              { text: '02. نتایج سیگنال دلارینو', callback_data: `adm_bind_ch:results:${chId}`, style: 'success' },
+            ],
+            [
+              { text: '07. اخبار دلارینو (عمومی)', callback_data: `adm_bind_ch:news:${chId}` },
+              { text: '04. لاگ‌های دلارینو (خصوصی)', callback_data: `adm_bind_ch:logs:${chId}` },
+            ],
+            [
+              { text: '05. دیتابیس دلارینو (خصوصی)', callback_data: `adm_bind_ch:database:${chId}` },
+              { text: '06. تراکنش‌های دلارینو (خصوصی)', callback_data: `adm_bind_ch:transactions:${chId}` },
+            ],
           ],
         }
       ).catch(() => {});
@@ -1768,7 +1791,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
           `مبصر ضدلینک و دستیار هوشمند گروه آماده است:`,
         {
           inlineKeyboard: [
-            [{ text: '👥 ثبت به‌عنوان گروه رسمی کامیونیتی دلارینو', callback_data: `adm_bind_ch:community:${grpId}`, style: 'success' }],
+            [{ text: '03. ثبت به‌عنوان گروه کاربران دلارینو', callback_data: `adm_bind_ch:community:${grpId}`, style: 'success' }],
           ],
         }
       ).catch(() => {});
@@ -1784,14 +1807,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
     const chatIdStr = String(post.chat.id);
     const chatUser = (post.chat.username || '').toLowerCase();
-    const defaultHandle = (env.DEFAULT_SIGNAL_CHANNEL || '@Dollarino_official').replace(/^@/, '').toLowerCase();
-    const configuredSignalsChannel = await getSystemSetting(env.DB, 'signals_channel_id', '');
+    const [defaultRaw, configuredSignalsChannel] = await Promise.all([
+      getSystemSetting(env.DB, 'official_channel', env.DEFAULT_SIGNAL_CHANNEL || ''),
+      getSystemSetting(env.DB, 'signals_channel_id', ''),
+    ]);
+    const defaultHandle = defaultRaw.replace(/^@/, '').toLowerCase();
     const isOfficial =
-      chatIdStr === '-1002263982097' ||
-      (configuredSignalsChannel && chatIdStr === configuredSignalsChannel) ||
-      chatUser === 'dollarino_official' ||
-      chatUser === 'dollarinoofficial' ||
-      chatUser === defaultHandle;
+      (Boolean(configuredSignalsChannel) && (chatIdStr === configuredSignalsChannel || (chatUser && chatUser === configuredSignalsChannel.replace(/^@/, '').toLowerCase()))) ||
+      (Boolean(defaultHandle) && (chatUser === defaultHandle || chatIdStr === defaultRaw));
 
     if (!isOfficial) {
       const configuredBotChannel = await env.DB.prepare(
@@ -1874,7 +1897,11 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true, signalId: sigId };
   }
 
-  const privateAdminOnly = (await getSystemSetting(env.DB, 'bot_private_admin_only', 'false')) === 'true';
+  const [privateAdminOnlyVal, ownerId] = await Promise.all([
+    getSystemSetting(env.DB, 'bot_private_admin_only', 'false'),
+    resolveOwnerTelegramId(env),
+  ]);
+  const privateAdminOnly = privateAdminOnlyVal === 'true';
 
   // 2. Handle Inline Callback Queries
   if (update.callback_query) {
@@ -1889,8 +1916,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
-    const user = await getOrProvisionTelegramUser(env, cq.from);
-    const admin = isUserAdmin(tgId, user.role, env);
+    const user = await getOrProvisionTelegramUser(env, cq.from, { ownerId });
+    if (!user) {
+      await bot.answerCallbackQuery(cq.id, '⏳ ورود و ثبت‌نام از طریق تلگرام هنوز توسط مدیر سایت فعال نشده است.', true);
+      return { ok: true };
+    }
+    const admin = isUserAdmin(tgId, user.role, ownerId);
 
     if (user.is_blocked || (privateAdminOnly && !admin)) {
       await bot.answerCallbackQuery(cq.id, '⛔️ دسترسی محدود شده یا ربات در حالت خصوصی ادمین است.', true);
@@ -1898,7 +1929,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     }
 
     // Hard Phone-KYC Gate on all callbacks before account verification (no extra buttons before KYC)
-    if (await isPhoneKycRequiredForUser(env, user, tgId)) {
+    if (await isPhoneKycRequiredForUser(env, user, tgId, ownerId)) {
       await bot.answerCallbackQuery(cq.id, '🔐 ابتدا شماره تماس اکانت خود را از دکمه پایین به اشتراک بگذارید.', true);
       await sendPreAuthIntro(env, bot, chatId, user, cq.from.first_name || user.username);
       return { ok: true };
@@ -1953,26 +1984,19 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const parts = data.split(':');
       const roleKey = parts[1];
       const targetChatId = parts.slice(2).join(':');
-      const settingKey =
-        roleKey === 'signals'
-          ? 'signals_channel_id'
-          : roleKey === 'results'
-            ? 'results_channel_id'
-            : roleKey === 'news'
-              ? 'news_channel_id'
-              : roleKey === 'community'
-                ? 'community_group_id'
-                : 'official_channel';
-      const roleTitle =
-        roleKey === 'signals'
-          ? '📡 کانال سیگنال‌ها'
-          : roleKey === 'results'
-            ? '🏆 کانال نتیجه سیگنال‌ها'
-            : roleKey === 'news'
-              ? '📰 کانال اخبار کریپتو'
-              : roleKey === 'community'
-                ? '👥 گروه رسمی کامیونیتی دلارینو'
-                : '📢 کانال اصلی دلارینو';
+      const roleMeta: Record<string, { settingKey: string; title: string }> = {
+        official: { settingKey: 'official_channel', title: '🌟 چنل رسمی و اصلی دلارینو' },
+        signals: { settingKey: 'signals_channel_id', title: '01. سیگنال دلارینو' },
+        results: { settingKey: 'results_channel_id', title: '02. نتایج سیگنال دلارینو' },
+        community: { settingKey: 'community_group_id', title: '03. گروه کاربران دلارینو' },
+        logs: { settingKey: 'logs_channel_id', title: '04. لاگ‌های دلارینو (خصوصی)' },
+        database: { settingKey: 'database_channel_id', title: '05. دیتابیس دلارینو (خصوصی)' },
+        transactions: { settingKey: 'transactions_channel_id', title: '06. تراکنش‌های دلارینو (خصوصی)' },
+        news: { settingKey: 'news_channel_id', title: '07. اخبار دلارینو' },
+      };
+      const meta = (roleKey && roleMeta[roleKey]) || roleMeta.official!;
+      const settingKey = meta.settingKey;
+      const roleTitle = meta.title;
 
       await env.DB.prepare(
         `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
@@ -1998,7 +2022,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         await bot.answerCallbackQuery(cq.id, '⛔️ دسترسی مدیریتی ندارید.', true);
         return { ok: true };
       }
-      await handleAdminCallback(env, bot, buildAdminActor(user, tgId, env), cq.id, chatId, msgId, data);
+      await handleAdminCallback(env, bot, buildAdminActor(user, tgId, ownerId), cq.id, chatId, msgId, data);
       return { ok: true };
     }
 
@@ -2051,6 +2075,46 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     if (data === 'tg_web_login') {
       await bot.answerCallbackQuery(cq.id, 'لینک ورود سریع ساخته شد 🌐');
       await sendWebMagicLoginLink(env, bot, chatId, user.id, webAppUrl);
+      return { ok: true };
+    }
+
+    if (data === 'tg_ecosystem_links') {
+      await bot.answerCallbackQuery(cq.id);
+      const cfg = await resolveChannelAndBotConfig(env);
+      const pubUrl = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:|\/|$)/i.test(u);
+      const linkRows: Array<Array<{ text: string; url?: string; callback_data?: string; web_app?: { url: string }; style?: 'primary' | 'success' | 'danger' }>> = [];
+      if (pubUrl(cfg.officialChannelInvite)) {
+        linkRows.push([{ text: '🌟 چنل رسمی و اصلی دلارینو (اطلاعیه/قرعه‌کشی)', url: cfg.officialChannelInvite, style: 'primary' }]);
+      }
+      const row1: Array<{ text: string; url: string; style?: 'success' }> = [];
+      if (pubUrl(cfg.signalsChannelInvite)) {
+        row1.push({ text: '01. سیگنال دلارینو 📡', url: cfg.signalsChannelInvite, style: 'success' });
+      }
+      if (pubUrl(cfg.resultsChannelInvite)) {
+        row1.push({ text: '02. نتایج سیگنال 🏆', url: cfg.resultsChannelInvite });
+      }
+      if (row1.length > 0) linkRows.push(row1);
+      const row2: Array<{ text: string; url: string }> = [];
+      if (pubUrl(cfg.communityGroupInvite)) {
+        row2.push({ text: '03. گروه کاربران دلارینو 👥', url: cfg.communityGroupInvite });
+      }
+      if (pubUrl(cfg.newsChannelInvite)) {
+        row2.push({ text: '07. اخبار دلارینو 📰', url: cfg.newsChannelInvite });
+      }
+      if (row2.length > 0) linkRows.push(row2);
+      linkRows.push([{ text: '🌐 ورود فوری به نسخه وب', callback_data: 'tg_web_login', style: 'primary' }]);
+      linkRows.push([{ text: '🔙 بازگشت به منو', callback_data: 'tg_acc:none' }]);
+
+      const ecoText =
+        `📡 **ساختار رسمی DOLLARINO — AI Trading Ecosystem**\n\n` +
+        `• 🌟 **چنل رسمی و اصلی:** ${cfg.officialChannel || 'تنظیم‌نشده (به‌زودی)'}\n` +
+        `• 📡 **01. سیگنال دلارینو:** ${cfg.signalsChannelId || 'تنظیم‌نشده'}\n` +
+        `• 🏆 **02. نتایج سیگنال دلارینو:** ${cfg.resultsChannelId || 'تنظیم‌نشده'}\n` +
+        `• 👥 **03. گروه کاربران دلارینو:** ${cfg.communityGroupId ? 'فعال ✅' : 'تنظیم‌نشده'}\n` +
+        `• 📰 **07. اخبار دلارینو:** ${cfg.newsChannelId || 'تنظیم‌نشده'}\n\n` +
+        `از دکمه‌های زیر می‌توانید مستقیماً وارد هر بخش یا سایت شوید 👇`;
+
+      await bot.sendMessage(chatId, ecoText, { inlineKeyboard: linkRows });
       return { ok: true };
     }
 
@@ -2282,7 +2346,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         },
         margin_pct: { step: 'AWAIT_MARGIN_PCT', prompt: '💰 درصد مارجین هر معامله (بین 1 تا 100، پیش‌فرض 10) را بفرستید:' },
         max_leverage: { step: 'AWAIT_MAX_LEV', prompt: '🔘 حداکثر اهرم مجاز (بین 1 تا 125، پیش‌فرض 20) را بفرستید:' },
-        signal_channel_handle: { step: 'AWAIT_SIGNAL_CHANNEL', prompt: '📡 آیدی یا لینک کانال سیگنال جدید را بفرستید (پیش‌فرض: @Dollarino_official):' },
+        signal_channel_handle: { step: 'AWAIT_SIGNAL_CHANNEL', prompt: '📡 آیدی یا لینک کانال سیگنال جدید را بفرستید (مثلاً @my_signals_channel):' },
         tp_custom: { step: 'AWAIT_TP_CUSTOM', prompt: '🎯 درصدهای TP1 TP2 TP3 را با فاصله بفرستید (مثلاً: 50 25 25):' },
       };
       const item = stepMap[field];
@@ -2444,7 +2508,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         ).catch(() => {});
       }
       await bot.sendMessage(chatId, nextMode === 'pro' ? '⚡ منوی حالت حرفه‌ای فعال شد:' : '🌱 منوی حالت ساده فعال شد:', {
-        replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode, isUserAdmin(tgId, user.role, env)),
+        replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode, isUserAdmin(tgId, user.role, ownerId)),
       });
       return { ok: true };
     }
@@ -3316,11 +3380,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     if (data === 'tg_support_open') {
       await env.DB.prepare(`UPDATE users SET telegram_state = ? WHERE id = ?`).bind(JSON.stringify({ step: 'AWAIT_SUPPORT_MSG' }), user.id).run();
       await bot.answerCallbackQuery(cq.id);
-      const supportId = await getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE);
-      const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
+      const configuredBot = (await getSystemSetting(env.DB, 'bot_username', '')).replace(/^@/, '');
+      const fallbackBot = configuredBot ? `@${configuredBot}` : '';
+      const supportId = await getSystemSetting(env.DB, 'telegram_support', fallbackBot);
+      const safeSup = !supportId || /Dollarino_admin/i.test(supportId) ? fallbackBot : supportId;
+      const supTag = safeSup ? ` (${safeSup})` : '';
       await bot.sendMessage(
         chatId,
-        `💬 پشتیبانی هوشمند و آنلاین دلارینو (${safeSup})\n\n` +
+        `💬 پشتیبانی هوشمند و آنلاین دلارینو${supTag}\n\n` +
         `سوال، خطا یا <b>عکس و اسکرین‌شات</b> خود را همین‌جا ارسال کنید تا دستیار هوش مصنوعی پشتیبانی ظرف چند ثانیه بررسی و پاسخ دهد.\n` +
         `هر زمان بخواهید می‌توانید دکمه «گفتگو مستقیم با مدیران» را بزنید تا پیام یا تصویرتان مستقیماً برای تیم مدیریت ارسال شود.\n\n` +
         `${ANTI_SCAM_WARNING_FA}`,
@@ -3692,7 +3759,6 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
         tp1: setup.tp1,
         tp2: setup.tp2,
         tp3: setup.tp3,
-        channelHandle: '@Dollarino_official',
         engineKey: 'ai_autonomous_agent',
         engineLabel: 'تحلیل چارت AI اختصاصی دلارینو',
       };
@@ -3727,7 +3793,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       await env.DB.prepare(`UPDATE users SET telegram_state = NULL WHERE id = ?`).bind(user.id).run();
       await bot.answerCallbackQuery(cq.id, 'بازگشت به منوی اصلی');
       await bot.sendMessage(chatId, '🏠 از حالت چت مستقیم خارج شدید. منوی کامل در اختیار شماست:', {
-        replyKeyboard: mainMenuKeyboard(webAppUrl, getUserUiMode(user), isUserAdmin(tgId, user.role, env)),
+        replyKeyboard: mainMenuKeyboard(webAppUrl, getUserUiMode(user), isUserAdmin(tgId, user.role, ownerId)),
       });
       return { ok: true };
     }
@@ -3764,9 +3830,17 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   const text = msgBodyText;
   const chatId = msg.chat.id;
   const tgId = String(msg.from.id);
-  const user = await getOrProvisionTelegramUser(env, msg.from);
-  const superAdmin = isSuperAdminUser(tgId, user.role, env);
-  const admin = isUserAdmin(tgId, user.role, env);
+  const isLinkCommand = text.startsWith('/start LINK-') || text.startsWith('/link ');
+  const user = await getOrProvisionTelegramUser(env, msg.from, { allowLinkBypass: isLinkCommand, ownerId });
+  if (!user) {
+    await bot.sendMessage(
+      chatId,
+      '⏳ ورود و ثبت‌نام از طریق تلگرام هنوز توسط مدیر سایت فعال نشده است.\nلطفاً پس از فعال‌سازی از پنل مدیریت دوباره تلاش کنید.'
+    );
+    return { ok: true };
+  }
+  const superAdmin = isSuperAdminUser(tgId, user.role, ownerId);
+  const admin = isUserAdmin(tgId, user.role, ownerId);
   const uiMode = getUserUiMode(user);
 
   if (admin && forwardedChannel) {
@@ -3794,7 +3868,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   if (privateAdminOnly && !admin) {
     await bot.sendMessage(
       chatId,
-      `⛔️ این ربات در حال حاضر در حالت خصوصی است و فقط برای مدیر اصلی (${env.OWNER_TELEGRAM_ID || '944021185'}) و مدیران تاییدشده قابل استفاده می‌باشد.`
+      '⛔️ این ربات در حال حاضر در حالت خصوصی است و فقط برای مدیر اصلی و مدیران تاییدشده قابل استفاده می‌باشد.'
     );
     return { ok: true };
   }
@@ -3856,7 +3930,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   // 3B. Mandatory Pre-Auth Landing & Phone-KYC Gate (Never show bot menus before account verification!)
-  if (await isPhoneKycRequiredForUser(env, user, tgId)) {
+  if (await isPhoneKycRequiredForUser(env, user, tgId, ownerId)) {
     const startArg = text.startsWith('/start ') ? text.slice(7).trim() : undefined;
     await sendPreAuthIntro(env, bot, chatId, user, msg.from.first_name ?? user.username, startArg);
     return { ok: true };
@@ -4061,7 +4135,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const handled = await handleAdminStepInput(
         env,
         bot,
-        buildAdminActor(user, tgId, env),
+        buildAdminActor(user, tgId, ownerId),
         chatId,
         state as AdminStepState,
         text,
@@ -4753,11 +4827,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text === '💬 پشتیبانی آنلاین' || text === '💬 پشتیبانی' || text === '/support') {
     await setState({ step: 'AWAIT_SUPPORT_MSG' });
-    const supportId = await getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE);
-    const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
+    const configuredBot = (await getSystemSetting(env.DB, 'bot_username', '')).replace(/^@/, '');
+    const fallbackBot = configuredBot ? `@${configuredBot}` : '';
+    const supportId = await getSystemSetting(env.DB, 'telegram_support', fallbackBot);
+    const safeSup = !supportId || /Dollarino_admin/i.test(supportId) ? fallbackBot : supportId;
+    const supTag = safeSup ? ` (${safeSup})` : '';
     await bot.sendMessage(
       chatId,
-      `💬 پشتیبانی هوشمند و آنلاین دلارینو (${safeSup})\n\n` +
+      `💬 پشتیبانی هوشمند و آنلاین دلارینو${supTag}\n\n` +
       `سوال، مشکل یا <b>عکس / اسکرین‌شات</b> خود را همین‌جا ارسال کنید تا هوش مصنوعی پشتیبانی فوری بررسی و پاسخ دهد. هر زمان خواستید می‌توانید از دکمه زیر مستقیم با <b>مدیران انسانی</b> گفتگو کنید.\n\n` +
       `${ANTI_SCAM_WARNING_FA}`,
       {
@@ -5026,7 +5103,7 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
 
   if (text === 'افزودن مدیر 🔑') {
     if (!superAdmin) {
-      await bot.sendMessage(chatId, '⛔️ فقط مدیر اصلی سیستم (944021185) مجاز به افزودن مدیر جدید است.');
+      await bot.sendMessage(chatId, '⛔️ فقط مدیر اصلی سیستم مجاز به افزودن مدیر جدید است.');
       return { ok: true };
     }
     await setState({ step: 'AWAIT_ADD_ADMIN' });
@@ -5059,12 +5136,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
   }
 
   if (text === 'راهنما 📚' || text === '/help') {
-    const [helpText, helpMedia, supportId] = await Promise.all([
+    const [helpText, helpMedia, supportId, botUsernameCfg] = await Promise.all([
       getSystemSetting(env.DB, 'bot_help_text', ''),
       getSystemSetting(env.DB, 'bot_help_media_url', ''),
-      getSystemSetting(env.DB, 'telegram_support', OFFICIAL_BOT_HANDLE),
+      getSystemSetting(env.DB, 'telegram_support', ''),
+      getSystemSetting(env.DB, 'bot_username', ''),
     ]);
-    const safeSup = /Dollarino_admin/i.test(supportId) ? OFFICIAL_BOT_HANDLE : supportId;
+    const cleanHelpBot = botUsernameCfg.replace(/^@/, '');
+    const fallbackHelpSup = cleanHelpBot ? `@${cleanHelpBot}` : '';
+    const safeSup = !supportId || /Dollarino_admin/i.test(supportId) ? fallbackHelpSup : supportId;
     const defaultHelpGuide = [
       '📚 **راهنمای سریع دلارینو (نسخه V11.2)**',
       '• **۵ موتور معامله هم‌زمان:** ۱) هوش مصنوعی دلارینو (کاملاً خودکار)، ۲) هوش مصنوعی من (قابل آموزش با چت و عکس)، ۳) استراتژی شکار دُرنا V1 + IDE، ۴) کپی‌ترید هوشمند ولت‌ها V2، ۵) اسنایپ لیستینگ و میم‌کوین.',
@@ -5073,10 +5153,14 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       '• **تحلیل چارت:** در چت ربات بنویسید `/ai` یا مستقیماً عکس چارت را بفرستید تا ورود، استاپ و ۳ تارگت تحویل بگیرید.',
     ].join('\n');
     const rawHelp = (helpText || (await getSystemSetting(env.DB, 'help_text', defaultHelpGuide))).replace(/\\n/g, '\n');
-    const caption = `${rawHelp}\n\n${CREATOR_ATTRIBUTION_FA}\n\n🆘 پشتیبانی رسمی: ${safeSup}\n${ANTI_SCAM_WARNING_FA}`;
-    const faqKb: InlineKeyboardButton[][] | undefined = webAppUrl.startsWith('https://')
-      ? [[{ text: '🚀 راهنمای کامل در مینی‌اپ دلارینو', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/faq` }, style: 'primary' }]]
-      : undefined;
+    const supLine = safeSup ? `\n\n🆘 پشتیبانی رسمی: ${safeSup}` : '\n';
+    const caption = `${rawHelp}\n\n${CREATOR_ATTRIBUTION_FA}${supLine}\n${ANTI_SCAM_WARNING_FA}`;
+    const faqKb: InlineKeyboardButton[][] = [
+      [{ text: '📡 کانال‌ها و گروه رسمی دلارینو', callback_data: 'tg_ecosystem_links', style: 'success' }],
+      ...(webAppUrl.startsWith('https://')
+        ? [[{ text: '🚀 راهنمای کامل در مینی‌اپ دلارینو', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/faq` }, style: 'primary' as const }]]
+        : []),
+    ];
     if (helpMedia && helpMedia.startsWith('https://')) {
       if (/\.(mp4|mov|webm)(\?|$)/i.test(helpMedia)) {
         await bot.sendVideo(chatId, helpMedia, caption).catch(() => bot.sendMessage(chatId, caption, { inlineKeyboard: faqKb }));
@@ -5089,8 +5173,37 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
+  if (text === '/channels' || text === 'کانال‌های رسمی دلارینو') {
+    const cfg = await resolveChannelAndBotConfig(env);
+    const pubUrl = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0)(:|\/|$)/i.test(u);
+    const linkRows: InlineKeyboardButton[][] = [];
+    if (pubUrl(cfg.officialChannelInvite)) {
+      linkRows.push([{ text: '🌟 چنل رسمی و اصلی دلارینو', url: cfg.officialChannelInvite, style: 'primary' }]);
+    }
+    const r1: InlineKeyboardButton[] = [];
+    if (pubUrl(cfg.signalsChannelInvite)) r1.push({ text: '01. سیگنال دلارینو 📡', url: cfg.signalsChannelInvite, style: 'success' });
+    if (pubUrl(cfg.resultsChannelInvite)) r1.push({ text: '02. نتایج سیگنال 🏆', url: cfg.resultsChannelInvite });
+    if (r1.length > 0) linkRows.push(r1);
+    const r2: InlineKeyboardButton[] = [];
+    if (pubUrl(cfg.communityGroupInvite)) r2.push({ text: '03. گروه کاربران دلارینو 👥', url: cfg.communityGroupInvite });
+    if (pubUrl(cfg.newsChannelInvite)) r2.push({ text: '07. اخبار دلارینو 📰', url: cfg.newsChannelInvite });
+    if (r2.length > 0) linkRows.push(r2);
+    linkRows.push([{ text: '🌐 ورود فوری به نسخه وب', callback_data: 'tg_web_login', style: 'primary' }]);
+    await bot.sendMessage(
+      chatId,
+      `📡 **ساختار رسمی DOLLARINO — AI Trading Ecosystem**\n\n` +
+        `• 🌟 **چنل رسمی و اصلی:** ${cfg.officialChannel || 'تنظیم‌نشده'}\n` +
+        `• 📡 **01. سیگنال دلارینو:** ${cfg.signalsChannelId || 'تنظیم‌نشده'}\n` +
+        `• 🏆 **02. نتایج سیگنال دلارینو:** ${cfg.resultsChannelId || 'تنظیم‌نشده'}\n` +
+        `• 👥 **03. گروه کاربران دلارینو:** ${cfg.communityGroupId ? 'فعال ✅' : 'تنظیم‌نشده'}\n` +
+        `• 📰 **07. اخبار دلارینو:** ${cfg.newsChannelId || 'تنظیم‌نشده'}`,
+      { inlineKeyboard: linkRows }
+    );
+    return { ok: true };
+  }
+
   if ((text === 'پنل مدیریت 💼' || text === '/admin') && admin) {
-    await openAdminPanelHome(env, bot, chatId, buildAdminActor(user, tgId, env));
+    await openAdminPanelHome(env, bot, chatId, buildAdminActor(user, tgId, ownerId));
     return { ok: true };
   }
 

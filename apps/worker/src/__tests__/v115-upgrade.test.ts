@@ -123,6 +123,7 @@ describe('Dollarino V11.5 Upgrade Suite: Zero Subscriptions, Signal Controls, D1
         }
       }
     }
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'true')`).run();
   });
 
   afterAll(async () => {

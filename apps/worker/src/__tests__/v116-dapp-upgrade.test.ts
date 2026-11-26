@@ -11,6 +11,7 @@ import { executeSniperBuyForCandidate, type SniperCandidate } from '../engine/li
 import type { UserBotConfigRow } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { dedupeMarketsBySymbol } from '../exchanges/markets.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 import worker from '../index.js';
 
 let mf: Miniflare;
@@ -136,6 +137,7 @@ describe('V11.6 Trust Wallet DApp Integration, ECDSA Verification & Live 24/7 Ex
         await db.prepare(stmt).run();
       }
     }
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'true')`).run();
   });
 
   afterAll(async () => {
@@ -610,7 +612,20 @@ describe('V11.6 Trust Wallet DApp Integration, ECDSA Verification & Live 24/7 Ex
   it('supports Web3 EIP-191 signup/login, complete-profile, username/email login, TOTP 2FA challenge, and masks google_client_secret in admin overview', async () => {
     const env = makeEnv();
 
-    // 1. Check providers
+    // 1. Check providers — wallet starts disabled cleanly until admin enables it
+    const provCleanRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/auth/providers'), env);
+    expect(provCleanRes.status).toBe(200);
+    const provCleanJson = (await provCleanRes.json()) as {
+      walletAuthEnabled: boolean;
+      telegramAuthEnabled: boolean;
+      googleEnabled: boolean;
+    };
+    expect(provCleanJson.walletAuthEnabled).toBe(false);
+    expect(provCleanJson.googleEnabled).toBe(false);
+
+    // Enable wallet auth as admin and verify providers reflects it
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_wallet_enabled', 'true')`).run();
+    invalidateSettingsCache(db);
     const provRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/auth/providers'), env);
     expect(provRes.status).toBe(200);
     const provJson = (await provRes.json()) as {

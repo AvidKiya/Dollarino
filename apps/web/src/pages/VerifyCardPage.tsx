@@ -53,7 +53,7 @@ export function VerifyCardPage({ cardId, lang, onBackHome }: { cardId: string; l
               <h1 className="text-sm font-black text-main">
                 {isFa ? 'استعلام اصالت کارت سود دلارینو' : 'Dollarino Profit Card Verification'}
               </h1>
-              <p dir="ltr" className="text-[11px] font-mono-num text-dim">{cardId} · @Dollarino_official</p>
+              <p dir="ltr" className="text-[11px] font-mono-num text-dim">{cardId} · Dollarino Verified</p>
             </div>
           </div>
           <button type="button" onClick={onBackHome} className="btn-ghost px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1">

@@ -78,7 +78,7 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
   const [text, setText] = useState('');
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
-  const [telegramSupport, setTelegramSupport] = useState('@Dollarino_bot');
+  const [telegramSupport, setTelegramSupport] = useState('');
   const [antiScam, setAntiScam] = useState('');
   const [statusMsg, setStatusMsg] = useState('');
   const [supportMode, setSupportMode] = useState<'AI_ASSISTANT' | 'HUMAN_ADMIN'>('AI_ASSISTANT');
@@ -386,8 +386,8 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
           <span>
             {antiScam ||
               (isFa
-                ? 'هشدار امنیتی: دلارینو هیچ‌گونه اکانت شخصی برای پشتیبانی یا دریافت وجه ندارد. تمام ارتباطات رسمی فقط از طریق همین پنجره آنلاین و ربات رسمی @Dollarino_bot انجام می‌شود.'
-                : 'Security notice: Dollarino has NO personal DM support account. Only use this online window or the official bot @Dollarino_bot.')}
+                ? `هشدار امنیتی: دلارینو هیچ‌گونه اکانت شخصی برای پشتیبانی یا دریافت وجه ندارد. تمام ارتباطات رسمی فقط از طریق همین پنجره آنلاین${telegramSupport ? ` و ربات رسمی ${telegramSupport}` : ''} انجام می‌شود.`
+                : `Security notice: Dollarino has NO personal DM support account. Only use this online window${telegramSupport ? ` or the official bot ${telegramSupport}` : ''}.`)}
           </span>
         </div>
 

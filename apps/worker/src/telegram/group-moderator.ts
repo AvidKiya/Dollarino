@@ -6,6 +6,7 @@ import { invalidateSettingsCache } from '../services/settings-cache.js';
 import { TelegramBotClient, type InlineKeyboardButton } from './client.js';
 import { ANTI_SCAM_WARNING_FA, OFFICIAL_BOT_HANDLE, OFFICIAL_CHANNEL_HANDLE } from './formatter.js';
 import { getSystemSettingValue, resolveChannelAndBotConfig } from './publisher.js';
+import { resolveOwnerTelegramId } from './token.js';
 
 export interface TelegramMessageEntity {
   type: string;
@@ -99,7 +100,8 @@ export async function isGroupModeratorExempt(
 ): Promise<boolean> {
   const uid = String(userId);
   if (uid === '1087968824' || username === 'GroupAnonymousBot') return true;
-  if (uid === (env.OWNER_TELEGRAM_ID || '944021185')) return true;
+  const ownerId = await resolveOwnerTelegramId(env);
+  if (ownerId && uid === ownerId) return true;
 
   const dbAdmin = await env.DB.prepare(
     `SELECT role FROM users WHERE telegram_id = ? AND role IN ('owner', 'admin') LIMIT 1`
@@ -279,13 +281,15 @@ export async function handleGroupModCallback(
 
   if (data === 'gmod:rules') {
     await bot.answerCallbackQuery(cqId);
+    const cfg = await resolveChannelAndBotConfig(env);
+    const botLabel = cfg.botUsername ? `@${cfg.botUsername}` : 'ربات رسمی دلارینو';
     const rulesText =
       `📜 **قوانین رسمی گروه کامیونیتی دلارینو**\n\n` +
       `1️⃣ ارسال هرگونه لینک خارجی، کانال و تبلیغات ممنوع است (حذف خودکار + ۳ اخطار = سکوت ۲۴ ساعته).\n` +
       `2️⃣ هرگونه وعده سود تضمینی، درخواست ۱۲ کلمه بازیابی (Seed Phrase) یا پیام مشکوک اسکم محسوب و فوراً حذف می‌شود.\n` +
-      `3️⃣ پشتیبانی و ثبت‌نام رسمی فقط در ربات ${OFFICIAL_BOT_HANDLE} است.\n` +
+      `3️⃣ پشتیبانی و ثبت‌نام رسمی فقط در ${botLabel} است.\n` +
       `4️⃣ برای پرسش سوال از هوش مصنوعی در همین گروه، کافیست بنویسید:\n` +
-      `\`@Dollarino_bot سوالتون...\``;
+      (cfg.botUsername ? `\`@${cfg.botUsername} سوالتون...\`` : '`@ربات سوالتون...`');
     await bot.sendMessage(chatId, rulesText);
     return true;
   }
@@ -346,19 +350,21 @@ export async function handleTelegramGroupMessage(
       .filter((m) => !m.is_bot)
       .map((m) => m.first_name || (m.username ? `@${m.username}` : 'دوست عزیز'));
     if (humanNames.length > 0) {
+      const botTag = cfg.botUsername ? `@${cfg.botUsername}` : 'ربات رسمی';
+      const chanTag = cfg.channelHandle || OFFICIAL_CHANNEL_HANDLE || 'تنظیم‌نشده';
+      const kbRow: InlineKeyboardButton[] = [];
+      if (cfg.botUsername) {
+        kbRow.push({ text: '🤖 شروع با ربات دلارینو', url: `https://t.me/${cfg.botUsername}`, style: 'success' });
+      }
+      kbRow.push({ text: '🌐 ورود به سایت', url: cfg.webAppUrl, style: 'primary' });
       await bot.sendMessage(
         chatId,
         `👋 خوش آمدید **${humanNames.join('، ')}** به گروه کامیونیتی **دلارینو**!\n\n` +
-          `🤖 ربات و هوش مصنوعی رسمی ما در گروه فعال است — هر سوال یا مشکلی دارید کافیست **@${cfg.botUsername}** را صدا بزنید یا روی پیام ربات ریپلای کنید.\n` +
+          `🤖 ربات و هوش مصنوعی رسمی ما در گروه فعال است — هر سوال یا مشکلی دارید کافیست **${botTag}** را صدا بزنید یا روی پیام ربات ریپلای کنید.\n` +
           `🛡 برای امنیت خودتان: هرگز ۱۲ کلمه بازیابی ولت را برای کسی نفرستید. لینک و تبلیغ در گروه خودکار حذف می‌شود.\n\n` +
-          `📌 ربات رسمی: @${cfg.botUsername} | کانال: ${OFFICIAL_CHANNEL_HANDLE}`,
+          `📌 ربات رسمی: ${botTag}${chanTag && chanTag !== 'تنظیم‌نشده' ? ` | کانال: ${chanTag}` : ''}`,
         {
-          inlineKeyboard: [
-            [
-              { text: '🤖 شروع با ربات دلارینو', url: `https://t.me/${cfg.botUsername}`, style: 'success' },
-              { text: '🌐 ورود به سایت', url: cfg.webAppUrl, style: 'primary' },
-            ],
-          ],
+          inlineKeyboard: [kbRow],
         }
       ).catch(() => {});
     }
