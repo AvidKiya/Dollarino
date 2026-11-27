@@ -13,6 +13,8 @@ name: Deploy Dollarino to Cloudflare
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   # D1's free tier rejects every query once the daily row-read limit is hit and only
   # resets at 00:00 UTC. A failed deploy therefore re-arms itself: the 2-hourly
@@ -36,8 +38,19 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
+      - name: Environment info
+        run: |
+          node --version
+          npm --version
+          uname -a
+          echo "CI=$CI"
       - run: npm run typecheck
-      - run: npm test
+      # Tests run through scripts/run-tests.mjs: same vitest suites and the same
+      # pass/fail semantics, but every failing test is republished as a workflow
+      # annotation (suite name + assertion message). Job logs sit behind short-lived
+      # signed blob URLs that some environments cannot read; annotations always work.
+      - name: Unit & integration tests
+        run: node scripts/run-tests.mjs
       - name: Build Core & Web Assets
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
@@ -55,6 +68,9 @@ jobs:
   deploy:
     name: Deploy Worker + D1 + Pages
     needs: verify
+    # Never deploy from a pull request: only main pushes, manual runs and the retry
+    # schedule may touch production.
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
