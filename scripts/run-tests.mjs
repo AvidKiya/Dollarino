@@ -101,6 +101,7 @@ function summarize(message) {
 let failed = false;
 const allFailures = [];
 const workspaceSummary = [];
+const rawTails = [];
 
 for (const workspace of WORKSPACES) {
   const dir = path.join(root, workspace);
@@ -108,11 +109,16 @@ for (const workspace of WORKSPACES) {
   fs.rmSync(reportFile, { force: true });
 
   console.log(`\n================ ${workspace} ================`);
+  const bin = path.join(root, 'node_modules', '.bin', 'vitest');
+  console.log(`[run-tests] vitest binary: ${bin} (exists=${fs.existsSync(bin)})`);
   const result = spawnSync(
-    'npx',
-    ['vitest', 'run', '--maxWorkers=2', '--testTimeout=15000', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
-    { cwd: dir, stdio: 'inherit', env: { ...process.env, CI: process.env.CI ?? 'true' }, shell: false }
+    bin,
+    ['run', '--maxWorkers=2', '--testTimeout=15000', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
+    { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: process.env.CI ?? 'true' }, shell: false }
   );
+  const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  if (out) process.stdout.write(out);
+  if (result.error) console.log(`[run-tests] spawn error: ${result.error.message}`);
 
   const report = readResults(reportFile);
   const failures = report ? collectFailures(report) : [];
@@ -123,13 +129,11 @@ for (const workspace of WORKSPACES) {
   if (result.status !== 0) {
     failed = true;
     if (!report) {
-      allFailures.push({
-        file: workspace,
-        suite: 'vitest did not produce a report (crashed before running tests)',
-        messages: `exit code ${result.status ?? 'unknown'}${
+      rawTails.push(
+        `${workspace}: vitest produced no JSON report (exit ${result.status ?? 'unknown'})${
           result.error ? ` — ${result.error.message}` : ''
-        }`,
-      });
+        }`
+      );
     }
   }
   workspaceSummary.push(
@@ -162,6 +166,10 @@ if (allFailures.length > 0) {
   annotate('error', 'Tests failed without a parseable report', workspaceSummary.join('\n'));
 } else {
   annotate('notice', 'All tests passed', workspaceSummary.join('\n'));
+}
+
+for (const tail of rawTails) {
+  annotate('error', 'vitest produced no report', tail);
 }
 
 process.exit(failed || allFailures.length > 0 ? 1 : 0);
