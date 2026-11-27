@@ -37,7 +37,11 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # Tests run through cf-step.sh so a failing suite publishes its own output as an
+      # annotation. Job logs sit behind short-lived signed blob URLs that some
+      # environments cannot read, which made the first red run undiagnosable.
+      - name: Unit & integration tests
+        run: bash scripts/cf-step.sh "npm test" npm test
       - name: Build Core & Web Assets
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
