@@ -126,7 +126,7 @@ for (const workspace of WORKSPACES) {
   console.log(`[run-tests] local vitest/vite config: ${configs.length ? configs.join(', ') : 'none'}`);
   const result = spawnSync(
     bin,
-    ['run', '--maxWorkers=2', '--testTimeout=15000', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
+    ['run', '--minWorkers=1', '--maxWorkers=2', '--testTimeout=15000', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
     { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: process.env.CI ?? 'true' }, shell: false }
   );
   const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
