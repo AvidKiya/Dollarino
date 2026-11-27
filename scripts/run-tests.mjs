@@ -46,6 +46,11 @@ function annotate(level, title, message) {
   console.log(`::${level} title=${escapeProp(title)}::${escapeData(text)}`);
 }
 
+/** Remove ANSI colour codes so annotations stay readable. */
+function stripAnsi(value) {
+  return String(value ?? '').replace(/\u001b\[[0-9;]*m/g, '');
+}
+
 function relative(dir) {
   return path.relative(root, dir) || '.';
 }
@@ -111,6 +116,14 @@ for (const workspace of WORKSPACES) {
   console.log(`\n================ ${workspace} ================`);
   const bin = path.join(root, 'node_modules', '.bin', 'vitest');
   console.log(`[run-tests] vitest binary: ${bin} (exists=${fs.existsSync(bin)})`);
+  const testDir = path.join(dir, 'src', '__tests__');
+  const testFiles = fs.existsSync(testDir)
+    ? fs.readdirSync(testDir).filter((f) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(f))
+    : [];
+  console.log(`[run-tests] src/__tests__ present=${fs.existsSync(testDir)} files=${testFiles.length}`);
+  const configCandidates = ['vitest.config.ts', 'vitest.config.mts', 'vite.config.ts', 'vite.config.mts'];
+  const configs = configCandidates.filter((c) => fs.existsSync(path.join(dir, c)));
+  console.log(`[run-tests] local vitest/vite config: ${configs.length ? configs.join(', ') : 'none'}`);
   const result = spawnSync(
     bin,
     ['run', '--maxWorkers=2', '--testTimeout=15000', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
@@ -120,6 +133,15 @@ for (const workspace of WORKSPACES) {
   if (out) process.stdout.write(out);
   if (result.error) console.log(`[run-tests] spawn error: ${result.error.message}`);
 
+  const pkgJson = (() => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    } catch {
+      return {};
+    }
+  })();
+  const pkgTestScript = pkgJson.scripts?.test ?? null;
+
   const report = readResults(reportFile);
   const failures = report ? collectFailures(report) : [];
   const total = report?.numTotalTests ?? '?';
@@ -128,11 +150,21 @@ for (const workspace of WORKSPACES) {
   if (failures.length > 0) allFailures.push(...failures);
   if (result.status !== 0) {
     failed = true;
-    if (!report) {
+    if (!report || (failures.length === 0 && (report.numTotalTests ?? 0) === 0)) {
+      const tail = stripAnsi(out).trim().split('\n').slice(-25).join('\n');
       rawTails.push(
-        `${workspace}: vitest produced no JSON report (exit ${result.status ?? 'unknown'})${
-          result.error ? ` — ${result.error.message}` : ''
-        }`
+        [
+          `${workspace}: vitest produced no JSON report (exit ${result.status ?? 'unknown'})`,
+          result.error ? `spawn error: ${result.error.message}` : '',
+          `cwd: ${dir}`,
+          `bin exists: ${fs.existsSync(bin)}`,
+          `test dir present: ${fs.existsSync(testDir)} (${testFiles.length} test files)`,
+          `test script: ${JSON.stringify(pkgTestScript)}`,
+          `node: ${process.version}`,
+          tail ? `--- output tail ---\n${tail}` : '--- output was completely empty ---',
+        ]
+          .filter(Boolean)
+          .join('\n')
       );
     }
   }
