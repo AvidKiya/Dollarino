@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Miniflare } from 'miniflare';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SAMPLE_CUSTOM_STRATEGIES,
   evaluateCustomStrategy,
@@ -37,6 +37,84 @@ function makeSyntheticCandles(count = 240, stepMs = 900_000): Candle[] {
     price = close;
   }
   return out;
+}
+
+/**
+ * V11.9.3 removed the synthetic Math.sin candle fallback from
+ * `fetchPublicKlines` (real exchanges only). These route tests used to reach the public
+ * Binance/Bybit endpoints, so they only passed on machines with exchange egress and an
+ * open network. We now stub the exchange HTTP calls with deterministic candles so the
+ * suite is hermetic and tests our code, not third-party uptime.
+ */
+const TIMEFRAME_MS: Record<string, number> = {
+  '1m': 60_000,
+  '5m': 300_000,
+  '15m': 900_000,
+  '30m': 1_800_000,
+  '1h': 3_600_000,
+  '4h': 14_400_000,
+  '1d': 86_400_000,
+  '1w': 604_800_000,
+};
+
+function intervalToMs(interval: string): number {
+  return TIMEFRAME_MS[interval] ?? 900_000;
+}
+
+function buildStubKlines(count: number, stepMs: number): Array<[number, string, string, string, string, string, number]> {
+  const candles = makeSyntheticCandles(count, stepMs);
+  return candles.map((c) => [c.timestamp, String(c.open), String(c.high), String(c.low), String(c.close), String(c.volume), c.timestamp + stepMs] as [
+    number,
+    string,
+    string,
+    string,
+    string,
+    string,
+    number,
+  ]);
+}
+
+const realFetch = globalThis.fetch;
+
+function installExchangeFetchStub() {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const parsed = new URL(url);
+
+    // Binance USDT-M / Spot klines
+    if (parsed.pathname.endsWith('/klines')) {
+      const interval = parsed.searchParams.get('interval') ?? '15m';
+      const limit = Number(parsed.searchParams.get('limit') ?? 500);
+      return new Response(JSON.stringify(buildStubKlines(limit, intervalToMs(interval))), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    // Toobit (proxy path) klines
+    if (parsed.pathname.endsWith('/quote/v1/klines')) {
+      const interval = parsed.searchParams.get('interval') ?? '15m';
+      const limit = Number(parsed.searchParams.get('limit') ?? 500);
+      return new Response(JSON.stringify(buildStubKlines(limit, intervalToMs(interval))), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    // Single ticker price endpoints
+    if (parsed.pathname.includes('/ticker/price') || parsed.pathname.endsWith('/tickers')) {
+      return new Response(JSON.stringify({ price: '62000', data: [{ lastPrice: '62000' }], result: { list: [{ lastPrice: '62000' }] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    // Anything else: deterministic empty-but-valid payload so cascades fall through.
+    return new Response(JSON.stringify({ data: [], result: { list: [] } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
 }
 
 function splitSqlStatements(sql: string): string[] {
@@ -212,6 +290,7 @@ describe('Worker Trading Routes for Pine v6 & 1w Timeframe', () => {
   });
 
   beforeAll(async () => {
+    installExchangeFetchStub();
     mf = new Miniflare({
       modules: true,
       script: 'export default { fetch() { return new Response("ok"); } }',
@@ -242,6 +321,7 @@ describe('Worker Trading Routes for Pine v6 & 1w Timeframe', () => {
   });
 
   afterAll(async () => {
+    globalThis.fetch = realFetch;
     await mf.dispose();
   });
 

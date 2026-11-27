@@ -15,22 +15,6 @@ const FALLBACK_PRICES: Record<string, number> = {
   AVAXUSDT: 18,
 };
 
-function tfToMs(tf: Timeframe): number {
-  const m: Record<Timeframe, number> = {
-    '1m': 60_000,
-    '3m': 180_000,
-    '5m': 300_000,
-    '15m': 900_000,
-    '30m': 1_800_000,
-    '1h': 3_600_000,
-    '2h': 7_200_000,
-    '4h': 14_400_000,
-    '1d': 86_400_000,
-    '1w': 604_800_000,
-  };
-  return m[tf] ?? 900_000;
-}
-
 export async function fetchPublicMarket24h(symbol: string, proxyConfig?: ToobitProxyConfig): Promise<Market24hStats> {
   const clean = normalizeCanonicalSymbol(symbol);
   const toobitSym = clean.endsWith('USDT') ? `${clean.slice(0, -4)}-SWAP-USDT` : clean;
@@ -179,6 +163,32 @@ export async function fetchPublicTickerPrice(symbol: string, proxyConfig?: Toobi
     }
   } catch { /* fall through */ }
 
+  // Public Bybit v5 Linear / Spot ticker fallback
+  for (const cat of ['linear', 'spot'] as const) {
+    try {
+      const byRes = await fetch(
+        `https://api.bybit.com/v5/market/tickers?category=${cat}&symbol=${clean}`,
+        { signal: AbortSignal.timeout(3500) }
+      );
+      if (byRes.ok) {
+        const json = (await byRes.json()) as { result?: { list?: Array<{ lastPrice?: string }> } };
+        const p = json.result?.list?.[0]?.lastPrice;
+        if (p && Number(p) > 0) return String(p);
+      }
+    } catch { /* fall through */ }
+  }
+
+  // Public Binance Spot ticker fallback (handles altcoins without USDT-M perp)
+  try {
+    const spRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${clean}`, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (spRes.ok) {
+      const json = (await spRes.json()) as { price?: string };
+      if (json.price && Number(json.price) > 0) return String(json.price);
+    }
+  } catch { /* fall through */ }
+
   // Public OKX & Coinbase ticker fallbacks (high uptime on Cloudflare edge)
   try {
     const base = clean.replace(/USDT$/, '');
@@ -310,7 +320,97 @@ export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 2
     }
   } catch { /* fall through */ }
 
-  // Verified Bitget USDT-Futures fallback (guard exact symbol match via ticker check)
+  // 4. Binance Spot Klines (covers tokens listed on Spot or stripped 1000-prefix)
+  const spotCandidates = clean.startsWith('1000') ? [clean, clean.slice(4)] : [clean];
+  for (const symCand of spotCandidates) {
+    try {
+      const res = await fetch(
+        `https://api.binance.com/api/v3/klines?symbol=${symCand}&interval=${tf}&limit=${Math.min(1000, limit)}`,
+        { signal: AbortSignal.timeout(4000) }
+      );
+      if (res.ok) {
+        const rows = await res.json() as Array<[number, string, string, string, string, string]>;
+        if (Array.isArray(rows) && rows.length > 5) {
+          return rows.map((r) => ({
+            timestamp: Number(r[0]),
+            open: Number(r[1]),
+            high: Number(r[2]),
+            low: Number(r[3]),
+            close: Number(r[4]),
+            volume: Number(r[5]),
+          }));
+        }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // 5. Bybit v5 Linear & Spot Klines (covers new tokens like INITUSDT, HYPERUSDT, etc.)
+  const bybitTfMap: Record<string, string> = {
+    '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+    '1h': '60', '2h': '120', '4h': '240', '1d': 'D', '1w': 'W',
+  };
+  const bybitInterval = bybitTfMap[tf] ?? '15';
+  for (const cat of ['linear', 'spot'] as const) {
+    try {
+      const byRes = await fetch(
+        `https://api.bybit.com/v5/market/kline?category=${cat}&symbol=${clean}&interval=${bybitInterval}&limit=${Math.min(1000, limit)}`,
+        { signal: AbortSignal.timeout(4500) }
+      );
+      if (byRes.ok) {
+        const byJson = (await byRes.json()) as {
+          retCode?: number;
+          result?: { list?: Array<[string, string, string, string, string, string, string?]> };
+        };
+        const rows = Array.isArray(byJson.result?.list) ? byJson.result.list : [];
+        if (rows.length > 5) {
+          return rows
+            .map((r) => ({
+              timestamp: Number(r[0]),
+              open: Number(r[1]),
+              high: Number(r[2]),
+              low: Number(r[3]),
+              close: Number(r[4]),
+              volume: Number(r[6] ?? r[5] ?? 0),
+            }))
+            .sort((a, b) => a.timestamp - b.timestamp);
+        }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // 6. OKX Swap / Spot Klines
+  const okxTfMap: Record<string, string> = {
+    '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+    '1h': '1H', '2h': '2H', '4h': '4H', '1d': '1D', '1w': '1W',
+  };
+  const okxBar = okxTfMap[tf] ?? '15m';
+  const baseSym = clean.replace(/USDT$/, '');
+  for (const instId of [`${baseSym}-USDT-SWAP`, `${baseSym}-USDT`]) {
+    try {
+      const okxRes = await fetch(
+        `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${okxBar}&limit=${Math.min(300, limit)}`,
+        { signal: AbortSignal.timeout(4500) }
+      );
+      if (okxRes.ok) {
+        const okxJson = (await okxRes.json()) as { data?: Array<[string, string, string, string, string, string]> };
+        const rows = Array.isArray(okxJson.data) ? okxJson.data : [];
+        if (rows.length > 5) {
+          return rows
+            .map((r) => ({
+              timestamp: Number(r[0]),
+              open: Number(r[1]),
+              high: Number(r[2]),
+              low: Number(r[3]),
+              close: Number(r[4]),
+              volume: Number(r[5] ?? 0),
+            }))
+            .sort((a, b) => a.timestamp - b.timestamp);
+        }
+      }
+    } catch { /* fall through */ }
+  }
+
+  // 7. Verified Bitget USDT-Futures & Spot fallback (covers hundreds of altcoins & new listings)
   try {
     const tkRes = await fetch(
       `https://api.bitget.com/api/v2/mix/market/ticker?symbol=${clean}&productType=USDT-FUTURES`,
@@ -348,23 +448,55 @@ export async function fetchPublicKlines(symbol: string, tf: Timeframe, limit = 2
     }
   } catch { /* fall through */ }
 
-  const spec = await findMarketSpec('paper', clean, proxyConfig).catch(() => undefined);
-  const base = spec && Number(spec.lastPrice) > 0 ? Number(spec.lastPrice) : (FALLBACK_PRICES[clean] ?? 100);
-  const stepMs = tfToMs(tf);
-  const now = Math.floor(Date.now() / stepMs) * stepMs;
-  const candles: Candle[] = [];
-  let px = base;
-  for (let i = limit; i >= 1; i--) {
-    const ts = now - i * stepMs;
-    const delta = Math.sin(i * 0.27) * base * 0.004 + Math.cos(i * 0.11) * base * 0.002;
-    const open = px;
-    const close = Math.max(base * 0.2, open + delta);
-    const high = Math.max(open, close) + base * 0.0025;
-    const low = Math.min(open, close) - base * 0.0025;
-    candles.push({ timestamp: ts, open, high, low, close, volume: 120 + (i % 35) * 18 });
-    px = close;
-  }
-  return candles;
+  // 8. Gate.io Futures & Spot fallback
+  const gatePair = clean.endsWith('USDT') ? `${clean.slice(0, -4)}_USDT` : clean;
+  try {
+    const gRes = await fetch(
+      `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${encodeURIComponent(gatePair)}&interval=${tf}&limit=${Math.min(1000, limit)}`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    if (gRes.ok) {
+      const rows = (await gRes.json()) as Array<{ t?: number; o?: string; h?: string; l?: string; c?: string; sum?: string; v?: number }>;
+      if (Array.isArray(rows) && rows.length > 5) {
+        return rows
+          .map((r) => ({
+            timestamp: Number(r.t || 0) * 1000,
+            open: Number(r.o || 0),
+            high: Number(r.h || 0),
+            low: Number(r.l || 0),
+            close: Number(r.c || 0),
+            volume: Number(r.sum ?? r.v ?? 0),
+          }))
+          .filter((x) => x.timestamp > 0 && x.close > 0)
+          .sort((a, b) => a.timestamp - b.timestamp);
+      }
+    }
+  } catch { /* fall through */ }
+
+  // 9. MEXC Spot fallback (widest long-tail altcoin coverage)
+  const mexcTf = tf === '1h' ? '60m' : tf === '1d' ? '1d' : tf === '1w' ? '1W' : tf;
+  try {
+    const mxRes = await fetch(
+      `https://api.mexc.com/api/v3/klines?symbol=${clean}&interval=${mexcTf}&limit=${Math.min(1000, limit)}`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    if (mxRes.ok) {
+      const rows = (await mxRes.json()) as Array<[number, string, string, string, string, string]>;
+      if (Array.isArray(rows) && rows.length > 5) {
+        return rows.map((r) => ({
+          timestamp: Number(r[0]),
+          open: Number(r[1]),
+          high: Number(r[2]),
+          low: Number(r[3]),
+          close: Number(r[4]),
+          volume: Number(r[5] ?? 0),
+        }));
+      }
+    }
+  } catch { /* fall through */ }
+
+  // Never synthesize fake sine-wave candles; return empty array when no real exchange feed has history
+  return [];
 }
 
 export class PaperExchangeAdapter implements IExchangeAdapter {

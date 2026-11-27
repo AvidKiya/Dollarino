@@ -2939,11 +2939,11 @@ adminRoutes.post('/database/wipe', async (c) => {
         .catch(() => {});
       for (const [sk, sv] of [
         ['auth_password_login_enabled', 'true'],
-        ['auth_public_signup_enabled', 'false'],
-        ['auth_wallet_enabled', 'false'],
-        ['auth_telegram_enabled', 'false'],
-        ['auth_google_enabled', 'false'],
-        ['allow_direct_email_signup', 'false'],
+        ['auth_public_signup_enabled', 'true'],
+        ['auth_wallet_enabled', 'true'],
+        ['auth_telegram_enabled', 'true'],
+        ['auth_google_enabled', 'true'],
+        ['allow_direct_email_signup', 'true'],
         ['telegram_only_signup', 'false'],
         ['require_telegram_phone_kyc', 'false'],
       ]) {

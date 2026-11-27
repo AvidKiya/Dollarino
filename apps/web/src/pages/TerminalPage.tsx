@@ -182,6 +182,7 @@ export function TerminalPage({
   const [lev, setLev] = useState(10);
   const effectiveLev = marketType === 'SPOT' ? 1 : lev;
   const [marginPct, setMarginPct] = useState<number>(Math.max(1, Math.min(100, Number(data.config.margin_pct || 10))));
+  const [easyUsdDraft, setEasyUsdDraft] = useState<string | null>(null);
   const [stopLoss, setStopLoss] = useState('');
   const [tp1, setTp1] = useState('');
   const [tp2, setTp2] = useState('');
@@ -621,8 +622,8 @@ export function TerminalPage({
   if (uiMode === 'simple') {
     const coinBase = symbol.replace('USDT', '');
     const coinFaTitle = coinDisplayName(coinBase, isFa);
-    const usdAmountStr = marginEst > 0 ? marginEst.toFixed(0) : '0';
-    const tomanAmountStr = marginEst > 0 ? Math.round(marginEst * 70000).toLocaleString('en-US') : '0';
+    const usdAmountStr = marginEst > 0 ? marginEst.toFixed(marginEst >= 10 ? 0 : 2) : '0';
+    const tomanAmountStr = marginEst > 0 ? formatTomanEq(marginEst) : '0';
 
     return (
       <div className="space-y-4 max-w-2xl mx-auto">
@@ -775,12 +776,19 @@ export function TerminalPage({
               <input
                 type="number"
                 min={1}
+                step="any"
                 max={Math.max(10, freeCash)}
-                value={Math.round(marginEst)}
+                value={easyUsdDraft !== null ? easyUsdDraft : (marginEst > 0 ? Number(marginEst.toFixed(2)) : '')}
+                onFocus={() => setEasyUsdDraft(marginEst > 0 ? String(Number(marginEst.toFixed(2))) : '')}
+                onBlur={() => setEasyUsdDraft(null)}
                 onChange={(e) => {
-                  const usd = Math.max(1, Number(e.target.value) || 0);
-                  const pct = Math.min(100, Math.max(1, Math.round((usd / Math.max(1, freeCash)) * 100)));
-                  setMarginPct(pct);
+                  const raw = e.target.value;
+                  setEasyUsdDraft(raw);
+                  const usd = Number(raw);
+                  if (Number.isFinite(usd) && usd > 0) {
+                    const pct = Math.min(100, Math.max(0.1, (usd / Math.max(1, freeCash)) * 100));
+                    setMarginPct(pct);
+                  }
                 }}
                 dir="ltr"
                 className="bg-transparent text-end font-num font-black text-base text-main outline-none flex-1 min-w-0"
@@ -879,9 +887,12 @@ export function TerminalPage({
               <span>{isFa ? 'موجودی در دسترس:' : 'Available:'}</span>
               <strong dir="ltr" className="text-[#F59E0B] font-num">${freeCash.toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong>
             </button>
-            <span className="text-dim font-bold">
-              {isFa ? 'حدضرر / تارگت:' : 'SL / TP1:'}{' '}
-              <strong dir="ltr" className="text-main font-num">${stopLoss || '—'} / ${tp1 || '—'}</strong>
+            <span className="text-dim font-bold inline-flex items-center gap-1.5 flex-wrap">
+              <span>{isFa ? 'حدضرر:' : 'SL:'}</span>
+              <strong dir="ltr" className="text-loss font-num">${stopLoss || '—'}</strong>
+              <span className="opacity-40">|</span>
+              <span>{isFa ? 'تارگت:' : 'TP1:'}</span>
+              <strong dir="ltr" className="text-jade font-num">${tp1 || '—'}</strong>
             </span>
           </div>
         </form>

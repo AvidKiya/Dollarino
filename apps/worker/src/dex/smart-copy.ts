@@ -19,8 +19,11 @@ import { TelegramBotClient } from '../telegram/client.js';
 import { publishCopyTradeSignal, shouldDeliverEngineSignalToUser } from '../telegram/publisher.js';
 import { resolveTelegramBotToken } from '../telegram/token.js';
 import {
+  buildErc20ApproveCalldata,
   buildV2SwapExactEthForTokensCalldata,
+  buildV2SwapExactTokensForEthCalldata,
   EVM_CHAIN_CONFIG,
+  fetchErc20BalanceAndAllowance,
   signAndBroadcastEvmTx,
 } from './evm-tx.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
@@ -1963,6 +1966,230 @@ export async function executeLiveEvmVaultSwap(
   }
 }
 
+export async function executeLiveSolanaVaultSellSwap(
+  env: Env,
+  userId: string,
+  inputMint: string,
+  sellPercent = 100,
+  slippageBps = 1500
+): Promise<{ executedOnchain: boolean; txHash: string | null; note: string }> {
+  try {
+    const keys = await exportUserCopyVaultKeys(env, userId);
+    const helius = await resolveOnchainApiKey(env, 'helius').catch(() => ({ apiKey: null, isActive: false }));
+    const rpcEndpoint =
+      helius.isActive && helius.apiKey
+        ? `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(helius.apiKey)}`
+        : 'https://api.mainnet-beta.solana.com';
+
+    const accRes = await fetch(rpcEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getTokenAccountsByOwner',
+        params: [keys.solanaAddress, { mint: inputMint }, { encoding: 'jsonParsed' }],
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+    const accJson = (await accRes.json().catch(() => ({}))) as {
+      result?: { value?: Array<{ account?: { data?: { parsed?: { info?: { tokenAmount?: { amount?: string } } } } } }> };
+    };
+    let rawTotal = 0n;
+    for (const acc of accJson.result?.value ?? []) {
+      const amtStr = acc.account?.data?.parsed?.info?.tokenAmount?.amount;
+      if (amtStr) {
+        try {
+          rawTotal += BigInt(amtStr);
+        } catch { /* ignore */ }
+      }
+    }
+    if (rawTotal <= 0n) {
+      return { executedOnchain: false, txHash: null, note: 'موجودی توکن سولانا در خزانه برای فروش صفر است' };
+    }
+
+    const pct = BigInt(Math.max(1, Math.min(100, Math.round(sellPercent))));
+    const sellAmountRaw = pct === 100n ? rawTotal : (rawTotal * pct) / 100n;
+    if (sellAmountRaw <= 0n) {
+      return { executedOnchain: false, txHash: null, note: 'مقدار فروش توکن سولانا صفر است' };
+    }
+
+    const solMint = 'So11111111111111111111111111111111111111112';
+    const qUrl =
+      `https://quote-api.jup.ag/v6/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${solMint}` +
+      `&amount=${sellAmountRaw.toString()}&slippageBps=${Math.max(50, Math.min(4000, Math.round(slippageBps)))}`;
+    const qRes = await fetch(qUrl, { signal: AbortSignal.timeout(6000) });
+    if (!qRes.ok) {
+      return { executedOnchain: false, txHash: null, note: 'خطای دریافت مسیر فروش Jupiter' };
+    }
+    const quoteResponse = await qRes.json();
+
+    const sRes = await fetch('https://quote-api.jup.ag/v6/swap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quoteResponse,
+        userPublicKey: keys.solanaAddress,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        prioritizationFeeLamports: 'auto',
+      }),
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!sRes.ok) {
+      return { executedOnchain: false, txHash: null, note: 'ساخت تراکنش فروش Jupiter ناموفق بود' };
+    }
+    const swapJson = (await sRes.json()) as { swapTransaction?: string };
+    if (!swapJson.swapTransaction) {
+      return { executedOnchain: false, txHash: null, note: 'پاسخ خالی از فروش Jupiter' };
+    }
+
+    const rawBin = atob(swapJson.swapTransaction);
+    const txBytes = new Uint8Array(rawBin.length);
+    for (let i = 0; i < rawBin.length; i++) txBytes[i] = rawBin.charCodeAt(i);
+
+    const numSigs = txBytes[0] || 1;
+    const msgOffset = 1 + numSigs * 64;
+    const messageBytes = txBytes.slice(msgOffset);
+    const fullSecret = decodeBase58(keys.solanaSecretBase58);
+    const seed32 = fullSecret.slice(0, 32);
+    const sig64 = ed25519.sign(messageBytes, seed32);
+    txBytes.set(sig64, 1);
+
+    let signedStr = '';
+    for (let i = 0; i < txBytes.length; i++) signedStr += String.fromCharCode(txBytes[i]!);
+    const signedB64 = btoa(signedStr);
+
+    const rpcRes = await fetch(rpcEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [signedB64, { encoding: 'base64', skipPreflight: false, maxRetries: 2 }],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const rpcJson = (await rpcRes.json().catch(() => ({}))) as { result?: string; error?: { message?: string } };
+    if (rpcJson.result) {
+      return {
+        executedOnchain: true,
+        txHash: rpcJson.result,
+        note: `✅ فروش واقعی آن‌چین با Jupiter انجام شد (${pct.toString()}%)`,
+      };
+    }
+    return { executedOnchain: false, txHash: null, note: `ارسال فروش RPC ناموفق: ${rpcJson.error?.message || 'error'}` };
+  } catch (err) {
+    return {
+      executedOnchain: false,
+      txHash: null,
+      note: `خطای فروش سولانا (${err instanceof Error ? err.message : 'Vault sell'})`,
+    };
+  }
+}
+
+export async function executeLiveEvmVaultSellSwap(
+  env: Env,
+  userId: string,
+  chainIdName: string,
+  tokenAddress: string,
+  sellPercent = 100,
+  slippagePct = 10
+): Promise<{ executedOnchain: boolean; txHash: string | null; note: string }> {
+  const chainKey = chainIdName.toLowerCase();
+  const cfg = EVM_CHAIN_CONFIG[chainKey];
+  if (!cfg) {
+    return { executedOnchain: false, txHash: null, note: `فروش خزانه روی ${chainIdName} پشتیبانی نمی‌شود` };
+  }
+
+  try {
+    const keys = await exportUserCopyVaultKeys(env, userId);
+    const oneInchCfg = await resolveOnchainApiKey(env, 'oneinch').catch(() => ({ apiKey: null, isActive: false }));
+    const routerSpender = cfg.v2Router || '0x111111125421cA6dc452d289314280a0f8842A65';
+
+    const { balance, allowance } = await fetchErc20BalanceAndAllowance(
+      chainKey,
+      tokenAddress,
+      keys.evmAddress,
+      routerSpender
+    );
+    if (balance <= 0n) {
+      return { executedOnchain: false, txHash: null, note: `موجودی توکن ${chainKey.toUpperCase()} در خزانه صفر است` };
+    }
+
+    const pct = BigInt(Math.max(1, Math.min(100, Math.round(sellPercent))));
+    const sellRaw = pct === 100n ? balance : (balance * pct) / 100n;
+    if (sellRaw <= 0n) {
+      return { executedOnchain: false, txHash: null, note: 'مقدار فروش EVM صفر است' };
+    }
+
+    let txTo = cfg.v2Router;
+    let txData: string | undefined;
+    let txValue = 0n;
+
+    if (oneInchCfg?.isActive && oneInchCfg.apiKey) {
+      const swapUrl =
+        `https://api.1inch.dev/swap/v6.0/${cfg.chainId}/swap?src=${encodeURIComponent(tokenAddress)}` +
+        `&dst=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&amount=${sellRaw.toString()}&from=${keys.evmAddress}` +
+        `&slippage=${Math.max(1, Math.min(49, Math.round(slippagePct)))}&disableEstimate=true`;
+      const res = await fetch(swapUrl, {
+        headers: { Authorization: `Bearer ${oneInchCfg.apiKey}` },
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null);
+      if (res?.ok) {
+        const j = (await res.json()) as { tx?: { to: string; data: string; value?: string } };
+        if (j.tx?.to && j.tx?.data) {
+          txTo = j.tx.to;
+          txData = j.tx.data;
+          if (j.tx.value) txValue = BigInt(j.tx.value);
+        }
+      }
+    }
+
+    if (!txData && cfg.v2Router) {
+      if (allowance < sellRaw) {
+        const maxUint = (1n << 256n) - 1n;
+        await signAndBroadcastEvmTx({
+          chainIdName: chainKey,
+          privateKeyHex: keys.evmPrivateKeyHex,
+          to: tokenAddress,
+          valueWei: 0n,
+          dataHex: buildErc20ApproveCalldata(cfg.v2Router, maxUint),
+          gasLimitOverride: 85_000n,
+        });
+      }
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      txTo = cfg.v2Router;
+      txData = buildV2SwapExactTokensForEthCalldata(sellRaw, 0n, [tokenAddress, cfg.wrappedNative], keys.evmAddress, deadline);
+    }
+
+    if (!txTo || !txData) {
+      return { executedOnchain: false, txHash: null, note: `مسیر روتر فروش ${chainKey.toUpperCase()} آماده نبود` };
+    }
+
+    const sent = await signAndBroadcastEvmTx({
+      chainIdName: chainKey,
+      privateKeyHex: keys.evmPrivateKeyHex,
+      to: txTo,
+      valueWei: txValue,
+      dataHex: txData,
+    });
+
+    return {
+      executedOnchain: true,
+      txHash: sent.txHash,
+      note: `✅ فروش واقعی آن‌چین ${chainKey.toUpperCase()} اجرا شد (${pct.toString()}%)`,
+    };
+  } catch (err) {
+    return {
+      executedOnchain: false,
+      txHash: null,
+      note: `خطای فروش EVM (${err instanceof Error ? err.message : 'Vault sell'})`,
+    };
+  }
+}
+
 export async function withdrawCopyVaultToTrustWallet(
   env: Env,
   userId: string,
@@ -2652,6 +2879,30 @@ export async function closeCopyPositionV2(
   exitPriceUsd: number,
   reason: string
 ): Promise<void> {
+  const isPaper = isPaperCopyPositionRow(pos);
+  let liveSellNote = '';
+  if (!isPaper && pos.direction !== 'SHORT' && pos.tx_hash && !pos.tx_hash.startsWith('paper_')) {
+    const chLower = normalizeDexChainId(pos.chain_id);
+    if (chLower === 'solana') {
+      const sellRes = await executeLiveSolanaVaultSellSwap(env, pos.user_id, pos.token_address, 100, 1500).catch(
+        () => null
+      );
+      if (sellRes?.txHash) liveSellNote = ` | SELL TX: ${sellRes.txHash}`;
+      else if (sellRes?.note) liveSellNote = ` | ${sellRes.note}`;
+    } else if (EVM_CHAIN_CONFIG[chLower]) {
+      const sellRes = await executeLiveEvmVaultSellSwap(
+        env,
+        pos.user_id,
+        chLower,
+        pos.token_address,
+        100,
+        10
+      ).catch(() => null);
+      if (sellRes?.txHash) liveSellNote = ` | SELL TX: ${sellRes.txHash}`;
+      else if (sellRes?.note) liveSellNote = ` | ${sellRes.note}`;
+    }
+  }
+
   const entry = Math.max(1e-12, Number(pos.entry_price_usd));
   const rawPct = ((exitPriceUsd - entry) / entry) * 100;
   const dirPct = pos.direction === 'SHORT' ? -rawPct : rawPct;
@@ -2666,7 +2917,7 @@ export async function closeCopyPositionV2(
        SET current_price_usd = ?, pnl_pct = ?, pnl_usd = ?, remaining_pct = 0, status = 'CLOSED',
            ai_guard_note = COALESCE(ai_guard_note, '') || ' | ' || ?, closed_at = datetime('now')
        WHERE id = ?`
-    ).bind(exitPriceUsd, Number(dirPct.toFixed(2)), Number(finalUsd.toFixed(2)), reason, pos.id),
+    ).bind(exitPriceUsd, Number(dirPct.toFixed(2)), Number(finalUsd.toFixed(2)), `${reason}${liveSellNote}`, pos.id),
     env.DB.prepare(
       `UPDATE copy_follow_rules
        SET used_margin_usd = MAX(0, used_margin_usd - ?),
@@ -2676,7 +2927,6 @@ export async function closeCopyPositionV2(
     ).bind(pos.margin_usd, Number(lossIncrement.toFixed(2)), pos.rule_id),
   ]);
 
-  const isPaper = isPaperCopyPositionRow(pos);
   if (isPaper) {
     const balRow = await env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
       .bind(pos.user_id)
@@ -2854,6 +3104,16 @@ export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promi
         await closeCopyPositionV2(env, pos, livePrice, 'TP3 Full Target');
         updated++;
         continue;
+      }
+    }
+
+    if (soldPctThisTick > 0 && !isPaperCopyPositionRow(pos) && pos.direction !== 'SHORT' && pos.tx_hash && !pos.tx_hash.startsWith('paper_')) {
+      const sellSlicePct = Math.max(1, Math.min(100, Math.round((soldPctThisTick / Math.max(1, Number(pos.remaining_pct))) * 100)));
+      const chLower = normalizeDexChainId(pos.chain_id);
+      if (chLower === 'solana') {
+        await executeLiveSolanaVaultSellSwap(env, pos.user_id, pos.token_address, sellSlicePct, 1500).catch(() => null);
+      } else if (EVM_CHAIN_CONFIG[chLower]) {
+        await executeLiveEvmVaultSellSwap(env, pos.user_id, chLower, pos.token_address, sellSlicePct, 10).catch(() => null);
       }
     }
 

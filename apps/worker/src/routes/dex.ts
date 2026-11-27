@@ -22,6 +22,7 @@ import { round2 } from '../services/portfolio-accounting.js';
 import { resolveOnchainApiKey, runTokenRugAndSafetyScan } from '../dex/smart-copy.js';
 import {
   buildPerpDappLinks,
+  executeHyperliquidReduceOnlyClose,
   fetchHyperliquidLivePerpMarkets,
   getUserPerpDexOverview,
   recordPerpDexOrder,
@@ -953,19 +954,45 @@ dexRoutes.post('/perp-orders/:id/close', requireAuth, async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const row = await c.env.DB.prepare(
-    `SELECT id, symbol, side, leverage, margin_usd, status FROM perp_dex_orders WHERE id = ? AND user_id = ? LIMIT 1`
+    `SELECT id, venue, symbol, side, leverage, margin_usd, entry_price, execution_kind, status
+     FROM perp_dex_orders WHERE id = ? AND user_id = ? LIMIT 1`
   )
     .bind(id, user.id)
-    .first<{ id: string; symbol: string; side: string; leverage: number; margin_usd: number; status: string }>();
+    .first<{
+      id: string;
+      venue: string;
+      symbol: string;
+      side: 'LONG' | 'SHORT';
+      leverage: number;
+      margin_usd: number;
+      entry_price: number;
+      execution_kind: string;
+      status: string;
+    }>();
   if (!row) return c.json({ error: 'سفارش یا پوزیشن Perp DEX یافت نشد.' }, 404);
   if (row.status === 'CLOSED' || row.status === 'CANCELLED') {
     return c.json({ ok: true, id, status: row.status });
   }
+
+  let exchangeCloseNote = '[بسته‌شده توسط کاربر]';
+  let closedOnExchange = false;
+  if (row.venue === 'hyperliquid' && row.execution_kind === 'HYPERLIQUID_AGENT_LIVE') {
+    const res = await executeHyperliquidReduceOnlyClose(c.env, user.id, {
+      symbol: row.symbol,
+      side: row.side,
+      marginUsd: row.margin_usd,
+      leverage: row.leverage,
+      entryPrice: row.entry_price,
+    });
+    closedOnExchange = res.closedOnExchange;
+    exchangeCloseNote = `[بسته‌شده توسط کاربر: ${res.note}]`;
+  }
+
   await c.env.DB.prepare(
-    `UPDATE perp_dex_orders SET status = 'CLOSED', note = COALESCE(note, '') || ' [بسته‌شده توسط کاربر]' WHERE id = ? AND user_id = ?`
+    `UPDATE perp_dex_orders SET status = 'CLOSED', note = COALESCE(note, '') || ' ' || ? WHERE id = ? AND user_id = ?`
   )
-    .bind(id, user.id)
+    .bind(exchangeCloseNote, id, user.id)
     .run();
-  return c.json({ ok: true, id, status: 'CLOSED', symbol: row.symbol });
+  return c.json({ ok: true, id, status: 'CLOSED', symbol: row.symbol, closedOnExchange, note: exchangeCloseNote });
 });
 

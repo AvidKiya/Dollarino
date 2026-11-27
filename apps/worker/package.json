@@ -5,7 +5,7 @@
   "main": "./src/index.ts",
   "scripts": {
     "dev": "wrangler dev --config ../../wrangler.toml --ip 127.0.0.1 --port 8787 --local",
-    "test": "vitest run --testTimeout=15000",
+    "test": "vitest run --maxWorkers=2 --testTimeout=15000",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

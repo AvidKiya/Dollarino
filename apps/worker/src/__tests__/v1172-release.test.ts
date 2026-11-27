@@ -330,6 +330,8 @@ describe('Dollarino V11.7.2 Release — Admin Reset/Exemption, Auto Admin Referr
     globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 })) as typeof fetch;
     try {
       // While auth_telegram_enabled='false', unknown users are NOT provisioned via bot /start
+      await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_telegram_enabled', 'false')`).run();
+      invalidateSettingsCache(db);
       await handleTelegramUpdate(env, env.TELEGRAM_BOT_TOKEN!, {
         update_id: 900,
         message: {

@@ -467,7 +467,9 @@ export function OverviewPage({
   }, [data.openTrades, openDexTrades, openSmartCopy, openPerpOrders]);
 
   const unrealized = pb ? pb.unrealizedPnlUsd : (data.stats.unrealizedPnl ?? openPnlBreakdown.totalUnrealized);
-  const todayPnl = pb ? pb.todayTotalPnlUsd : Number(data.stats.todayPnl ?? data.stats.totalPnl ?? 0) + unrealized;
+  const todayPnl = pb
+    ? (pb.todayRealizedPnlUsd ?? 0) + (pb.unrealizedPnlUsd ?? 0)
+    : Number(data.stats.todayPnl ?? data.stats.totalPnl ?? 0) + unrealized;
   const activeStrategy = data.config.strategy_key || 'dollarino_v01';
   const scanScope = data.config.scan_scope || 'ALL_MARKET';
   const execMode = data.config.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';

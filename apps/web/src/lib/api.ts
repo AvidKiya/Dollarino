@@ -145,11 +145,11 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
       throw new ApiError(rawMsg, 503, 'SITE_MAINTENANCE');
     }
     if (res.status === 404 && /route not found/i.test(rawMsg)) {
-      const serverBuild = errObj.workerVersion ? ` نسخه سرور: ${errObj.workerVersion} / نسخه رابط کاربری: ${APP_VERSION}.` : '';
+      const serverBuild = errObj.workerVersion ? ` (Worker ${errObj.workerVersion} / UI ${APP_VERSION})` : '';
       throw new ApiError(
-        `${rawMsg} — نسخه Worker سرور با رابط کاربری هماهنگ نیست.${serverBuild} برای رفع: npx wrangler d1 migrations apply dollarino-db --remote && npx wrangler deploy`,
+        `${rawMsg}${serverBuild}`,
         res.status,
-        errObj.code || 'WORKER_OUTDATED'
+        errObj.code || 'ROUTE_NOT_FOUND'
       );
     }
     throw new ApiError(rawMsg, res.status, errObj.code);

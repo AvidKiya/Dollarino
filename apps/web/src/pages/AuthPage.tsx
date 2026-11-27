@@ -24,7 +24,9 @@ import {
   hasAnyInjectedWallet,
   isMobileWalletPlatform,
   signTrustWalletNonce,
+  waitForWalletProviders,
 } from '../lib/trustwallet';
+import { getTelegramWebApp, isInsideTelegramMiniApp } from '../lib/telegram';
 import { DollarinoBrandMark } from '../components/BrandGraphics';
 import { WalletLogo } from '../components/BrandLogos';
 
@@ -94,6 +96,7 @@ export function AuthPage({
     publicSignupEnabled: boolean;
     walletAuthEnabled: boolean;
     telegramAuthEnabled: boolean;
+    telegramBotConfigured?: boolean;
     googleAuthEnabled: boolean;
     googleConfigured: boolean;
     googleClientId?: string | null;
@@ -102,10 +105,11 @@ export function AuthPage({
     defaultAdminReferralCode?: string | null;
   }>({
     passwordLoginEnabled: true,
-    publicSignupEnabled: false,
-    walletAuthEnabled: false,
-    telegramAuthEnabled: false,
-    googleAuthEnabled: false,
+    publicSignupEnabled: true,
+    walletAuthEnabled: true,
+    telegramAuthEnabled: true,
+    telegramBotConfigured: false,
+    googleAuthEnabled: true,
     googleConfigured: false,
     botUsername: '',
     telegramBotUrl: '',
@@ -140,25 +144,29 @@ export function AuthPage({
       publicSignupEnabled?: boolean;
       walletAuthEnabled?: boolean;
       telegramAuthEnabled?: boolean;
+      telegramBotConfigured?: boolean;
       googleAuthEnabled?: boolean;
       googleConfigured?: boolean;
       googleEnabled?: boolean;
       googleClientId?: string | null;
       botUsername?: string;
+      telegramBotUsername?: string;
       telegramBotUrl?: string;
       defaultAdminReferralCode?: string | null;
     }>('/api/auth/providers')
       .then((p) => {
+        const resolvedBot = (p.botUsername || p.telegramBotUsername || '').replace(/^@/, '');
         const next = {
           passwordLoginEnabled: p.passwordLoginEnabled !== false,
-          publicSignupEnabled: Boolean(p.publicSignupEnabled),
-          walletAuthEnabled: Boolean(p.walletAuthEnabled),
-          telegramAuthEnabled: Boolean(p.telegramAuthEnabled),
-          googleAuthEnabled: Boolean(p.googleAuthEnabled),
+          publicSignupEnabled: p.publicSignupEnabled !== false,
+          walletAuthEnabled: p.walletAuthEnabled !== false,
+          telegramAuthEnabled: p.telegramAuthEnabled !== false,
+          telegramBotConfigured: Boolean(p.telegramBotConfigured),
+          googleAuthEnabled: p.googleAuthEnabled !== false,
           googleConfigured: Boolean(p.googleConfigured ?? p.googleEnabled),
           googleClientId: p.googleClientId ?? null,
-          botUsername: (p.botUsername || '').replace(/^@/, ''),
-          telegramBotUrl: p.telegramBotUrl || '',
+          botUsername: resolvedBot,
+          telegramBotUrl: p.telegramBotUrl || (resolvedBot ? `https://t.me/${resolvedBot}?start=web_auth` : ''),
           defaultAdminReferralCode: p.defaultAdminReferralCode ?? null,
         };
         setProviders(next);
@@ -179,15 +187,23 @@ export function AuthPage({
       ? `https://t.me/${cleanBotUsername}?start=${encodeURIComponent(`web_auth__REF_${cleanRef}`)}`
       : `https://t.me/${cleanBotUsername}?start=web_auth`
     : providers.telegramBotUrl || '';
+  const insideTelegramMiniApp = isInsideTelegramMiniApp();
   const hasAnyExternalMethod =
-    providers.walletAuthEnabled || providers.googleAuthEnabled || (providers.telegramAuthEnabled && Boolean(telegramBotUrl));
-  const hasAnySignupMethod = providers.publicSignupEnabled || hasAnyExternalMethod;
+    providers.walletAuthEnabled ||
+    (providers.googleAuthEnabled && providers.googleConfigured) ||
+    (providers.telegramAuthEnabled && (Boolean(telegramBotUrl) || insideTelegramMiniApp));
+  const hasAnySignupMethod =
+    providers.publicSignupEnabled ||
+    providers.walletAuthEnabled ||
+    providers.googleAuthEnabled ||
+    providers.telegramAuthEnabled;
 
   const handleWalletAuth = useCallback(async () => {
     setError(null);
     setTwDappDeepLink(null);
     setWalletLoading(true);
     try {
+      await waitForWalletProviders(250);
       if (!hasAnyInjectedWallet()) {
         const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dollarino.pages.dev';
         const target = new URL(origin);
@@ -268,13 +284,48 @@ export function AuthPage({
     if (typeof window === 'undefined' || autoTwSignupTriggeredRef.current) return;
     const qp = new URLSearchParams(window.location.search);
     if (qp.get('tw_signup') !== '1') return;
-    if (!hasAnyInjectedWallet()) return;
     autoTwSignupTriggeredRef.current = true;
-    qp.delete('tw_signup');
-    const nextQ = qp.toString();
-    window.history.replaceState({}, '', `${window.location.pathname}${nextQ ? `?${nextQ}` : ''}`);
-    void handleWalletAuth();
+    void waitForWalletProviders(220).then(() => {
+      if (!hasAnyInjectedWallet()) return;
+      qp.delete('tw_signup');
+      const nextQ = qp.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${nextQ ? `?${nextQ}` : ''}`);
+      void handleWalletAuth();
+    });
   }, [handleWalletAuth]);
+
+  const handleTelegramMiniAppAuth = async () => {
+    setError(null);
+    const tg = getTelegramWebApp();
+    if (!tg?.initData) {
+      setError(
+        isFa
+          ? 'برای ورود با تلگرام، نام ربات تلگرام را در پنل مدیریت ثبت کنید یا از داخل مینی‌اپ تلگرام وارد شوید.'
+          : 'Configure the Telegram bot username in Admin Panel or open inside Telegram Mini App.'
+      );
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await apiFetch<{ token?: string; requires2fa?: boolean; challengeType?: 'TOTP' | 'SECONDARY_PASSWORD'; challengeToken?: string }>(
+        '/api/auth/telegram-webapp',
+        { method: 'POST', body: JSON.stringify({ initData: tg.initData }) }
+      );
+      if (res.requires2fa && res.challengeToken) {
+        setChallengeType(res.challengeType || 'TOTP');
+        setChallengeToken(res.challengeToken);
+        return;
+      }
+      if (res.token) {
+        setStoredToken(res.token);
+        await onSuccess();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Telegram authentication failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleGoogleAuth = () => {
     setError(null);
@@ -299,6 +350,9 @@ export function AuthPage({
     if (cleanRef) params.set('ref', cleanRef);
     const isAndroid = isAndroidNativeApp();
     if (isAndroid) params.set('client', 'android');
+    if (typeof window !== 'undefined' && window.location.origin) {
+      params.set('web_origin', window.location.origin);
+    }
     const qs = params.toString();
     const startUrl = `${getApiBase()}/api/auth/google/start${qs ? `?${qs}` : ''}`;
     if (isAndroid && openNativeOrBrowserUrl(startUrl)) {
@@ -708,37 +762,61 @@ export function AuthPage({
                         </button>
                       )}
 
-                      {providers.telegramAuthEnabled && telegramBotUrl && (
-                        <a
-                          href={telegramBotUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="w-full rounded-2xl p-3.5 bg-sky-500/12 hover:bg-sky-500/20 border border-sky-500/35 text-start flex items-center justify-between gap-3 transition"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-10 h-10 rounded-xl bg-sky-500/20 grid place-items-center shrink-0">
-                              <Send className="w-5 h-5 text-sky-400" />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="text-xs font-black text-main flex items-center gap-1.5 flex-wrap">
-                                <span>
-                                  {isFa ? (
-                                    <>
-                                      ثبت‌نام / ورود با ربات تلگرام{' '}
-                                      {cleanBotUsername && <span dir="ltr" className="font-mono-num text-sky-400">@{cleanBotUsername}</span>}
-                                    </>
-                                  ) : (
-                                    `Continue with Telegram${cleanBotUsername ? ` (@${cleanBotUsername})` : ''}`
-                                  )}
-                                </span>
+                      {providers.telegramAuthEnabled && (telegramBotUrl || insideTelegramMiniApp) && (
+                        insideTelegramMiniApp ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleTelegramMiniAppAuth()}
+                            disabled={loading}
+                            className="w-full rounded-2xl p-3.5 bg-sky-500/12 hover:bg-sky-500/20 border border-sky-500/35 text-start flex items-center justify-between gap-3 transition"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-sky-500/20 grid place-items-center shrink-0">
+                                <Send className="w-5 h-5 text-sky-400" />
                               </div>
-                              <p className="text-[11px] text-dim truncate">
-                                {isFa ? 'ورود تک‌لمسی امن بدون رمز و دریافت اعلان لحظه‌ای' : 'Instant 1-tap login & live Telegram trade alerts'}
-                              </p>
+                              <div className="min-w-0">
+                                <div className="text-xs font-black text-main flex items-center gap-1.5 flex-wrap">
+                                  <span>{isFa ? 'ورود / ثبت‌نام فوری با مینی‌اپ تلگرام' : 'Continue with Telegram Mini App'}</span>
+                                </div>
+                                <p className="text-[11px] text-dim truncate">
+                                  {isFa ? 'احراز هویت خودکار بدون رمز عبور داخل تلگرام' : 'Instant cryptographic login inside Telegram'}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                          <ExternalLink className="w-4 h-4 text-sky-400 shrink-0" />
-                        </a>
+                            <Send className="w-4 h-4 text-sky-400 shrink-0" />
+                          </button>
+                        ) : (
+                          <a
+                            href={telegramBotUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full rounded-2xl p-3.5 bg-sky-500/12 hover:bg-sky-500/20 border border-sky-500/35 text-start flex items-center justify-between gap-3 transition"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-sky-500/20 grid place-items-center shrink-0">
+                                <Send className="w-5 h-5 text-sky-400" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-black text-main flex items-center gap-1.5 flex-wrap">
+                                  <span>
+                                    {isFa ? (
+                                      <>
+                                        ثبت‌نام / ورود با ربات تلگرام{' '}
+                                        {cleanBotUsername && <span dir="ltr" className="font-mono-num text-sky-400">@{cleanBotUsername}</span>}
+                                      </>
+                                    ) : (
+                                      `Continue with Telegram${cleanBotUsername ? ` (@${cleanBotUsername})` : ''}`
+                                    )}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-dim truncate">
+                                  {isFa ? 'ورود تک‌لمسی امن بدون رمز و دریافت اعلان لحظه‌ای' : 'Instant 1-tap login & live Telegram trade alerts'}
+                                </p>
+                              </div>
+                            </div>
+                            <ExternalLink className="w-4 h-4 text-sky-400 shrink-0" />
+                          </a>
+                        )
                       )}
 
                       {providers.publicSignupEnabled && (
@@ -884,16 +962,27 @@ export function AuthPage({
                             <span>Google</span>
                           </button>
                         )}
-                        {providers.telegramAuthEnabled && telegramBotUrl && (
-                          <a
-                            href={telegramBotUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex-1 min-w-[96px] py-2.5 px-2 rounded-xl surface-soft hover:bg-sky-500/15 border border-sky-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
-                          >
-                            <Send className="w-3.5 h-3.5 text-sky-400" />
-                            <span>{isFa ? 'تلگرام' : 'Telegram'}</span>
-                          </a>
+                        {providers.telegramAuthEnabled && (telegramBotUrl || insideTelegramMiniApp) && (
+                          insideTelegramMiniApp ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleTelegramMiniAppAuth()}
+                              className="flex-1 min-w-[96px] py-2.5 px-2 rounded-xl surface-soft hover:bg-sky-500/15 border border-sky-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
+                            >
+                              <Send className="w-3.5 h-3.5 text-sky-400" />
+                              <span>{isFa ? 'تلگرام' : 'Telegram'}</span>
+                            </button>
+                          ) : (
+                            <a
+                              href={telegramBotUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex-1 min-w-[96px] py-2.5 px-2 rounded-xl surface-soft hover:bg-sky-500/15 border border-sky-500/30 text-[11px] font-bold text-main flex items-center justify-center gap-1.5"
+                            >
+                              <Send className="w-3.5 h-3.5 text-sky-400" />
+                              <span>{isFa ? 'تلگرام' : 'Telegram'}</span>
+                            </a>
+                          )
                         )}
                       </div>
                     </>

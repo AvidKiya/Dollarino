@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { generateTotpCodeAt } from '../crypto.js';
 import type { Env } from '../env.js';
 import worker from '../index.js';
+import { invalidateSettingsCache } from '../services/settings-cache.js';
 
 let mf: Miniflare;
 let db: D1Database;
@@ -85,26 +88,112 @@ describe('Clean-Slate Bootstrap, Default Admin Flow (admin/admin -> admin123 -> 
     await mf?.dispose();
   });
 
-  it('1. Ships completely clean-slate: all external auth providers disabled, zero pre-configured handles/keys', async () => {
+  it('1. Ships clean-slate secrets/handles while keeping standard public auth toggles enabled & Wallet EIP-191 working', async () => {
     const env = makeCleanEnv();
 
     const provRes = await worker.fetch(new Request('https://dollarino.test/api/auth/providers'), env);
     expect(provRes.status).toBe(200);
     const prov = (await provRes.json()) as Record<string, unknown>;
     expect(prov.passwordLoginEnabled).toBe(true);
-    expect(prov.publicSignupEnabled).toBe(false);
-    expect(prov.walletAuthEnabled).toBe(false);
-    expect(prov.telegramAuthEnabled).toBe(false);
+    expect(prov.publicSignupEnabled).toBe(true);
+    expect(prov.walletAuthEnabled).toBe(true);
+    expect(prov.telegramAuthEnabled).toBe(true);
     expect(prov.telegramBotConfigured).toBe(false);
     expect(prov.telegramBotUsername).toBe('');
+    expect(prov.botUsername).toBe('');
+    expect(prov.telegramBotUrl).toBe('');
     expect(prov.officialChannel).toBe('');
     expect(prov.telegramSupport).toBe('');
     expect(prov.requireTelegramPhoneKyc).toBe(false);
-    expect(prov.googleAuthEnabled).toBe(false);
+    expect(prov.googleAuthEnabled).toBe(true);
     expect(prov.googleEnabled).toBe(false);
     expect(prov.googleConfigured).toBe(false);
     expect(prov.googleClientId).toBeNull();
     expect(prov.defaultAdminReferralCode).toBeNull();
+
+    // Real EIP-191 Wallet Nonce + Personal Sign verification with @noble/curves
+    const priv = new Uint8Array(32).fill(9);
+    const pubUncompressed = secp256k1.getPublicKey(priv, false).slice(1);
+    const walletAddr =
+      '0x' +
+      Array.from(keccak_256(pubUncompressed).slice(-20))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+
+    const wNonceRes = await worker.fetch(
+      new Request('https://dollarino.test/api/auth/wallet/nonce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: walletAddr }),
+      }),
+      env
+    );
+    expect(wNonceRes.status).toBe(200);
+    const wNonce = (await wNonceRes.json()) as { nonce: string; message: string };
+    const msgBytes = new TextEncoder().encode(wNonce.message);
+    const prefix = new TextEncoder().encode(`\x19Ethereum Signed Message:\n${msgBytes.length}`);
+    const prefixed = new Uint8Array(prefix.length + msgBytes.length);
+    prefixed.set(prefix, 0);
+    prefixed.set(msgBytes, prefix.length);
+    const digest = keccak_256(prefixed);
+    const recSig = secp256k1.sign(digest, priv, { prehash: false, format: 'recovered' });
+    const sigOut = new Uint8Array(65);
+    sigOut.set(recSig.slice(1, 65), 0);
+    sigOut[64] = recSig[0]! + 27;
+    const sigHex = '0x' + Array.from(sigOut).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+    const wVerifyRes = await worker.fetch(
+      new Request('https://dollarino.test/api/auth/wallet/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: walletAddr, nonce: wNonce.nonce, signature: sigHex }),
+      }),
+      env
+    );
+    expect(wVerifyRes.status).toBe(200);
+    const wVerify = (await wVerifyRes.json()) as { token: string; user: { role: string } };
+    expect(wVerify.token).toBeTruthy();
+    expect(wVerify.user.role).toBe('user');
+
+    // Warm /api/auth/me cache then complete-profile -> cache invalidated immediately!
+    const meBefore = (await (
+      await worker.fetch(
+        new Request('https://dollarino.test/api/auth/me', {
+          headers: { Authorization: `Bearer ${wVerify.token}` },
+        }),
+        env
+      )
+    ).json()) as { user: { profile_completed?: number } };
+    expect(meBefore.user.profile_completed).toBe(0);
+
+    const cpRes = await worker.fetch(
+      new Request('https://dollarino.test/api/auth/complete-profile', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${wVerify.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          displayName: 'Wallet Trader',
+          username: 'wallet_trader_01',
+          email: 'wallet01@dollarino.test',
+          password: 'Password123!',
+        }),
+      }),
+      env
+    );
+    expect(cpRes.status).toBe(200);
+
+    const meAfter = (await (
+      await worker.fetch(
+        new Request('https://dollarino.test/api/auth/me', {
+          headers: { Authorization: `Bearer ${wVerify.token}` },
+        }),
+        env
+      )
+    ).json()) as { user: { profile_completed?: number; username?: string } };
+    expect(meAfter.user.profile_completed).toBe(1);
+    expect(meAfter.user.username).toBe('wallet_trader_01');
 
     const creatorRes = await worker.fetch(new Request('https://dollarino.test/api/public/creator'), env);
     expect(creatorRes.status).toBe(200);
@@ -124,8 +213,18 @@ describe('Clean-Slate Bootstrap, Default Admin Flow (admin/admin -> admin123 -> 
     expect(ai.models.map((m) => m.id)).toEqual(['dollarino-live-ai']);
   });
 
-  it('2. Blocks all disabled public auth routes (register, wallet, telegram, google)', async () => {
+  it('2. Blocks public auth routes when explicitly disabled via settings', async () => {
     const env = makeCleanEnv();
+    for (const k of [
+      'auth_public_signup_enabled',
+      'auth_wallet_enabled',
+      'auth_telegram_enabled',
+      'auth_google_enabled',
+      'allow_direct_email_signup',
+    ]) {
+      await db.prepare(`UPDATE system_settings SET value = 'false' WHERE key = ?`).bind(k).run();
+    }
+    invalidateSettingsCache(db);
 
     const regRes = await worker.fetch(
       new Request('https://dollarino.test/api/auth/register', {
@@ -170,6 +269,18 @@ describe('Clean-Slate Bootstrap, Default Admin Flow (admin/admin -> admin123 -> 
     );
     expect(googleRes.status).toBe(403);
     expect(((await googleRes.json()) as { code: string }).code).toBe('GOOGLE_AUTH_DISABLED');
+
+    // Re-enable defaults for step 3
+    for (const k of [
+      'auth_public_signup_enabled',
+      'auth_wallet_enabled',
+      'auth_telegram_enabled',
+      'auth_google_enabled',
+      'allow_direct_email_signup',
+    ]) {
+      await db.prepare(`UPDATE system_settings SET value = 'true' WHERE key = ?`).bind(k).run();
+    }
+    invalidateSettingsCache(db);
   });
 
   it('3. Authenticates admin/admin -> secondary password admin123, locks routes until setup, and completes TOTP + credential migration', async () => {
@@ -447,6 +558,8 @@ describe('Clean-Slate Bootstrap, Default Admin Flow (admin/admin -> admin123 -> 
     expect(provAfter.walletAuthEnabled).toBe(true);
     expect(provAfter.publicSignupEnabled).toBe(true);
     expect(provAfter.telegramBotUsername).toBe('MyCustomTraderBot');
+    expect(provAfter.botUsername).toBe('MyCustomTraderBot');
+    expect(provAfter.telegramBotUrl).toBe('https://t.me/MyCustomTraderBot?start=web_auth');
     expect(provAfter.officialChannel).toBe('@MyCustomSignals');
 
     // Public signup creates strictly 'user' role, NEVER 'owner'
@@ -461,7 +574,7 @@ describe('Clean-Slate Bootstrap, Default Admin Flow (admin/admin -> admin123 -> 
     expect(userSignupRes.status).toBe(201);
     expect(((await userSignupRes.json()) as { user: { role: string } }).user.role).toBe('user');
 
-    // Unpreserved DB wipe re-seeds clean usr_admin_bootstrap (admin/admin/admin123)
+    // Unpreserved DB wipe re-seeds clean usr_admin_bootstrap (admin/admin/admin123) and wipes handles/secrets
     const wipeRes = await worker.fetch(
       new Request('https://dollarino.test/api/admin/database/wipe', {
         method: 'POST',
@@ -480,8 +593,10 @@ describe('Clean-Slate Bootstrap, Default Admin Flow (admin/admin -> admin123 -> 
       string,
       unknown
     >;
-    expect(provAfterWipe.walletAuthEnabled).toBe(false);
-    expect(provAfterWipe.publicSignupEnabled).toBe(false);
+    expect(provAfterWipe.telegramBotUsername).toBe('');
+    expect(provAfterWipe.googleConfigured).toBe(false);
+    expect(provAfterWipe.walletAuthEnabled).toBe(true);
+    expect(provAfterWipe.publicSignupEnabled).toBe(true);
 
     const reseedLoginRes = await worker.fetch(
       new Request('https://dollarino.test/api/auth/login', {

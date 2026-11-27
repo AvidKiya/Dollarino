@@ -1079,7 +1079,7 @@ function clampOrbY(y: number): number {
   const mobile = (document.documentElement.clientWidth || window.innerWidth) < 640;
   const orbSize = mobile ? ORB_MOBILE_SIZE : ORB_SIZE;
   const bottomReserve = mobile ? 148 : 96;
-  const min = mobile ? 84 : 70;
+  const min = mobile ? 132 : 112;
   const max = Math.max(min + 40, window.innerHeight - orbSize - bottomReserve);
   return Math.min(max, Math.max(min, y));
 }
