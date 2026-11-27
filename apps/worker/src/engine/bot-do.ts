@@ -26,6 +26,7 @@ import { publishSignalBroadcast, publishSignalClosedCard } from '../telegram/pub
 import { checkLiveFeeEnforcement } from '../services/server-fee.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 import { parseActiveEnginesFromConfig, type TradingEngineChoice } from './exclusive-engine.js';
+import { reconcileCopyPositionsV2 } from '../dex/smart-copy.js';
 import { runNewListingAndMemeSniperForUser } from './listing-sniper.js';
 import {
   executeSignalForUser,
@@ -67,13 +68,22 @@ export class TradingBotCoordinator implements DurableObject {
   }
 
   async alarm() {
-    const [runningUsers, openUsers, pendingUsers, alertUsers] = await Promise.all([
+    const [runningUsers, openUsers, openDexUsers, openPerpUsers, openCopyUsers, pendingUsers, alertUsers] = await Promise.all([
       this.env.DB.prepare(
         `SELECT * FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE') LIMIT 200`
       ).all<UserBotConfigRow>(),
       this.env.DB.prepare(
         `SELECT DISTINCT user_id FROM trades WHERE status = 'OPEN' LIMIT 200`
       ).all<{ user_id: string }>(),
+      this.env.DB.prepare(
+        `SELECT DISTINCT user_id FROM dex_trades WHERE status = 'OPEN' LIMIT 200`
+      ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
+      this.env.DB.prepare(
+        `SELECT DISTINCT user_id FROM perp_dex_orders WHERE status IN ('FILLED', 'OPEN') LIMIT 200`
+      ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
+      this.env.DB.prepare(
+        `SELECT DISTINCT user_id FROM copy_positions_v2 WHERE status = 'OPEN' LIMIT 200`
+      ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
       this.env.DB.prepare(
         `SELECT DISTINCT user_id FROM pending_orders WHERE status = 'PENDING' LIMIT 200`
       ).all<{ user_id: string }>().catch(() => ({ results: [] as Array<{ user_id: string }> })),
@@ -84,14 +94,27 @@ export class TradingBotCoordinator implements DurableObject {
 
     const runningMap = new Map(runningUsers.results.map((r) => [r.user_id, r]));
     const openSet = new Set(openUsers.results.map((r) => r.user_id));
+    const openDexOrPerpSet = new Set([
+      ...openDexUsers.results.map((r) => r.user_id),
+      ...openPerpUsers.results.map((r) => r.user_id),
+    ]);
+    const openCopySet = new Set(openCopyUsers.results.map((r) => r.user_id));
     const pendingSet = new Set(pendingUsers.results.map((r) => r.user_id));
     const alertSet = new Set(alertUsers.results.map((r) => r.user_id));
-    const allUserIds = new Set([...runningMap.keys(), ...openSet, ...pendingSet, ...alertSet]);
+    const allUserIds = new Set([
+      ...runningMap.keys(),
+      ...openSet,
+      ...openDexOrPerpSet,
+      ...openCopySet,
+      ...pendingSet,
+      ...alertSet,
+    ]);
 
     for (const userId of allUserIds) {
       await this.runUserTick(userId, {
         isBotRunning: runningMap.has(userId),
-        hasOpenTrades: openSet.has(userId),
+        hasOpenTrades: openSet.has(userId) || openDexOrPerpSet.has(userId),
+        hasOpenCopy: openCopySet.has(userId),
         hasPendingOrders: pendingSet.has(userId),
         hasAlerts: alertSet.has(userId),
         prefetchedCfg: runningMap.get(userId),
@@ -109,8 +132,10 @@ export class TradingBotCoordinator implements DurableObject {
     }
 
     if (allUserIds.size > 0) {
-      // Check every 90s when open trades/pending orders exist; otherwise every 300s (5m) to preserve D1 quota
-      const nextDelay = openSet.size > 0 || pendingSet.size > 0 ? 90_000 : 300_000;
+      // Check every 90s when open trades/DEX/Copy/Perp/pending orders exist; otherwise every 300s (5m)
+      const hasAnyActivePositions =
+        openSet.size > 0 || openDexOrPerpSet.size > 0 || openCopySet.size > 0 || pendingSet.size > 0;
+      const nextDelay = hasAnyActivePositions ? 90_000 : 300_000;
       await this.state.storage.setAlarm(Date.now() + nextDelay);
     }
   }
@@ -226,7 +251,14 @@ export class TradingBotCoordinator implements DurableObject {
 
   private async runUserTick(
     userId: string,
-    hints?: { isBotRunning?: boolean; hasOpenTrades?: boolean; hasPendingOrders?: boolean; hasAlerts?: boolean; prefetchedCfg?: UserBotConfigRow }
+    hints?: {
+      isBotRunning?: boolean;
+      hasOpenTrades?: boolean;
+      hasOpenCopy?: boolean;
+      hasPendingOrders?: boolean;
+      hasAlerts?: boolean;
+      prefetchedCfg?: UserBotConfigRow;
+    }
   ) {
     // 1. Only query & reconcile open positions/pending orders when present (or manual /tick trigger)
     if (!hints || hints.hasOpenTrades || hints.hasPendingOrders) {
@@ -234,6 +266,11 @@ export class TradingBotCoordinator implements DurableObject {
         prefetchedCfg: hints?.prefetchedCfg,
         checkPendingOrders: hints ? Boolean(hints.hasPendingOrders) : true,
       });
+    }
+
+    // 1A. Reconcile open Copy-Trade v2 positions (TP1/TP2/TP3, Trailing Stop, Dev-Sell Auto Exit, Live On-Chain Sells)
+    if (!hints || hints.hasOpenCopy) {
+      await reconcileCopyPositionsV2(this.env, userId).catch(() => 0);
     }
 
     // 1B. Only check price alerts when user actually has active alerts (or manual /tick trigger)

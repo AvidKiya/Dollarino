@@ -73,6 +73,7 @@ import type {
 import { CoinIcon } from '../CoinIcon';
 import { SymbolPicker, type ExchangeMarket } from '../SymbolPickerModal';
 import { IndicatorsModal } from './IndicatorsModal';
+import { TradingViewRealWidget } from './TradingViewRealWidget';
 
 const ALL_TIMEFRAMES: Timeframe[] = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w'];
 const QUICK_TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '1h', '4h', '1d', '1w'];
@@ -265,7 +266,12 @@ export function TvSuperChart({
   height?: number;
 }) {
   const isFa = lang === 'fa';
-  const [isLight, setIsLight] = useState(() => document.documentElement.classList.contains('theme-light'));
+  const [isLight, setIsLight] = useState(
+    () =>
+      document.documentElement.dataset.look === 'paper' ||
+      document.documentElement.classList.contains('theme-light')
+  );
+  const [chartEngine, setChartEngine] = useState<'quant' | 'tv_widget'>('quant');
   const [chartType, setChartType] = useState<ChartSeriesType>(() => loadSavedChartType());
   const [showTypeMenu, setShowTypeMenu] = useState(false);
   const [showMoreTf, setShowMoreTf] = useState(false);
@@ -350,10 +356,14 @@ export function TvSuperChart({
     : height;
 
   useEffect(() => {
-    const obs = new MutationObserver(() => {
-      setIsLight(document.documentElement.classList.contains('theme-light'));
-    });
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    const syncTheme = () => {
+      setIsLight(
+        document.documentElement.dataset.look === 'paper' ||
+          document.documentElement.classList.contains('theme-light')
+      );
+    };
+    const obs = new MutationObserver(syncTheme);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-look'] });
     return () => obs.disconnect();
   }, []);
 
@@ -467,6 +477,7 @@ export function TvSuperChart({
   }, [drawings, draftStart, hoverPoint, selectedDrawingId, showDrawings]);
 
   useEffect(() => {
+    if (chartEngine !== 'quant') return;
     const el = containerRef.current;
     if (!el) return;
 
@@ -1281,6 +1292,7 @@ export function TvSuperChart({
     showMarkers,
     symbol,
     activeTool,
+    chartEngine,
   ]);
 
   // Interactive click handler on chart canvas for placing drawings
@@ -1488,6 +1500,28 @@ export function TvSuperChart({
             )}
           </div>
 
+          {/* Chart Engine Mode Switch: Dollarino Quant (AI + Pine + KBOS) vs Genuine TradingView Widget */}
+          <div className="inline-flex items-center rounded-xl bg-[var(--panel)] border hairline p-0.5">
+            <button
+              type="button"
+              onClick={() => setChartEngine('quant')}
+              className={`px-2 py-1 rounded-lg text-[10.5px] font-black transition ${
+                chartEngine === 'quant' ? 'btn-cobalt text-white' : 'text-dim hover:text-main'
+              }`}
+            >
+              {isFa ? 'Quant + AI' : 'Quant + AI'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartEngine('tv_widget')}
+              className={`px-2 py-1 rounded-lg text-[10.5px] font-black transition ${
+                chartEngine === 'tv_widget' ? 'btn-gold' : 'text-dim hover:text-main'
+              }`}
+            >
+              TradingView
+            </button>
+          </div>
+
           {/* Chart Type Dropdown */}
           <div className="relative">
             <button
@@ -1644,7 +1678,16 @@ export function TvSuperChart({
         </div>
       </div>
 
-      {/* 2. Main Superchart Workspace: Left Drawing Sidebar + Main Chart Canvas + Sub-Panes */}
+      {/* 2. Main Superchart Workspace: TradingView Real Widget OR Quant Chart (Drawing Sidebar + Canvas + Sub-Panes) */}
+      {chartEngine === 'tv_widget' ? (
+        <TradingViewRealWidget
+          symbol={symbol}
+          timeframe={timeframe}
+          lang={lang}
+          height={Math.max(460, effectiveHeight + 45)}
+          isLight={isLight}
+        />
+      ) : (
       <div className="flex gap-2 items-stretch">
         {/* Left Drawing Toolbar (TradingView style) */}
         <div
@@ -1768,6 +1811,22 @@ export function TvSuperChart({
             </div>
             <div ref={containerRef} className="w-full" />
             <svg ref={svgOverlayRef} className="pointer-events-none absolute inset-0 w-full h-full z-10" />
+            {candles.length === 0 && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-[var(--panel)]/85 backdrop-blur-sm space-y-2.5">
+                <p className="text-xs font-black text-main">
+                  {isFa
+                    ? `داده کندلی زنده برای ${symbol} از صرافی دریافت نشد (بدون کندل مصنوعی).`
+                    : `No live exchange candles available for ${symbol} (synthetic candles disabled).`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setChartEngine('tv_widget')}
+                  className="btn-gold px-3.5 py-1.5 rounded-xl text-xs font-black"
+                >
+                  {isFa ? 'نمایش در TradingView واقعی' : 'Open Real TradingView Chart'}
+                </button>
+              </div>
+            )}
 
             {/* Floating TradingView OHLC + Active Indicator Legend */}
             <div
@@ -2203,6 +2262,7 @@ export function TvSuperChart({
           </aside>
         )}
       </div>
+      )}
 
       {/* Indicators & Pine Scripts Catalog Modal */}
       <IndicatorsModal

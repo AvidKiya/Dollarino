@@ -137,6 +137,7 @@ export function AiChatPage({
     setScanBusy(true);
     try {
       const res = await apiFetch<{
+        ok?: boolean;
         results?: Array<{
           symbol: string;
           action: 'LONG' | 'SHORT' | 'SKIP';
@@ -146,9 +147,9 @@ export function AiChatPage({
           tp1: number;
           thesis: string;
         }>;
-      }>('/api/trading/ai/scan-market', {
+      }>('/api/trading/ai-scan-now', {
         method: 'POST',
-        body: JSON.stringify({ executeTop: false }),
+        body: JSON.stringify({ autoExecute: false }),
       });
       setScanResults(res.results || []);
       pushFloatingToast(isFa ? 'اسکن لحظه‌ای مدل هوش مصنوعی کامل شد' : 'Live AI model scan complete', 'info');

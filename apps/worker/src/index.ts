@@ -6,6 +6,7 @@ import { hmacSha256Hex, verifyJwt } from './crypto.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
 import { pollWatchedWalletsForNewTrades, reconcileCopyPositionsV2 } from './dex/smart-copy.js';
+import { reconcilePerpDexOrders } from './dex/perp-dex.js';
 import type { Env } from './env.js';
 import { fetchPublicKlines, fetchPublicMarket24h, fetchPublicOrderBook } from './exchanges/paper.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS } from './exchanges/markets.js';
@@ -879,6 +880,9 @@ export default {
         `SELECT
            EXISTS(SELECT 1 FROM bot_configs WHERE bot_state IN ('RUNNING_PAPER', 'RUNNING_LIVE')) AS has_bot,
            EXISTS(SELECT 1 FROM trades WHERE status = 'OPEN') AS has_open,
+           EXISTS(SELECT 1 FROM dex_trades WHERE status = 'OPEN') AS has_dex_open,
+           EXISTS(SELECT 1 FROM perp_dex_orders WHERE status IN ('FILLED', 'OPEN')) AS has_perp_open,
+           EXISTS(SELECT 1 FROM pending_orders WHERE status = 'PENDING') AS has_pending,
            EXISTS(SELECT 1 FROM price_alerts WHERE is_active = 1) AS has_alert,
            EXISTS(SELECT 1 FROM copy_follow_rules WHERE is_active = 1 AND trader_kind = 'SMART_WALLET') AS has_copy_watch,
            EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos,
@@ -890,6 +894,9 @@ export default {
         .first<{
           has_bot: number;
           has_open: number;
+          has_dex_open: number;
+          has_perp_open: number;
+          has_pending: number;
           has_alert: number;
           has_copy_watch: number;
           has_copy_pos: number;
@@ -900,10 +907,23 @@ export default {
         }>()
         .catch(() => null);
 
-      if (!activity || activity.has_bot || activity.has_open || activity.has_alert) {
+      if (
+        !activity ||
+        activity.has_bot ||
+        activity.has_open ||
+        activity.has_dex_open ||
+        activity.has_perp_open ||
+        activity.has_pending ||
+        activity.has_copy_pos ||
+        activity.has_alert
+      ) {
         const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
         const stub = env.TRADING_BOT_DO.get(id);
         await stub.fetch('https://do/start').catch(() => {});
+      }
+
+      if (!activity || activity.has_perp_open) {
+        await reconcilePerpDexOrders(env).catch(() => {});
       }
 
       if (!activity || activity.has_pending_treasury || activity.has_pending_fee) {

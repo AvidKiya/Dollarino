@@ -452,3 +452,232 @@ export async function recordPerpDexOrder(
   const dappLink = links.find((l) => l.venue === input.venue) ?? links[0]!;
   return { ok: true, orderId, dappLink, liquidationEstUsd: liqEst, note: agentNote };
 }
+
+function findHyperliquidUniverseIdx(
+  universe: Array<{ name: string; szDecimals?: number }>,
+  rawSymbol: string
+): number {
+  const raw = rawSymbol.toUpperCase().replace(/USDT$|USDC$|USD$/i, '');
+  const coin = raw.startsWith('1000') && raw.length > 4 ? `k${raw.slice(4)}` : raw;
+  const upper = coin.toUpperCase();
+  let idx = universe.findIndex((u) => u.name.toUpperCase() === upper);
+  if (idx >= 0) return idx;
+  const alt = upper.startsWith('K') ? `1000${upper.slice(1)}` : `K${upper}`;
+  idx = universe.findIndex((u) => u.name.toUpperCase() === alt);
+  return idx;
+}
+
+export async function executeHyperliquidReduceOnlyClose(
+  env: Env,
+  userId: string,
+  input: {
+    symbol: string;
+    side: 'LONG' | 'SHORT';
+    marginUsd: number;
+    leverage: number;
+    entryPrice: number;
+  }
+): Promise<{ closedOnExchange: boolean; note: string; markPrice: number | null; closeOid?: string }> {
+  const conn = await env.DB.prepare(
+    `SELECT encrypted_agent_secret, master_address FROM perp_dex_connections WHERE user_id = ? AND venue = 'hyperliquid' LIMIT 1`
+  )
+    .bind(userId)
+    .first<{ encrypted_agent_secret: string | null; master_address: string }>()
+    .catch(() => null);
+
+  if (!conn?.encrypted_agent_secret) {
+    return { closedOnExchange: false, note: 'بستن رکورد (بدون کلید Agent فعال)', markPrice: null };
+  }
+
+  const dec = await decryptVaultJson<{ agentPrivateKey?: string }>(
+    conn.encrypted_agent_secret,
+    env.MASTER_ENCRYPTION_KEY
+  ).catch(() => null);
+  const cleanPriv = dec?.agentPrivateKey?.trim().replace(/^0x/i, '') || '';
+  if (!/^[a-fA-F0-9]{64}$/.test(cleanPriv)) {
+    return { closedOnExchange: false, note: 'بستن رکورد (کلید Agent نامعتبر)', markPrice: null };
+  }
+
+  try {
+    const [metaRes, acct] = await Promise.all([
+      fetch('https://api.hyperliquid.xyz/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
+        signal: AbortSignal.timeout(5000),
+      }),
+      conn.master_address ? fetchHyperliquidAccountSummary(conn.master_address).catch(() => null) : Promise.resolve(null),
+    ]);
+    if (!metaRes.ok) {
+      return { closedOnExchange: false, note: 'خطای ارتباط با Hyperliquid info', markPrice: null };
+    }
+    const [meta, ctxs] = (await metaRes.json()) as [
+      { universe: Array<{ name: string; szDecimals?: number }> },
+      Array<{ markPx?: string }>,
+    ];
+    const assetIdx = findHyperliquidUniverseIdx(meta.universe, input.symbol);
+    if (assetIdx < 0) {
+      return { closedOnExchange: false, note: `نماد ${input.symbol} در Hyperliquid یافت نشد`, markPrice: null };
+    }
+    const coinName = meta.universe[assetIdx]!.name;
+    const szDec = Number(meta.universe[assetIdx]?.szDecimals ?? 3);
+    const markPx = Number(ctxs[assetIdx]?.markPx || input.entryPrice || 0);
+    if (!(markPx > 0)) {
+      return { closedOnExchange: false, note: 'قیمت لحظه‌ای Hyperliquid در دسترس نیست', markPrice: null };
+    }
+
+    const livePos = acct?.positions.find((p) => p.coin.toUpperCase() === coinName.toUpperCase());
+    const rawSize =
+      livePos && Math.abs(livePos.size) > 0
+        ? Math.abs(livePos.size)
+        : (Math.max(5, Number(input.marginUsd || 25)) * Math.max(1, Number(input.leverage || 5))) / markPx;
+    const szStr = rawSize.toFixed(Math.max(0, Math.min(6, szDec)));
+    if (!(Number(szStr) > 0)) {
+      return { closedOnExchange: false, note: 'حجم قابل بستن صفر است', markPrice: markPx };
+    }
+
+    const isBuyClose = input.side === 'SHORT';
+    const slippedPx = markPx * (isBuyClose ? 1.02 : 0.98);
+    const pxStr = Number(slippedPx.toPrecision(5)).toString();
+    const nonce = Date.now();
+    const action = {
+      type: 'order',
+      orders: [
+        {
+          a: assetIdx,
+          b: isBuyClose,
+          p: pxStr,
+          s: szStr,
+          r: true,
+          t: { limit: { tif: 'Ioc' } },
+        },
+      ],
+      grouping: 'na',
+    };
+    const signed = signHyperliquidL1Action({
+      agentPrivateKeyHex: cleanPriv,
+      action,
+      nonce,
+      isMainnet: true,
+    });
+    const exRes = await fetch('https://api.hyperliquid.xyz/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, nonce, signature: signed.signature }),
+      signal: AbortSignal.timeout(7000),
+    });
+    const exJson = (await exRes.json().catch(() => ({}))) as {
+      status?: string;
+      response?: {
+        data?: {
+          statuses?: Array<{
+            filled?: { oid?: number; totalSz?: string; avgPx?: string };
+            error?: string;
+          }>;
+        };
+      };
+    };
+    const st0 = exJson.response?.data?.statuses?.[0];
+    if (exJson.status === 'ok' && st0?.filled?.oid) {
+      return {
+        closedOnExchange: true,
+        markPrice: Number(st0.filled.avgPx || markPx),
+        closeOid: String(st0.filled.oid),
+        note: `✅ بستن Reduce-Only در Hyperliquid انجام شد (OID #${st0.filled.oid} · $${st0.filled.avgPx || markPx})`,
+      };
+    }
+    return {
+      closedOnExchange: false,
+      markPrice: markPx,
+      note: `بستن رکورد (Hyperliquid: ${st0?.error || exJson.status || 'No resting/open position on chain'})`,
+    };
+  } catch (err) {
+    return {
+      closedOnExchange: false,
+      markPrice: null,
+      note: `خطای بستن Hyperliquid: ${err instanceof Error ? err.message : 'network'}`,
+    };
+  }
+}
+
+export async function reconcilePerpDexOrders(env: Env, userId?: string): Promise<number> {
+  const query = userId
+    ? `SELECT id, user_id, venue, symbol, side, leverage, margin_usd, entry_price, tp_price, sl_price, execution_kind, status
+       FROM perp_dex_orders
+       WHERE user_id = ? AND status IN ('FILLED', 'OPEN') AND (tp_price IS NOT NULL OR sl_price IS NOT NULL)
+       LIMIT 30`
+    : `SELECT id, user_id, venue, symbol, side, leverage, margin_usd, entry_price, tp_price, sl_price, execution_kind, status
+       FROM perp_dex_orders
+       WHERE status IN ('FILLED', 'OPEN') AND (tp_price IS NOT NULL OR sl_price IS NOT NULL)
+       LIMIT 30`;
+
+  const rows = await (userId ? env.DB.prepare(query).bind(userId) : env.DB.prepare(query))
+    .all<{
+      id: string;
+      user_id: string;
+      venue: string;
+      symbol: string;
+      side: 'LONG' | 'SHORT';
+      leverage: number;
+      margin_usd: number;
+      entry_price: number;
+      tp_price: number | null;
+      sl_price: number | null;
+      execution_kind: string;
+      status: string;
+    }>()
+    .catch(() => ({ results: [] }));
+
+  if (!rows.results.length) return 0;
+
+  let closedCount = 0;
+  try {
+    const markets = await fetchHyperliquidLivePerpMarkets().catch(() => []);
+    const markMap = new Map<string, number>();
+    for (const m of markets) markMap.set(m.symbol.toUpperCase(), m.markPrice);
+
+    for (const o of rows.results) {
+      const sym = o.symbol.toUpperCase().replace(/USDT$|USD$/i, '');
+      const kSym = sym.startsWith('1000') ? `K${sym.slice(4)}` : sym;
+      const mark = markMap.get(sym) ?? markMap.get(kSym) ?? 0;
+      if (!(mark > 0)) continue;
+
+      const isLong = o.side === 'LONG';
+      const hitTp = Boolean(o.tp_price && o.tp_price > 0 && (isLong ? mark >= o.tp_price : mark <= o.tp_price));
+      const hitSl = Boolean(o.sl_price && o.sl_price > 0 && (isLong ? mark <= o.sl_price : mark >= o.sl_price));
+      if (!hitTp && !hitSl) continue;
+
+      const reason = hitTp ? 'PERP_TP' : 'PERP_SL';
+      let closeNote = `${reason} @ $${mark}`;
+      if (o.venue === 'hyperliquid' && o.execution_kind === 'HYPERLIQUID_AGENT_LIVE') {
+        const hlClose = await executeHyperliquidReduceOnlyClose(env, o.user_id, {
+          symbol: o.symbol,
+          side: o.side,
+          marginUsd: o.margin_usd,
+          leverage: o.leverage,
+          entryPrice: o.entry_price,
+        });
+        closeNote = `${reason} | ${hlClose.note}`;
+      }
+
+      const entry = Math.max(1e-9, Number(o.entry_price || mark));
+      const rawPct = ((mark - entry) / entry) * 100;
+      const pnlPct = (isLong ? rawPct : -rawPct) * Math.max(1, Number(o.leverage || 1));
+      const pnlUsd = Number(((Number(o.margin_usd || 0) * pnlPct) / 100).toFixed(2));
+
+      await env.DB.prepare(
+        `UPDATE perp_dex_orders
+         SET status = 'CLOSED', note = COALESCE(note, '') || ' | ' || ?
+         WHERE id = ? AND user_id = ?`
+      )
+        .bind(`${closeNote} (PnL ${pnlUsd >= 0 ? '+' : ''}$${pnlUsd})`, o.id, o.user_id)
+        .run()
+        .catch(() => {});
+
+      closedCount++;
+    }
+  } catch {
+    // non-fatal
+  }
+  return closedCount;
+}

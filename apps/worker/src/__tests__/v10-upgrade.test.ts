@@ -540,7 +540,11 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
     const env = makeEnv();
     await db.prepare('DELETE FROM users').run();
 
-    // 1. Fresh DB enforces Telegram-only signup on /register while allowing secure /bootstrap-owner with instance secret
+    // 1. When admin disables direct public signup, /register returns 403 while secure /bootstrap-owner works
+    await db
+      .prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_public_signup_enabled', 'false')`)
+      .run();
+    invalidateSettingsCache(db);
     const directReg = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/auth/register', {
         method: 'POST',
@@ -550,6 +554,10 @@ describe('Dollarino V10: Zero Sub, 5% Profit Fee, $10 Live Min, 25+ Free TV Aler
       env
     );
     expect(directReg.status).toBe(403);
+    await db
+      .prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_public_signup_enabled', 'true')`)
+      .run();
+    invalidateSettingsCache(db);
 
     const firstReg = await worker.fetch(
       new Request('https://dollarino.pages.dev/api/auth/bootstrap-owner', {

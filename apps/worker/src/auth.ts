@@ -70,8 +70,8 @@ export async function resolveAuthProviderToggles(db: D1Database): Promise<AuthPr
   const s = await getAllCachedSystemSettings(db);
   const g = (k: string, fb = '') => (s.get(k) ?? fb).trim();
   const telegramOnly = g('telegram_only_signup', 'false') === 'true';
-  const legacyDirectSignup = g('allow_direct_email_signup', 'false') === 'true';
-  const publicSignup = (g('auth_public_signup_enabled', 'false') === 'true' || legacyDirectSignup) && !telegramOnly;
+  const legacyDirectSignup = g('allow_direct_email_signup', 'true') !== 'false';
+  const publicSignup = g('auth_public_signup_enabled', 'true') !== 'false' && legacyDirectSignup && !telegramOnly;
 
   const officialChannel = g('official_channel', '');
   const signalsChannel = g('signals_channel_id', '');
@@ -82,9 +82,9 @@ export async function resolveAuthProviderToggles(db: D1Database): Promise<AuthPr
   return {
     passwordLoginEnabled: g('auth_password_login_enabled', 'true') !== 'false',
     publicSignupEnabled: publicSignup,
-    walletAuthEnabled: g('auth_wallet_enabled', 'false') === 'true',
-    telegramAuthEnabled: g('auth_telegram_enabled', 'false') === 'true' || telegramOnly,
-    googleAuthEnabled: g('auth_google_enabled', 'false') === 'true',
+    walletAuthEnabled: g('auth_wallet_enabled', 'true') !== 'false',
+    telegramAuthEnabled: g('auth_telegram_enabled', 'true') !== 'false' || telegramOnly,
+    googleAuthEnabled: g('auth_google_enabled', 'true') !== 'false',
     telegramOnlySignup: telegramOnly,
     requireTelegramPhoneKyc: g('require_telegram_phone_kyc', 'false') === 'true',
     botUsername: g('bot_username', '').replace(/^@/, ''),
@@ -873,6 +873,7 @@ authRoutes.get('/providers', async (c) => {
   ]);
   const googleConfigured = Boolean(google.clientId && google.clientSecret);
   const googleEnabled = toggles.googleAuthEnabled && googleConfigured;
+  const cleanBot = (toggles.botUsername || '').replace(/^@/, '');
   return c.json({
     ok: true,
     passwordLoginEnabled: toggles.passwordLoginEnabled,
@@ -880,7 +881,9 @@ authRoutes.get('/providers', async (c) => {
     walletAuthEnabled: toggles.walletAuthEnabled,
     telegramAuthEnabled: toggles.telegramAuthEnabled,
     telegramBotConfigured: Boolean(botToken),
-    telegramBotUsername: toggles.botUsername,
+    telegramBotUsername: cleanBot,
+    botUsername: cleanBot,
+    telegramBotUrl: cleanBot ? `https://t.me/${cleanBot}?start=web_auth` : '',
     officialChannel: toggles.officialChannel,
     officialChannelInvite: toggles.officialChannelInvite,
     signalsChannel: toggles.signalsChannel,
@@ -2154,21 +2157,64 @@ authRoutes.post('/google', async (c) => {
   return c.json({ ...authRes, isNewAccount: found.isNewAccount });
 });
 
+function resolveForwardedApiOrigin(c: Context<{ Bindings: Env; Variables: AppVariables }>): string {
+  const url = new URL(c.req.url);
+  const fwdProto = (c.req.header('X-Forwarded-Proto') || url.protocol.replace(/:$/, '')).split(',')[0]!.trim();
+  const fwdHost = (c.req.header('X-Forwarded-Host') || '').split(',')[0]!.trim();
+  const host = fwdHost || url.host;
+  const proto = fwdProto === 'http' || fwdProto === 'https' ? fwdProto : url.protocol.replace(/:$/, '');
+  return `${proto}://${host}`;
+}
+
+function resolveSafeWebOrigin(candidate: string | undefined | null, fallbackOrigin: string, publicWebUrl?: string): string {
+  const candidates = [candidate, publicWebUrl, fallbackOrigin];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    try {
+      const parsed = new URL(raw.trim());
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
+      const host = parsed.hostname.toLowerCase();
+      const publicHost = publicWebUrl ? (() => { try { return new URL(publicWebUrl).hostname.toLowerCase(); } catch { return ''; } })() : '';
+      const fbHost = (() => { try { return new URL(fallbackOrigin).hostname.toLowerCase(); } catch { return ''; } })();
+      const isTrusted =
+        host === fbHost ||
+        (publicHost && host === publicHost) ||
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host.endsWith('.pages.dev') ||
+        host.endsWith('.workers.dev') ||
+        host.endsWith('.e2b.app') ||
+        host.endsWith('.dollarino.app');
+      if (isTrusted) return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      // try next
+    }
+  }
+  return fallbackOrigin;
+}
+
 authRoutes.get('/google/start', async (c) => {
   const toggles = await resolveAuthProviderToggles(c.env.DB);
   const gCfg = await resolveGoogleOAuthConfig(c.env);
-  const url = new URL(c.req.url);
-  const origin = `${url.protocol}//${url.host}`;
+  const apiOrigin = resolveForwardedApiOrigin(c);
+  const webOrigin = resolveSafeWebOrigin(
+    c.req.query('web_origin') || c.req.header('Origin') || c.req.header('Referer'),
+    apiOrigin,
+    c.env.PUBLIC_WEB_URL
+  );
   if (!toggles.googleAuthEnabled) {
-    return c.redirect(`${origin}/?auth_error=google_auth_disabled`);
+    return c.redirect(`${webOrigin}/?auth_error=google_auth_disabled`);
   }
   if (!gCfg.clientId) {
-    return c.redirect(`${origin}/?auth_error=google_not_configured`);
+    return c.redirect(`${webOrigin}/?auth_error=google_not_configured`);
   }
   const ref = (c.req.query('ref') || '').trim().toUpperCase();
   const clientMode = c.req.query('client') === 'android' ? 'android' : 'web';
-  const state = await signJwt({ purpose: 'google_oauth_state', nonce: randomId('gs'), ref, client: clientMode }, c.env.SESSION_JWT_SECRET);
-  const redirectUri = `${origin}/api/auth/google/callback`;
+  const state = await signJwt(
+    { purpose: 'google_oauth_state', nonce: randomId('gs'), ref, client: clientMode, webOrigin },
+    c.env.SESSION_JWT_SECRET
+  );
+  const redirectUri = `${apiOrigin}/api/auth/google/callback`;
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', gCfg.clientId);
   authUrl.searchParams.set('redirect_uri', redirectUri);
@@ -2181,29 +2227,34 @@ authRoutes.get('/google/start', async (c) => {
 
 authRoutes.get('/google/callback', async (c) => {
   const toggles = await resolveAuthProviderToggles(c.env.DB);
-  const url = new URL(c.req.url);
-  const origin = `${url.protocol}//${url.host}`;
+  const apiOrigin = resolveForwardedApiOrigin(c);
+  const fallbackWebOrigin = resolveSafeWebOrigin(null, apiOrigin, c.env.PUBLIC_WEB_URL);
   const code = (c.req.query('code') || '').trim();
   const state = (c.req.query('state') || '').trim();
   const errParam = (c.req.query('error') || '').trim();
 
   if (!toggles.googleAuthEnabled) {
-    return c.redirect(`${origin}/?auth_error=google_auth_disabled`);
+    return c.redirect(`${fallbackWebOrigin}/?auth_error=google_auth_disabled`);
   }
   const statePayload = state ? await verifyJwt(state, c.env.SESSION_JWT_SECRET) : null;
   if (!statePayload || statePayload.purpose !== 'google_oauth_state') {
-    return c.redirect(`${origin}/?auth_error=invalid_oauth_state`);
+    return c.redirect(`${fallbackWebOrigin}/?auth_error=invalid_oauth_state`);
   }
+  const webOrigin = resolveSafeWebOrigin(
+    typeof statePayload.webOrigin === 'string' ? statePayload.webOrigin : undefined,
+    fallbackWebOrigin,
+    c.env.PUBLIC_WEB_URL
+  );
   const isAndroidClient = statePayload.client === 'android';
   if (errParam || !code) {
     const errTarget = isAndroidClient
       ? `dollarino://auth?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`
-      : `${origin}/?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`;
+      : `${webOrigin}/?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`;
     return c.redirect(errTarget);
   }
   const gCfg = await resolveGoogleOAuthConfig(c.env);
   if (!gCfg.clientId || !gCfg.clientSecret) {
-    return c.redirect(`${origin}/?auth_error=google_not_configured`);
+    return c.redirect(`${webOrigin}/?auth_error=google_not_configured`);
   }
   const referralCode = typeof statePayload.ref === 'string' ? statePayload.ref : undefined;
 
@@ -2214,18 +2265,18 @@ authRoutes.get('/google/callback', async (c) => {
       code,
       client_id: gCfg.clientId,
       client_secret: gCfg.clientSecret,
-      redirect_uri: `${origin}/api/auth/google/callback`,
+      redirect_uri: `${apiOrigin}/api/auth/google/callback`,
       grant_type: 'authorization_code',
     }).toString(),
     signal: AbortSignal.timeout(10_000),
   }).catch(() => null);
 
   if (!tokenRes || !tokenRes.ok) {
-    return c.redirect(`${origin}/?auth_error=google_token_exchange_failed`);
+    return c.redirect(`${webOrigin}/?auth_error=google_token_exchange_failed`);
   }
   const tokens = (await tokenRes.json()) as { access_token?: string; id_token?: string };
   if (!tokens.access_token) {
-    return c.redirect(`${origin}/?auth_error=google_missing_access_token`);
+    return c.redirect(`${webOrigin}/?auth_error=google_missing_access_token`);
   }
 
   const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -2233,11 +2284,11 @@ authRoutes.get('/google/callback', async (c) => {
     signal: AbortSignal.timeout(8000),
   }).catch(() => null);
   if (!userRes || !userRes.ok) {
-    return c.redirect(`${origin}/?auth_error=google_userinfo_failed`);
+    return c.redirect(`${webOrigin}/?auth_error=google_userinfo_failed`);
   }
   const gInfo = (await userRes.json()) as { sub?: string; email?: string; name?: string; picture?: string };
   if (!gInfo.sub || !gInfo.email) {
-    return c.redirect(`${origin}/?auth_error=google_missing_email`);
+    return c.redirect(`${webOrigin}/?auth_error=google_missing_email`);
   }
 
   const found = await findOrCreateGoogleUser(c, {
@@ -2248,19 +2299,19 @@ authRoutes.get('/google/callback', async (c) => {
     referralCode,
   });
   if (found.blocked) {
-    return c.redirect(`${origin}/?auth_error=account_suspended`);
+    return c.redirect(`${webOrigin}/?auth_error=account_suspended`);
   }
 
   const authRes = await issueAuthSessionOr2fa(c, found.row);
   if (authRes.requires2fa) {
     const target = isAndroidClient
       ? `dollarino://auth?google_2fa=${encodeURIComponent(authRes.tempToken)}`
-      : `${origin}/?google_2fa=${encodeURIComponent(authRes.tempToken)}`;
+      : `${webOrigin}/?google_2fa=${encodeURIComponent(authRes.tempToken)}`;
     return c.redirect(target);
   }
   const okTarget = isAndroidClient
     ? `dollarino://auth?google_token=${encodeURIComponent(authRes.token)}`
-    : `${origin}/?google_token=${encodeURIComponent(authRes.token)}`;
+    : `${webOrigin}/?google_token=${encodeURIComponent(authRes.token)}`;
   return c.redirect(okTarget);
 });
 
@@ -2381,6 +2432,7 @@ authRoutes.post('/complete-profile', requireAuth, async (c) => {
   });
 
   const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(u.id).first();
+  invalidateAuthUserCache(c.env.DB, u.id);
   return c.json({ ok: true, token, user: fullUser });
 });
 

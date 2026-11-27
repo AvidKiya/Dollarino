@@ -612,7 +612,7 @@ describe('V11.6 Trust Wallet DApp Integration, ECDSA Verification & Live 24/7 Ex
   it('supports Web3 EIP-191 signup/login, complete-profile, username/email login, TOTP 2FA challenge, and masks google_client_secret in admin overview', async () => {
     const env = makeEnv();
 
-    // 1. Check providers — wallet starts disabled cleanly until admin enables it
+    // 1. Check providers — standard wallet & telegram start enabled by default, google starts unconfigured
     const provCleanRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/auth/providers'), env);
     expect(provCleanRes.status).toBe(200);
     const provCleanJson = (await provCleanRes.json()) as {
@@ -620,10 +620,16 @@ describe('V11.6 Trust Wallet DApp Integration, ECDSA Verification & Live 24/7 Ex
       telegramAuthEnabled: boolean;
       googleEnabled: boolean;
     };
-    expect(provCleanJson.walletAuthEnabled).toBe(false);
+    expect(provCleanJson.walletAuthEnabled).toBe(true);
+    expect(provCleanJson.telegramAuthEnabled).toBe(true);
     expect(provCleanJson.googleEnabled).toBe(false);
 
-    // Enable wallet auth as admin and verify providers reflects it
+    // Disable wallet auth as admin, verify false, then re-enable and verify true
+    await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_wallet_enabled', 'false')`).run();
+    invalidateSettingsCache(db);
+    const provOffRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/auth/providers'), env);
+    expect(((await provOffRes.json()) as { walletAuthEnabled: boolean }).walletAuthEnabled).toBe(false);
+
     await db.prepare(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('auth_wallet_enabled', 'true')`).run();
     invalidateSettingsCache(db);
     const provRes = await worker.fetch(new Request('https://dollarino.pages.dev/api/auth/providers'), env);

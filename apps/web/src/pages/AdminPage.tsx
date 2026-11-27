@@ -1110,8 +1110,8 @@ export function AdminPage({
           </h3>
           <p className="text-xs text-sub mt-1">
             {isFa
-              ? 'در حالت پیش‌فرض و خام سایت، تمامی روش‌های ثبت‌نام/ورود عمومی کاربران خاموش هستند؛ هر روشی را که پس از تنظیم می‌خواهید برای کاربران فعال کنید، از اینجا روشن نمایید.'
-              : 'On a clean setup all public user login/signup methods start disabled. Configure integrations and enable each method below.'}
+              ? 'روش‌های استاندارد ثبت‌نام و ورود کاربران عادی (ایمیل، کیف‌پول دیجیتال، تلگرام و گوگل) به طور پیش‌فرض فعال هستند؛ در صورت نیاز می‌توانید هر کدام را از اینجا مدیریت کنید.'
+              : 'Standard public user onboarding methods (Email, Wallet, Telegram, Google) start active by default and can be toggled on or off below.'}
           </p>
         </div>
         <span className="px-3 py-1 rounded-full text-[11px] font-black border bg-emerald-500/10 border-emerald-500/30 text-jade">
@@ -1211,6 +1211,7 @@ export function AdminPage({
     try {
       const payload: Record<string, string> = {
         google_client_id: googleOauthForm.clientId.trim(),
+        auth_google_enabled: 'true',
       };
       if (googleOauthForm.clientSecret.trim() && googleOauthForm.clientSecret.trim() !== '********') {
         payload.google_client_secret = googleOauthForm.clientSecret.trim();

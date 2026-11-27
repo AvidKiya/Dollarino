@@ -21,7 +21,24 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
   constructor(private creds: HyperliquidAgentCreds) {}
 
   private static toCoin(symbol: string): string {
-    return normalizeCanonicalSymbol(symbol).replace(/USDT$|USDC$|USD$/i, '') || 'BTC';
+    const raw = normalizeCanonicalSymbol(symbol).replace(/USDT$|USDC$|USD$/i, '') || 'BTC';
+    if (raw.startsWith('1000') && raw.length > 4) {
+      return `k${raw.slice(4)}`;
+    }
+    return raw;
+  }
+
+  private static findAssetIndex(
+    universe: Array<{ name: string; szDecimals?: number; maxLeverage?: number }>,
+    symbol: string
+  ): number {
+    const coin = HyperliquidPerpAdapter.toCoin(symbol);
+    const upper = coin.toUpperCase();
+    let idx = universe.findIndex((u) => u.name.toUpperCase() === upper);
+    if (idx >= 0) return idx;
+    const alt = upper.startsWith('K') ? `1000${upper.slice(1)}` : `K${upper}`;
+    idx = universe.findIndex((u) => u.name.toUpperCase() === alt);
+    return idx;
   }
 
   private async fetchMetaAndCtxs(): Promise<{
@@ -113,10 +130,9 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
   }
 
   async getTickerPrice(symbol: string): Promise<string> {
-    const coin = HyperliquidPerpAdapter.toCoin(symbol);
     try {
       const { universe, ctxs } = await this.fetchMetaAndCtxs();
-      const idx = universe.findIndex((u) => u.name.toUpperCase() === coin);
+      const idx = HyperliquidPerpAdapter.findAssetIndex(universe, symbol);
       const px = idx >= 0 ? Number(ctxs[idx]?.markPx || 0) : 0;
       if (px > 0) return String(px);
     } catch { /* fallback below */ }
@@ -125,10 +141,9 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
 
   async getMarket24h(symbol: string): Promise<Market24hStats> {
     const base = await fetchPublicMarket24h(symbol);
-    const coin = HyperliquidPerpAdapter.toCoin(symbol);
     try {
       const { universe, ctxs } = await this.fetchMetaAndCtxs();
-      const idx = universe.findIndex((u) => u.name.toUpperCase() === coin);
+      const idx = HyperliquidPerpAdapter.findAssetIndex(universe, symbol);
       if (idx >= 0 && ctxs[idx]?.markPx) {
         return {
           ...base,
@@ -151,10 +166,10 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
 
   async getInstrumentSpec(symbol: string): Promise<InstrumentSpec> {
     const canonical = normalizeCanonicalSymbol(symbol);
-    const coin = HyperliquidPerpAdapter.toCoin(canonical);
     try {
       const { universe } = await this.fetchMetaAndCtxs();
-      const u = universe.find((x) => x.name.toUpperCase() === coin);
+      const idx = HyperliquidPerpAdapter.findAssetIndex(universe, canonical);
+      const u = idx >= 0 ? universe[idx] : undefined;
       if (u) {
         return {
           symbol: canonical,
@@ -224,9 +239,8 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
   }
 
   async setLeverage(symbol: string, leverage: number): Promise<void> {
-    const coin = HyperliquidPerpAdapter.toCoin(symbol);
     const { universe } = await this.fetchMetaAndCtxs();
-    const assetIdx = universe.findIndex((u) => u.name.toUpperCase() === coin);
+    const assetIdx = HyperliquidPerpAdapter.findAssetIndex(universe, symbol);
     if (assetIdx < 0) return;
     await this.postExchangeAction({
       type: 'updateLeverage',
@@ -239,7 +253,7 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
   async placeMarketOrder(params: PlaceOrderParams): Promise<OrderResult> {
     const coin = HyperliquidPerpAdapter.toCoin(params.symbol);
     const { universe, ctxs } = await this.fetchMetaAndCtxs();
-    const assetIdx = universe.findIndex((u) => u.name.toUpperCase() === coin);
+    const assetIdx = HyperliquidPerpAdapter.findAssetIndex(universe, params.symbol);
     if (assetIdx < 0) {
       throw new Error(`Symbol ${coin} not listed on Hyperliquid Perps`);
     }
@@ -307,7 +321,7 @@ export class HyperliquidPerpAdapter implements IExchangeAdapter {
   ): Promise<OrderResult> {
     const coin = HyperliquidPerpAdapter.toCoin(symbol);
     const { universe, ctxs } = await this.fetchMetaAndCtxs();
-    const assetIdx = universe.findIndex((u) => u.name.toUpperCase() === coin);
+    const assetIdx = HyperliquidPerpAdapter.findAssetIndex(universe, symbol);
     if (assetIdx < 0) throw new Error(`Symbol ${coin} not listed on Hyperliquid`);
     const szDec = Number(universe[assetIdx]?.szDecimals ?? 3);
     const markPx = Number(ctxs[assetIdx]?.markPx || 0);

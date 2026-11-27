@@ -22,7 +22,10 @@ import { resolveTelegramBotToken } from '../telegram/token.js';
 import { formatTradeOpenedCard } from '../telegram/formatter.js';
 import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard, publishSystemLogEvent, publishTransactionEvent } from '../telegram/publisher.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
-import { getDexTokenPools } from '../dex/screener.js';
+import { EVM_CHAIN_CONFIG } from '../dex/evm-tx.js';
+import { reconcilePerpDexOrders } from '../dex/perp-dex.js';
+import { getDexTokenPools, normalizeDexChainId } from '../dex/screener.js';
+import { executeLiveEvmVaultSellSwap, executeLiveSolanaVaultSellSwap } from '../dex/smart-copy.js';
 import { dispatchMobileNotification, enqueueMobileInboxNotification, type MobileNotificationCategory } from '../services/mobile-push.js';
 import { isPaperCopyPositionRow, isPaperDexTradeRow, isSniperDexTradeRow, round2 } from '../services/portfolio-accounting.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
@@ -953,18 +956,56 @@ export async function reconcileOpenPositionsForUser(
       })
     );
 
+    const sniperTrailingEnabled = Boolean(cfg.sniper_trailing_enabled ?? 1);
+    const sniperTrailPct = Math.max(2, Math.min(40, Number(cfg.sniper_trailing_pct ?? 8)));
+
     for (const d of openDex.results) {
       const key = `${String(d.chain_id || '').toLowerCase()}:${String(d.token_address || '').toLowerCase()}`;
       const livePx = tokenPriceCache.get(key) || 0;
       if (livePx <= 0 || !(d.entry_price_usd > 0)) continue;
 
+      let activeSl = d.stop_loss_usd ? Number(d.stop_loss_usd) : null;
+      if (sniperTrailingEnabled && livePx > d.entry_price_usd * (1 + sniperTrailPct / 100)) {
+        const ratchetedSl = Number((livePx * (1 - sniperTrailPct / 100)).toPrecision(7));
+        if (!activeSl || ratchetedSl > activeSl) {
+          activeSl = ratchetedSl;
+          await env.DB.prepare(`UPDATE dex_trades SET stop_loss_usd = ? WHERE id = ? AND status = 'OPEN'`)
+            .bind(ratchetedSl, d.id)
+            .run()
+            .catch(() => {});
+        }
+      }
+
       const hitTp1 = Boolean(d.tp1_usd && d.tp1_usd > 0 && livePx >= d.tp1_usd);
-      const hitSl = Boolean(d.stop_loss_usd && d.stop_loss_usd > 0 && livePx <= d.stop_loss_usd);
+      const hitSl = Boolean(activeSl && activeSl > 0 && livePx <= activeSl);
       if (!hitTp1 && !hitSl) continue;
 
-      const reason = hitTp1 ? 'DEX_TP1' : 'DEX_SL';
+      const reason = hitTp1 ? 'DEX_TP1' : activeSl && activeSl > d.entry_price_usd ? 'DEX_TRAILING_SL' : 'DEX_SL';
       const pnlPct = ((livePx - d.entry_price_usd) / d.entry_price_usd) * 100;
       const pnlUsd = round2((Number(d.amount_usd || 0) * pnlPct) / 100);
+      const isPaper = isPaperDexTradeRow(d);
+
+      let liveSellNote = '';
+      if (!isPaper && d.tx_hash && !d.tx_hash.startsWith('PAPER_')) {
+        const chLower = normalizeDexChainId(d.chain_id);
+        if (chLower === 'solana') {
+          const sellRes = await executeLiveSolanaVaultSellSwap(env, userId, d.token_address, 100, 1500).catch(() => null);
+          if (sellRes?.txHash) liveSellNote = ` | SELL TX: ${sellRes.txHash}`;
+          else if (sellRes?.note) liveSellNote = ` | ${sellRes.note}`;
+        } else if (EVM_CHAIN_CONFIG[chLower]) {
+          const sellRes = await executeLiveEvmVaultSellSwap(env, userId, chLower, d.token_address, 100, 10).catch(
+            () => null
+          );
+          if (sellRes?.txHash) liveSellNote = ` | SELL TX: ${sellRes.txHash}`;
+          else if (sellRes?.note) liveSellNote = ` | ${sellRes.note}`;
+        }
+      }
+
+      const reasonLabel = hitTp1
+        ? 'تارگت خودکار TP1'
+        : reason === 'DEX_TRAILING_SL'
+          ? 'حد سود متحرک (Trailing SL)'
+          : 'حد ضرر خودکار SL';
 
       await env.DB.prepare(
         `UPDATE dex_trades
@@ -972,10 +1013,8 @@ export async function reconcileOpenPositionsForUser(
              note = COALESCE(note, '') || ' | ' || ?, closed_at = datetime('now')
          WHERE id = ? AND user_id = ? AND status = 'OPEN'`
       )
-        .bind(livePx, pnlUsd, round2(pnlPct), hitTp1 ? 'تارگت خودکار TP1' : 'حد ضرر خودکار SL', d.id, userId)
+        .bind(livePx, pnlUsd, round2(pnlPct), `${reasonLabel}${liveSellNote}`, d.id, userId)
         .run();
-
-      const isPaper = isPaperDexTradeRow(d);
       if (isPaper) {
         const balRow = await env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
           .bind(userId)
@@ -1019,6 +1058,8 @@ export async function reconcileOpenPositionsForUser(
       processed++;
     }
   }
+
+  processed += await reconcilePerpDexOrders(env, userId).catch(() => 0);
 
   return processed;
 }

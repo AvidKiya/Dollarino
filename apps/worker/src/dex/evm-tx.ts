@@ -187,6 +187,61 @@ export function buildV2SwapExactEthForTokensCalldata(
   );
 }
 
+export function buildErc20ApproveCalldata(spender: string, amount: bigint): string {
+  // selector: approve(address,uint256) = 0x095ea7b3
+  const padAddr = (a: string) => stripHexPrefix(a).toLowerCase().padStart(64, '0');
+  const padUint = (v: bigint) => v.toString(16).padStart(64, '0');
+  return '0x095ea7b3' + padAddr(spender) + padUint(amount);
+}
+
+export function buildV2SwapExactTokensForEthCalldata(
+  amountIn: bigint,
+  minAmountOut: bigint,
+  path: [string, string],
+  recipient: string,
+  deadlineSec: bigint
+): string {
+  // selector: swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256) = 0x791ac947
+  const padUint = (v: bigint) => v.toString(16).padStart(64, '0');
+  const padAddr = (a: string) => stripHexPrefix(a).toLowerCase().padStart(64, '0');
+  return (
+    '0x791ac947' +
+    padUint(amountIn) +
+    padUint(minAmountOut) +
+    padUint(160n) + // dynamic offset to path (5 * 32)
+    padAddr(recipient) +
+    padUint(deadlineSec) +
+    padUint(BigInt(path.length)) +
+    padAddr(path[0]) +
+    padAddr(path[1])
+  );
+}
+
+export async function fetchErc20BalanceAndAllowance(
+  chainIdName: string,
+  tokenAddress: string,
+  ownerAddress: string,
+  spenderAddress: string
+): Promise<{ balance: bigint; allowance: bigint }> {
+  const cfg = EVM_CHAIN_CONFIG[chainIdName.toLowerCase()];
+  if (!cfg) return { balance: 0n, allowance: 0n };
+  const padAddr = (a: string) => stripHexPrefix(a).toLowerCase().padStart(64, '0');
+  const balData = '0x70a08231' + padAddr(ownerAddress);
+  const allowData = '0xdd62ed3e' + padAddr(ownerAddress) + padAddr(spenderAddress);
+  const [balHex, allowHex] = await Promise.all([
+    evmRpcCall<string>(cfg.rpcUrls, 'eth_call', [{ to: tokenAddress, data: balData }, 'latest']).catch(() => '0x0'),
+    evmRpcCall<string>(cfg.rpcUrls, 'eth_call', [{ to: tokenAddress, data: allowData }, 'latest']).catch(() => '0x0'),
+  ]);
+  const toBig = (h: string) => {
+    try {
+      return h && h !== '0x' ? BigInt(h) : 0n;
+    } catch {
+      return 0n;
+    }
+  };
+  return { balance: toBig(balHex), allowance: toBig(allowHex) };
+}
+
 async function evmRpcCall<T = unknown>(rpcUrls: string[], method: string, params: unknown[]): Promise<T> {
   let lastErr = 'RPC error';
   for (const url of rpcUrls) {
