@@ -5,7 +5,7 @@
   "main": "./src/index.ts",
   "scripts": {
     "dev": "wrangler dev --config ../../wrangler.toml --ip 127.0.0.1 --port 8787 --local",
-    "test": "vitest run --minWorkers=1 --maxWorkers=2 --testTimeout=15000",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -19,7 +19,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250214.0",
     "@types/qrcode": "^1.5.6",
+    "miniflare": "^3.20250718.3",
     "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
     "wrangler": "^3.109.2"
   }
 }

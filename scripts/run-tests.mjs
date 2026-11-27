@@ -124,9 +124,26 @@ for (const workspace of WORKSPACES) {
   const configCandidates = ['vitest.config.ts', 'vitest.config.mts', 'vite.config.ts', 'vite.config.mts'];
   const configs = configCandidates.filter((c) => fs.existsSync(path.join(dir, c)));
   console.log(`[run-tests] local vitest/vite config: ${configs.length ? configs.join(', ') : 'none'}`);
+  if (configs.length === 0) {
+    // Without a workspace config, Vitest falls back to minThreads = cpus - 1 while
+    // maxWorkers stays 2, and Tinypool aborts on runners with 4+ CPUs.
+    annotate(
+      'error',
+      `Missing vitest config in ${workspace}`,
+      'Add vitest.config.mts extending vitest.config.base.mts, otherwise the worker-pool floor is derived from the CPU count and can exceed maxWorkers.'
+    );
+    failed = true;
+    workspaceSummary.push(`${workspace}: SKIPPED - no vitest config found`);
+    continue;
+  }
+  // Pool bounds live in the root vitest.config.mts (minWorkers=1, maxWorkers=2). They are
+  // deliberately NOT passed as CLI flags here: `--maxWorkers` without `--minWorkers`
+  // makes Vitest fall back to `availableParallelism() - 1` as the floor, which aborts the
+  // run with "options.minThreads and options.maxThreads must not conflict" on runners
+  // with more than 3 CPUs.
   const result = spawnSync(
     bin,
-    ['run', '--minWorkers=1', '--maxWorkers=2', '--testTimeout=15000', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
+    ['run', '--reporter=default', '--reporter=json', `--outputFile.json=${reportFile}`],
     { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: process.env.CI ?? 'true' }, shell: false }
   );
   const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
