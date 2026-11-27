@@ -73,9 +73,40 @@ export interface DexTokenEnriched extends DexPair {
   riskFlags: string[];
   trustWallet: TrustWalletDexLinks;
   isOnCentralizedHint: boolean;
+  alphaScore?: number;
 }
 
 const DEX_BASE = 'https://api.dexscreener.com';
+
+const CHAIN_ALIASES: Record<string, string> = {
+  eth: 'ethereum',
+  mainnet: 'ethereum',
+  erc20: 'ethereum',
+  bnb: 'bsc',
+  bep20: 'bsc',
+  sol: 'solana',
+  arb: 'arbitrum',
+  matic: 'polygon',
+  pol: 'polygon',
+  op: 'optimism',
+  avax: 'avalanche',
+  trc20: 'tron',
+  trx: 'tron',
+};
+
+export function normalizeDexChainId(rawChain: string): string {
+  const c = String(rawChain || 'bsc').trim().toLowerCase();
+  return CHAIN_ALIASES[c] || c;
+}
+
+interface TtlCacheEntry<T> {
+  ts: number;
+  value: T;
+}
+const TRENDING_CACHE = new Map<string, TtlCacheEntry<{ pairs: DexTokenEnriched[]; metas: DexMetaItem[] }>>();
+const SNIPER_FEED_CACHE = new Map<string, TtlCacheEntry<DexTokenEnriched[]>>();
+const SEARCH_CACHE = new Map<string, TtlCacheEntry<DexTokenEnriched[]>>();
+const INFLIGHT_TRENDING = new Map<string, Promise<{ pairs: DexTokenEnriched[]; metas: DexMetaItem[] }>>();
 
 const TRUST_COIN_IDS: Record<string, number> = {
   bsc: 20000714,
@@ -165,46 +196,59 @@ export function buildTrustWalletSwapLinks(chainId: string, tokenAddress: string,
 }
 
 export function scoreDexPairSafety(pair: DexPair): { safetyScore: number; riskFlags: string[] } {
-  let score = 50;
+  let score = 54;
   const riskFlags: string[] = [];
 
   const liq = Number(pair.liquidity?.usd || 0);
   const vol24 = Number(pair.volume?.h24 || 0);
+  const vol1h = Number(pair.volume?.h1 || 0);
   const m5Buys = Number(pair.txns?.m5?.buys || 0);
   const m5Sells = Number(pair.txns?.m5?.sells || 0);
+  const h1Buys = Number(pair.txns?.h1?.buys || m5Buys);
+  const h1Sells = Number(pair.txns?.h1?.sells || m5Sells);
   const h1Change = Number(pair.priceChange?.h1 || 0);
   const ageMs = pair.pairCreatedAt ? Date.now() - Number(pair.pairCreatedAt) : 0;
 
   if (liq >= 250_000) score += 20;
-  else if (liq >= 50_000) score += 10;
-  else if (liq < 15_000) {
+  else if (liq >= 50_000) score += 13;
+  else if (liq >= 20_000) score += 7;
+  else if (liq < 12_000) {
     score -= 22;
-    riskFlags.push('نقدینگی پایین استخر (< $15K)');
+    riskFlags.push('نقدینگی پایین استخر (< $12K)');
   }
 
-  if (vol24 >= 500_000) score += 15;
-  else if (vol24 >= 100_000) score += 8;
-  else if (vol24 < 20_000) {
+  if (vol24 >= 500_000) score += 14;
+  else if (vol24 >= 100_000) score += 9;
+  else if (vol1h >= 25_000) score += 6;
+  else if (vol24 < 15_000 && vol1h < 5_000) {
     score -= 10;
-    riskFlags.push('حجم معاملات ۲۴ساعته پایین');
+    riskFlags.push('حجم معاملات پایین');
   }
 
   if (pair.info?.websites?.length || pair.info?.socials?.length) {
-    score += 10;
+    score += 8;
   } else {
     riskFlags.push('فاقد لینک وب‌سایت/شبکه اجتماعی تاییدشده');
   }
 
-  if (ageMs > 0 && ageMs < 6 * 3600_000) {
-    score -= 12;
-    riskFlags.push('استخر تازه ایجاد شده (< ۶ ساعت)');
-  } else if (ageMs >= 7 * 86400_000) {
-    score += 10;
+  // Healthy two-sided orderflow confirms real sellability (not a honeypot)
+  if (h1Sells >= 4 && h1Buys >= h1Sells * 0.85) {
+    score += 7;
+  } else if (m5Buys + m5Sells > 12 && m5Sells === 0 && h1Change > 75) {
+    score -= 18;
+    riskFlags.push('فشار خرید غیرعادی با صفر فروش / ریسک Honeypot');
   }
 
-  if (m5Buys + m5Sells > 10 && m5Sells === 0 && h1Change > 80) {
-    score -= 15;
-    riskFlags.push('فشار خرید غیرعادی / احتمال محدودیت فروش');
+  if (ageMs > 0 && ageMs < 6 * 3600_000) {
+    if (liq < 20_000 || h1Sells < 2) {
+      score -= 10;
+      riskFlags.push('استخر بسیار تازه و کم‌نقدینگی (< ۶ ساعت)');
+    } else {
+      score -= 3;
+      riskFlags.push('استخر تازه لیست‌شده (< ۶ ساعت)');
+    }
+  } else if (ageMs >= 7 * 86400_000) {
+    score += 8;
   }
 
   return {
@@ -213,15 +257,44 @@ export function scoreDexPairSafety(pair: DexPair): { safetyScore: number; riskFl
   };
 }
 
+export function computeDexAlphaScore(pair: DexPair, safetyScore: number): number {
+  const liq = Number(pair.liquidity?.usd || 0);
+  const vol1h = Number(pair.volume?.h1 || 0);
+  const vol24 = Number(pair.volume?.h24 || 0);
+  const buys1h = Number(pair.txns?.h1?.buys || pair.txns?.m5?.buys || 0);
+  const sells1h = Number(pair.txns?.h1?.sells || pair.txns?.m5?.sells || 0);
+  const ch1h = Number(pair.priceChange?.h1 || 0);
+  const ch5m = Number(pair.priceChange?.m5 || 0);
+
+  let alpha = safetyScore * 0.45;
+  // Volume-to-liquidity turnover (healthy 0.3x - 8x)
+  const turnover = liq > 0 ? vol1h / liq : 0;
+  if (turnover >= 0.25 && turnover <= 10) alpha += Math.min(20, turnover * 4);
+  if (liq >= 30_000) alpha += Math.min(14, Math.log10(liq / 1000) * 5);
+  if (vol24 >= 80_000) alpha += 7;
+
+  // Healthy buy pressure without vertical exhaustion
+  const ratio = sells1h > 0 ? buys1h / sells1h : buys1h > 0 ? 1.5 : 1;
+  if (ratio >= 1.05 && ratio <= 3.5 && sells1h >= 3) alpha += 10;
+  if (ch1h >= 2 && ch1h <= 65) alpha += 8;
+  else if (ch1h > 250) alpha -= 6;
+  if (ch5m > 0 && ch5m <= 25) alpha += 5;
+
+  return Math.round(Math.max(1, Math.min(100, alpha)));
+}
+
 export function enrichDexPair(pair: DexPair): DexTokenEnriched {
-  const { safetyScore, riskFlags } = scoreDexPairSafety(pair);
-  const sym = (pair.baseToken?.symbol || '').toUpperCase();
+  const normalizedChain = normalizeDexChainId(pair.chainId);
+  const normalizedPair: DexPair = normalizedChain !== pair.chainId ? { ...pair, chainId: normalizedChain } : pair;
+  const { safetyScore, riskFlags } = scoreDexPairSafety(normalizedPair);
+  const sym = (normalizedPair.baseToken?.symbol || '').toUpperCase();
   const majors = new Set(['BTC', 'WBTC', 'ETH', 'WETH', 'SOL', 'BNB', 'WBNB', 'XRP', 'ADA', 'DOGE', 'TON', 'TRX', 'AVAX', 'LINK', 'USDT', 'USDC']);
   return {
-    ...pair,
+    ...normalizedPair,
     safetyScore,
     riskFlags,
-    trustWallet: buildTrustWalletSwapLinks(pair.chainId, pair.baseToken?.address || pair.pairAddress, pair.url),
+    alphaScore: computeDexAlphaScore(normalizedPair, safetyScore),
+    trustWallet: buildTrustWalletSwapLinks(normalizedPair.chainId, normalizedPair.baseToken?.address || normalizedPair.pairAddress, normalizedPair.url),
     isOnCentralizedHint: majors.has(sym),
   };
 }
@@ -440,20 +513,26 @@ export async function fetchGeckoTerminalNewPools(allowedChains: string[] = ['sol
 }
 
 export async function fetchUltraFreshSniperPoolFeed(allowedChains: string[]): Promise<DexTokenEnriched[]> {
+  const normalizedChains = [...new Set(allowedChains.map((c) => normalizeDexChainId(c)))].sort();
+  const cacheKey = normalizedChains.join(',') || 'default';
+  const cached = SNIPER_FEED_CACHE.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 40_000 && cached.value.length > 0) {
+    return cached.value;
+  }
+
   const [newPoolsRes, trendingRes] = await Promise.allSettled([
-    fetchGeckoTerminalNewPools(allowedChains),
+    fetchGeckoTerminalNewPools(normalizedChains),
     fetchDexTrendingOverview(),
   ]);
   const map = new Map<string, DexTokenEnriched>();
   const add = (p: DexTokenEnriched) => {
     if (!p.baseToken?.address || !(Number(p.priceUsd || 0) > 0)) return;
-    const key = `${p.chainId}:${p.baseToken.address.toLowerCase()}`;
+    const key = `${normalizeDexChainId(p.chainId)}:${p.baseToken.address.toLowerCase()}`;
     const prev = map.get(key);
     if (!prev) {
       map.set(key, p);
       return;
     }
-    // Prefer entry with fresher/known pairCreatedAt and higher liquidity/socials
     const prevCreated = prev.pairCreatedAt ?? 0;
     const curCreated = p.pairCreatedAt ?? 0;
     const merged: DexTokenEnriched = {
@@ -471,12 +550,22 @@ export async function fetchUltraFreshSniperPoolFeed(allowedChains: string[]): Pr
   if (trendingRes.status === 'fulfilled') {
     for (const p of trendingRes.value.pairs) add(p);
   }
-  return [...map.values()];
+  const result = [...map.values()];
+  if (result.length > 0) {
+    if (SNIPER_FEED_CACHE.size > 40) SNIPER_FEED_CACHE.clear();
+    SNIPER_FEED_CACHE.set(cacheKey, { ts: Date.now(), value: result });
+  }
+  return result;
 }
 
 export async function searchDexPairs(query: string): Promise<DexTokenEnriched[]> {
   const q = query.trim();
   if (!q) return [];
+  const cacheKey = q.toLowerCase();
+  const cached = SEARCH_CACHE.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 20_000 && cached.value.length > 0) {
+    return cached.value;
+  }
   const [dexRes, geckoRes] = await Promise.allSettled([
     fetchJson<{ pairs?: DexPair[] }>(`/latest/dex/search?q=${encodeURIComponent(q)}`),
     fetchGeckoTerminalFallback(q),
@@ -488,21 +577,26 @@ export async function searchDexPairs(query: string): Promise<DexTokenEnriched[]>
   const combined: DexTokenEnriched[] = [];
   for (const p of dexPairs) {
     if (!p.baseToken?.symbol || Number(p.priceUsd || 0) <= 0) continue;
-    const key = `${String(p.chainId).toLowerCase()}:${String(p.pairAddress || p.baseToken.address).toLowerCase()}`;
+    const key = `${normalizeDexChainId(p.chainId)}:${String(p.pairAddress || p.baseToken.address).toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
     combined.push(enrichDexPair(p));
   }
   for (const gp of geckoPairs) {
-    const key = `${String(gp.chainId).toLowerCase()}:${String(gp.pairAddress || gp.baseToken?.address).toLowerCase()}`;
+    const key = `${normalizeDexChainId(gp.chainId)}:${String(gp.pairAddress || gp.baseToken?.address).toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
     combined.push(gp);
   }
 
-  return combined
+  const sorted = combined
     .sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))
     .slice(0, 72);
+  if (sorted.length > 0) {
+    if (SEARCH_CACHE.size > 80) SEARCH_CACHE.clear();
+    SEARCH_CACHE.set(cacheKey, { ts: Date.now(), value: sorted });
+  }
+  return sorted;
 }
 
 export async function getDexTokenPools(chainId: string, tokenAddress: string): Promise<DexTokenEnriched[]> {
@@ -534,104 +628,130 @@ export async function fetchDexTrendingOverview(): Promise<{
   pairs: DexTokenEnriched[];
   metas: DexMetaItem[];
 }> {
-  const [topRes, latestRes, profRes, metasRes] = await Promise.allSettled([
-    fetchJson<DexBoostProfileItem[]>('/token-boosts/top/v1'),
-    fetchJson<DexBoostProfileItem[]>('/token-boosts/latest/v1'),
-    fetchJson<DexBoostProfileItem[]>('/token-profiles/latest/v1'),
-    fetchJson<DexMetaItem[]>('/metas/trending/v1'),
-  ]);
-
-  const topBoosts = topRes.status === 'fulfilled' ? topRes.value : null;
-  const latestBoosts = latestRes.status === 'fulfilled' ? latestRes.value : null;
-  const latestProfiles = profRes.status === 'fulfilled' ? profRes.value : null;
-  const trendingMetas = metasRes.status === 'fulfilled' ? metasRes.value : null;
-
-  const byChain = new Map<string, Set<string>>();
-  const collect = (list: DexBoostProfileItem[] | null, cap = 40) => {
-    if (!Array.isArray(list)) return;
-    for (const item of list.slice(0, cap)) {
-      if (!item.chainId || !item.tokenAddress) continue;
-      if (!byChain.has(item.chainId)) byChain.set(item.chainId, new Set());
-      const set = byChain.get(item.chainId)!;
-      if (set.size < 30) set.add(item.tokenAddress);
-    }
-  };
-  collect(topBoosts, 45);
-  collect(latestBoosts, 35);
-  collect(latestProfiles, 30);
-
-  const pairFetches: Array<Promise<DexPair[] | null>> = [];
-  for (const [chainId, addresses] of byChain.entries()) {
-    const all = [...addresses];
-    for (let i = 0; i < all.length; i += 25) {
-      const batch = all.slice(i, i + 25);
-      if (batch.length) {
-        pairFetches.push(fetchJson<DexPair[]>(`/tokens/v1/${encodeURIComponent(chainId)}/${batch.join(',')}`));
-      }
-    }
+  const cached = TRENDING_CACHE.get('trending');
+  if (cached && Date.now() - cached.ts < 30_000 && cached.value.pairs.length > 0) {
+    return cached.value;
   }
+  const inflight = INFLIGHT_TRENDING.get('trending');
+  if (inflight) return inflight;
 
-  const fetchedChunks = await Promise.all(pairFetches);
-  const bestByToken = new Map<string, DexPair>();
-  for (const chunk of fetchedChunks) {
-    if (!Array.isArray(chunk)) continue;
-    for (const p of chunk) {
-      if (!p.baseToken?.address || !p.priceUsd) continue;
-      const key = `${p.chainId}:${p.baseToken.address.toLowerCase()}`;
-      const prev = bestByToken.get(key);
-      if (!prev || Number(p.liquidity?.usd || 0) > Number(prev.liquidity?.usd || 0)) {
-        bestByToken.set(key, p);
-      }
-    }
-  }
-
-  let pairs = [...bestByToken.values()]
-    .filter((p) => Number(p.liquidity?.usd || 0) >= 3500)
-    .sort((a, b) => (Number(b.boosts?.active || 0) * 100000 + Number(b.volume?.h24 || 0)) - (Number(a.boosts?.active || 0) * 100000 + Number(a.volume?.h24 || 0)))
-    .slice(0, 80)
-    .map(enrichDexPair);
-
-  // Enrich with additional multi-chain trending pools so users always see a full market list instead of 15 items
-  if (pairs.length < 40) {
-    const [geckoRes, searchRes] = await Promise.allSettled([
-      fetchGeckoTerminalFallback(),
-      Promise.allSettled([searchDexPairs('SOL/USDC'), searchDexPairs('PEPE'), searchDexPairs('AERO'), searchDexPairs('CAKE'), searchDexPairs('TON')]),
+  const job = (async () => {
+    const [topRes, latestRes, profRes, metasRes] = await Promise.allSettled([
+      fetchJson<DexBoostProfileItem[]>('/token-boosts/top/v1'),
+      fetchJson<DexBoostProfileItem[]>('/token-boosts/latest/v1'),
+      fetchJson<DexBoostProfileItem[]>('/token-profiles/latest/v1'),
+      fetchJson<DexMetaItem[]>('/metas/trending/v1'),
     ]);
-    const seen = new Set(pairs.map((p) => `${p.chainId}:${p.baseToken.address.toLowerCase()}`));
-    if (geckoRes.status === 'fulfilled') {
-      for (const gp of geckoRes.value) {
-        const key = `${gp.chainId}:${gp.baseToken.address.toLowerCase()}`;
-        if (!seen.has(key) && Number(gp.liquidity?.usd || 0) >= 3500) {
-          seen.add(key);
-          pairs.push(gp);
+
+    const topBoosts = topRes.status === 'fulfilled' ? topRes.value : null;
+    const latestBoosts = latestRes.status === 'fulfilled' ? latestRes.value : null;
+    const latestProfiles = profRes.status === 'fulfilled' ? profRes.value : null;
+    const trendingMetas = metasRes.status === 'fulfilled' ? metasRes.value : null;
+
+    const byChain = new Map<string, Set<string>>();
+    const collect = (list: DexBoostProfileItem[] | null, cap = 40) => {
+      if (!Array.isArray(list)) return;
+      for (const item of list.slice(0, cap)) {
+        if (!item.chainId || !item.tokenAddress) continue;
+        const ch = normalizeDexChainId(item.chainId);
+        if (!byChain.has(ch)) byChain.set(ch, new Set());
+        const set = byChain.get(ch)!;
+        if (set.size < 30) set.add(item.tokenAddress);
+      }
+    };
+    collect(topBoosts, 45);
+    collect(latestBoosts, 35);
+    collect(latestProfiles, 30);
+
+    const pairFetches: Array<Promise<DexPair[] | null>> = [];
+    for (const [chainId, addresses] of byChain.entries()) {
+      const all = [...addresses];
+      for (let i = 0; i < all.length; i += 25) {
+        const batch = all.slice(i, i + 25);
+        if (batch.length) {
+          pairFetches.push(fetchJson<DexPair[]>(`/tokens/v1/${encodeURIComponent(chainId)}/${batch.join(',')}`));
         }
       }
     }
-    if (searchRes.status === 'fulfilled') {
-      for (const r of searchRes.value) {
-        if (r.status !== 'fulfilled') continue;
-        for (const item of r.value) {
-          const key = `${item.chainId}:${item.baseToken.address.toLowerCase()}`;
-          if (!seen.has(key) && Number(item.liquidity?.usd || 0) >= 5000) {
+
+    const fetchedChunks = await Promise.all(pairFetches);
+    const bestByToken = new Map<string, DexPair>();
+    for (const chunk of fetchedChunks) {
+      if (!Array.isArray(chunk)) continue;
+      for (const p of chunk) {
+        if (!p.baseToken?.address || !p.priceUsd) continue;
+        const key = `${normalizeDexChainId(p.chainId)}:${p.baseToken.address.toLowerCase()}`;
+        const prev = bestByToken.get(key);
+        if (!prev || Number(p.liquidity?.usd || 0) > Number(prev.liquidity?.usd || 0)) {
+          bestByToken.set(key, p);
+        }
+      }
+    }
+
+    let pairs = [...bestByToken.values()]
+      .filter((p) => Number(p.liquidity?.usd || 0) >= 3500)
+      .map(enrichDexPair);
+
+    // Enrich with GeckoTerminal trending & major ecosystem pairs if DexScreener returned few or failed
+    if (pairs.length < 48) {
+      const [geckoRes, searchRes] = await Promise.allSettled([
+        fetchGeckoTerminalFallback(),
+        Promise.allSettled([
+          searchDexPairs('SOL/USDC'),
+          searchDexPairs('PEPE'),
+          searchDexPairs('AERO'),
+          searchDexPairs('CAKE'),
+          searchDexPairs('TON'),
+        ]),
+      ]);
+      const seen = new Set(pairs.map((p) => `${p.chainId}:${p.baseToken.address.toLowerCase()}`));
+      if (geckoRes.status === 'fulfilled') {
+        for (const gp of geckoRes.value) {
+          const key = `${gp.chainId}:${gp.baseToken.address.toLowerCase()}`;
+          if (!seen.has(key) && Number(gp.liquidity?.usd || 0) >= 3500) {
             seen.add(key);
-            pairs.push(item);
+            pairs.push(gp);
+          }
+        }
+      }
+      if (searchRes.status === 'fulfilled') {
+        for (const r of searchRes.value) {
+          if (r.status !== 'fulfilled') continue;
+          for (const item of r.value) {
+            const key = `${item.chainId}:${item.baseToken.address.toLowerCase()}`;
+            if (!seen.has(key) && Number(item.liquidity?.usd || 0) >= 5000) {
+              seen.add(key);
+              pairs.push(item);
+            }
           }
         }
       }
     }
+
     pairs = pairs
       .sort((a, b) => {
-        const scoreA = Number(a.boosts?.active || 0) * 100000 + Number(a.volume?.h24 || 0);
-        const scoreB = Number(b.boosts?.active || 0) * 100000 + Number(b.volume?.h24 || 0);
-        return scoreB - scoreA;
+        const rankA = (a.alphaScore ?? 0) * 5000 + Math.min(200_000, Number(a.volume?.h1 || 0)) + Number(a.boosts?.active || 0) * 400;
+        const rankB = (b.alphaScore ?? 0) * 5000 + Math.min(200_000, Number(b.volume?.h1 || 0)) + Number(b.boosts?.active || 0) * 400;
+        return rankB - rankA;
       })
       .slice(0, 80);
-  }
 
-  return {
-    pairs,
-    metas: Array.isArray(trendingMetas) ? trendingMetas.slice(0, 15) : [],
-  };
+    const out = {
+      pairs,
+      metas: Array.isArray(trendingMetas) ? trendingMetas.slice(0, 15) : [],
+    };
+    if (pairs.length > 0) {
+      TRENDING_CACHE.set('trending', { ts: Date.now(), value: out });
+    }
+    return out;
+  })();
+
+  INFLIGHT_TRENDING.set('trending', job);
+  try {
+    return await job;
+  } finally {
+    INFLIGHT_TRENDING.delete('trending');
+  }
 }
 
 export interface MultiDappRoute {

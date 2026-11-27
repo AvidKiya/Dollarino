@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dollarino_bg">#070B14</color>
+    <color name="dollarino_surface">#0F172A</color>
+    <color name="dollarino_jade">#10D9A3</color>
+    <color name="dollarino_gold">#F59E0B</color>
+    <color name="dollarino_text">#F8FAFC</color>
+    <color name="dollarino_text_dim">#94A3B8</color>
+</resources>

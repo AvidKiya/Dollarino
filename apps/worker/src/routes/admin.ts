@@ -1,11 +1,15 @@
 import { Hono } from 'hono';
 import type { DollarinoSignal } from '@dollarino/core';
 import {
+  discoverGatewayModels,
   getPlatformAISummary,
+  isArenaGatewayUrl,
   testAllPlatformAIEngines,
 } from '../ai/providers.js';
-import { invalidateAuthUserCache, requireAuth, resetPrivilegedUserAccountToFreshState, type AppVariables } from '../auth.js';
-import { encryptVaultJson, generateReferralCode, hashPassword, maskSecret, randomId } from '../crypto.js';
+import { invalidateAuthUserCache, requireSessionAuth, resetPrivilegedUserAccountToFreshState, type AppVariables } from '../auth.js';
+import { invalidateDbPublicCache } from '../services/d1-cache.js';
+import { decryptVaultJson, encryptVaultJson, generateReferralCode, hashPassword, maskSecret, randomId } from '../crypto.js';
+import { isSafeExternalHttpUrl, isValidSqlIdentifier } from '../security.js';
 import type { Env } from '../env.js';
 import { fetchPublicMarket24h } from '../exchanges/paper.js';
 import { TelegramBotClient } from '../telegram/client.js';
@@ -45,10 +49,14 @@ import {
 import {
   applyConfirmedTreasuryCredit,
   connectOwnerWalletAsTreasury,
+  getAdminComprehensiveFeeReport,
   getAdminTreasurySummary,
   importOwnerMnemonicAsTreasury,
+  reconcilePendingFeeAndTreasuryTransactions,
   saveManualTreasuryReceivers,
+  settleDebtFirstThenCredit,
 } from '../services/treasury.js';
+import { evaluateUserFeeStanding } from '../services/server-fee.js';
 import {
   invalidatePublicCopyTradersCache,
   invalidateSettingsCache,
@@ -63,7 +71,7 @@ async function isSystemOwner(user: { role?: string; telegramId?: string | null }
 }
 
 export const adminRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
-adminRoutes.use('*', requireAuth);
+adminRoutes.use('*', requireSessionAuth);
 
 adminRoutes.use('*', async (c, next) => {
   const u = c.get('user');
@@ -279,6 +287,8 @@ adminRoutes.get('/ai-engines', async (c) => {
     latestSignals: summary.latestSignals,
     hilinkupSecretConfigured: Boolean(secretKey),
     hilinkupModel: c.env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017',
+    arenaSecretConfigured: Boolean(c.env.ARENA_API_KEY?.trim()),
+    arenaModel: c.env.ARENA_MODEL?.trim() || 'coding-router-preview',
   });
 });
 
@@ -304,15 +314,18 @@ adminRoutes.post('/ai-engines', async (c) => {
 
   const slotOrder = Math.min(3, Math.max(1, Math.round(Number(body.slotOrder ?? 1))));
   const weight = Math.min(100, Math.max(10, Math.round(Number(body.weight ?? 100))));
+  const cleanBase = body.baseUrl?.trim() || null;
+  if (cleanBase && !isSafeExternalHttpUrl(cleanBase)) {
+    return c.json({ error: 'آدرس Base URL نامعتبر یا غیرمجاز است.' }, 400);
+  }
   const defaultModelMap: Record<string, string> = {
     deepseek: 'deepseek-chat',
     openai: 'gpt-4o-mini',
-    anthropic: 'claude-3-5-sonnet-20241022',
+    anthropic: isArenaGatewayUrl(cleanBase) ? 'coding-router-preview' : 'claude-3-5-sonnet-20241022',
     gemini: 'gemini-2.0-flash',
-    openai_compatible: body.model,
+    openai_compatible: isArenaGatewayUrl(cleanBase) ? 'coding-router-preview' : body.model,
   };
   let model = body.model.trim() || defaultModelMap[body.provider] || 'gpt-4o-mini';
-  const cleanBase = body.baseUrl?.trim() || null;
   if (
     cleanBase &&
     cleanBase.includes('hilinkup.com') &&
@@ -320,7 +333,9 @@ adminRoutes.post('/ai-engines', async (c) => {
   ) {
     model = c.env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
   }
-  const label = (body.label ?? '').trim() || `مدل ${slotOrder} (${body.provider.toUpperCase()})`;
+  const label =
+    (body.label ?? '').trim() ||
+    (isArenaGatewayUrl(cleanBase) ? `Arena AI · ${model}` : `مدل ${slotOrder} (${body.provider.toUpperCase()})`);
 
   // Check if updating an existing slot or creating a new one (max 3 slots!)
   const existing = body.id
@@ -450,6 +465,67 @@ adminRoutes.post('/ai-engines/test', async (c) => {
   return c.json(result, result.results.length === 0 ? 400 : 200);
 });
 
+adminRoutes.post('/ai-engines/discover-models', async (c) => {
+  const body = await c.req
+    .json<{
+      baseUrl?: string;
+      apiKey?: string;
+      slotOrder?: number;
+      provider?: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openai_compatible';
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          baseUrl?: string;
+          apiKey?: string;
+          slotOrder?: number;
+          provider?: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openai_compatible';
+        }
+    );
+
+  const baseUrl = String(body.baseUrl || 'https://api.arena.ai/v1').trim();
+  if (!isSafeExternalHttpUrl(baseUrl)) {
+    return c.json({ error: 'آدرس Base URL نامعتبر یا غیرمجاز است.' }, 400);
+  }
+
+  let apiKey = String(body.apiKey || '').trim();
+  if (!apiKey && body.slotOrder) {
+    const slotRow = await c.env.DB.prepare(
+      `SELECT encrypted_api_key FROM platform_ai_engines WHERE slot_order = ? LIMIT 1`
+    )
+      .bind(Math.min(3, Math.max(1, Math.round(Number(body.slotOrder)))))
+      .first<{ encrypted_api_key: string }>()
+      .catch(() => null);
+    if (slotRow?.encrypted_api_key) {
+      const dec = await decryptVaultJson<{ apiKey?: string }>(
+        slotRow.encrypted_api_key,
+        c.env.MASTER_ENCRYPTION_KEY
+      ).catch(() => ({ apiKey: undefined }));
+      apiKey = dec.apiKey?.trim() || '';
+    }
+  }
+  if (!apiKey && isArenaGatewayUrl(baseUrl) && c.env.ARENA_API_KEY?.trim()) {
+    apiKey = c.env.ARENA_API_KEY.trim();
+  }
+  if (!apiKey) {
+    return c.json({ error: 'برای دریافت لیست مدل‌های زنده، ابتدا API Key را وارد یا ذخیره کنید.' }, 400);
+  }
+
+  try {
+    const models = await discoverGatewayModels({
+      baseUrl,
+      apiKey,
+      provider: body.provider || 'openai_compatible',
+    });
+    return c.json({ ok: true, count: models.length, models });
+  } catch (err) {
+    return c.json(
+      { ok: false, error: err instanceof Error ? err.message : 'دریافت لیست مدل‌ها ناموفق بود.' },
+      400
+    );
+  }
+});
+
 adminRoutes.patch('/users/:id', async (c) => {
   const actor = c.get('user');
   const targetId = c.req.param('id');
@@ -475,11 +551,27 @@ adminRoutes.patch('/users/:id', async (c) => {
 
 adminRoutes.put('/settings', async (c) => {
   const actor = c.get('user');
+  const ownerFlag = await isSystemOwner(actor, c.env);
   const body = await c.req.json<Record<string, unknown>>();
   const entriesSource: Record<string, unknown> =
     body && typeof body.settings === 'object' && body.settings !== null && !Array.isArray(body.settings)
       ? (body.settings as Record<string, unknown>)
       : body;
+
+  const ownerOnlyKeys = [
+    'owner_telegram_id',
+    'treasury_evm_receiver',
+    'trust_wallet_evm_receiver',
+    'treasury_trc20_receiver',
+    'usdt_trc20_wallet',
+    'treasury_solana_receiver',
+    'treasury_ton_receiver',
+  ];
+  for (const okKey of ownerOnlyKeys) {
+    if (Object.prototype.hasOwnProperty.call(entriesSource, okKey) && !ownerFlag) {
+      return c.json({ error: 'تغییر آیدی مالک یا آدرس‌های خزانه فقط برای مالک اصلی (Owner) مجاز است.' }, 403);
+    }
+  }
 
   if (Object.prototype.hasOwnProperty.call(entriesSource, 'owner_telegram_id')) {
     const rawOwnerId = String(entriesSource.owner_telegram_id ?? '').trim();
@@ -1950,6 +2042,7 @@ adminRoutes.post('/banners', async (c) => {
     )
     .run();
 
+  invalidateDbPublicCache(c.env.DB, 'public:banners');
   const rows = await c.env.DB.prepare(`SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`).all();
   return c.json({ ok: true, id, banners: rows.results });
 });
@@ -1967,6 +2060,7 @@ adminRoutes.patch('/banners/:id', async (c) => {
       .bind(body.sort_order, id)
       .run();
   }
+  invalidateDbPublicCache(c.env.DB, 'public:banners');
   const rows = await c.env.DB.prepare(`SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`).all();
   return c.json({ ok: true, banners: rows.results });
 });
@@ -1974,6 +2068,7 @@ adminRoutes.patch('/banners/:id', async (c) => {
 adminRoutes.delete('/banners/:id', async (c) => {
   const id = c.req.param('id');
   await c.env.DB.prepare(`DELETE FROM promo_banners WHERE id = ?`).bind(id).run();
+  invalidateDbPublicCache(c.env.DB, 'public:banners');
   const rows = await c.env.DB.prepare(`SELECT * FROM promo_banners ORDER BY sort_order ASC, created_at DESC`).all();
   return c.json({ ok: true, banners: rows.results });
 });
@@ -2494,7 +2589,7 @@ async function discoverAllUserTables(db: D1Database): Promise<string[]> {
     }
   }
   for (const rest of present) ordered.push(rest);
-  return ordered;
+  return ordered.filter((t) => isValidSqlIdentifier(t));
 }
 
 adminRoutes.get('/database/stats', async (c) => {
@@ -2551,11 +2646,37 @@ adminRoutes.get('/database/backup', async (c) => {
   let totalRows = 0;
 
   for (const tbl of tables) {
+    if (!isValidSqlIdentifier(tbl)) continue;
     const safeTbl = tbl.replace(/"/g, '');
     const res = await c.env.DB.prepare(`SELECT * FROM "${safeTbl}"`).all<Record<string, unknown>>().catch(() => ({ results: [] }));
     let rows = res.results ?? [];
-    if (excludeSecrets && tbl === 'system_settings') {
-      rows = rows.filter((r) => !['telegram_bot_token_enc', 'telegram_webhook_secret_auto', 'treasury_mnemonic_enc'].includes(String(r.key || '')));
+    if (excludeSecrets) {
+      if (tbl === 'system_settings') {
+        rows = rows.filter((r) => !['telegram_bot_token_enc', 'telegram_webhook_secret_auto', 'treasury_mnemonic_enc', 'google_oauth_client_secret_enc'].includes(String(r.key || '')));
+      } else {
+        const sensitiveFields = [
+          'password_hash',
+          'secondary_password_hash',
+          'totp_secret',
+          'encrypted_credentials',
+          'encrypted_api_key',
+          'encrypted_bot_token',
+          'encrypted_evm_private_key',
+          'encrypted_sol_private_key',
+          'extension_api_key',
+          'webhook_secret',
+          'vault_pin_hash',
+        ];
+        rows = rows.map((row) => {
+          const copy = { ...row };
+          for (const field of sensitiveFields) {
+            if (field in copy && copy[field] !== null && copy[field] !== undefined) {
+              copy[field] = '[REDACTED]';
+            }
+          }
+          return copy;
+        });
+      }
     }
     data[tbl] = rows;
     rowCounts[tbl] = rows.length;
@@ -2801,7 +2922,9 @@ adminRoutes.post('/database/wipe', async (c) => {
         .bind(freshOwnerId, pwdHash, secHash, generateReferralCode())
         .run();
       await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO bot_configs (user_id, bot_state, trading_mode) VALUES (?, 'STOPPED', 'PAPER')`
+        `INSERT OR IGNORE INTO bot_configs (
+           user_id, bot_state, trading_mode, active_engines_json, ai_gate_enabled, sniper_enabled
+         ) VALUES (?, 'STOPPED', 'PAPER', '[]', 0, 0)`
       )
         .bind(freshOwnerId)
         .run()
@@ -2949,4 +3072,312 @@ adminRoutes.post('/users/:id/bot-stop', async (c) => {
 
   return c.json({ ok: true, userId: targetUserId, bot_state: 'STOPPED' });
 });
+
+// =========================================================================
+// V11.9.1: Comprehensive 3% Server Fee Report, Manual & Auto Verification
+// =========================================================================
+
+adminRoutes.get('/fee-report', async (c) => {
+  const report = await getAdminComprehensiveFeeReport(c.env.DB);
+  return c.json(report);
+});
+
+adminRoutes.post('/fee-report/reconcile', async (c) => {
+  const actor = c.get('user');
+  const syncRes = await reconcilePendingFeeAndTreasuryTransactions(c.env.DB);
+  const report = await getAdminComprehensiveFeeReport(c.env.DB);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'RECONCILE_PENDING_FEES', 'server_fee_ledger', 'batch', ?)`
+  )
+    .bind(randomId('aud'), actor.id, JSON.stringify(syncRes))
+    .run()
+    .catch(() => {});
+  return c.json({ ok: true, reconcile: syncRes, report });
+});
+
+adminRoutes.post('/fee-report/ledger/:id/decide', async (c) => {
+  const actor = c.get('user');
+  const ledgerId = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as { approve?: boolean; note?: string };
+  const approve = body.approve !== false;
+
+  const entry = await c.env.DB.prepare(
+    `SELECT * FROM server_fee_ledger WHERE id = ? LIMIT 1`
+  )
+    .bind(ledgerId)
+    .first<{
+      id: string;
+      user_id: string;
+      source: string;
+      fee_usd: number;
+      status: string;
+      tx_hash: string | null;
+      note: string | null;
+    }>();
+
+  if (!entry) {
+    return c.json({ error: 'رکورد کارمزد یافت نشد.' }, 404);
+  }
+
+  if (approve) {
+    if (entry.source === 'PREPAY_CREDIT') {
+      const split = await settleDebtFirstThenCredit(
+        c.env.DB,
+        entry.user_id,
+        Number(entry.fee_usd || 0),
+        entry.tx_hash || `admin_${ledgerId}`,
+        { alsoCreditWalletBalance: false }
+      );
+      await c.env.DB.prepare(
+        `UPDATE server_fee_ledger
+         SET status = 'SETTLED_PREPAID',
+             fee_usd = ?,
+             note = COALESCE(note, '') || ?
+         WHERE id = ?`
+      )
+        .bind(Number(split.addedCreditUsd || entry.fee_usd || 0), ` [تایید توسط ${actor.username}]`, ledgerId)
+        .run();
+    } else {
+      await c.env.DB.prepare(
+        `UPDATE server_fee_ledger
+         SET status = 'SETTLED_ONCHAIN',
+             note = COALESCE(note, '') || ?
+         WHERE id = ?`
+      )
+        .bind(` [تایید توسط ${actor.username}]`, ledgerId)
+        .run();
+    }
+    if (entry.tx_hash) {
+      await c.env.DB.prepare(
+        `UPDATE treasury_deposits
+         SET status = 'CONFIRMED', credited_to_wallet = 1, confirmed_at = COALESCE(confirmed_at, datetime('now')), admin_note = ?
+         WHERE LOWER(tx_hash) = LOWER(?) AND status = 'PENDING_VERIFY'`
+      )
+        .bind(body.note || `تایید شده توسط ${actor.username}`, entry.tx_hash)
+        .run()
+        .catch(() => {});
+    }
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE server_fee_ledger
+       SET status = CASE WHEN source = 'PREPAY_CREDIT' THEN 'REJECTED' ELSE 'ACCRUED' END,
+           note = COALESCE(note, '') || ?
+       WHERE id = ?`
+    )
+      .bind(` [رد/برگشت توسط ${actor.username}${body.note ? `: ${body.note}` : ''}]`, ledgerId)
+      .run();
+    if (entry.tx_hash) {
+      await c.env.DB.prepare(
+        `UPDATE treasury_deposits SET status = 'REJECTED', admin_note = ? WHERE LOWER(tx_hash) = LOWER(?) AND status = 'PENDING_VERIFY'`
+      )
+        .bind(body.note || `رد شده توسط ${actor.username}`, entry.tx_hash)
+        .run()
+        .catch(() => {});
+    }
+  }
+
+  const standing = await evaluateUserFeeStanding(c.env.DB, entry.user_id).catch(() => null);
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, ?, 'server_fee_ledger', ?, ?)`
+  )
+    .bind(
+      randomId('aud'),
+      actor.id,
+      approve ? 'APPROVE_FEE_LEDGER' : 'REJECT_FEE_LEDGER',
+      ledgerId,
+      JSON.stringify({ userId: entry.user_id, feeUsd: entry.fee_usd, note: body.note || '' })
+    )
+    .run()
+    .catch(() => {});
+
+  const report = await getAdminComprehensiveFeeReport(c.env.DB);
+  return c.json({ ok: true, standing, report });
+});
+
+// =========================================================================
+// V11.9.1: Site Maintenance Lock (Pause platform for users, keep Admin open)
+// =========================================================================
+
+adminRoutes.get('/site-maintenance', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT key, value FROM system_settings WHERE key IN (
+       'site_maintenance_mode',
+       'site_maintenance_title_fa',
+       'site_maintenance_title_en',
+       'site_maintenance_message_fa',
+       'site_maintenance_message_en',
+       'site_maintenance_eta',
+       'site_maintenance_updated_at'
+     )`
+  )
+    .all<{ key: string; value: string }>()
+    .catch(() => ({ results: [] }));
+  const map = new Map(rows.results.map((r) => [r.key, r.value]));
+  return c.json({
+    ok: true,
+    maintenance: {
+      enabled: map.get('site_maintenance_mode') === 'true',
+      titleFa: map.get('site_maintenance_title_fa') || 'سایت در حال بروزرسانی فنی است',
+      titleEn: map.get('site_maintenance_title_en') || 'Scheduled Platform Maintenance',
+      messageFa:
+        map.get('site_maintenance_message_fa') ||
+        'پلتفرم دلارینو موقتاً برای ارتقای هسته و بهینه‌سازی زیرساخت برای کاربران بسته شده است. لطفاً ساعاتی دیگر مجدداً تلاش فرمایید.',
+      messageEn:
+        map.get('site_maintenance_message_en') ||
+        'Dollarino is temporarily closed for maintenance and infrastructure upgrades. Please check back shortly.',
+      eta: map.get('site_maintenance_eta') || '',
+      updatedAt: map.get('site_maintenance_updated_at') || null,
+    },
+  });
+});
+
+adminRoutes.put('/site-maintenance', async (c) => {
+  const actor = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    enabled?: boolean;
+    titleFa?: string;
+    titleEn?: string;
+    messageFa?: string;
+    messageEn?: string;
+    eta?: string;
+  };
+  const nowIso = new Date().toISOString();
+  const pairs: Array<[string, string]> = [
+    ['site_maintenance_updated_at', nowIso],
+  ];
+  if (typeof body.enabled === 'boolean') {
+    pairs.push(['site_maintenance_mode', body.enabled ? 'true' : 'false']);
+  }
+  if (typeof body.titleFa === 'string') pairs.push(['site_maintenance_title_fa', body.titleFa.trim().slice(0, 180)]);
+  if (typeof body.titleEn === 'string') pairs.push(['site_maintenance_title_en', body.titleEn.trim().slice(0, 180)]);
+  if (typeof body.messageFa === 'string') pairs.push(['site_maintenance_message_fa', body.messageFa.trim().slice(0, 1500)]);
+  if (typeof body.messageEn === 'string') pairs.push(['site_maintenance_message_en', body.messageEn.trim().slice(0, 1500)]);
+  if (typeof body.eta === 'string') pairs.push(['site_maintenance_eta', body.eta.trim().slice(0, 160)]);
+
+  for (const [k, v] of pairs) {
+    await setCachedSystemSetting(c.env.DB, k, v);
+  }
+  invalidateSettingsCache(c.env.DB);
+
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'TOGGLE_SITE_MAINTENANCE', 'system', 'site_maintenance_mode', ?)`
+  )
+    .bind(randomId('aud'), actor.id, JSON.stringify({ enabled: body.enabled, eta: body.eta || '' }))
+    .run()
+    .catch(() => {});
+
+  if (typeof body.enabled === 'boolean') {
+    await publishSystemLogEvent(c.env, {
+      category: 'SYSTEM',
+      level: body.enabled ? 'WARN' : 'INFO',
+      source: 'SiteMaintenance',
+      title: body.enabled ? 'قفل موقت دسترسی کاربران به سایت فعال شد' : 'سایت برای تمام کاربران بازگشایی شد',
+      userId: actor.id,
+      details: `توسط ${actor.username} | زمان تخمینی: ${body.eta || 'نامشخص'}`,
+    }).catch(() => {});
+  }
+
+  return c.json({ ok: true, enabled: body.enabled, updatedAt: nowIso });
+});
+
+// =========================================================================
+// V11.9.1: Admin Custom Modal Popups (Global or Targeted User Notices)
+// =========================================================================
+
+adminRoutes.get('/popups', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT p.*,
+            u.username AS target_username,
+            (SELECT COUNT(*) FROM user_popup_acks a WHERE a.popup_id = p.id) AS ack_count
+     FROM user_popup_messages p
+     LEFT JOIN users u ON u.id = p.target_user_id
+     ORDER BY p.is_active DESC, p.created_at DESC
+     LIMIT 100`
+  )
+    .all()
+    .catch(() => ({ results: [] }));
+  return c.json({ ok: true, popups: rows.results || [] });
+});
+
+adminRoutes.post('/popups', async (c) => {
+  const actor = c.get('user');
+  const body = (await c.req.json().catch(() => ({}))) as {
+    titleFa?: string;
+    titleEn?: string;
+    bodyFa?: string;
+    bodyEn?: string;
+    severity?: string;
+    targetScope?: string;
+    targetUserId?: string | null;
+    ctaLabelFa?: string;
+    ctaRoute?: string;
+    dismissible?: boolean;
+    expiresAt?: string | null;
+  };
+  const titleFa = String(body.titleFa || '').trim();
+  const bodyFa = String(body.bodyFa || '').trim();
+  if (!titleFa || !bodyFa) {
+    return c.json({ error: 'عنوان و متن پیام پاپ‌آپ فارسی الزامی است.' }, 400);
+  }
+  const severity = ['INFO', 'WARNING', 'SUCCESS', 'MAINTENANCE', 'URGENT'].includes((body.severity || '').toUpperCase())
+    ? String(body.severity).toUpperCase()
+    : 'INFO';
+  const targetUserId = body.targetUserId && String(body.targetUserId).trim() ? String(body.targetUserId).trim() : null;
+  const targetScope = targetUserId ? 'USER' : 'ALL';
+  const id = randomId('pop');
+
+  await c.env.DB.prepare(
+    `INSERT INTO user_popup_messages
+     (id, title_fa, title_en, body_fa, body_en, severity, target_scope, target_user_id, cta_label_fa, cta_route, dismissible, is_active, created_by, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+  )
+    .bind(
+      id,
+      titleFa.slice(0, 180),
+      (body.titleEn || '').trim().slice(0, 180) || null,
+      bodyFa.slice(0, 2000),
+      (body.bodyEn || '').trim().slice(0, 2000) || null,
+      severity,
+      targetScope,
+      targetUserId,
+      (body.ctaLabelFa || '').trim().slice(0, 60) || null,
+      (body.ctaRoute || '').trim().slice(0, 120) || null,
+      body.dismissible === false ? 0 : 1,
+      actor.id,
+      body.expiresAt ? String(body.expiresAt).trim() : null
+    )
+    .run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO admin_audit_logs (id, actor_user_id, action, target_type, target_id, details_json)
+     VALUES (?, ?, 'CREATE_USER_POPUP', 'popup', ?, ?)`
+  )
+    .bind(randomId('aud'), actor.id, id, JSON.stringify({ titleFa, targetScope, targetUserId, severity }))
+    .run()
+    .catch(() => {});
+
+  return c.json({ ok: true, id }, 201);
+});
+
+adminRoutes.patch('/popups/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = (await c.req.json().catch(() => ({}))) as { isActive?: boolean };
+  if (typeof body.isActive === 'boolean') {
+    await c.env.DB.prepare(`UPDATE user_popup_messages SET is_active = ? WHERE id = ?`)
+      .bind(body.isActive ? 1 : 0, id)
+      .run();
+  }
+  return c.json({ ok: true });
+});
+
+adminRoutes.delete('/popups/:id', async (c) => {
+  const id = c.req.param('id');
+  await c.env.DB.prepare(`DELETE FROM user_popup_acks WHERE popup_id = ?`).bind(id).run().catch(() => {});
+  await c.env.DB.prepare(`DELETE FROM user_popup_messages WHERE id = ?`).bind(id).run();
+  return c.json({ ok: true });
+});
+
 

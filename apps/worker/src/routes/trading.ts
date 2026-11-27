@@ -70,12 +70,20 @@ import {
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { getExchangeMarkets, MAJOR_LIQUID_COINS, normalizeCanonicalSymbol } from '../exchanges/markets.js';
+import { TRUST_WALLET_ASSET_MAP } from '../services/trustwallet-universe.js';
 import { publishProfitCardToTelegram, publishSignalClosedCard, publishSystemLogEvent } from '../telegram/publisher.js';
 import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
 import { checkLiveFeeEnforcement, getUserServerFeeSummary, recordProfitShareServerFee } from '../services/server-fee.js';
 import { getTrustWalletLiveTotalUsd } from './trustwallet.js';
-import { buildTrustWalletSwapLinks, getDexTokenPools } from '../dex/screener.js';
+import { buildTrustWalletSwapLinks, getDexTokenPools, normalizeDexChainId } from '../dex/screener.js';
 import { closeCopyPositionV2, type CopyPositionV2Row } from '../dex/smart-copy.js';
+import {
+  computeUnifiedPortfolioAccounting,
+  isPaperCopyPositionRow,
+  isPaperDexTradeRow,
+  isSniperDexTradeRow,
+  round2,
+} from '../services/portfolio-accounting.js';
 import type { ExchangeProviderId } from '@dollarino/core';
 
 export const tradingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -133,6 +141,8 @@ const DASHBOARD_LITE_META_CACHE = new WeakMap<
       serverFeeSummary: unknown;
       riskTermsAcceptedAt: string | null;
       sniperEvents: unknown[];
+      pendingPopups: unknown[];
+      portfolioBreakdown: Awaited<ReturnType<typeof computeUnifiedPortfolioAccounting>> | null;
     }
   >
 >();
@@ -201,10 +211,25 @@ async function buildLivePositionsSnapshot(
   const totalEqDenom = Math.max(1, totalEq);
 
   const [openTradesRaw, dexTradesQueryRes, smartCopyQueryRes, perpOrdersQueryRes] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN' AND mode = ? ORDER BY opened_at DESC`)
+    env.DB.prepare(
+      `SELECT t.*,
+              s.timeframe AS signal_timeframe,
+              s.raw_text AS signal_raw_text,
+              s.source AS signal_source,
+              s.engine_label AS signal_engine_label
+       FROM trades t
+       LEFT JOIN signals s ON s.id = t.signal_id
+       WHERE t.user_id = ? AND t.status = 'OPEN' AND t.mode = ?
+       ORDER BY t.opened_at DESC`
+    )
       .bind(userId, effectiveMode)
       .all<{
         id: string;
+        signal_id?: string | null;
+        signal_timeframe?: string | null;
+        signal_raw_text?: string | null;
+        signal_source?: string | null;
+        signal_engine_label?: string | null;
         symbol: string;
         direction: Direction;
         market_type?: MarketType;
@@ -398,13 +423,14 @@ async function buildLivePositionsSnapshot(
     const livePx = dexPriceMap.get(`${d.chain_id}:${d.token_address}`) ?? d.entry_price_usd;
     const unrealizedPct = d.entry_price_usd > 0 ? ((livePx - d.entry_price_usd) / d.entry_price_usd) * 100 : 0;
     const unrealizedUsd = (d.amount_usd * unrealizedPct) / 100;
-    if (d.status === 'OPEN') {
+    const rowMode = isPaperDexTradeRow(d) ? 'PAPER' : 'LIVE';
+    if (d.status === 'OPEN' && rowMode === effectiveMode) {
       totalUnrealizedPnl += unrealizedUsd;
     }
-    const isSniper = Boolean((d.note && /اسنایپ|sniper|شکار/i.test(d.note)) || !d.dex_id || d.dex_id === 'sniper');
+    const isSniper = isSniperDexTradeRow(d);
     return {
       ...d,
-      mode: d.tx_hash && d.tx_hash.startsWith('PAPER_') ? 'PAPER' : 'LIVE',
+      mode: rowMode,
       live_price_usd: livePx,
       unrealized_pnl_pct: Number(unrealizedPct.toFixed(2)),
       unrealized_pnl_usd: Number(unrealizedUsd.toFixed(2)),
@@ -424,12 +450,13 @@ async function buildLivePositionsSnapshot(
     const dirPct = cp.direction === 'SHORT' ? -rawPct : rawPct;
     const remFrac = Number(cp.remaining_pct ?? 100) / 100;
     const openUsd = (Number(cp.margin_usd || 0) * remFrac * dirPct) / 100 + Number(cp.pnl_usd || 0);
-    if (cp.status === 'OPEN') {
+    const rowMode = isPaperCopyPositionRow(cp) ? 'PAPER' : 'LIVE';
+    if (cp.status === 'OPEN' && rowMode === effectiveMode) {
       totalUnrealizedPnl += openUsd;
     }
     return {
       ...cp,
-      mode: cp.execution_mode === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE',
+      mode: rowMode,
       live_price_usd: livePx,
       unrealized_pnl_pct: Number(dirPct.toFixed(2)),
       unrealized_pnl_usd: Number(openUsd.toFixed(2)),
@@ -465,12 +492,13 @@ async function buildLivePositionsSnapshot(
     const levPct = (isShort ? -rawPct : rawPct) * Math.max(1, Number(po.leverage || 1));
     const uPnl = (Number(po.margin_usd || 0) * levPct) / 100;
     const isOpen = po.status !== 'CLOSED' && po.status !== 'CANCELLED';
-    if (isOpen && entry > 0) {
+    const rowMode = po.execution_kind === 'PAPER' || po.execution_kind === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE';
+    if (isOpen && entry > 0 && rowMode === effectiveMode) {
       totalUnrealizedPnl += uPnl;
     }
     return {
       ...po,
-      mode: po.execution_kind === 'PAPER' || po.execution_kind === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE',
+      mode: rowMode,
       live_price_usd: livePx,
       unrealized_pnl_pct: Number(levPct.toFixed(2)),
       unrealized_pnl_usd: Number(uPnl.toFixed(2)),
@@ -480,12 +508,26 @@ async function buildLivePositionsSnapshot(
     };
   });
 
+  const livePricesRecord: Record<string, number> = {};
+  for (const [k, v] of priceCache.entries()) {
+    livePricesRecord[k] = v;
+  }
+  for (const [k, v] of perpPriceMap.entries()) {
+    livePricesRecord[k] = v;
+  }
+  const dexPricesRecord: Record<string, number> = {};
+  for (const [k, v] of dexPriceMap.entries()) {
+    dexPricesRecord[k.toLowerCase()] = v;
+  }
+
   return {
     openTrades,
     dexTrades,
     smartCopyPositions,
     perpOrders,
-    totalUnrealizedPnl,
+    totalUnrealizedPnl: round2(totalUnrealizedPnl),
+    livePricesRecord,
+    dexPricesRecord,
   };
 }
 
@@ -507,32 +549,31 @@ async function resolveModeAwareWalletAndBalance(
           : undefined;
 
   const { adapter, provider, label } = await resolveUserExchangeAdapter(env, userId, effectiveProvider);
-  const demoCfgBal = Number(cfg?.paper_balance ?? 10000) || 0;
+  const demoCfgBal = round2(Math.max(0, Number(cfg?.paper_balance ?? 10000) || 0));
   const needTrustWalletCheck = !opts?.skipWalletSummary || (effectiveMode === 'LIVE' && provider === 'paper');
 
-  const [tradesMarginRow, dexMarginRow, liveReadiness] = await Promise.all([
+  const [tradesMarginRow, openDexRows, openCopyRows, liveReadiness] = await Promise.all([
     env.DB.prepare(
       `SELECT
          COALESCE(SUM(CASE WHEN mode = 'LIVE' THEN CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL))) ELSE 0 END), 0) AS live_used,
-         COALESCE(SUM(CASE WHEN mode = 'PAPER' THEN CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL))) ELSE 0 END), 0) AS paper_used,
-         COALESCE(SUM(CASE WHEN mode = 'PAPER' THEN CAST(margin_used AS REAL) ELSE 0 END), 0) AS paper_full_used
+         COALESCE(SUM(CASE WHEN mode = 'PAPER' THEN CAST(margin_used AS REAL) * (CAST(remaining_quantity AS REAL) / MAX(1e-9, CAST(initial_quantity AS REAL))) ELSE 0 END), 0) AS paper_used
        FROM trades WHERE user_id = ? AND status = 'OPEN'`
-    ).bind(userId).first<{ live_used: number; paper_used: number; paper_full_used: number }>().catch(() => ({
+    ).bind(userId).first<{ live_used: number; paper_used: number }>().catch(() => ({
       live_used: 0,
       paper_used: 0,
-      paper_full_used: 0,
     })),
     env.DB.prepare(
-      `SELECT
-         COALESCE(SUM(CASE WHEN status = 'OPEN' AND tx_hash LIKE 'PAPER_%' THEN amount_usd ELSE 0 END), 0) AS dex_paper_used,
-         COALESCE(SUM(CASE WHEN status IN ('OPEN', 'PENDING_SIGN') AND (tx_hash IS NULL OR tx_hash NOT LIKE 'PAPER_%') THEN amount_usd ELSE 0 END), 0) AS dex_live_used,
-         COALESCE(SUM(CASE WHEN status = 'OPEN' AND note LIKE '%شکارچی دمو%' THEN CAST(amount_usd AS REAL) ELSE 0 END), 0) AS sniper_paper_used
-       FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN')`
-    ).bind(userId).first<{ dex_paper_used: number; dex_live_used: number; sniper_paper_used: number }>().catch(() => ({
-      dex_paper_used: 0,
-      dex_live_used: 0,
-      sniper_paper_used: 0,
-    })),
+      `SELECT amount_usd, tx_hash, note, dex_id, status FROM dex_trades WHERE user_id = ? AND status IN ('OPEN', 'PENDING_SIGN')`
+    )
+      .bind(userId)
+      .all<{ amount_usd: number; tx_hash: string | null; note: string | null; dex_id: string | null; status: string }>()
+      .catch(() => ({ results: [] as Array<{ amount_usd: number; tx_hash: string | null; note: string | null; dex_id: string | null; status: string }> })),
+    env.DB.prepare(
+      `SELECT margin_usd, remaining_pct, execution_mode, tx_hash, status FROM copy_positions_v2 WHERE user_id = ? AND status = 'OPEN'`
+    )
+      .bind(userId)
+      .all<{ margin_usd: number; remaining_pct: number; execution_mode: string; tx_hash: string | null; status: string }>()
+      .catch(() => ({ results: [] as Array<{ margin_usd: number; remaining_pct: number; execution_mode: string; tx_hash: string | null; status: string }> })),
     needTrustWalletCheck
       ? getTrustWalletLiveTotalUsd(env.DB, userId, { useFullCache: opts?.usePollCache }).catch(() => ({
           hasWallet: false,
@@ -552,27 +593,47 @@ async function resolveModeAwareWalletAndBalance(
         }),
   ]);
 
-  const openLiveMargin = Math.max(0, Number(tradesMarginRow?.live_used || 0));
-  const openPaperMargin = Math.max(0, Number(tradesMarginRow?.paper_used || 0));
-  const openPaperFullMargin = Math.max(0, Number(tradesMarginRow?.paper_full_used || 0));
-  const openDexPaperUsd = Math.max(0, Number(dexMarginRow?.dex_paper_used || 0));
-  const openDexLiveUsd = Math.max(0, Number(dexMarginRow?.dex_live_used || 0));
-  const openSniperPaperUsd = Math.max(0, Number(dexMarginRow?.sniper_paper_used || 0));
+  let openDexPaperUsd = 0;
+  let openDexLiveUsd = 0;
+  for (const d of openDexRows.results || []) {
+    const amt = Math.max(0, Number(d.amount_usd || 0));
+    const isPaper = isPaperDexTradeRow(d);
+    if (isPaper && d.status === 'OPEN') {
+      openDexPaperUsd += amt;
+    } else if (!isPaper) {
+      openDexLiveUsd += amt;
+    }
+  }
+
+  let openCopyPaperUsd = 0;
+  let openCopyLiveUsd = 0;
+  for (const cp of openCopyRows.results || []) {
+    const remMargin = Math.max(0, Number(cp.margin_usd || 0) * (Math.max(0, Math.min(100, Number(cp.remaining_pct ?? 100))) / 100));
+    if (isPaperCopyPositionRow(cp)) {
+      openCopyPaperUsd += remMargin;
+    } else {
+      openCopyLiveUsd += remMargin;
+    }
+  }
+
+  const openLiveMargin = round2(Math.max(0, Number(tradesMarginRow?.live_used || 0)));
+  const openPaperMargin = round2(Math.max(0, Number(tradesMarginRow?.paper_used || 0)));
+  const usedPaperDexAndCopy = round2(openDexPaperUsd + openCopyPaperUsd);
+  const usedLiveDexAndCopy = round2(openDexLiveUsd + openCopyLiveUsd);
 
   let balance: { free: string; used: string; total: string; currency: string };
   let displayProvider = provider;
   let displayLabel = label;
 
   if (effectiveMode === 'LIVE' && provider === 'paper') {
-    // Non-custodial Trust Wallet LIVE mode without CEX/Hyperliquid keys:
-    // NEVER return Demo/Paper balance here — always reflect real Trust Wallet balance!
-    const usedLive = Math.max(0, openLiveMargin + openDexLiveUsd);
-    const liveTotal = Math.max(0, Number(liveReadiness.totalUsd || 0));
-    const freeLive = Math.max(0, liveTotal - usedLive);
+    const usedLive = round2(openLiveMargin + usedLiveDexAndCopy);
+    const liveTotal = round2(Math.max(0, Number(liveReadiness.totalUsd || 0)));
+    const freeLive = round2(Math.max(0, liveTotal - usedLive));
+    const reconciledTotal = round2(freeLive + usedLive);
     balance = {
       free: freeLive.toFixed(2),
       used: usedLive.toFixed(2),
-      total: Math.max(liveTotal, freeLive + usedLive).toFixed(2),
+      total: reconciledTotal.toFixed(2),
       currency: 'USDT',
     };
     displayProvider = 'trustwallet';
@@ -580,12 +641,13 @@ async function resolveModeAwareWalletAndBalance(
       ? 'Trust Wallet (حساب واقعی)'
       : 'Trust Wallet (متصل نشده)';
   } else if (effectiveMode === 'PAPER' && provider === 'paper') {
-    const usedNum = Math.max(0, openPaperFullMargin + openDexPaperUsd);
-    const freeNum = Math.max(0, demoCfgBal);
+    const usedNum = round2(openPaperMargin + usedPaperDexAndCopy);
+    const freeNum = round2(demoCfgBal);
+    const totalNum = round2(freeNum + usedNum);
     balance = {
       free: freeNum.toFixed(2),
       used: usedNum.toFixed(2),
-      total: (freeNum + usedNum).toFixed(2),
+      total: totalNum.toFixed(2),
       currency: 'USDT',
     };
   } else {
@@ -595,24 +657,24 @@ async function resolveModeAwareWalletAndBalance(
       total: effectiveMode === 'LIVE' ? '0.00' : demoCfgBal.toFixed(2),
       currency: 'USDT',
     }));
-    if (effectiveMode === 'PAPER' && openDexPaperUsd > 0) {
-      const freeNum = Math.max(0, Number(balance.free || 0));
-      const usedNum = Math.max(0, Number(balance.used || 0)) + openDexPaperUsd;
+    if (effectiveMode === 'PAPER' && usedPaperDexAndCopy > 0) {
+      const freeNum = round2(Math.max(0, Number(balance.free || 0)));
+      const usedNum = round2(Math.max(0, Number(balance.used || 0)) + usedPaperDexAndCopy);
       balance = {
         ...balance,
         free: freeNum.toFixed(2),
         used: usedNum.toFixed(2),
-        total: (freeNum + usedNum).toFixed(2),
+        total: round2(freeNum + usedNum).toFixed(2),
       };
     }
   }
 
-  const usedPaper = Math.max(0, openPaperMargin + openDexPaperUsd);
-  const demoTotalUsd = Math.max(0, demoCfgBal + usedPaper);
+  const usedPaperTotal = round2(openPaperMargin + usedPaperDexAndCopy);
+  const demoTotalUsd = round2(demoCfgBal + usedPaperTotal);
   const liveBalanceUsd =
     effectiveMode === 'LIVE' && provider !== 'paper'
-      ? Math.max(0, Number(balance.total || 0))
-      : Math.max(0, Number(liveReadiness.totalUsd || 0));
+      ? round2(Math.max(0, Number(balance.total || 0)))
+      : round2(Math.max(0, Number(liveReadiness.totalUsd || 0)));
 
   return {
     effectiveMode,
@@ -622,12 +684,12 @@ async function resolveModeAwareWalletAndBalance(
     balance,
     prefetchedCapital: {
       usedTradesMarginUsd: effectiveMode === 'LIVE' ? openLiveMargin : openPaperMargin,
-      usedSniperUsd: effectiveMode === 'PAPER' ? openSniperPaperUsd : 0,
+      usedSniperUsd: effectiveMode === 'PAPER' ? usedPaperDexAndCopy : usedLiveDexAndCopy,
     },
     walletSummary: {
       activeMode: effectiveMode,
-      demoBalanceUsd: Number(demoTotalUsd.toFixed(2)),
-      liveBalanceUsd: Number(liveBalanceUsd.toFixed(2)),
+      demoBalanceUsd: demoTotalUsd,
+      liveBalanceUsd,
       liveHasWallet: liveReadiness.hasWallet || (effectiveMode === 'LIVE' && provider !== 'paper'),
       liveMeetsMinimum: liveReadiness.meetsMinimum || (effectiveMode === 'LIVE' && provider !== 'paper' && liveBalanceUsd >= 10),
       minLiveUsd: liveReadiness.minRequiredUsd,
@@ -851,7 +913,7 @@ tradingRoutes.get('/dashboard', async (c) => {
 
   const rawTotalEq = Math.max(0, Number(balance.total ?? 0));
   const totalEq = effectiveMode === 'LIVE' ? rawTotalEq : (rawTotalEq || Number(cfg?.paper_balance ?? 10000));
-  const { openTrades, dexTrades, smartCopyPositions, perpOrders, totalUnrealizedPnl } = positionsSnap;
+  const { openTrades, dexTrades, smartCopyPositions, perpOrders, totalUnrealizedPnl, livePricesRecord, dexPricesRecord } = positionsSnap;
 
   // Derive hourly, 30d daily, 7d weekly, & chronological Equity Curve in-memory from single closedSeriesRaw scan
   const seriesSource = isLitePoll
@@ -1012,13 +1074,21 @@ tradingRoutes.get('/dashboard', async (c) => {
     if (cfg?.risk_profile_json) riskProfile = { ...riskProfile, ...JSON.parse(cfg.risk_profile_json) };
   } catch { /* default */ }
 
-  const totalDeposited = (walletRow?.deposited ?? 0) > 0 ? walletRow!.deposited : (effectiveMode === 'LIVE' ? totalEq : 10000);
-  const totalPnl = stats?.total_pnl ?? 0;
+  const totalDeposited = (walletRow?.deposited ?? 0) > 0 ? walletRow!.deposited : (effectiveMode === 'LIVE' ? totalEq : Number(cfg?.custom_paper_balance ?? 10000));
   const tfSecs: Record<string, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400, '1w': 604800 };
   const cyclePeriod = tfSecs[cfg?.entry_timeframe ?? '15m'] ?? 900;
   const nextCycleInSec = cyclePeriod - (Math.floor(Date.now() / 1000) % cyclePeriod);
 
-  const [iranRate, serverFeeSummary, uRiskRow, sniperEventsRows, capitalSummary] = await Promise.all([
+  const hasAnyLiveOpenPosition =
+    openTrades.length > 0 ||
+    dexTrades.some((d) => String((d as { status?: string }).status || '') === 'OPEN') ||
+    smartCopyPositions.some((p) => String((p as { status?: string }).status || '') === 'OPEN') ||
+    perpOrders.some((o) => {
+      const st = String((o as { status?: string }).status || '');
+      return st !== 'CLOSED' && st !== 'CANCELLED';
+    });
+
+  const [iranRate, serverFeeSummary, uRiskRow, sniperEventsRows, capitalSummary, portfolioBreakdown, pendingPopupsRows] = await Promise.all([
     fetchIranUsdtRate().catch(() => null),
     useCachedDashMeta
       ? Promise.resolve(cachedDashMeta!.serverFeeSummary as Awaited<ReturnType<typeof getUserServerFeeSummary>> | null)
@@ -1030,6 +1100,50 @@ tradingRoutes.get('/dashboard', async (c) => {
       ? Promise.resolve({ results: cachedDashMeta!.sniperEvents })
       : c.env.DB.prepare(`SELECT * FROM new_listing_events ORDER BY created_at DESC LIMIT 12`).all().catch(() => ({ results: [] })),
     resolveUserCapitalSummary(c.env.DB, user.id, cfg ?? null, balance, prefetchedCapital).catch(() => null),
+    useCachedDashMeta && !hasAnyLiveOpenPosition && cachedDashMeta!.portfolioBreakdown
+      ? Promise.resolve(cachedDashMeta!.portfolioBreakdown)
+      : computeUnifiedPortfolioAccounting(c.env, user.id, {
+          tradingMode: effectiveMode,
+          freeBalanceUsd: Number(balance.free || 0),
+          livePrices: livePricesRecord,
+          dexPrices: dexPricesRecord,
+          botBudgetMode: cfg?.bot_budget_mode,
+          botBudgetUsd: cfg?.bot_budget_usd,
+          botBudgetPct: cfg?.bot_budget_pct,
+          walletStartingUsd: totalDeposited,
+        }).catch(() => null),
+    useCachedDashMeta
+      ? Promise.resolve({ results: cachedDashMeta!.pendingPopups })
+      : c.env.DB.prepare(
+          `SELECT m.id, m.title_fa, m.title_en, m.body_fa, m.body_en, m.severity,
+                  m.target_scope, m.target_user_id, m.cta_label_fa, m.cta_route,
+                  m.dismissible, m.is_active, m.expires_at, m.created_at
+           FROM user_popup_messages m
+           LEFT JOIN user_popup_acks a ON a.popup_id = m.id AND a.user_id = ?
+           WHERE m.is_active = 1
+             AND (m.target_user_id IS NULL OR m.target_user_id = ?)
+             AND (m.expires_at IS NULL OR m.expires_at > datetime('now'))
+             AND a.popup_id IS NULL
+           ORDER BY m.created_at DESC LIMIT 8`
+        )
+          .bind(user.id, user.id)
+          .all<{
+            id: string;
+            title_fa: string;
+            title_en: string | null;
+            body_fa: string;
+            body_en: string | null;
+            severity: string;
+            target_scope: string;
+            target_user_id: string | null;
+            cta_label_fa: string | null;
+            cta_route: string | null;
+            dismissible: number;
+            is_active: number;
+            expires_at: string | null;
+            created_at: string;
+          }>()
+          .catch(() => ({ results: [] })),
   ]);
 
   if (!useCachedDashMeta) {
@@ -1055,14 +1169,47 @@ tradingRoutes.get('/dashboard', async (c) => {
       serverFeeSummary,
       riskTermsAcceptedAt: uRiskRow?.risk_terms_accepted_at ?? null,
       sniperEvents: sniperEventsRows.results,
+      pendingPopups: pendingPopupsRows.results,
+      portfolioBreakdown,
     });
   }
 
-  if (capitalSummary) {
+  // Reconcile balance & capitalSummary from single unified accounting source so cards never drift by $0.01
+  const reconciledBalance = portfolioBreakdown
+    ? {
+        ...balance,
+        free: portfolioBreakdown.freeBalanceUsd.toFixed(2),
+        used: portfolioBreakdown.lockedMarginUsd.toFixed(2),
+        total: round2(portfolioBreakdown.freeBalanceUsd + portfolioBreakdown.lockedMarginUsd).toFixed(2),
+      }
+    : balance;
+
+  const reconciledCapitalSummary = capitalSummary && portfolioBreakdown
+    ? {
+        ...capitalSummary,
+        walletFreeUsd: portfolioBreakdown.freeBalanceUsd,
+        usedMarginUsd: portfolioBreakdown.lockedMarginUsd,
+        walletTotalUsd: round2(portfolioBreakdown.freeBalanceUsd + portfolioBreakdown.lockedMarginUsd),
+        effectiveCapitalUsd: portfolioBreakdown.botBudgetAllocatedUsd,
+        remainingBudgetUsd: portfolioBreakdown.botBudgetAvailableUsd,
+      }
+    : capitalSummary;
+
+  if (reconciledCapitalSummary) {
     riskProfile.allocatedAmount = Math.round(
-      capitalSummary.effectiveCapitalUsd * ((cfg?.margin_pct ?? capitalSummary.recommended.marginPct) / 100)
+      reconciledCapitalSummary.effectiveCapitalUsd * ((cfg?.margin_pct ?? reconciledCapitalSummary.recommended.marginPct) / 100)
     );
   }
+
+  const unifiedTotalPnl = portfolioBreakdown ? portfolioBreakdown.realizedPnlUsd : (stats?.total_pnl ?? 0);
+  const unifiedTodayPnl = portfolioBreakdown ? portfolioBreakdown.todayRealizedPnlUsd : (stats?.today_pnl ?? 0);
+  const unifiedUnrealizedPnl = portfolioBreakdown ? portfolioBreakdown.unrealizedPnlUsd : round2(totalUnrealizedPnl);
+  const unifiedWinRate = portfolioBreakdown
+    ? portfolioBreakdown.winRatePct
+    : stats?.total_trades
+      ? (stats.wins / stats.total_trades) * 100
+      : 0;
+  const unifiedTradesCount = portfolioBreakdown ? portfolioBreakdown.closedTradesCount : (stats?.total_trades ?? 0);
 
   return c.json({
     lite: isLitePoll,
@@ -1073,13 +1220,27 @@ tradingRoutes.get('/dashboard', async (c) => {
     sniperEvents: sniperEventsRows.results,
     kbosParams,
     riskProfile,
-    capitalSummary,
+    capitalSummary: reconciledCapitalSummary,
+    portfolioBreakdown,
+    pendingPopups: pendingPopupsRows.results,
     activeExchange: { provider, label },
     activeAI: aiRow || null,
     platformAI,
     entitlement,
-    balance,
-    walletSummary,
+    balance: reconciledBalance,
+    walletSummary: portfolioBreakdown
+      ? {
+          ...walletSummary,
+          demoBalanceUsd:
+            effectiveMode === 'PAPER'
+              ? round2(portfolioBreakdown.freeBalanceUsd + portfolioBreakdown.lockedMarginUsd)
+              : walletSummary.demoBalanceUsd,
+          liveBalanceUsd:
+            effectiveMode === 'LIVE'
+              ? round2(portfolioBreakdown.freeBalanceUsd + portfolioBreakdown.lockedMarginUsd)
+              : walletSummary.liveBalanceUsd,
+        }
+      : walletSummary,
     iranRate,
     serverFeeSummary,
     openTrades,
@@ -1093,14 +1254,14 @@ tradingRoutes.get('/dashboard', async (c) => {
     walletLedger: ledgerRows.results,
     nextCycleInSec,
     stats: {
-      totalTrades: stats?.total_trades ?? 0,
-      winRate: stats?.total_trades ? (stats.wins / stats.total_trades) * 100 : 0,
-      totalPnl,
-      todayPnl: stats?.today_pnl ?? 0,
+      totalTrades: unifiedTradesCount,
+      winRate: unifiedWinRate,
+      totalPnl: unifiedTotalPnl,
+      todayPnl: unifiedTodayPnl,
       last24hPnl: stats?.last_24h_pnl ?? 0,
       last7dPnl: stats?.last_7d_pnl ?? 0,
-      unrealizedPnl: Number(totalUnrealizedPnl.toFixed(2)),
-      allTimePct: totalDeposited > 0 ? Number(((totalPnl / totalDeposited) * 100).toFixed(2)) : 0,
+      unrealizedPnl: unifiedUnrealizedPnl,
+      allTimePct: totalDeposited > 0 ? Number(((unifiedTotalPnl / totalDeposited) * 100).toFixed(2)) : 0,
       totalDeposited,
       profitFactor,
     },
@@ -1214,14 +1375,43 @@ tradingRoutes.post('/engines/toggle', async (c) => {
   return c.json({ ok: true, activeEngine: state });
 });
 
-const ALLOWED_SNIPER_CHAINS = new Set(['solana', 'bsc', 'base', 'ethereum', 'ton', 'arbitrum', 'polygon', 'sui']);
+tradingRoutes.post('/engines/guide-seen', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json<{ engine?: string }>().catch(() => ({} as { engine?: string }));
+  const eng = String(body.engine || '').trim();
+  if (!eng) return c.json({ error: 'Missing engine' }, 400);
+
+  const row = await c.env.DB.prepare(`SELECT risk_profile_json FROM bot_configs WHERE user_id = ?`)
+    .bind(user.id)
+    .first<{ risk_profile_json?: string | null }>()
+    .catch(() => null);
+  let rp: Record<string, unknown> = {};
+  try {
+    if (row?.risk_profile_json) rp = JSON.parse(row.risk_profile_json) as Record<string, unknown>;
+  } catch { /* default */ }
+  const existing = Array.isArray(rp.seenEngineGuides) ? rp.seenEngineGuides.map(String) : [];
+  if (!existing.includes(eng)) {
+    existing.push(eng);
+    rp.seenEngineGuides = existing;
+    await c.env.DB.prepare(
+      `UPDATE bot_configs SET risk_profile_json = ?, updated_at = datetime('now') WHERE user_id = ?`
+    )
+      .bind(JSON.stringify(rp), user.id)
+      .run()
+      .catch(() => {});
+  }
+  invalidateLiveTicksCache(c.env.DB, user.id);
+  return c.json({ ok: true, seenEngineGuides: existing });
+});
+
+const ALLOWED_SNIPER_CHAINS = new Set(['solana', 'bsc', 'base', 'ethereum', 'ton', 'arbitrum', 'polygon', 'sui', 'avalanche', 'optimism']);
 
 function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
   let networks: string[] = ['solana', 'bsc', 'base'];
   try {
     const parsed = JSON.parse(cfg?.sniper_networks_json || '["solana","bsc","base"]');
     if (Array.isArray(parsed) && parsed.length > 0) {
-      networks = parsed.map((x) => String(x).toLowerCase()).filter((x) => ALLOWED_SNIPER_CHAINS.has(x));
+      networks = [...new Set(parsed.map((x) => normalizeDexChainId(String(x))).filter((x) => ALLOWED_SNIPER_CHAINS.has(x)))];
     }
   } catch { /* ignore */ }
   if (networks.length === 0) networks = ['solana', 'bsc', 'base'];
@@ -1242,8 +1432,8 @@ function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
       ? cfg.sniper_target_type
       : 'BOTH') as SniperTargetType,
     budgetUsd: Number(cfg?.sniper_budget_usd ?? 25),
-    minSafetyScore: Number(cfg?.sniper_min_safety_score ?? 75),
-    minLiquidityUsd: Number(cfg?.sniper_min_liquidity_usd ?? 25000),
+    minSafetyScore: Number(cfg?.sniper_min_safety_score ?? 70),
+    minLiquidityUsd: Number(cfg?.sniper_min_liquidity_usd ?? 15000),
     maxPairAgeHours,
     maxPairAgeMinutes,
     advancedFilters,
@@ -1252,7 +1442,7 @@ function parseSniperRow(cfg: Partial<UserBotConfigRow> | null) {
     slPct: Number(cfg?.sniper_sl_pct ?? 15),
     trailingEnabled: cfg?.sniper_trailing_enabled === undefined ? true : Boolean(cfg.sniper_trailing_enabled),
     trailingPct: Number(cfg?.sniper_trailing_pct ?? 8),
-    maxOpenPositions: Number(cfg?.sniper_max_open_positions ?? 3),
+    maxOpenPositions: Number(cfg?.sniper_max_open_positions ?? 5),
     autoExecute: cfg?.sniper_auto_execute === undefined ? false : Boolean(cfg.sniper_auto_execute),
     slippagePct: Number(cfg?.sniper_slippage_pct ?? 3),
     networks,
@@ -1265,10 +1455,10 @@ tradingRoutes.get('/sniper', async (c) => {
     c.env.DB.prepare(
       `SELECT COALESCE(sniper_enabled, 0) AS sniper_enabled,
               COALESCE(sniper_budget_usd, 25) AS sniper_budget_usd,
-              COALESCE(sniper_min_safety_score, 75) AS sniper_min_safety_score,
+              COALESCE(sniper_min_safety_score, 70) AS sniper_min_safety_score,
               COALESCE(sniper_networks_json, '["solana","bsc","base"]') AS sniper_networks_json,
               COALESCE(sniper_target_type, 'BOTH') AS sniper_target_type,
-              COALESCE(sniper_min_liquidity_usd, 25000) AS sniper_min_liquidity_usd,
+              COALESCE(sniper_min_liquidity_usd, 15000) AS sniper_min_liquidity_usd,
               COALESCE(sniper_max_pair_age_hours, 24) AS sniper_max_pair_age_hours,
               COALESCE(sniper_max_pair_age_minutes, 1440) AS sniper_max_pair_age_minutes,
               COALESCE(sniper_advanced_filters_json, '{}') AS sniper_advanced_filters_json,
@@ -1277,7 +1467,7 @@ tradingRoutes.get('/sniper', async (c) => {
               COALESCE(sniper_sl_pct, 15) AS sniper_sl_pct,
               COALESCE(sniper_trailing_enabled, 1) AS sniper_trailing_enabled,
               COALESCE(sniper_trailing_pct, 8) AS sniper_trailing_pct,
-              COALESCE(sniper_max_open_positions, 3) AS sniper_max_open_positions,
+              COALESCE(sniper_max_open_positions, 5) AS sniper_max_open_positions,
               COALESCE(sniper_auto_execute, 0) AS sniper_auto_execute,
               COALESCE(sniper_slippage_pct, 3) AS sniper_slippage_pct
        FROM bot_configs WHERE user_id = ?`
@@ -1328,6 +1518,7 @@ tradingRoutes.post('/sniper', async (c) => {
     autoExecute?: boolean;
     slippagePct?: number;
     networks?: string[];
+    chains?: string[];
   }>().catch(() => ({} as Record<string, unknown>));
 
   const cur = await c.env.DB.prepare(`SELECT * FROM bot_configs WHERE user_id = ?`).bind(user.id).first<Partial<UserBotConfigRow>>().catch(() => null);
@@ -1340,8 +1531,8 @@ tradingRoutes.post('/sniper', async (c) => {
       : prev.targetType;
   const nextBudget = Math.max(5, Math.min(5000, Number(body.budgetUsd ?? prev.budgetUsd) || 25));
   const rawSafety = body.minSafetyScore ?? body.minSafety ?? prev.minSafetyScore;
-  const nextSafety = Math.max(30, Math.min(98, Math.round(Number(rawSafety) || 75)));
-  const nextLiq = Math.max(1000, Math.min(10_000_000, Math.round(Number(body.minLiquidityUsd ?? prev.minLiquidityUsd) || 25000)));
+  const nextSafety = Math.max(30, Math.min(98, Math.round(Number(rawSafety) || 70)));
+  const nextLiq = Math.max(1000, Math.min(10_000_000, Math.round(Number(body.minLiquidityUsd ?? prev.minLiquidityUsd) || 15000)));
   let nextAgeMinutes = prev.maxPairAgeMinutes;
   let nextAge = prev.maxPairAgeHours;
   if (body.maxPairAgeMinutes !== undefined) {
@@ -1360,11 +1551,12 @@ tradingRoutes.post('/sniper', async (c) => {
   const nextTrailEn = body.trailingEnabled !== undefined ? Boolean(body.trailingEnabled) : prev.trailingEnabled;
   const nextTrailPct = Math.max(2, Math.min(50, Number(body.trailingPct ?? prev.trailingPct) || 8));
   const isPrivilegedSniper = user.role === 'owner' || user.role === 'admin';
-  const nextMaxPos = Math.max(1, Math.min(isPrivilegedSniper ? 999 : 12, Math.round(Number(body.maxOpenPositions ?? prev.maxOpenPositions) || 3)));
+  const nextMaxPos = Math.max(1, Math.min(isPrivilegedSniper ? 999 : 25, Math.round(Number(body.maxOpenPositions ?? prev.maxOpenPositions) || 5)));
   const nextAutoExec = body.autoExecute !== undefined ? Boolean(body.autoExecute) : prev.autoExecute;
   const nextSlip = Math.max(0.5, Math.min(25, Number(body.slippagePct ?? prev.slippagePct) || 3));
-  const nextNets = Array.isArray(body.networks)
-    ? body.networks.map((x) => String(x).toLowerCase()).filter((x) => ALLOWED_SNIPER_CHAINS.has(x))
+  const rawNets = Array.isArray(body.networks) ? body.networks : Array.isArray(body.chains) ? body.chains : null;
+  const nextNets = rawNets
+    ? [...new Set(rawNets.map((x) => normalizeDexChainId(String(x))).filter((x) => ALLOWED_SNIPER_CHAINS.has(x)))]
     : prev.networks;
   const safeNets = nextNets.length > 0 ? nextNets : ['solana', 'bsc', 'base'];
 
@@ -1476,7 +1668,7 @@ tradingRoutes.post('/sniper/scan-now', async (c) => {
   }
 
   const scanChains = Array.isArray(body.networks) && body.networks.length
-    ? body.networks.map((x) => x.toLowerCase()).filter((x) => ALLOWED_SNIPER_CHAINS.has(x))
+    ? [...new Set(body.networks.map((x) => normalizeDexChainId(String(x))).filter((x) => ALLOWED_SNIPER_CHAINS.has(x)))]
     : settings.networks;
   const scanAgeMin = body.maxPairAgeMinutes ?? settings.maxPairAgeMinutes;
   const scanLiq = body.minLiquidityUsd ?? settings.minLiquidityUsd;
@@ -1739,7 +1931,12 @@ tradingRoutes.on(['PATCH', 'PUT'], '/config', async (c) => {
         val = Math.max(2, Math.min(50, Number(body[k]) || 8));
       }
       if (k === 'sniper_max_open_positions') {
-        val = Math.max(1, Math.min(12, Math.round(Number(body[k]) || 3)));
+        const isPriv = user.role === 'owner' || user.role === 'admin';
+        val = Math.max(1, Math.min(isPriv ? 999 : 25, Math.round(Number(body[k]) || 5)));
+      }
+      if (k === 'sniper_networks_json' && Array.isArray(body[k])) {
+        const cleaned = [...new Set((body[k] as unknown[]).map((x) => normalizeDexChainId(String(x))).filter((x) => ALLOWED_SNIPER_CHAINS.has(x)))];
+        val = JSON.stringify(cleaned.length ? cleaned : ['solana', 'bsc', 'base']);
       }
       if (k === 'sniper_slippage_pct') {
         val = Math.max(0.5, Math.min(25, Number(body[k]) || 3));
@@ -1827,6 +2024,7 @@ tradingRoutes.post('/bot/start', async (c) => {
     tradeExecutionMode?: 'AUTO' | 'MANUAL_CONFIRM';
     tradingMode?: 'PAPER' | 'LIVE';
     acceptRiskTerms?: boolean;
+    activeEngines?: string[];
   }>().catch(() => ({} as Record<string, unknown>));
 
   if (body.tradingMode === 'PAPER' || body.tradingMode === 'LIVE') {
@@ -1950,6 +2148,25 @@ tradingRoutes.post('/bot/start', async (c) => {
   if (typeof body.marginPct === 'number') {
     sets.push(`margin_pct = ?`);
     vals.push(body.marginPct);
+  }
+  if (Array.isArray(body.activeEngines)) {
+    const validSet = new Set(['CENTRAL_AI', 'MY_AI', 'STRATEGY', 'COPY_TRADE', 'LISTING_SNIPER']);
+    const cleaned = Array.from(new Set(body.activeEngines.filter((e) => typeof e === 'string' && validSet.has(e))));
+    if (cleaned.length === 0) {
+      return c.json(
+        {
+          error: 'لطفاً حداقل یکی از موتورهای معاملاتی (هوش مصنوعی، استراتژی، کپی‌ترید یا اسنایپر) را فعال کنید.',
+          code: 'NO_ACTIVE_ENGINE',
+        },
+        400
+      );
+    }
+    sets.push(`active_engines_json = ?`, `ai_gate_enabled = ?`, `sniper_enabled = ?`);
+    vals.push(
+      JSON.stringify(cleaned),
+      cleaned.includes('CENTRAL_AI') || cleaned.includes('MY_AI') ? 1 : 0,
+      cleaned.includes('LISTING_SNIPER') ? 1 : 0
+    );
   }
   if (typeof body.strategyKey === 'string') {
     sets.push(`strategy_key = ?`);
@@ -2563,6 +2780,15 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
   const pnl = t.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
   const totalRealized = Number(t.realized_pnl) + pnl - Number(cls.fee);
 
+  // Atomic state transition prevents concurrent double-close balance/credit duplication
+  const closeUpdate = await c.env.DB.prepare(
+    `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'MANUAL', closed_at = datetime('now') WHERE id = ? AND user_id = ? AND status = 'OPEN'`
+  ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id, user.id).run();
+
+  if (!closeUpdate.meta?.changes || closeUpdate.meta.changes < 1) {
+    return c.json({ ok: true, alreadyClosed: true, exitPrice: cls.filledPrice, realizedPnl: totalRealized });
+  }
+
   if (t.mode === 'PAPER') {
     const cfg = await c.env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?')
       .bind(user.id).first<{ paper_balance: string }>();
@@ -2571,10 +2797,6 @@ tradingRoutes.post('/positions/:id/close', async (c) => {
     await c.env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?')
       .bind(nextBal.toFixed(2), user.id).run();
   }
-
-  await c.env.DB.prepare(
-    `UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'MANUAL', closed_at = datetime('now') WHERE id = ?`
-  ).bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
 
   const pnlPct = Number(t.margin_used) > 0 ? (totalRealized / Number(t.margin_used)) * 100 : 0;
   await publishSignalClosedCard(c.env, {
@@ -2759,7 +2981,7 @@ tradingRoutes.post('/positions/close-batch', async (c) => {
       .bind(exitPx, Number(pnlUsd.toFixed(2)), Number(pnlPct.toFixed(2)), d.id, user.id)
       .run();
 
-    const isPaper = Boolean(d.tx_hash && d.tx_hash.startsWith('PAPER_'));
+    const isPaper = isPaperDexTradeRow(d);
     if (isPaper) {
       const balRow = await c.env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
         .bind(user.id)
@@ -2781,7 +3003,7 @@ tradingRoutes.post('/positions/close-batch', async (c) => {
       await recordProfitShareServerFee(c.env.DB, {
         userId: user.id,
         tradeId: d.id,
-        source: d.source_key === 'SNIPER' ? 'SNIPER_LIVE' : 'DEX_LIVE',
+        source: isSniperDexTradeRow(d) ? 'SNIPER_LIVE' : 'DEX_LIVE',
         symbol: d.token_symbol,
         mode: 'LIVE',
         realizedPnlUsd: Number(pnlUsd.toFixed(2)),
@@ -3275,7 +3497,22 @@ tradingRoutes.post('/scanner', async (c) => {
     timeframe?: Timeframe;
     symbols?: string[];
     limit?: number;
-  }>().catch(() => ({} as { strategyKey?: StrategyKey; timeframe?: Timeframe; symbols?: string[]; limit?: number }));
+    offset?: number;
+    category?: string;
+    search?: string;
+    query?: string;
+    marketType?: MarketType;
+  }>().catch(() => ({} as {
+    strategyKey?: StrategyKey;
+    timeframe?: Timeframe;
+    symbols?: string[];
+    limit?: number;
+    offset?: number;
+    category?: string;
+    search?: string;
+    query?: string;
+    marketType?: MarketType;
+  }));
   const strategyKey = body.strategyKey === 'ai_autonomous_agent' ? 'signal_mixer' : (body.strategyKey || 'signal_mixer');
   const tf = body.timeframe || '15m';
   const htfMap: Record<string, Timeframe> = { '1m': '15m', '3m': '15m', '5m': '15m', '15m': '1h', '30m': '4h', '1h': '4h', '2h': '4h', '4h': '1d', '1d': '1w', '1w': '1w' };
@@ -3301,15 +3538,40 @@ tradingRoutes.post('/scanner', async (c) => {
   } catch { /* default */ }
   const mixerThreshold = cfgRow?.mixer_threshold ?? 65;
 
+  const proxyConfig = c.env.TOOBIT_PROXY_URL
+    ? { proxyUrl: c.env.TOOBIT_PROXY_URL, proxySecret: c.env.EXCHANGE_PROXY_SECRET }
+    : undefined;
+  const requestedMarketType: MarketType = body.marketType === 'SPOT' ? 'SPOT' : 'FUTURES';
+  const allMarkets = await getExchangeMarkets(provider, proxyConfig, requestedMarketType);
+  const marketBySymbol = new Map(allMarkets.map((m) => [m.symbol, m]));
+
+  const reqOffset = Math.max(0, Number(body.offset || 0) || 0);
+  const reqLimit = Math.min(40, Math.max(6, Number(body.limit || 24) || 24));
+  const categoryFilter = String(body.category || 'ALL').toUpperCase();
+  const searchFilter = String(body.search || body.query || '').trim().toUpperCase();
+
+  let totalMarkets = allMarkets.length;
   let symbols = body.symbols?.length ? body.symbols.map(normalizeCanonicalSymbol) : [];
   if (!symbols.length) {
-    const proxyConfig = c.env.TOOBIT_PROXY_URL
-      ? { proxyUrl: c.env.TOOBIT_PROXY_URL, proxySecret: c.env.EXCHANGE_PROXY_SECRET }
-      : undefined;
-    const allMarkets = await getExchangeMarkets(provider, proxyConfig);
-    const count = Math.min(20, Math.max(6, body.limit ?? 14));
     const orderedPool = Array.from(new Set([...MAJOR_LIQUID_COINS, ...allMarkets.map((m) => m.symbol)]));
-    symbols = orderedPool.slice(0, count);
+    const filteredPool = orderedPool.filter((sym) => {
+      const m = marketBySymbol.get(sym);
+      const base = sym.replace(/USDT$/, '');
+      const tw = TRUST_WALLET_ASSET_MAP.get(base);
+      if (categoryFilter !== 'ALL') {
+        const cat = (m?.category || tw?.category || 'OTHER').toUpperCase();
+        if (cat !== categoryFilter) return false;
+      }
+      if (searchFilter) {
+        const hay = `${sym} ${base} ${m?.nameEn || tw?.nameEn || ''} ${m?.nameFa || tw?.nameFa || ''}`.toUpperCase();
+        if (!hay.includes(searchFilter)) return false;
+      }
+      return true;
+    });
+    totalMarkets = filteredPool.length;
+    symbols = filteredPool.slice(reqOffset, reqOffset + reqLimit);
+  } else {
+    totalMarkets = symbols.length;
   }
 
   const { adapter } = await resolveUserExchangeAdapter(c.env, user.id, 'paper');
@@ -3334,7 +3596,7 @@ tradingRoutes.post('/scanner', async (c) => {
         htfTf,
         { kbosParams, mixerWeights, mixerThreshold }
       );
-      const currentClose = evalLtf[evalLtf.length - 1]?.close ?? 0;
+      const currentClose = evalLtf[evalLtf.length - 1]?.close ?? Number(marketBySymbol.get(sym)?.lastPrice || 0);
       let chosen = outputs[outputs.length - 1];
       let barsAgo = 0;
 
@@ -3369,8 +3631,19 @@ tradingRoutes.post('/scanner', async (c) => {
       const signalCard = chosen && chosen.signal !== 'NONE'
         ? strategyOutputToDollarinoSignal(sym, tf, Math.max(1, cfgRow?.max_leverage ?? 5), chosen)
         : null;
+      const mInfo = marketBySymbol.get(sym);
+      const base = sym.replace(/USDT$/, '');
+      const tw = TRUST_WALLET_ASSET_MAP.get(base);
       return {
         symbol: sym,
+        base,
+        nameEn: mInfo?.nameEn || tw?.nameEn || base,
+        nameFa: mInfo?.nameFa || tw?.nameFa || base,
+        category: mInfo?.category || tw?.category || 'OTHER',
+        primaryChain: mInfo?.primaryChain || tw?.primaryChain || 'MULTICHAIN',
+        logoUrl: mInfo?.logoUrl || tw?.trustLogoUrl,
+        changePct24h: Number(mInfo?.changePct24h ?? 0),
+        volume24h: mInfo?.volume24h ?? 0,
         price: currentClose,
         trend: realHtfTrend,
         rsi: Number((chosen?.rsi ?? 50).toFixed(1)),
@@ -3383,7 +3656,18 @@ tradingRoutes.post('/scanner', async (c) => {
     })
   );
 
-  return c.json({ provider, strategyKey, timeframe: tf, results });
+  const nextOffset = reqOffset + symbols.length;
+  return c.json({
+    provider,
+    strategyKey,
+    timeframe: tf,
+    totalMarkets,
+    offset: reqOffset,
+    limit: reqLimit,
+    hasMore: nextOffset < totalMarkets,
+    nextOffset: nextOffset < totalMarkets ? nextOffset : null,
+    results,
+  });
 });
 
 tradingRoutes.post('/ai-agent/run', async (c) => {
@@ -3576,6 +3860,40 @@ tradingRoutes.post('/notifications/read', async (c) => {
   const user = c.get('user');
   await c.env.DB.prepare(`UPDATE notifications SET is_read = 1 WHERE user_id = ?`).bind(user.id).run().catch(() => {});
   return c.json({ ok: true });
+});
+
+tradingRoutes.get('/popups/pending', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT m.id, m.title_fa, m.title_en, m.body_fa, m.body_en, m.severity,
+            m.target_scope, m.target_user_id, m.cta_label_fa, m.cta_route,
+            m.dismissible, m.is_active, m.expires_at, m.created_at
+     FROM user_popup_messages m
+     LEFT JOIN user_popup_acks a ON a.popup_id = m.id AND a.user_id = ?
+     WHERE m.is_active = 1
+       AND (m.target_user_id IS NULL OR m.target_user_id = ?)
+       AND (m.expires_at IS NULL OR m.expires_at > datetime('now'))
+       AND a.popup_id IS NULL
+     ORDER BY m.created_at DESC LIMIT 8`
+  )
+    .bind(user.id, user.id)
+    .all()
+    .catch(() => ({ results: [] }));
+  return c.json({ ok: true, popups: rows.results });
+});
+
+tradingRoutes.post('/popups/:id/ack', async (c) => {
+  const user = c.get('user');
+  const popupId = c.req.param('id');
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO user_popup_acks (popup_id, user_id, acknowledged_at)
+     VALUES (?, ?, datetime('now'))`
+  )
+    .bind(popupId, user.id)
+    .run()
+    .catch(() => {});
+  DASHBOARD_LITE_META_CACHE.get(c.env.DB as unknown as object)?.delete(user.id);
+  return c.json({ ok: true, popupId });
 });
 
 tradingRoutes.get('/events/snapshot', async (c) => {

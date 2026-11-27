@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Dollarino V11.9.1 for Firefox — حالت ساده و ترید هوشمند",
+  "short_name": "Dollarino",
+  "version": "11.7.2",
+  "description": "اکستنشن Firefox دلارینو V11.9.1 — حالت ساده کامل در نوار کناری (Sidebar) و پاپ‌آپ، ثبت‌نام و ورود، ۵ موتور همزمان، تراز ۵ بخش و اسنایپر DEX.",
+  "icons": {
+    "16": "icons/icon-192.png",
+    "48": "icons/icon-192.png",
+    "128": "icons/icon-512.png"
+  },
+  "action": {
+    "default_title": "باز کردن حالت ساده دلارینو V11.9.1",
+    "default_icon": {
+      "16": "icons/icon-192.png",
+      "48": "icons/icon-192.png",
+      "128": "icons/icon-512.png"
+    }
+  },
+  "sidebar_action": {
+    "default_title": "دلارینو V11.9.1 — حالت ساده",
+    "default_panel": "sidepanel.html",
+    "default_icon": {
+      "16": "icons/icon-192.png",
+      "48": "icons/icon-192.png",
+      "128": "icons/icon-512.png"
+    },
+    "open_at_install": true
+  },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "dollarino@dollarino.app",
+      "strict_min_version": "115.0"
+    }
+  }
+}

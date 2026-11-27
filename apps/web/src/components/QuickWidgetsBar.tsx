@@ -300,25 +300,43 @@ export function QuickWidgetsBar({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-black text-white text-xs sm:text-sm truncate">
-                      {isFa ? 'افزونه گرافیکی مرورگر دلارینو' : 'Dollarino Browser Extension'}
+                      {isFa ? 'افزونه مرورگر دلارینو (Chrome · Firefox · Edge)' : 'Dollarino Browser Extension (Chrome · Firefox · Edge)'}
                     </p>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-white border border-white/25 shrink-0">
-                      V11.7
+                      V11.9.1
                     </span>
                   </div>
                   <p className="text-[11px] text-white/80 mt-0.5">
-                    {isFa ? 'کنترل ربات، نرخ زنده، رادار DEX و سوآپ Trust Wallet در کروم/اج' : 'Live bot control, markets & DEX radar in Chrome / Edge'}
+                    {isFa ? 'حالت ساده V11.9.1، ثبت‌نام/ورود، ۵ موتور همزمان، تراز ۵ بخش و اسنایپر در نوار کناری' : 'V11.9.1 Simple Mode, Signup/Login, 5 Engines, 5-Mode Ledger & Sniper'}
                   </p>
                 </div>
               </div>
-              <a
-                href="/downloads/dollarino-extension.zip"
-                download="dollarino-extension.zip"
-                className="px-3.5 py-2 rounded-xl text-[11px] font-black inline-flex items-center gap-1.5 bg-white text-[#0b3bb8] shadow-md hover:brightness-105 active:scale-95 transition"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{isFa ? 'دانلود اکستنشن (ZIP)' : 'Download Extension ZIP'}</span>
-              </a>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <a
+                  href="/downloads/dollarino-extension.zip"
+                  download="dollarino-extension-chrome-v11.9.1.zip"
+                  className="px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center gap-1 bg-white text-[#0b3bb8] shadow-md hover:brightness-105 active:scale-95 transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'کروم (Chrome)' : 'Chrome'}</span>
+                </a>
+                <a
+                  href="/downloads/dollarino-extension-firefox.zip"
+                  download="dollarino-extension-firefox-v11.9.1.zip"
+                  className="px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center gap-1 bg-white/15 text-white border border-white/30 hover:bg-white/25 transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'فایرفاکس (Firefox)' : 'Firefox'}</span>
+                </a>
+                <a
+                  href="/downloads/dollarino-extension-edge.zip"
+                  download="dollarino-extension-edge-v11.9.1.zip"
+                  className="px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center gap-1 bg-white/15 text-white border border-white/30 hover:bg-white/25 transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'اج (Edge)' : 'Edge'}</span>
+                </a>
+              </div>
             </div>
           </div>
 

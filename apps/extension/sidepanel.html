@@ -1,64 +1,57 @@
 <!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="fa" dir="rtl" data-theme="paper" class="mode-sidepanel">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dollarino V11.7.2 — حالت ساده</title>
+    <title>دلارینو V11.9.1 — پایانه ساده</title>
     <link rel="stylesheet" href="sidepanel.css" />
+    <link rel="stylesheet" href="popup.css" />
   </head>
-  <body>
-    <div class="sp-shell">
-      <header class="sp-topbar">
-        <div class="sp-brand">
-          <img src="icons/icon-192.png" alt="Dollarino" class="sp-logo" />
-          <div class="sp-title-group">
-            <span class="sp-title">دلارینو</span>
-            <span class="sp-pill">حالت ساده</span>
-          </div>
+  <body class="mode-sidepanel">
+    <header class="sp-header">
+      <div class="sp-brand">
+        <img src="icons/icon-192.png" alt="Dollarino" />
+        <div class="sp-title-group">
+          <strong>دلارینو V11.9.1</strong>
+          <span>حالت ساده · Chrome / Firefox / Edge</span>
         </div>
-        <div class="sp-actions">
-          <button id="btnReload" type="button" class="sp-icon-btn" title="بارگذاری مجدد">↻</button>
-          <button id="btnSettings" type="button" class="sp-icon-btn" title="تنظیم آدرس سرور">⚙</button>
-          <button id="btnOpenTab" type="button" class="sp-icon-btn" title="باز کردن در تب کامل">↗</button>
+      </div>
+      <div class="sp-actions">
+        <div class="sp-mode-switch" role="tablist">
+          <button id="sp-mode-native" type="button" class="sp-mode-btn active">بومی V11.9.1</button>
+          <button id="sp-mode-embed" type="button" class="sp-mode-btn">وب زنده</button>
         </div>
-      </header>
+        <button id="sp-reload" type="button" class="sp-btn" title="بارگذاری مجدد">🔄</button>
+        <a id="sp-open-tab" href="https://dollarino.pages.dev/?ui_mode=simple" target="_blank" rel="noreferrer" class="sp-btn" title="باز کردن در تب">↗️</a>
+      </div>
+    </header>
 
-      <section id="settingsDrawer" class="sp-settings hidden">
-        <label class="sp-settings-label" for="siteUrlInput">آدرس سایت دلارینو:</label>
-        <div class="sp-settings-row" dir="ltr">
-          <input id="siteUrlInput" type="url" class="sp-input" placeholder="https://dollarino.pages.dev" />
-          <button id="btnSaveUrl" type="button" class="sp-save-btn">ذخیره</button>
-        </div>
-        <div class="sp-presets" dir="ltr">
-          <button type="button" class="sp-preset" data-url="https://dollarino.pages.dev">Production (Cloudflare)</button>
-          <button type="button" class="sp-preset" data-url="http://localhost:5173">Local Dev (:5173)</button>
-        </div>
-      </section>
+    <main class="sp-main">
+      <div id="sp-native-pane" class="sp-native-pane">
+        <div class="bg-mesh" aria-hidden="true"></div>
+        <div id="dlr-app" class="shell"></div>
+      </div>
 
-      <main class="sp-viewport">
-        <div id="loadingOverlay" class="sp-loading">
-          <div class="sp-spinner"></div>
-          <p>در حال بارگذاری حالت ساده دلارینو...</p>
+      <div id="sp-embed-pane" class="sp-embed-pane hidden">
+        <div id="sp-loader" class="sp-loader">
+          <div class="sp-spinner" aria-hidden="true"></div>
+          <p>در حال بارگذاری نمای زنده حالت ساده دلارینو...</p>
         </div>
-
-        <div id="errorBanner" class="sp-error hidden">
-          <p class="sp-error-title">اتصال به پنل ساده برقرار نشد</p>
-          <p id="errorDesc" class="sp-error-desc"></p>
-          <div class="sp-error-actions">
-            <button id="btnRetry" type="button" class="sp-btn-primary">تلاش مجدد</button>
-            <button id="btnOpenSettingsErr" type="button" class="sp-btn-ghost">تغییر آدرس سرور</button>
-          </div>
-        </div>
-
         <iframe
-          id="simpleFrame"
+          id="sp-frame"
           title="Dollarino Simple Mode"
-          class="sp-frame"
           allow="clipboard-read; clipboard-write"
         ></iframe>
-      </main>
-    </div>
+      </div>
+    </main>
 
+    <footer id="sp-host-bar" class="sp-host-bar hidden">
+      <span>آدرس سرور:</span>
+      <input id="sp-host-input" type="url" dir="ltr" value="https://dollarino.pages.dev" placeholder="https://dollarino.pages.dev" />
+      <button id="sp-host-save" type="button">اتصال</button>
+    </footer>
+
+    <script src="app.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

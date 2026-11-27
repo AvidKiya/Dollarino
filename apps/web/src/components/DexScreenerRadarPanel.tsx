@@ -54,6 +54,7 @@ export interface DexTokenCardItem {
   liquidity?: { usd?: number };
   fdv?: number | null;
   safetyScore: number;
+  alphaScore?: number;
   riskFlags: string[];
   isOnCentralizedHint: boolean;
   trustWallet: {
@@ -104,7 +105,7 @@ const DEFAULT_DEX_FILTERS: DexComboFilters = {
   requireSocial: false,
 };
 
-type DexSortKey = 'hot' | 'vol_desc' | 'liq_desc' | 'ch1_desc' | 'ch24_desc' | 'ch5_desc' | 'safety_desc' | 'age_asc' | 'txns_desc';
+type DexSortKey = 'hot' | 'alpha_desc' | 'vol_desc' | 'liq_desc' | 'ch1_desc' | 'ch24_desc' | 'ch5_desc' | 'safety_desc' | 'age_asc' | 'txns_desc';
 
 function fmtUsd(v?: number | null): string {
   const n = Number(v || 0);
@@ -254,6 +255,20 @@ export function DexScreenerRadarPanel({
           : chain === 'bsc'
             ? `https://pancakeswap.finance/swap?outputCurrency=${encodeURIComponent(addr)}`
             : `https://app.uniswap.org/swap?outputCurrency=${encodeURIComponent(addr)}`;
+      const clampedSafety = Math.max(10, Math.min(96, safetyScore));
+      const ch1v = Number(p.priceChange?.h1 || 0);
+      const alphaScore = Math.max(
+        5,
+        Math.min(
+          99,
+          Math.round(
+            clampedSafety * 0.52 +
+              (liq >= 100_000 ? 18 : liq >= 25_000 ? 10 : 0) +
+              (vol >= 100_000 ? 15 : vol >= 25_000 ? 8 : 0) +
+              (ch1v > 0 && ch1v < 120 ? Math.min(12, ch1v * 0.3) : 0)
+          )
+        )
+      );
       return {
         chainId: chain,
         dexId: p.dexId || 'dex',
@@ -269,7 +284,8 @@ export function DexScreenerRadarPanel({
         pairCreatedAt: p.pairCreatedAt ? Number(p.pairCreatedAt) : undefined,
         liquidity: p.liquidity,
         fdv: p.fdv ?? null,
-        safetyScore: Math.max(10, Math.min(96, safetyScore)),
+        safetyScore: clampedSafety,
+        alphaScore,
         riskFlags,
         isOnCentralizedHint: new Set(['BTC', 'ETH', 'SOL', 'BNB', 'TON', 'XRP', 'DOGE', 'PEPE']).has(sym.toUpperCase()),
         trustWallet: {
@@ -743,6 +759,7 @@ export function DexScreenerRadarPanel({
 
     if (sortBy === 'hot') return filtered;
     return [...filtered].sort((a, b) => {
+      if (sortBy === 'alpha_desc') return Number(b.alphaScore ?? b.safetyScore) - Number(a.alphaScore ?? a.safetyScore);
       if (sortBy === 'vol_desc') return Number(b.volume?.h24 || 0) - Number(a.volume?.h24 || 0);
       if (sortBy === 'liq_desc') return Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0);
       if (sortBy === 'ch1_desc') return Number(b.priceChange?.h1 || 0) - Number(a.priceChange?.h1 || 0);
@@ -844,6 +861,7 @@ export function DexScreenerRadarPanel({
               menuMinWidthClass="min-w-[230px]"
               options={[
                 { value: 'hot', label: isFa ? 'مرتب‌سازی: داغ‌ترین بازار' : 'Sort: Trending Hot' },
+                { value: 'alpha_desc', label: isFa ? 'بهترین امتیاز Alpha ترکیبی' : 'Best Alpha Score' },
                 { value: 'vol_desc', label: isFa ? 'بیشترین حجم ۲۴ ساعته' : 'Highest 24h Volume' },
                 { value: 'liq_desc', label: isFa ? 'بیشترین نقدینگی استخر' : 'Highest Liquidity' },
                 { value: 'ch1_desc', label: isFa ? 'بیشترین رشد ۱ ساعته (%)' : 'Top 1h Gainers' },
@@ -1363,10 +1381,17 @@ export function DexScreenerRadarPanel({
                         <p className="text-[11px] text-dim truncate max-w-[180px]">{t.baseToken.name}</p>
                       </div>
                     </div>
-                    <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black inline-flex items-center gap-1 shrink-0 ${safeColor}`}>
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      {t.safetyScore}/100
-                    </span>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black inline-flex items-center gap-1 ${safeColor}`}>
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        {t.safetyScore}/100
+                      </span>
+                      {typeof t.alphaScore === 'number' && (
+                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-indigo-500/15 text-indigo-400 font-num" dir="ltr">
+                          α {t.alphaScore}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-3 surface-soft rounded-2xl border hairline divide-x divide-[var(--line)] rtl:divide-x-reverse text-center overflow-hidden">

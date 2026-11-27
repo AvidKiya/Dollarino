@@ -77,18 +77,34 @@ export function isValidBlockchainTxHash(txHash: string): boolean {
   return false;
 }
 
-export async function tryVerifyEvmReceiptOnchain(txHash: string): Promise<'CONFIRMED' | 'FAILED' | 'UNAVAILABLE'> {
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+function evmAddressMatches(actual: string | undefined | null, expected: string): boolean {
+  if (!actual || !expected) return false;
+  const cleanExp = expected.trim().toLowerCase().replace(/^0x/, '');
+  const cleanAct = actual.trim().toLowerCase().replace(/^0x/, '');
+  if (!cleanExp || !cleanAct) return false;
+  return cleanAct === cleanExp || cleanAct.endsWith(cleanExp);
+}
+
+export async function tryVerifyEvmReceiptOnchain(
+  txHash: string,
+  expectedRecipient?: string
+): Promise<'CONFIRMED' | 'FAILED' | 'UNAVAILABLE'> {
   if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) return 'UNAVAILABLE';
   const rpcs = [
     'https://bsc-dataseed.binance.org',
     'https://mainnet.base.org',
     'https://arb1.arbitrum.io/rpc',
     'https://ethereum-rpc.publicnode.com',
+    'https://polygon-bor-rpc.publicnode.com',
   ];
+  const normalizedExp = expectedRecipient?.trim();
+  const checkRecipient = Boolean(normalizedExp && /^0x[0-9a-fA-F]{40}$/.test(normalizedExp));
   for (const rpc of rpcs) {
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 1400);
+      const timer = setTimeout(() => ctrl.abort(), 2400);
       const res = await fetch(rpc, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,13 +113,112 @@ export async function tryVerifyEvmReceiptOnchain(txHash: string): Promise<'CONFI
       });
       clearTimeout(timer);
       if (!res.ok) continue;
-      const data = (await res.json()) as { result?: { status?: string } | null };
-      if (data?.result?.status === '0x1') return 'CONFIRMED';
+      const data = (await res.json()) as {
+        result?: {
+          status?: string;
+          to?: string | null;
+          logs?: Array<{ topics?: string[] }>;
+        } | null;
+      };
       if (data?.result?.status === '0x0') return 'FAILED';
+      if (data?.result?.status === '0x1') {
+        if (!checkRecipient || !normalizedExp) return 'CONFIRMED';
+        const directMatch = evmAddressMatches(data.result.to, normalizedExp);
+        const tokenTransferMatch = Array.isArray(data.result.logs)
+          ? data.result.logs.some(
+              (log) =>
+                Array.isArray(log.topics) &&
+                log.topics.length >= 3 &&
+                String(log.topics[0] || '').toLowerCase() === ERC20_TRANSFER_TOPIC &&
+                evmAddressMatches(log.topics[2], normalizedExp)
+            )
+          : false;
+        if (directMatch || tokenTransferMatch) return 'CONFIRMED';
+        // Receipt succeeded on-chain, but NOT sent to configured treasury recipient -> require manual verification
+        return 'UNAVAILABLE';
+      }
     } catch {
-      // Ignore unreachable RPC in sandboxed/offline mode
+      // Ignore unreachable RPC
     }
   }
+  return 'UNAVAILABLE';
+}
+
+export async function verifyBlockchainTxOnchain(
+  network: string,
+  txHash: string,
+  expectedRecipient?: string
+): Promise<'CONFIRMED' | 'FAILED' | 'UNAVAILABLE'> {
+  const cleanHash = txHash.trim();
+  const net = String(network || '').toUpperCase().trim();
+  if (!isValidBlockchainTxHash(cleanHash)) return 'UNAVAILABLE';
+
+  if (/^0x[0-9a-fA-F]{64}$/.test(cleanHash)) {
+    return tryVerifyEvmReceiptOnchain(cleanHash, expectedRecipient);
+  }
+
+  if (net === 'TRC20' || net === 'TRON' || (/^[0-9a-fA-F]{64}$/.test(cleanHash) && net !== 'TON')) {
+    try {
+      const res = await fetch(`https://apilist.tronscanapi.com/api/transaction-info?hash=${encodeURIComponent(cleanHash)}`, {
+        signal: AbortSignal.timeout(3500),
+      });
+      if (res.ok) {
+        const j = (await res.json().catch(() => ({}))) as {
+          confirmed?: boolean;
+          contractRet?: string;
+          revert?: boolean;
+          toAddress?: string;
+          trc20TransferInfo?: Array<{ to_address?: string }>;
+        };
+        if (j.revert || (j.contractRet && j.contractRet !== 'SUCCESS')) return 'FAILED';
+        if (j.confirmed && j.contractRet === 'SUCCESS') {
+          if (expectedRecipient) {
+            const directMatch = j.toAddress === expectedRecipient;
+            const trc20Match = Array.isArray(j.trc20TransferInfo)
+              ? j.trc20TransferInfo.some((t) => t.to_address === expectedRecipient)
+              : false;
+            if (!directMatch && !trc20Match) return 'UNAVAILABLE';
+          }
+          return 'CONFIRMED';
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return 'UNAVAILABLE';
+  }
+
+  if (net === 'SOLANA' || /^[1-9A-HJ-NP-Za-km-z]{43,96}$/.test(cleanHash)) {
+    for (const rpc of ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com']) {
+      try {
+        const res = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getSignatureStatuses',
+            params: [[cleanHash], { searchTransactionHistory: true }],
+          }),
+          signal: AbortSignal.timeout(3500),
+        });
+        if (!res.ok) continue;
+        const j = (await res.json().catch(() => ({}))) as {
+          result?: { value?: Array<{ err?: unknown; confirmationStatus?: string } | null> };
+        };
+        const st = j.result?.value?.[0];
+        if (!st) continue;
+        if (st.err) return 'FAILED';
+        if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized') {
+          return 'CONFIRMED';
+        }
+      } catch {
+        // try next rpc
+      }
+    }
+    return 'UNAVAILABLE';
+  }
+
   return 'UNAVAILABLE';
 }
 

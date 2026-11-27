@@ -40,10 +40,12 @@ const CHAIN_OPTIONS = [
   { id: 'solana', labelFa: 'سولانا (SOL)', labelEn: 'Solana', badgeColor: 'border-violet-500/40 bg-violet-500/10 text-violet-400' },
   { id: 'bsc', labelFa: 'بی‌ان‌بی چین (BSC)', labelEn: 'BSC', badgeColor: 'border-amber-500/40 bg-amber-500/10 text-amber-400' },
   { id: 'base', labelFa: 'بیس (Base)', labelEn: 'Base', badgeColor: 'border-sky-500/40 bg-sky-500/10 text-sky-400' },
-  { id: 'eth', labelFa: 'اتریوم (ETH)', labelEn: 'Ethereum', badgeColor: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-400' },
+  { id: 'ethereum', labelFa: 'اتریوم (ETH)', labelEn: 'Ethereum', badgeColor: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-400' },
   { id: 'ton', labelFa: 'تون (TON)', labelEn: 'TON', badgeColor: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' },
   { id: 'arbitrum', labelFa: 'آربیتروم (ARB)', labelEn: 'Arbitrum', badgeColor: 'border-blue-500/40 bg-blue-500/10 text-blue-400' },
   { id: 'polygon', labelFa: 'پالیگان (MATIC)', labelEn: 'Polygon', badgeColor: 'border-purple-500/40 bg-purple-500/10 text-purple-400' },
+  { id: 'avalanche', labelFa: 'آوالانچ (AVAX)', labelEn: 'Avalanche', badgeColor: 'border-rose-500/40 bg-rose-500/10 text-rose-400' },
+  { id: 'optimism', labelFa: 'اپتیمیزم (OP)', labelEn: 'Optimism', badgeColor: 'border-red-500/40 bg-red-500/10 text-red-400' },
   { id: 'sui', labelFa: 'سویی (SUI)', labelEn: 'Sui', badgeColor: 'border-teal-500/40 bg-teal-500/10 text-teal-400' },
 ] as const;
 
@@ -68,6 +70,25 @@ const DEFAULT_ADV: SniperAdvancedFilters = {
   maxMcapUsd: 0,
 };
 
+function normalizeSniperNetworks(nets?: string[]): string[] {
+  const list = Array.isArray(nets) ? nets : [];
+  const norm = Array.from(
+    new Set(
+      list.map((c) => {
+        const s = String(c || '').toLowerCase().trim();
+        if (s === 'eth') return 'ethereum';
+        if (s === 'bnb' || s === 'smartchain') return 'bsc';
+        if (s === 'matic') return 'polygon';
+        if (s === 'avax') return 'avalanche';
+        if (s === 'op') return 'optimism';
+        if (s === 'arb') return 'arbitrum';
+        return s;
+      }).filter(Boolean)
+    )
+  );
+  return norm.length > 0 ? norm : ['solana', 'bsc', 'base'];
+}
+
 const DEFAULT_SETTINGS: SniperSettings = {
   enabled: false,
   targetType: 'BOTH',
@@ -81,7 +102,7 @@ const DEFAULT_SETTINGS: SniperSettings = {
   slPct: 15,
   trailingEnabled: true,
   trailingPct: 8,
-  maxOpenPositions: 3,
+  maxOpenPositions: 5,
   autoExecute: true,
   slippagePct: 3,
   networks: ['solana', 'bsc', 'base'],
@@ -141,14 +162,19 @@ export function SniperWorkbench({
   onRequireOnboardingGate,
 }: SniperWorkbenchProps) {
   const isFa = lang === 'fa';
-  const [settings, setSettings] = useState<SniperSettings>(() => ({
-    ...DEFAULT_SETTINGS,
-    ...initialConfig,
-    maxPairAgeMinutes:
-      initialConfig?.maxPairAgeMinutes ??
-      Math.round((initialConfig?.maxPairAgeHours ?? DEFAULT_SETTINGS.maxPairAgeHours) * 60),
-    advancedFilters: { ...DEFAULT_ADV, ...(initialConfig?.advancedFilters || {}) },
-  }));
+  const [settings, setSettings] = useState<SniperSettings>(() =>
+    initialConfig
+      ? {
+          ...DEFAULT_SETTINGS,
+          ...initialConfig,
+          networks: normalizeSniperNetworks(initialConfig?.networks),
+          maxPairAgeMinutes:
+            initialConfig?.maxPairAgeMinutes ??
+            Math.round((initialConfig?.maxPairAgeHours ?? DEFAULT_SETTINGS.maxPairAgeHours) * 60),
+          advancedFilters: { ...DEFAULT_ADV, ...(initialConfig?.advancedFilters || {}) },
+        }
+      : DEFAULT_SETTINGS
+  );
   const [candidates, setCandidates] = useState<SniperCandidate[]>([]);
   const [recentSnipes, setRecentSnipes] = useState<SniperRecentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -197,6 +223,7 @@ export function SniperWorkbench({
         setSettings({
           ...DEFAULT_SETTINGS,
           ...res.settings,
+          networks: normalizeSniperNetworks(res.settings.networks),
           maxPairAgeMinutes:
             res.settings.maxPairAgeMinutes ?? Math.round((res.settings.maxPairAgeHours || 24) * 60),
           advancedFilters: { ...DEFAULT_ADV, ...(res.settings.advancedFilters || {}) },
@@ -293,6 +320,7 @@ export function SniperWorkbench({
         setSettings({
           ...DEFAULT_SETTINGS,
           ...res.settings,
+          networks: normalizeSniperNetworks(res.settings.networks),
           maxPairAgeMinutes: res.settings.maxPairAgeMinutes ?? mergedAgeMins,
           advancedFilters: { ...DEFAULT_ADV, ...(res.settings.advancedFilters || {}) },
         });
@@ -338,7 +366,7 @@ export function SniperWorkbench({
         minSafetyScore: 60,
         maxTaxPct: 5,
         slippagePct: 4,
-        networks: ['solana', 'bsc', 'base', 'eth'],
+        networks: ['solana', 'bsc', 'base', 'ethereum'],
         advancedFilters: {
           sortBy: 'MOMENTUM_5M',
           minVolume5mUsd: 2500,
@@ -784,7 +812,7 @@ export function SniperWorkbench({
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-dim font-bold">{isFa ? 'شبکه‌های هدف اسکن (۸ زنجیره)' : 'Target Networks (8 Chains)'}</span>
+              <span className="text-dim font-bold">{isFa ? 'شبکه‌های هدف اسکن (۱۰ زنجیره)' : 'Target Networks (10 Chains)'}</span>
               <span className="text-[11px] text-dim">{settings.networks.length} {isFa ? 'فعال' : 'active'}</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -983,9 +1011,9 @@ export function SniperWorkbench({
                 <input
                   type="number"
                   min={1}
-                  max={20}
+                  max={25}
                   value={settings.maxOpenPositions}
-                  onChange={(e) => setSettings((s) => ({ ...s, maxOpenPositions: Math.max(1, Number(e.target.value) || 3) }))}
+                  onChange={(e) => setSettings((s) => ({ ...s, maxOpenPositions: Math.min(25, Math.max(1, Number(e.target.value) || 5)) }))}
                   className="input-field w-full rounded-xl px-2.5 py-1.5 text-xs font-bold font-num"
                   dir="ltr"
                 />

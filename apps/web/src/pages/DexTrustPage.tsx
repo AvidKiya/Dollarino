@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  ArrowLeft,
+  ArrowRight,
   Check,
   CheckCircle2,
   ExternalLink,
   Landmark,
+  RefreshCw,
   ShieldCheck,
   Unlink,
   Wallet,
 } from 'lucide-react';
 import { ChainLogo, WalletLogo } from '../components/BrandLogos';
-import { TreasuryBankingHub } from '../components/TreasuryBankingHub';
+import { CoinIcon } from '../components/CoinIcon';
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
 import { TrustWalletDirectModal } from '../components/TrustWalletDirectModal';
+import { TrustWalletTradePlaybook } from '../components/TrustWalletTradePlaybook';
 import { apiFetch } from '../lib/api';
+import { formatTomanEq, getLiveUsdtIrt } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
 import {
@@ -25,7 +30,29 @@ import {
   type EvmNetworkSpec,
   type TrustWalletDappHandoff,
 } from '../lib/trustwallet';
-import type { AuthUserInfo } from '../lib/types';
+import type { AuthUserInfo, NavTab } from '../lib/types';
+
+interface TrustPortfolioHolding {
+  symbol: string;
+  base?: string;
+  name?: string;
+  nameEn?: string;
+  nameFa?: string;
+  chain: string;
+  balance: number;
+  priceUsd: number;
+  valueUsd: number;
+  changePct24h?: number;
+  logoUrl?: string;
+}
+
+interface TrustPortfolioPayload {
+  ok: boolean;
+  connected: boolean;
+  totalUsd: number;
+  holdingsCount: number;
+  holdings: TrustPortfolioHolding[];
+}
 
 interface TrustWalletStatusRes {
   ok: boolean;
@@ -51,14 +78,17 @@ export function DexTrustPage({
   lang,
   user,
   onUserRefresh,
+  onNavigate,
 }: {
   lang: Lang;
   user: AuthUserInfo;
   onUserRefresh: () => Promise<void> | void;
+  onNavigate?: (tab: NavTab) => void;
 }) {
   const isFa = lang === 'fa';
-  const [subTab, setSubTab] = useState<'wallet' | 'treasury'>('wallet');
   const [twStatus, setTwStatus] = useState<TrustWalletStatusRes | null>(null);
+  const [portfolio, setPortfolio] = useState<TrustPortfolioPayload | null>(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [balances, setBalances] = useState<{
     bnb: number | null;
     eth: number | null;
@@ -103,9 +133,22 @@ export function DexTrustPage({
     }
   }, []);
 
+  const loadPortfolio = useCallback(async () => {
+    setPortfolioLoading(true);
+    try {
+      const pf = await apiFetch<TrustPortfolioPayload>('/api/trustwallet/portfolio');
+      setPortfolio(pf);
+    } catch {
+      /* ignore */
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadWalletStatus();
-  }, [loadWalletStatus]);
+    void loadPortfolio();
+  }, [loadWalletStatus, loadPortfolio]);
 
   const flash = (text: string, isErr = false) => {
     pushFloatingToast(text, isErr ? 'error' : 'success');
@@ -288,15 +331,15 @@ export function DexTrustPage({
                 )}
               </div>
               <h2 className="font-display font-black text-xl md:text-2xl text-main">
-                {isFa ? 'مدیریت Trust Wallet، سرمایه شخصی و کارمزد ۳٪' : 'Personal Trust Wallet Hub & 3% Fee Settlement'}
+                {isFa ? 'کیف‌پول Trust Wallet شخصی و پورتفوی آن‌چین من' : 'My Non-Custodial Trust Wallet & On-Chain Portfolio'}
               </h2>
               <p className="text-xs text-dim leading-relaxed">
                 {isFa ? (
                   <>
-                    تمام سرمایه معاملاتی ۱۰۰٪ داخل Trust Wallet شخصی خودتان باقی می‌ماند و به حساب سایت واریز نمی‌شود (<span dir="ltr">EVM · Solana · TON · TRON</span>). از اینجا کیف‌پولتان را وصل کنید، سقف سرمایه مجاز ربات را روی همین ولت تنظیم نمایید و فقط کارمزد ۳٪ سود واقعی را مستقیم پرداخت کنید.
+                    تمام سرمایه معاملاتی ۱۰۰٪ داخل Trust Wallet شخصی خودتان باقی می‌ماند و به حساب سایت واریز نمی‌شود (<span dir="ltr">EVM · Solana · TON · TRON</span>). از این صفحه کیف‌پولتان را متصل کنید و دارایی‌های زنده آن‌چین خود را مشاهده نمایید.
                   </>
                 ) : (
-                  'All trading capital stays 100% inside your own Trust Wallet — never deposited to platform accounts. Manage chains, set bot wallet cap, and settle 3% profit fees directly.'
+                  'All trading capital stays 100% inside your own Trust Wallet — never deposited to platform accounts. Connect your chains and view live on-chain token holdings.'
                 )}
               </p>
             </div>
@@ -366,7 +409,10 @@ export function DexTrustPage({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setSubTab('wallet')}
+                onClick={() => {
+                  const el = document.getElementById('tw-address-manager');
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-bold transition ${
                   item.addr
                     ? 'bg-emerald-500/12 border-emerald-500/35 text-jade'
@@ -406,32 +452,100 @@ export function DexTrustPage({
         </div>
       </section>
 
-      {/* Clean 2-Tab Navigation */}
-      <div className="tab-bar w-full sm:w-auto">
-        {[
-          { id: 'wallet' as const, icon: Wallet, fa: 'اتصال و آدرس‌های Trust Wallet', en: 'Trust Wallet Manager' },
-          { id: 'treasury' as const, icon: Landmark, fa: 'سرمایه شخصی ولت و کارمزد ۳٪', en: 'Wallet Cap & 3% Fees' },
-        ].map((t) => {
-          const Icon = t.icon;
-          return (
+      {/* Live Trust Wallet Portfolio Overview (All On-Chain Token Holdings) */}
+      <section className="panel rounded-[28px] p-5 md:p-6 space-y-4 border hairline">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-display font-black text-lg text-main flex items-center gap-2">
+              <WalletLogo wallet="trustwallet" size={20} />
+              <span>{isFa ? 'دارایی‌ها و پورتفوی زنده داخل Trust Wallet من' : 'Live Trust Wallet Asset Portfolio'}</span>
+            </h3>
+            <p className="text-xs text-dim mt-0.5">
+              {isFa
+                ? 'تمامی موجودی‌های واقعی داخل کیف‌پول شما روی شبکه‌های EVM، Solana، TON و TRON هم‌گام با قیمت‌های Trust Wallet'
+                : 'Real token balances held inside your Trust Wallet across EVM, Solana, TON & TRON aligned with live prices.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="surface-soft rounded-2xl px-4 py-2 border hairline text-end">
+              <span className="text-[10px] font-bold text-dim block">{isFa ? 'جمع ارزش کیف‌پول' : 'Total Wallet Value'}</span>
+              <strong dir="ltr" className="font-num font-black text-base text-main">
+                ${(portfolio?.totalUsd ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </strong>
+              {portfolio && portfolio.totalUsd > 0 && (
+                <span className="block text-[10px] text-dim">{formatTomanEq(portfolio.totalUsd, getLiveUsdtIrt())}</span>
+              )}
+            </div>
             <button
-              key={t.id}
               type="button"
-              onClick={() => setSubTab(t.id)}
-              className={`tab-pill flex-1 sm:flex-initial ${subTab === t.id ? 'tab-pill-active' : ''}`}
+              onClick={() => void loadPortfolio()}
+              disabled={portfolioLoading}
+              className="btn-cobalt px-3.5 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
             >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span>{isFa ? t.fa : t.en}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${portfolioLoading ? 'animate-spin' : ''}`} />
+              <span>{isFa ? 'بروزرسانی پورتفوی' : 'Refresh Portfolio'}</span>
             </button>
-          );
-        })}
-      </div>
+          </div>
+        </div>
 
-      {/* TAB 1: Trust Wallet Connection + Manual Addresses + On-Chain Balances */}
-      {subTab === 'wallet' && (
-        <div className="space-y-4 tab-enter">
-          <div className="panel rounded-[26px] p-5">
-            <TrustWalletConnectInline lang={lang} onMsg={flash} onRefresh={onUserRefresh} />
+        {portfolio && portfolio.holdings.length > 0 ? (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {portfolio.holdings.map((h) => {
+              const pct = Number(h.changePct24h || 0);
+              const tokenSym = (h.base || h.symbol.replace(/USDT$/, '')).toUpperCase();
+              const tokenName = isFa ? h.nameFa || h.nameEn || h.name || tokenSym : h.nameEn || h.name || tokenSym;
+              return (
+                <div key={`${h.chain}_${tokenSym}_${h.symbol}`} className="surface-soft rounded-2xl p-3.5 border hairline flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <CoinIcon symbol={`${tokenSym}USDT`} size={32} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <strong className="text-sm font-black text-main">{tokenSym}</strong>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--panel)] border hairline text-[9px] font-bold text-dim uppercase shrink-0">
+                          <ChainLogo chain={h.chain} size={10} />
+                          {h.chain}
+                        </span>
+                      </div>
+                      <p className="text-[10.5px] text-dim truncate mt-0.5">{tokenName}</p>
+                    </div>
+                  </div>
+                  <div className="text-end shrink-0">
+                    <p dir="ltr" className="font-num font-black text-xs text-main whitespace-nowrap">
+                      {h.balance.toLocaleString('en-US', { maximumFractionDigits: 4 })} {tokenSym}
+                    </p>
+                    <p dir="ltr" className="font-num text-[11px] font-bold text-sub whitespace-nowrap">
+                      ${h.valueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {Number.isFinite(pct) && pct !== 0 && (
+                        <span className={`ms-1.5 ${pct >= 0 ? 'text-jade' : 'text-loss'}`}>
+                          {pct >= 0 ? '+' : ''}
+                          {pct.toFixed(1)}%
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="surface-soft rounded-2xl p-4 border border-dashed hairline text-xs text-dim flex flex-wrap items-center justify-between gap-3">
+            <span>
+              {portfolio?.connected
+                ? isFa
+                  ? 'در حال حاضر موجودی مثبت روی شبکه‌های استعلام‌شده یافت نشد یا روی «بروزرسانی پورتفوی» بزنید.'
+                  : 'No positive balances detected yet across connected chains — click Refresh Portfolio to re-sync.'
+                : isFa
+                  ? 'برای مشاهده تمام دارایی‌های Trust Wallet خودتان، ابتدا یکی از آدرس‌های زیر را متصل یا ذخیره کنید.'
+                  : 'Connect or save your wallet address below to view all Trust Wallet asset holdings.'}
+            </span>
+          </div>
+        )}
+      </section>
+
+      {/* Direct Wallet Connection & Multi-Chain Address Manager */}
+      <div id="tw-address-manager" className="space-y-4">
+        <div className="panel rounded-[26px] p-5">
+          <TrustWalletConnectInline lang={lang} onMsg={flash} onRefresh={onUserRefresh} />
           </div>
 
           <div className="grid lg:grid-cols-2 gap-4">
@@ -532,13 +646,17 @@ export function DexTrustPage({
                 <h3 className="font-display font-bold text-base text-main">
                   {isFa ? 'موجودی زنده بلاکچین و دسته‌بندی شبکه‌ها' : 'Live On-Chain Balances'}
                 </h3>
-                <button
-                  type="button"
-                  onClick={() => setSubTab('treasury')}
-                  className="badge-signal px-3 py-1 rounded-full text-[10px] font-black hover:opacity-90 transition"
-                >
-                  {isFa ? '← سقف سرمایه و کارمزد ۳٪' : 'Wallet Cap & 3% Fees →'}
-                </button>
+                {onNavigate && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('pricing')}
+                    className="badge-signal px-3 py-1 rounded-full text-[10px] font-black hover:opacity-90 transition inline-flex items-center gap-1"
+                  >
+                    <Landmark className="w-3 h-3" />
+                    <span>{isFa ? 'خزانه و تسویه کارمزد ۳٪' : 'Treasury & 3% Fees'}</span>
+                    {isFa ? <ArrowLeft className="w-3 h-3" /> : <ArrowRight className="w-3 h-3" />}
+                  </button>
+                )}
               </div>
               {balances ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -574,27 +692,8 @@ export function DexTrustPage({
             </div>
           </div>
         </div>
-      )}
 
-      {/* TAB 2: 100% Non-Custodial Trust Wallet Personal Cap + 3% Fee Settlement & Invoices */}
-      {subTab === 'treasury' && (
-        <div className="tab-enter">
-          <TreasuryBankingHub
-            lang={lang}
-            mode="full"
-            defaultCategory="FEE_SETTLEMENT"
-            connectedEvmAddress={twStatus?.wallet.evmAddress || user.trust_wallet_address}
-            connectedSolanaAddress={twStatus?.wallet.solanaAddress}
-            connectedTonAddress={twStatus?.wallet.tonAddress}
-            connectedTronAddress={twStatus?.wallet.tronAddress}
-            onOpenWalletTab={() => setSubTab('wallet')}
-            onSyncWallet={handleConnectInjectedTrust}
-            onAfterSuccess={async () => {
-              await Promise.all([loadWalletStatus(), onUserRefresh()]);
-            }}
-          />
-        </div>
-      )}
+      <TrustWalletTradePlaybook lang={lang} focusMode="FUTURES" compact onNavigate={onNavigate} />
 
       <TrustWalletDirectModal
         open={twModalOpen}
@@ -606,11 +705,12 @@ export function DexTrustPage({
         onRetryInjected={handleConnectInjectedTrust}
         onConnected={async () => {
           setTwModalOpen(false);
-          await Promise.all([loadWalletStatus(), onUserRefresh()]);
+          await Promise.all([loadWalletStatus(), loadPortfolio(), onUserRefresh()]);
         }}
         onGoToWalletPage={() => {
           setTwModalOpen(false);
-          setSubTab('wallet');
+          const el = document.getElementById('tw-address-manager');
+          el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }}
         onClose={() => setTwModalOpen(false)}
       />

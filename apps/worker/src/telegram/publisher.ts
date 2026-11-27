@@ -16,6 +16,118 @@ function isUserNotifCategoryOn(prefsJson: string | null | undefined, category: '
   } catch { /* fallback true */ }
   return true;
 }
+
+export type SignalEngineFilterKey = 'CENTRAL_AI' | 'MY_AI' | 'STRATEGY' | 'COPY_TRADE' | 'LISTING_SNIPER';
+
+export interface SignalDeliveryPrefs {
+  signalEngines: Record<SignalEngineFilterKey, boolean>;
+  channels: {
+    telegramBot: boolean;
+    inApp: boolean;
+    channelSignals: boolean;
+  };
+  minConfidence: number;
+  minSniperSafety: number;
+  directionFilter: 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY';
+  quietHoursEnabled: boolean;
+}
+
+export function resolveSignalEngineCategory(engineKeyOrSource?: string | null): SignalEngineFilterKey {
+  const s = String(engineKeyOrSource || '').toLowerCase();
+  if (s.includes('sniper') || s.includes('listing') || s.includes('meme')) return 'LISTING_SNIPER';
+  if (s.includes('copy') || s.includes('whale') || s.includes('smart_wallet')) return 'COPY_TRADE';
+  if (s.includes('my_ai') || s.includes('my_custom_ai') || s.includes('personal_ai')) return 'MY_AI';
+  if (s.includes('ai_autonomous') || s.includes('central_ai') || s === 'ai') return 'CENTRAL_AI';
+  return 'STRATEGY';
+}
+
+export function parseSignalDeliveryPrefs(prefsJson: string | null | undefined): SignalDeliveryPrefs {
+  const defaults: SignalDeliveryPrefs = {
+    signalEngines: {
+      CENTRAL_AI: true,
+      MY_AI: true,
+      STRATEGY: true,
+      COPY_TRADE: true,
+      LISTING_SNIPER: true,
+    },
+    channels: {
+      telegramBot: true,
+      inApp: true,
+      channelSignals: true,
+    },
+    minConfidence: 60,
+    minSniperSafety: 70,
+    directionFilter: 'BOTH',
+    quietHoursEnabled: false,
+  };
+  if (!prefsJson) return defaults;
+  try {
+    const raw = JSON.parse(prefsJson) as Record<string, unknown>;
+    const sd = (raw.signalDelivery && typeof raw.signalDelivery === 'object'
+      ? raw.signalDelivery
+      : raw) as Record<string, unknown>;
+    const seRaw = sd.signalEngines;
+    const seArr = Array.isArray(seRaw) ? new Set(seRaw.map((x) => String(x))) : null;
+    const se = (!Array.isArray(seRaw) && seRaw && typeof seRaw === 'object' ? seRaw : {}) as Record<string, unknown>;
+    const chRaw = sd.channels;
+    const chArr = Array.isArray(chRaw) ? new Set(chRaw.map((x) => String(x))) : null;
+    const ch = (!Array.isArray(chRaw) && chRaw && typeof chRaw === 'object' ? chRaw : {}) as Record<string, unknown>;
+    return {
+      signalEngines: {
+        CENTRAL_AI: seArr ? seArr.has('CENTRAL_AI') : typeof se.CENTRAL_AI === 'boolean' ? se.CENTRAL_AI : true,
+        MY_AI: seArr ? seArr.has('MY_AI') : typeof se.MY_AI === 'boolean' ? se.MY_AI : true,
+        STRATEGY: seArr ? seArr.has('STRATEGY') : typeof se.STRATEGY === 'boolean' ? se.STRATEGY : true,
+        COPY_TRADE: seArr
+          ? seArr.has('COPY_TRADE')
+          : typeof se.COPY_TRADE === 'boolean'
+            ? se.COPY_TRADE
+            : Boolean(raw.whaleCopy ?? true),
+        LISTING_SNIPER: seArr
+          ? seArr.has('LISTING_SNIPER')
+          : typeof se.LISTING_SNIPER === 'boolean'
+            ? se.LISTING_SNIPER
+            : Boolean(raw.dex_sniper ?? true),
+      },
+      channels: {
+        telegramBot: chArr ? chArr.has('TELEGRAM') || chArr.has('telegramBot') : typeof ch.telegramBot === 'boolean' ? ch.telegramBot : true,
+        inApp: chArr ? chArr.has('WEB') || chArr.has('inApp') : typeof ch.inApp === 'boolean' ? ch.inApp : true,
+        channelSignals: chArr ? chArr.has('CHANNEL') || chArr.has('channelSignals') : typeof ch.channelSignals === 'boolean' ? ch.channelSignals : true,
+      },
+      minConfidence: Number.isFinite(Number(sd.minConfidence)) ? Math.max(0, Math.min(99, Number(sd.minConfidence))) : 60,
+      minSniperSafety: Number.isFinite(Number(sd.minSniperSafety)) ? Math.max(0, Math.min(99, Number(sd.minSniperSafety))) : 70,
+      directionFilter:
+        sd.directionFilter === 'LONG_ONLY' || sd.directionFilter === 'SHORT_ONLY' ? sd.directionFilter : 'BOTH',
+      quietHoursEnabled: Boolean(sd.quietHoursEnabled),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+export function shouldDeliverEngineSignalToUser(
+  prefsJson: string | null | undefined,
+  opts: {
+    engine: SignalEngineFilterKey;
+    direction?: string;
+    confidence?: number;
+    safetyScore?: number;
+  }
+): boolean {
+  if (!isUserNotifCategoryOn(prefsJson, 'signals')) return false;
+  if (opts.engine === 'LISTING_SNIPER' && !isUserNotifCategoryOn(prefsJson, 'dex_sniper')) return false;
+  const delivery = parseSignalDeliveryPrefs(prefsJson);
+  if (!delivery.signalEngines[opts.engine]) return false;
+  if (!delivery.channels.telegramBot) return false;
+  if (typeof opts.confidence === 'number' && opts.confidence < delivery.minConfidence) return false;
+  if (opts.engine === 'LISTING_SNIPER' && typeof opts.safetyScore === 'number' && opts.safetyScore < delivery.minSniperSafety) {
+    return false;
+  }
+  const dir = String(opts.direction || '').toUpperCase();
+  if (delivery.directionFilter === 'LONG_ONLY' && dir === 'SHORT') return false;
+  if (delivery.directionFilter === 'SHORT_ONLY' && (dir === 'LONG' || dir === 'SELL')) return false;
+  return true;
+}
+
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import {
@@ -28,6 +140,8 @@ import {
   channelNewsInlineButtons,
   channelSignalInlineButtons,
   copyTradePublishConfirmButtons,
+  formatCopyTradeSignalCard,
+  formatSniperSignalCard,
   formatTradeClosedCard,
 } from './formatter.js';
 
@@ -351,7 +465,13 @@ export async function publishSignalBroadcast(
        LIMIT 100`
     ).all<{ telegram_id: string; notification_prefs_json?: string | null }>().catch(() => ({ results: [] }));
 
-    const eligibleSubs = subs.results.filter((s) => isUserNotifCategoryOn(s.notification_prefs_json, 'signals'));
+    const engineCat = resolveSignalEngineCategory(params.engineKey || params.source);
+    const eligibleSubs = subs.results.filter((s) =>
+      shouldDeliverEngineSignalToUser(s.notification_prefs_json, {
+        engine: engineCat,
+        direction: fullSignal.direction,
+      })
+    );
     const inlineKb = channelSignalInlineButtons({
       signalId,
       botUsername: cfg.botUsername,
@@ -378,6 +498,192 @@ export async function publishSignalBroadcast(
   }).catch(() => {});
 
   return { signalId, channelMessageId, channelError, subscribersNotified };
+}
+
+/**
+ * Logs & broadcasts a Sniper discovery as a first-class Signal with its own Sniper card format.
+ */
+export async function publishSniperSignal(
+  env: Env,
+  params: {
+    userId: string;
+    symbol: string;
+    name?: string;
+    chainId: string;
+    dexId: string;
+    source: 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME' | string;
+    tokenAddress: string;
+    priceUsd: number;
+    tpUsd: number;
+    slUsd: number;
+    tpPct: number;
+    slPct: number;
+    safetyScore: number;
+    liquidityUsd: number;
+    mcapUsd?: number | null;
+    ageMinutes?: number | null;
+    change5mPct?: number;
+    change1hPct?: number;
+    buySellRatio1h?: number;
+    slippagePct?: number;
+    modeLabel?: string;
+    trustWalletSwapUrl?: string;
+  }
+): Promise<{ signalId: string; notified: boolean }> {
+  const cfg = await resolveChannelAndBotConfig(env);
+  const signalId = randomId('sig');
+  const formattedText = formatSniperSignalCard({
+    ...params,
+    channelHandle: cfg.channelHandle,
+  });
+
+  await env.DB.prepare(
+    `INSERT INTO signals (
+      id, source, symbol, direction, timeframe, price, stop_loss, leverage,
+      tp1, raw_text, status, engine_source, engine_label, channel_chat_id
+    ) VALUES (?, 'LISTING_SNIPER', ?, 'LONG', '5m', ?, ?, 1, ?, ?, 'PROCESSED', 'LISTING_SNIPER', 'اسنایپر لیستینگ و میم‌کوین', ?)`
+  )
+    .bind(
+      signalId,
+      `${params.symbol.toUpperCase()}USDT`,
+      String(params.priceUsd),
+      String(params.slUsd),
+      String(params.tpUsd),
+      formattedText,
+      cfg.channelHandle
+    )
+    .run()
+    .catch(() => {});
+
+  const userRow = await env.DB.prepare(
+    `SELECT u.telegram_id, bc.notifications_enabled, bc.notification_prefs_json
+     FROM users u
+     LEFT JOIN bot_configs bc ON bc.user_id = u.id
+     WHERE u.id = ? LIMIT 1`
+  )
+    .bind(params.userId)
+    .first<{ telegram_id: string | null; notifications_enabled: number | null; notification_prefs_json?: string | null }>()
+    .catch(() => null);
+
+  if (
+    !userRow?.telegram_id ||
+    userRow.notifications_enabled === 0 ||
+    !shouldDeliverEngineSignalToUser(userRow.notification_prefs_json, {
+      engine: 'LISTING_SNIPER',
+      direction: 'LONG',
+      safetyScore: params.safetyScore,
+    })
+  ) {
+    return { signalId, notified: false };
+  }
+
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return { signalId, notified: false };
+  const tg = new TelegramBotClient(botToken);
+  const baseWeb = cfg.webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
+  const kb: InlineKeyboardButton[][] = [];
+  if (params.trustWalletSwapUrl) {
+    kb.push([{ text: `خرید ${params.symbol} در Trust Wallet 🛡`, url: params.trustWalletSwapUrl, style: 'success' }]);
+  }
+  if (baseWeb.startsWith('https://')) {
+    kb.push([{ text: '🎯 میز اسنایپر در مینی‌اپ', web_app: { url: `${baseWeb}/?tab=sniper` }, style: 'primary' }]);
+  }
+  const sent = await tg.sendMessage(userRow.telegram_id, formattedText, kb.length ? { inlineKeyboard: kb } : undefined).catch(() => null);
+  return { signalId, notified: Boolean(sent) };
+}
+
+/**
+ * Logs & broadcasts a Copy-Trade / Whale Wallet discovery as a first-class Signal with its own Copy-Trade card format.
+ */
+export async function publishCopyTradeSignal(
+  env: Env,
+  params: {
+    userId: string;
+    traderName: string;
+    traderKind: 'SMART_WALLET' | 'SITE_TRADER' | 'COPY_TRADER' | string;
+    chainId?: string;
+    symbol: string;
+    direction: 'LONG' | 'SHORT' | 'BUY' | 'SELL' | string;
+    leverage?: number;
+    entryPrice: string | number;
+    stopLoss?: string | number | null;
+    tp1?: string | number | null;
+    traderWinRate?: number | null;
+    traderRoi30d?: number | null;
+    traderAmountUsd?: number | null;
+    userAllocUsd?: number | null;
+    actionNote?: string;
+    trustWalletSwapUrl?: string;
+    skipTelegramSend?: boolean;
+  }
+): Promise<{ signalId: string; notified: boolean }> {
+  const cfg = await resolveChannelAndBotConfig(env);
+  const signalId = randomId('sig');
+  const formattedText = formatCopyTradeSignalCard({
+    ...params,
+    channelHandle: cfg.channelHandle,
+  });
+  const normDir = String(params.direction || 'LONG').toUpperCase() === 'SHORT' || String(params.direction).toUpperCase() === 'SELL' ? 'SHORT' : 'LONG';
+  const canonSym = params.symbol.toUpperCase().endsWith('USDT') ? params.symbol.toUpperCase() : `${params.symbol.toUpperCase()}USDT`;
+
+  await env.DB.prepare(
+    `INSERT INTO signals (
+      id, source, symbol, direction, timeframe, price, stop_loss, leverage,
+      tp1, raw_text, status, engine_source, engine_label, channel_chat_id
+    ) VALUES (?, 'COPY_TRADE', ?, ?, '15m', ?, ?, ?, ?, ?, 'PROCESSED', 'COPY_TRADE', 'کپی‌ترید تاییدشده دلارینو', ?)`
+  )
+    .bind(
+      signalId,
+      canonSym,
+      normDir,
+      String(params.entryPrice || '0'),
+      String(params.stopLoss || '0'),
+      Math.max(1, Number(params.leverage || 1)),
+      params.tp1 ? String(params.tp1) : String(params.entryPrice || '0'),
+      formattedText,
+      cfg.channelHandle
+    )
+    .run()
+    .catch(() => {});
+
+  if (params.skipTelegramSend) {
+    return { signalId, notified: false };
+  }
+
+  const userRow = await env.DB.prepare(
+    `SELECT u.telegram_id, bc.notifications_enabled, bc.notification_prefs_json
+     FROM users u
+     LEFT JOIN bot_configs bc ON bc.user_id = u.id
+     WHERE u.id = ? LIMIT 1`
+  )
+    .bind(params.userId)
+    .first<{ telegram_id: string | null; notifications_enabled: number | null; notification_prefs_json?: string | null }>()
+    .catch(() => null);
+
+  if (
+    !userRow?.telegram_id ||
+    userRow.notifications_enabled === 0 ||
+    !shouldDeliverEngineSignalToUser(userRow.notification_prefs_json, {
+      engine: 'COPY_TRADE',
+      direction: normDir,
+    })
+  ) {
+    return { signalId, notified: false };
+  }
+
+  const botToken = await resolveTelegramBotToken(env);
+  if (!botToken) return { signalId, notified: false };
+  const tg = new TelegramBotClient(botToken);
+  const baseWeb = cfg.webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
+  const kb: InlineKeyboardButton[][] = [];
+  if (params.trustWalletSwapUrl) {
+    kb.push([{ text: `تایید در Trust Wallet 🛡`, url: params.trustWalletSwapUrl, style: 'success' }]);
+  }
+  if (baseWeb.startsWith('https://')) {
+    kb.push([{ text: '🏆 کپی‌ترید در مینی‌اپ', web_app: { url: `${baseWeb}/?tab=copy` }, style: 'primary' }]);
+  }
+  const sent = await tg.sendMessage(userRow.telegram_id, formattedText, kb.length ? { inlineKeyboard: kb } : undefined).catch(() => null);
+  return { signalId, notified: Boolean(sent) };
 }
 
 export async function publishSignalClosedCard(

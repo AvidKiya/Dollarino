@@ -147,6 +147,20 @@ export interface DexTradePosition {
   trustWallet?: { trustWalletDappUrl?: string; dexUrl?: string };
 }
 
+export interface TerminalTradeOverlay {
+  id?: string;
+  symbol: string;
+  direction?: 'LONG' | 'SHORT';
+  timeframe?: Timeframe;
+  entryPrice?: number;
+  stopLoss?: number;
+  tp1?: number;
+  tp2?: number | null;
+  tp3?: number | null;
+  sourceLabel?: string;
+  signalText?: string;
+}
+
 export interface OpenTradeRow {
   id: string;
   symbol: string;
@@ -169,6 +183,11 @@ export interface OpenTradeRow {
   source_key?: 'COPY' | 'AI' | 'MANUAL' | 'BOT';
   source_label_fa?: string;
   source_label_en?: string;
+  signal_id?: string | null;
+  signal_timeframe?: string | null;
+  signal_raw_text?: string | null;
+  signal_source?: string | null;
+  signal_engine_label?: string | null;
   mode?: 'PAPER' | 'LIVE';
   sparkline?: number[];
   opened_at?: string;
@@ -595,6 +614,8 @@ export interface DashboardPayload {
     message: string;
     created_at: string;
   }>;
+  portfolioBreakdown?: PortfolioBreakdownPayload | null;
+  pendingPopups?: UserPopupMessage[];
   charts: {
     dailyPnl: Array<{ day: string; pnl: number }>;
     weeklyResults: Array<{ day: string; pnl: number; count: number; wins?: number }>;
@@ -688,7 +709,7 @@ export interface CopyFollowRuleItem {
   trader_id: string;
   trader_label: string;
   chain_id: string;
-  execution_mode: 'TRUST_ONE_CLICK' | 'AUTO_EVM_ALLOWANCE' | 'AUTO_COPY_VAULT';
+  execution_mode: 'PAPER_SIMULATOR' | 'TRUST_ONE_CLICK' | 'AUTO_EVM_ALLOWANCE' | 'AUTO_COPY_VAULT';
   allocated_margin_usd: number;
   used_margin_usd: number;
   sizing_mode: 'FIXED_USD' | 'PCT_ALLOCATION' | 'PROPORTIONAL';
@@ -829,5 +850,80 @@ export interface FounderProfile {
   showPublic: boolean;
   updatedAt?: string | null;
 }
+
+export type PortfolioEngineMode = 'futures' | 'spot' | 'dex' | 'sniper' | 'copy';
+
+export interface ModePortfolioBucket {
+  mode: PortfolioEngineMode;
+  labelFa: string;
+  labelEn: string;
+  openCount: number;
+  pendingCount: number;
+  closedCount: number;
+  winsCount: number;
+  lossesCount: number;
+  winRatePct: number;
+  lockedMarginUsd: number;
+  unrealizedPnlUsd: number;
+  realizedPnlUsd: number;
+  todayRealizedPnlUsd: number;
+  netPnlUsd: number;
+  totalVolumeUsd: number;
+  activeEquityUsd: number;
+}
+
+export interface PortfolioBreakdownPayload {
+  accountMode: 'PAPER' | 'LIVE';
+  freeBalanceUsd: number;
+  lockedMarginUsd: number;
+  unrealizedPnlUsd: number;
+  totalEquityUsd: number;
+  realizedPnlUsd: number;
+  todayRealizedPnlUsd: number;
+  todayUnrealizedPnlUsd: number;
+  todayTotalPnlUsd: number;
+  totalOpenCount: number;
+  totalPendingCount: number;
+  totalClosedCount: number;
+  winsCount: number;
+  lossesCount: number;
+  winRatePct: number;
+  profitFactor: number;
+  totalDepositedUsd: number;
+  totalWithdrawnUsd: number;
+  netAccountReturnUsd: number;
+  netAccountReturnPct: number;
+  isReconciled: boolean;
+  reconciliationDiffUsd: number;
+  modes: Record<PortfolioEngineMode, ModePortfolioBucket>;
+}
+
+export interface UserPopupMessage {
+  id: string;
+  title_fa: string;
+  title_en: string | null;
+  body_fa: string;
+  body_en: string | null;
+  severity: 'INFO' | 'WARNING' | 'SUCCESS' | 'MAINTENANCE' | 'URGENT' | string;
+  target_scope: string;
+  target_user_id: string | null;
+  cta_label_fa: string | null;
+  cta_route: string | null;
+  dismissible: number;
+  is_active: number;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface SiteMaintenanceInfo {
+  enabled: boolean;
+  titleFa: string;
+  titleEn: string;
+  messageFa: string;
+  messageEn: string;
+  eta: string;
+  updatedAt: string | null;
+}
+
 
 

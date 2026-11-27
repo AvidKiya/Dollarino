@@ -1008,7 +1008,7 @@ export function toHeikinAshiCandles(candles: Candle[]): Candle[] {
   return out;
 }
 
-const ACTIVE_INDICATORS_KEY = 'dollarino_tv_indicators_v1';
+const ACTIVE_INDICATORS_KEY = 'dollarino_tv_indicators_v2';
 const CHART_TYPE_KEY = 'dollarino_tv_chart_type_v1';
 
 export function loadSavedIndicators(): ActiveTvIndicator[] {
@@ -1021,10 +1021,8 @@ export function loadSavedIndicators(): ActiveTvIndicator[] {
   } catch {
     /* ignore */
   }
-  return [
-    { uid: 'ind_ema20', id: 'EMA', params: { length: 20 }, visible: true, color: '#38bdf8' },
-    { uid: 'ind_ema50', id: 'EMA', params: { length: 50 }, visible: true, color: '#f59e0b' },
-  ];
+  // Start with a clean TradingView Superchart canvas (no default clutter indicators)
+  return [];
 }
 
 export function saveActiveIndicators(list: ActiveTvIndicator[]): void {

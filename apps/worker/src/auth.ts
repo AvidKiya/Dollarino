@@ -255,6 +255,7 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
       username: extRow.username,
       role: (extRow.role as AuthUser['role']) || 'user',
       telegramId: extRow.telegram_id,
+      authMethod: 'extension_key',
     };
     if (!extMap) {
       extMap = new Map();
@@ -342,6 +343,7 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
     role: (row.role as AuthUser['role']) || 'user',
     telegramId: row.telegram_id,
     mustChangeCredentials: mustChange,
+    authMethod: 'jwt',
   };
   if (!userMap) {
     userMap = new Map();
@@ -352,6 +354,29 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
 
   c.set('user', authUser);
   await next();
+}
+
+/**
+ * Stricter middleware for high-privilege operations (Admin, Vault key export/withdraw, 2FA, password, account deletion):
+ * blocks scoped Browser Extension keys (`X-Dollarino-Extension-Key`) and requires a full JWT session.
+ */
+export async function requireSessionAuth(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
+  let authed = false;
+  const authRes = await requireAuth(c, async () => {
+    authed = true;
+  });
+  if (!authed) return authRes;
+  const user = c.get('user');
+  if (user?.authMethod === 'extension_key') {
+    return c.json(
+      {
+        error: 'این عملیات امنیتی حساس فقط با نشست کامل کاربری مجاز است (کلید اکستنشن محدود است).',
+        code: 'EXTENSION_KEY_SCOPE_RESTRICTED',
+      },
+      403
+    );
+  }
+  return await next();
 }
 
 export function normalizePhoneInput(raw?: string | null): string {
@@ -634,8 +659,8 @@ export async function ensureUserDefaults(db: D1Database, userId: string) {
   const rec = computeDynamicRecommendedSettings(10_000, 'conservative');
   await db.prepare(
     `INSERT OR IGNORE INTO bot_configs
-     (user_id, bot_state, trading_mode, trade_execution_mode, market_type, direction_mode, notifications_enabled, notification_prefs_json, display_currency, strategy_key, active_engines_json, entry_timeframe, higher_timeframe, margin_pct, use_signal_leverage, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_enabled, trailing_stop_pct, trail_after_tp1, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, ai_gate_enabled, ai_min_confidence, sniper_enabled, sniper_auto_execute, sniper_min_safety_score, sniper_min_liquidity_usd, sniper_tp_pct, sniper_sl_pct, sniper_trailing_enabled, sniper_trailing_pct, bot_budget_mode, bot_budget_usd, bot_budget_pct, trading_mode_selected, webhook_secret)
-     VALUES (?, 'STOPPED', 'PAPER', 'MANUAL_CONFIRM', 'FUTURES', 'BOTH', 0, '{"tradeOpen":false,"tpSlHit":false,"aiSignals":false,"whaleCopy":false,"dailyDigest":false}', 'USD', 'dollarino_v01', '[]', '15m', '1h', ?, 0, ?, ?, ?, 1, ?, 1, ?, ?, ?, 1, 1, 0, 'ALL_MARKET', 0, 0, 70, 0, 0, 80, 35000, 35, 15, 1, 8, 'FULL_BALANCE', 0, 100, 0, ?)`
+     (user_id, bot_state, trading_mode, trade_execution_mode, market_type, direction_mode, notifications_enabled, notification_prefs_json, display_currency, strategy_key, active_engines_json, entry_timeframe, higher_timeframe, margin_pct, use_signal_leverage, max_leverage, max_open_positions, daily_max_loss_pct, trailing_stop_enabled, trailing_stop_pct, trail_after_tp1, tp1_close_pct, tp2_close_pct, tp3_close_pct, auto_breakeven_on_tp1, move_sl_to_tp1_on_tp2, auto_scan_top, scan_scope, allow_auto_flip, ai_gate_enabled, ai_min_confidence, sniper_enabled, sniper_auto_execute, sniper_min_safety_score, sniper_min_liquidity_usd, sniper_max_open_positions, sniper_tp_pct, sniper_sl_pct, sniper_trailing_enabled, sniper_trailing_pct, bot_budget_mode, bot_budget_usd, bot_budget_pct, trading_mode_selected, webhook_secret)
+     VALUES (?, 'STOPPED', 'PAPER', 'MANUAL_CONFIRM', 'FUTURES', 'BOTH', 0, '{"tradeOpen":false,"tpSlHit":false,"aiSignals":false,"whaleCopy":false,"dailyDigest":false}', 'USD', 'dollarino_v01', '[]', '15m', '1h', ?, 0, ?, ?, ?, 1, ?, 1, ?, ?, ?, 1, 1, 0, 'ALL_MARKET', 0, 0, 70, 0, 0, 70, 15000, 5, 35, 15, 1, 8, 'FULL_BALANCE', 0, 100, 0, ?)`
   ).bind(
     userId,
     rec.marginPct,
@@ -1129,6 +1154,9 @@ authRoutes.patch('/profile', requireAuth, async (c) => {
   }
 
   if (typeof body.newPassword === 'string' && body.newPassword.length > 0) {
+    if (u.authMethod === 'extension_key') {
+      return c.json({ error: 'تغییر رمز عبور با کلید اکستنشن مجاز نیست.', code: 'EXTENSION_KEY_SCOPE_RESTRICTED' }, 403);
+    }
     if (body.newPassword.length < 6) {
       return c.json({ error: 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد' }, 400);
     }
@@ -1174,6 +1202,8 @@ authRoutes.patch('/profile', requireAuth, async (c) => {
   if (body.useTelegramAvatar && u.telegramId) {
     await syncTelegramAvatarForUser(c.env, u.id, u.telegramId, undefined, true);
   }
+
+  invalidateAuthUserCache(c.env.DB, u.id);
 
   const full = await c.env.DB.prepare(
     `SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`
@@ -1271,7 +1301,7 @@ authRoutes.post('/telegram/merge-code', requireAuth, async (c) => {
   });
 });
 
-authRoutes.patch('/password', requireAuth, async (c) => {
+authRoutes.patch('/password', requireSessionAuth, async (c) => {
   const u = c.get('user');
   const body = await c.req.json<{ currentPassword?: string; newPassword?: string }>();
   const cur = body.currentPassword ?? '';
@@ -1284,6 +1314,7 @@ authRoutes.patch('/password', requireAuth, async (c) => {
   }
   const hash = await hashPassword(next);
   await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hash, u.id).run();
+  invalidateAuthUserCache(c.env.DB, u.id);
   return c.json({ ok: true });
 });
 
@@ -1323,6 +1354,10 @@ authRoutes.post('/upgrade-demo', requireAuth, async (c) => {
 
 // Telegram Mini App cryptographic initData authentication (HMAC-SHA256)
 authRoutes.post('/telegram-webapp', async (c) => {
+  const clientIp = getClientIp(c.req.raw);
+  const rl = await enforceRateLimit(c.env, `tgwa:${clientIp}`, 25, 300);
+  if (!rl.allowed) return c.json({ error: `تلاش بیش از حد. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+
   const body = await c.req.json<{ initData?: string }>().catch(() => ({} as { initData?: string }));
   const initData = (body.initData ?? '').trim();
   const botToken = await resolveTelegramBotToken(c.env);
@@ -1451,11 +1486,18 @@ authRoutes.post('/telegram-webapp', async (c) => {
 
 // One-click Magic Login from Telegram Bot (`/?tg_login=...`)
 authRoutes.post('/telegram-magic-login', async (c) => {
+  const clientIp = getClientIp(c.req.raw);
+  const rl = await enforceRateLimit(c.env, `tgmagic:${clientIp}`, 25, 300);
+  if (!rl.allowed) return c.json({ error: `تلاش بیش از حد. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+
   const toggles = await resolveAuthProviderToggles(c.env.DB);
   const body = await c.req.json<{ token?: string }>().catch(() => ({} as { token?: string }));
   const magic = (body.token ?? '').trim();
   if (!magic) {
     return c.json({ error: 'Magic login token is required' }, 400);
+  }
+  if (!toggles.telegramAuthEnabled && magic.length < 12) {
+    return c.json({ error: 'ورود و ثبت‌نام از طریق تلگرام هنوز توسط مدیر فعال نشده است.', code: 'TELEGRAM_AUTH_DISABLED' }, 403);
   }
   const row = await c.env.DB.prepare(
     `SELECT id, email, username, display_name, role, is_blocked, telegram_id, avatar_url, web_magic_expires_at,
@@ -1504,6 +1546,10 @@ authRoutes.post('/telegram-magic-login', async (c) => {
 
 // Telegram Login Widget verification (BotFather -> Login Widget) for phone-verified users
 authRoutes.post('/telegram-login-widget', async (c) => {
+  const clientIp = getClientIp(c.req.raw);
+  const rl = await enforceRateLimit(c.env, `tglw:${clientIp}`, 25, 300);
+  if (!rl.allowed) return c.json({ error: `تلاش بیش از حد. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+
   const toggles = await resolveAuthProviderToggles(c.env.DB);
   const botToken = await resolveTelegramBotToken(c.env);
   if (!botToken) {
@@ -1578,7 +1624,7 @@ authRoutes.post('/telegram-login-widget', async (c) => {
 });
 
 // Generate or retrieve personal Browser Extension & Mobile Shortcut API key
-authRoutes.post('/extension-key', requireAuth, async (c) => {
+authRoutes.post('/extension-key', requireSessionAuth, async (c) => {
   const u = c.get('user');
   const rl = await enforceRateLimit(c.env, `extkey:${u.id}`, 15, 300, { bypass: u.role === 'owner' || u.role === 'admin' });
   if (!rl.allowed) {
@@ -1592,6 +1638,7 @@ authRoutes.post('/extension-key', requireAuth, async (c) => {
   if (!key || body.rotate) {
     key = `dlr_ext_${randomId('').replace(/_/g, '')}${Math.random().toString(36).slice(2, 10)}`;
     await c.env.DB.prepare(`UPDATE users SET extension_api_key = ? WHERE id = ?`).bind(key, u.id).run();
+    invalidateAuthUserCache(c.env.DB, u.id);
   }
   return c.json({ ok: true, extensionApiKey: key });
 });
@@ -1616,7 +1663,7 @@ authRoutes.patch('/ui-preferences', requireAuth, async (c) => {
 });
 
 // Permanently delete regular user account, OR reset Admin/Owner account to fresh zero-state while keeping Admin role & access
-authRoutes.delete('/account', requireAuth, async (c) => {
+authRoutes.delete('/account', requireSessionAuth, async (c) => {
   const u = c.get('user');
 
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -1725,6 +1772,7 @@ authRoutes.delete('/account', requireAuth, async (c) => {
   }
 
   await c.env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(u.id).run();
+  invalidateAuthUserCache(c.env.DB, u.id);
   deleteCookie(c, 'dollarino_session', { path: '/' });
 
   return c.json({ ok: true, deleted: true });
@@ -2060,6 +2108,17 @@ authRoutes.post('/google', async (c) => {
     }
     gUser = { sub: info.sub, email: info.email, name: info.name, picture: info.picture };
   } else if (accessToken) {
+    if (gCfg.clientId) {
+      const tiRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`, {
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => null);
+      if (!tiRes || !tiRes.ok) return c.json({ error: 'توکن دسترسی گوگل معتبر نیست.' }, 401);
+      const tiInfo = (await tiRes.json()) as { aud?: string; azp?: string; email_verified?: string | boolean };
+      const tokenAud = tiInfo.aud || tiInfo.azp || '';
+      if (tokenAud && tokenAud !== gCfg.clientId) {
+        return c.json({ error: 'Google Client ID mismatch.' }, 401);
+      }
+    }
     const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${accessToken}` },
       signal: AbortSignal.timeout(8000),
@@ -2107,7 +2166,8 @@ authRoutes.get('/google/start', async (c) => {
     return c.redirect(`${origin}/?auth_error=google_not_configured`);
   }
   const ref = (c.req.query('ref') || '').trim().toUpperCase();
-  const state = await signJwt({ nonce: randomId('gs'), ref }, c.env.SESSION_JWT_SECRET);
+  const clientMode = c.req.query('client') === 'android' ? 'android' : 'web';
+  const state = await signJwt({ purpose: 'google_oauth_state', nonce: randomId('gs'), ref, client: clientMode }, c.env.SESSION_JWT_SECRET);
   const redirectUri = `${origin}/api/auth/google/callback`;
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', gCfg.clientId);
@@ -2130,15 +2190,22 @@ authRoutes.get('/google/callback', async (c) => {
   if (!toggles.googleAuthEnabled) {
     return c.redirect(`${origin}/?auth_error=google_auth_disabled`);
   }
+  const statePayload = state ? await verifyJwt(state, c.env.SESSION_JWT_SECRET) : null;
+  if (!statePayload || statePayload.purpose !== 'google_oauth_state') {
+    return c.redirect(`${origin}/?auth_error=invalid_oauth_state`);
+  }
+  const isAndroidClient = statePayload.client === 'android';
   if (errParam || !code) {
-    return c.redirect(`${origin}/?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`);
+    const errTarget = isAndroidClient
+      ? `dollarino://auth?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`
+      : `${origin}/?auth_error=${encodeURIComponent(errParam || 'google_cancelled')}`;
+    return c.redirect(errTarget);
   }
   const gCfg = await resolveGoogleOAuthConfig(c.env);
   if (!gCfg.clientId || !gCfg.clientSecret) {
     return c.redirect(`${origin}/?auth_error=google_not_configured`);
   }
-  const statePayload = state ? await verifyJwt(state, c.env.SESSION_JWT_SECRET) : null;
-  const referralCode = typeof statePayload?.ref === 'string' ? statePayload.ref : undefined;
+  const referralCode = typeof statePayload.ref === 'string' ? statePayload.ref : undefined;
 
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -2186,9 +2253,15 @@ authRoutes.get('/google/callback', async (c) => {
 
   const authRes = await issueAuthSessionOr2fa(c, found.row);
   if (authRes.requires2fa) {
-    return c.redirect(`${origin}/?google_2fa=${encodeURIComponent(authRes.tempToken)}`);
+    const target = isAndroidClient
+      ? `dollarino://auth?google_2fa=${encodeURIComponent(authRes.tempToken)}`
+      : `${origin}/?google_2fa=${encodeURIComponent(authRes.tempToken)}`;
+    return c.redirect(target);
   }
-  return c.redirect(`${origin}/?google_token=${encodeURIComponent(authRes.token)}`);
+  const okTarget = isAndroidClient
+    ? `dollarino://auth?google_token=${encodeURIComponent(authRes.token)}`
+    : `${origin}/?google_token=${encodeURIComponent(authRes.token)}`;
+  return c.redirect(okTarget);
 });
 
 // ==================== 3) Mandatory Profile Completion (Display Name, Username, Password) ====================
@@ -2518,7 +2591,7 @@ authRoutes.get('/2fa/status', requireAuth, async (c) => {
   });
 });
 
-authRoutes.post('/2fa/setup', requireAuth, async (c) => {
+authRoutes.post('/2fa/setup', requireSessionAuth, async (c) => {
   const u = c.get('user');
   const body = await c.req.json<{ force?: boolean }>().catch(() => ({} as { force?: boolean }));
   const forceRegenerate = Boolean(body.force) || c.req.query('force') === '1';
@@ -2548,8 +2621,10 @@ authRoutes.post('/2fa/setup', requireAuth, async (c) => {
   return c.json({ ok: true, secret, otpauthUri, issuer: 'Dollarino', account: label });
 });
 
-authRoutes.post('/2fa/enable', requireAuth, async (c) => {
+authRoutes.post('/2fa/enable', requireSessionAuth, async (c) => {
   const u = c.get('user');
+  const rl = await enforceRateLimit(c.env, `2faen:${u.id}`, 12, 300);
+  if (!rl.allowed) return c.json({ error: `تلاش بیش از حد. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   const body = await c.req
     .json<{ code?: string; clientTimestampMs?: number }>()
     .catch(() => ({} as { code?: string; clientTimestampMs?: number }));
@@ -2575,12 +2650,15 @@ authRoutes.post('/2fa/enable', requireAuth, async (c) => {
   )
     .bind(u.id)
     .run();
+  invalidateAuthUserCache(c.env.DB, u.id);
   const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(u.id).first();
   return c.json({ ok: true, enabled: true, user: fullUser });
 });
 
-authRoutes.post('/2fa/disable', requireAuth, async (c) => {
+authRoutes.post('/2fa/disable', requireSessionAuth, async (c) => {
   const u = c.get('user');
+  const rl = await enforceRateLimit(c.env, `2fadis:${u.id}`, 10, 300);
+  if (!rl.allowed) return c.json({ error: `تلاش بیش از حد. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   const body = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
   const code = (body.code || '').replace(/\s+/g, '');
   if (!/^\d{6}$/.test(code)) {
@@ -2604,6 +2682,7 @@ authRoutes.post('/2fa/disable', requireAuth, async (c) => {
   )
     .bind(u.id)
     .run();
+  invalidateAuthUserCache(c.env.DB, u.id);
   const fullUser = await c.env.DB.prepare(`SELECT ${USER_PROFILE_COLUMNS} FROM users WHERE id = ?`).bind(u.id).first();
   return c.json({ ok: true, enabled: false, user: fullUser });
 });

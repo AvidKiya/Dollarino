@@ -16,6 +16,7 @@ import {
   isValidBlockchainTxHash,
   SERVER_PROFIT_FEE_PCT,
   tryVerifyEvmReceiptOnchain,
+  verifyBlockchainTxOnchain,
 } from '../services/server-fee.js';
 import { invalidateSettingsCache } from '../services/settings-cache.js';
 import {
@@ -1241,10 +1242,17 @@ subscriptionRoutes.post('/redeem-gift', async (c) => {
   ).bind(code, user.id).first();
   if (already) return c.json({ error: 'You have already redeemed this gift code' }, 409);
 
+  // Atomic capacity reservation prevents concurrent redemption race exceeding max_uses
+  const incRes = await c.env.DB.prepare(
+    `UPDATE gift_codes SET uses_count = uses_count + 1 WHERE code = ? AND is_active = 1 AND uses_count < max_uses`
+  ).bind(code).run();
+  if (!incRes.meta?.changes || incRes.meta.changes < 1) {
+    return c.json({ error: 'Gift code usage limit reached' }, 400);
+  }
+
   const subId = randomId('sub');
   const redId = randomId('red');
   await c.env.DB.prepare(`INSERT INTO gift_redemptions (id, code, user_id) VALUES (?, ?, ?)`).bind(redId, code, user.id).run();
-  await c.env.DB.prepare(`UPDATE gift_codes SET uses_count = uses_count + 1 WHERE code = ?`).bind(code).run();
   await c.env.DB.prepare(
     `INSERT INTO user_subscriptions (id, user_id, plan_code, status, payment_method, payment_reference, amount_usd, started_at, expires_at, admin_note)
      VALUES (?, ?, ?, 'ACTIVE', 'ADMIN_GRANT', ?, 0, datetime('now'), datetime('now', '+' || ? || ' days'), 'Gift code redeemed')`
@@ -1319,6 +1327,8 @@ subscriptionRoutes.get('/invoices', async (c) => {
 
 subscriptionRoutes.post('/treasury/verify-auto', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `tr_auto:${user.id}`, 10, 300);
+  if (!rl.allowed) return c.json({ error: `درخواست زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   const body = (await c.req.json().catch(() => ({}))) as {
     network?: string;
     asset?: string;
@@ -1357,6 +1367,8 @@ subscriptionRoutes.post('/treasury/verify-auto', async (c) => {
 
 subscriptionRoutes.post('/treasury/deposit', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `tr_dep:${user.id}`, 12, 300);
+  if (!rl.allowed) return c.json({ error: `درخواست واریز بیش از حد مجاز. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   const body = (await c.req.json().catch(() => ({}))) as {
     asset?: string;
     network?: 'BEP20' | 'TRC20' | 'ERC20' | 'BASE' | 'ARBITRUM' | 'SOLANA' | 'TON';
@@ -1406,6 +1418,8 @@ subscriptionRoutes.post('/treasury/deposit', async (c) => {
 
 subscriptionRoutes.post('/server-fees/settle', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `feesettle:${user.id}`, 12, 300);
+  if (!rl.allowed) return c.json({ error: `درخواست تسویه بیش از حد مجاز. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   const body = await c.req
     .json<{ txHash?: string; network?: string; asset?: string; senderAddress?: string; amountUsd?: number }>()
     .catch(() => ({} as { txHash?: string; network?: string; asset?: string; senderAddress?: string; amountUsd?: number }));
@@ -1419,53 +1433,21 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
 
   const [dup, dupOwn, dupTreasury] = await Promise.all([
     c.env.DB.prepare(
-      `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND user_id != ? LIMIT 1`
+      `SELECT id FROM server_fee_ledger WHERE LOWER(tx_hash) = LOWER(?) AND user_id != ? LIMIT 1`
     ).bind(txHash, user.id).first<{ id: string }>().catch(() => null),
     c.env.DB.prepare(
-      `SELECT id FROM server_fee_ledger WHERE tx_hash = ? AND status IN ('SETTLED_ONCHAIN', 'PENDING_VERIFY') LIMIT 1`
+      `SELECT id FROM server_fee_ledger WHERE LOWER(tx_hash) = LOWER(?) AND status IN ('SETTLED_ONCHAIN', 'PENDING_VERIFY') LIMIT 1`
     ).bind(txHash).first<{ id: string }>().catch(() => null),
     c.env.DB.prepare(
-      `SELECT id FROM treasury_deposits WHERE tx_hash = ? LIMIT 1`
+      `SELECT id FROM treasury_deposits WHERE LOWER(tx_hash) = LOWER(?) LIMIT 1`
     ).bind(txHash).first<{ id: string }>().catch(() => null),
   ]);
   if (dup || dupOwn || dupTreasury) {
     return c.json({ error: 'این هش تراکنش قبلاً برای تسویه یا واریز ثبت شده است و قابل استفاده مجدد نیست.' }, 409);
   }
 
-  const receipt = await tryVerifyEvmReceiptOnchain(txHash);
-  if (receipt === 'FAILED') {
-    return c.json({ error: 'تراکنش در بلاکچین ناموفق (Reverted) بوده است. لطفاً تراکنش موفق ثبت کنید.' }, 400);
-  }
-
   const standingBefore = await evaluateUserFeeStanding(c.env.DB, user.id);
-  const net = (body.network || (/^0x[0-9a-fA-F]{64}$/.test(txHash) ? 'BEP20' : 'TRC20')).toUpperCase();
-  const asset = (body.asset || 'USDT').toUpperCase();
-  const invAmt = Math.max(0, Number(body.amountUsd || standingBefore.totalDueUsd || standingBefore.accruedUsd || 0));
-  const nextLedgerStatus = receipt === 'CONFIRMED' || standingBefore.lockStatus !== 'LOCKED' ? 'SETTLED_ONCHAIN' : 'PENDING_VERIFY';
-
-  let settledDebtUsd = Number(standingBefore.totalDueUsd || 0);
-  let addedCreditUsd = 0;
-  let settledCount = 0;
-
-  if (nextLedgerStatus === 'SETTLED_ONCHAIN') {
-    const resSplit = await settleDebtFirstThenCredit(c.env.DB, user.id, invAmt, txHash, {
-      alsoCreditWalletBalance: false,
-    });
-    settledDebtUsd = resSplit.settledDebtUsd;
-    addedCreditUsd = resSplit.addedCreditUsd;
-    settledCount = resSplit.settledCount;
-  } else {
-    const updated = await c.env.DB.prepare(
-      `UPDATE server_fee_ledger SET status = 'PENDING_VERIFY', tx_hash = ? WHERE user_id = ? AND status = 'ACCRUED'`
-    ).bind(txHash, user.id).run();
-    settledCount = updated.meta?.changes ?? 0;
-    await c.env.DB.prepare(
-      `UPDATE users SET fee_lock_status = 'PENDING_REVIEW' WHERE id = ?`
-    ).bind(user.id).run().catch(() => {});
-  }
-
-  const depId = randomId('tset');
-  const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const net = (body.network || (/^0x[0-9a-fA-F]{64}$/.test(txHash) ? 'BEP20' : /^[0-9a-fA-F]{64}$/.test(txHash) ? 'TRC20' : 'SOLANA')).toUpperCase();
 
   const settings = await c.env.DB.prepare(
     `SELECT key, value FROM system_settings WHERE key IN ('treasury_evm_receiver', 'trust_wallet_evm_receiver', 'treasury_trc20_receiver', 'usdt_trc20_wallet', 'treasury_solana_receiver', 'treasury_ton_receiver')`
@@ -1481,6 +1463,46 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
         : net === 'TON'
           ? smap.get('treasury_ton_receiver') || null
           : smap.get('treasury_evm_receiver') || smap.get('trust_wallet_evm_receiver') || null;
+
+  void tryVerifyEvmReceiptOnchain;
+  const receipt = await verifyBlockchainTxOnchain(net, txHash, receiverAddress || undefined);
+  if (receipt === 'FAILED') {
+    return c.json({ error: 'تراکنش در بلاکچین ناموفق (Reverted) بوده است. لطفاً تراکنش موفق ثبت کنید.' }, 400);
+  }
+  const asset = (body.asset || 'USDT').toUpperCase();
+  const dueUsd = Math.max(0, Number(standingBefore.totalDueUsd || standingBefore.accruedUsd || 0));
+  const claimedAmt = Number(body.amountUsd || 0);
+  // Security hardening: unconfirmed TX hashes MUST NEVER grant self-declared prepaid credit or auto-clear locked debt!
+  const invAmt =
+    receipt === 'CONFIRMED' && Number.isFinite(claimedAmt) && claimedAmt > 0 && claimedAmt <= 50_000
+      ? Math.max(dueUsd, claimedAmt)
+      : dueUsd;
+  const nextLedgerStatus = receipt === 'CONFIRMED' ? 'SETTLED_ONCHAIN' : 'PENDING_VERIFY';
+
+  let settledDebtUsd = 0;
+  let addedCreditUsd = 0;
+  let settledCount = 0;
+
+  if (nextLedgerStatus === 'SETTLED_ONCHAIN') {
+    const resSplit = await settleDebtFirstThenCredit(c.env.DB, user.id, invAmt, txHash, {
+      alsoCreditWalletBalance: false,
+    });
+    settledDebtUsd = resSplit.settledDebtUsd;
+    addedCreditUsd = resSplit.addedCreditUsd;
+    settledCount = resSplit.settledCount;
+  } else {
+    const updated = await c.env.DB.prepare(
+      `UPDATE server_fee_ledger SET status = 'PENDING_VERIFY', tx_hash = ? WHERE user_id = ? AND status = 'ACCRUED'`
+    ).bind(txHash, user.id).run();
+    settledCount = updated.meta?.changes ?? 0;
+    settledDebtUsd = dueUsd;
+    await c.env.DB.prepare(
+      `UPDATE users SET fee_lock_status = 'PENDING_REVIEW' WHERE id = ? AND COALESCE(fee_lock_status, 'ACTIVE') != 'LOCKED'`
+    ).bind(user.id).run().catch(() => {});
+  }
+
+  const depId = randomId('tset');
+  const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   const noteStr =
     addedCreditUsd > 0 && settledDebtUsd > 0
@@ -1563,6 +1585,8 @@ subscriptionRoutes.post('/server-fees/settle', async (c) => {
 
 subscriptionRoutes.post('/server-fees/prepay', async (c) => {
   const user = c.get('user');
+  const rl = await enforceRateLimit(c.env, `feeprep:${user.id}`, 10, 300);
+  if (!rl.allowed) return c.json({ error: `درخواست بیش از حد مجاز. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
   const body = await c.req
     .json<{ amountUsd?: number; txHash?: string; network?: string; asset?: string; senderAddress?: string }>()
     .catch(() => ({} as { amountUsd?: number; txHash?: string; network?: string; asset?: string; senderAddress?: string }));
@@ -1576,16 +1600,29 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
   }
 
   const [dup, dupTreasury] = await Promise.all([
-    c.env.DB.prepare(`SELECT id FROM server_fee_ledger WHERE tx_hash = ? LIMIT 1`)
+    c.env.DB.prepare(`SELECT id FROM server_fee_ledger WHERE LOWER(tx_hash) = LOWER(?) LIMIT 1`)
       .bind(txHash).first<{ id: string }>().catch(() => null),
-    c.env.DB.prepare(`SELECT id FROM treasury_deposits WHERE tx_hash = ? LIMIT 1`)
+    c.env.DB.prepare(`SELECT id FROM treasury_deposits WHERE LOWER(tx_hash) = LOWER(?) LIMIT 1`)
       .bind(txHash).first<{ id: string }>().catch(() => null),
   ]);
   if (dup || dupTreasury) {
     return c.json({ error: 'این هش تراکنش قبلاً ثبت شده است.' }, 409);
   }
 
-  const receipt = await tryVerifyEvmReceiptOnchain(txHash);
+  const net = (body.network || (/^0x[0-9a-fA-F]{64}$/.test(txHash) ? 'BEP20' : /^[0-9a-fA-F]{64}$/.test(txHash) ? 'TRC20' : 'SOLANA')).toUpperCase();
+  const prepayReceivers = await c.env.DB.prepare(
+    `SELECT key, value FROM system_settings WHERE key IN ('treasury_evm_receiver', 'trust_wallet_evm_receiver', 'treasury_trc20_receiver', 'usdt_trc20_wallet', 'treasury_solana_receiver', 'treasury_ton_receiver')`
+  ).all<{ key: string; value: string }>().catch(() => ({ results: [] }));
+  const pm = new Map(prepayReceivers.results.map((r) => [r.key, r.value]));
+  const expectedRcv =
+    net === 'TRC20'
+      ? pm.get('treasury_trc20_receiver') || pm.get('usdt_trc20_wallet') || ''
+      : net === 'SOLANA'
+        ? pm.get('treasury_solana_receiver') || ''
+        : net === 'TON'
+          ? pm.get('treasury_ton_receiver') || ''
+          : pm.get('treasury_evm_receiver') || pm.get('trust_wallet_evm_receiver') || '';
+  const receipt = await verifyBlockchainTxOnchain(net, txHash, expectedRcv || undefined);
   if (receipt === 'FAILED') {
     return c.json({ error: 'تراکنش در بلاکچین ناموفق بوده است.' }, 400);
   }
@@ -1593,7 +1630,6 @@ subscriptionRoutes.post('/server-fees/prepay', async (c) => {
   const autoConfirm = receipt === 'CONFIRMED';
   const feePreId = randomId('fee_pre');
   const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const net = (body.network || (/^0x[0-9a-fA-F]{64}$/.test(txHash) ? 'BEP20' : 'TRC20')).toUpperCase();
   const asset = (body.asset || 'USDT').toUpperCase();
 
   let settledDebtUsd = 0;

@@ -1,4 +1,9 @@
 import type { Candle, ExchangeProviderId, MarketType, Timeframe } from '@dollarino/core';
+import {
+  fetchTrustWalletAlignedMarkets,
+  TRUST_WALLET_ASSET_MAP,
+  type TrustWalletAssetCategory,
+} from '../services/trustwallet-universe.js';
 import { buildToobitRequest, normalizeProxyBaseUrl, type ToobitProxyConfig } from './proxy.js';
 
 export const MAJOR_LIQUID_COINS = [
@@ -24,6 +29,16 @@ export interface ExchangeMarketInfo {
   quotePrecision: number;
   minTradeVolume: string;
   status: string;
+  // Trust Wallet parity fields
+  nameEn?: string;
+  nameFa?: string;
+  category?: TrustWalletAssetCategory;
+  primaryChain?: string;
+  chains?: string[];
+  contractAddress?: string;
+  logoUrl?: string;
+  marketCapUsd?: number;
+  priceSource?: string;
 }
 
 const MARKET_CACHE = new Map<string, { ts: number; data: ExchangeMarketInfo[] }>();
@@ -424,6 +439,83 @@ export async function getExchangeMarkets(
       maxLeverage: marketType === 'SPOT' ? 1 : m.maxLeverage,
     }));
   }
+
+  // Enrich & synchronize with Trust Wallet's complete asset catalog & canonical spot prices
+  try {
+    const twQuotes = await fetchTrustWalletAlignedMarkets(
+      list.map((m) => ({
+        symbol: m.symbol,
+        base: m.base,
+        lastPrice: m.lastPrice,
+        changePct24h: m.changePct24h,
+        high24h: m.high24h,
+        low24h: m.low24h,
+        volume24h: m.volume24h,
+      }))
+    );
+    const twMap = new Map(twQuotes.map((q) => [q.symbol, q]));
+    const existingSyms = new Set<string>();
+
+    list = list.map((m) => {
+      existingSyms.add(m.symbol);
+      const tw = twMap.get(m.symbol);
+      const meta = TRUST_WALLET_ASSET_MAP.get(m.base);
+      if (!tw && !meta) return m;
+      const useTwPrice = tw && tw.priceSource === 'TRUST_COINGECKO' && tw.priceUsd > 0;
+      const cleanPx = useTwPrice ? tw.priceUsd : Number(m.lastPrice || 0);
+      return {
+        ...m,
+        lastPrice: cleanPx > 0 ? String(cleanPx) : m.lastPrice,
+        changePct24h: useTwPrice ? tw.changePct24h.toFixed(2) : m.changePct24h,
+        high24h: useTwPrice && tw.high24h > 0 ? String(tw.high24h) : m.high24h,
+        low24h: useTwPrice && tw.low24h > 0 ? String(tw.low24h) : m.low24h,
+        volume24h: Math.max(m.volume24h, tw?.volume24hUsd ?? 0),
+        nameEn: tw?.nameEn || meta?.nameEn,
+        nameFa: tw?.nameFa || meta?.nameFa,
+        category: tw?.category || meta?.category,
+        primaryChain: tw?.primaryChain || meta?.primaryChain,
+        chains: tw?.chains || meta?.chains,
+        contractAddress: tw?.contractAddress || meta?.contractAddress,
+        logoUrl: tw?.logoUrl || meta?.trustLogoUrl,
+        marketCapUsd: tw?.marketCapUsd || 0,
+        priceSource: tw?.priceSource || 'SPOT_AGGREGATE',
+      };
+    });
+
+    // Append Trust Wallet catalog tokens missing from the exchange perp list so Markets & Radar cover all Trust Wallet assets
+    for (const tw of twQuotes) {
+      if (existingSyms.has(tw.symbol) || tw.priceUsd <= 0) continue;
+      list.push({
+        symbol: tw.symbol,
+        exchangeSymbol: tw.symbol,
+        marketType,
+        base: tw.base,
+        quote: 'USDT',
+        lastPrice: String(tw.priceUsd),
+        changePct24h: tw.changePct24h.toFixed(2),
+        high24h: String(tw.high24h || tw.priceUsd),
+        low24h: String(tw.low24h || tw.priceUsd),
+        volume24h: tw.volume24hUsd,
+        maxLeverage: marketType === 'SPOT' ? 1 : tw.tradableOnPerp ? 25 : 1,
+        basePrecision: tw.priceUsd >= 100 ? 3 : 2,
+        quotePrecision: tw.priceUsd >= 10 ? 2 : tw.priceUsd >= 0.1 ? 4 : 6,
+        minTradeVolume: tw.priceUsd >= 100 ? '0.001' : '0.1',
+        status: 'TRADING',
+        nameEn: tw.nameEn,
+        nameFa: tw.nameFa,
+        category: tw.category,
+        primaryChain: tw.primaryChain,
+        chains: tw.chains,
+        contractAddress: tw.contractAddress,
+        logoUrl: tw.logoUrl,
+        marketCapUsd: tw.marketCapUsd,
+        priceSource: tw.priceSource,
+      });
+    }
+  } catch {
+    // Keep exchange list if Trust Wallet catalog sync fails transiently
+  }
+
   MARKET_CACHE.set(cacheKey, { ts: Date.now(), data: list });
   return list;
 }

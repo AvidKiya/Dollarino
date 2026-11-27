@@ -3,12 +3,15 @@ import {
   ArrowLeft,
   Award,
   BadgeCheck,
+  BookOpen,
   Bot,
   Brain,
+  CandlestickChart,
   Check,
   CheckCircle2,
   ChevronDown,
   Code2,
+  Compass,
   Download,
   FileCheck2,
   Flame,
@@ -25,7 +28,9 @@ import {
   Percent,
   Phone,
   Play,
+  PowerOff,
   Radar,
+  Rocket,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -35,6 +40,7 @@ import {
   UserCheck,
   Users,
   Vault,
+  Wallet,
   X,
   Zap,
 } from 'lucide-react';
@@ -48,6 +54,7 @@ import { DollarinoBrandMark } from '../components/BrandGraphics';
 import { ChainLogo, ExchangeLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { Sparkline } from '../components/DollarinoViz';
+import { LandingLiveProofHub } from '../components/LandingLiveProofHub';
 import { LiveTickerBar } from '../components/LiveTickerBar';
 import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { PwaInstallModal } from '../components/PwaInstallModal';
@@ -130,7 +137,7 @@ export function LandingPage({
   const [heroCoin, setHeroCoin] = useState<string>('BTCUSDT');
   const [liveCandles, setLiveCandles] = useState<number[]>([]);
   const [liveCoins, setLiveCoins] = useState<SnapshotCoin[]>(INITIAL_TICKER_COINS);
-  const [activePillar, setActivePillar] = useState<'simple' | 'myai' | 'copy' | 'ide'>('simple');
+  const [activePillar, setActivePillar] = useState<'simple' | 'myai' | 'copy' | 'ide' | 'sniper'>('simple');
   const [openFaq, setOpenFaq] = useState<number>(0);
   const [pwaOpen, setPwaOpen] = useState(false);
   const [founder, setFounder] = useState<FounderProfile | null>(null);
@@ -264,67 +271,73 @@ export function LandingPage({
   const pillars = [
     {
       id: 'simple' as const,
-      badge: '۰۱ · DOLLARINO AI',
-      title: isFa ? 'هوش مصنوعی دلارینو: ترید هوشمند اتومات با اجماع چندمدله' : 'Dollarino AI: 100% Automated Multi-LLM Trading',
-      shortTitle: isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI',
+      badge: '۰۱ · DOLLARINO AI (DEFAULT OFF)',
+      title: isFa ? 'هوش مصنوعی مرکزی دلارینو: تحلیل چندمدله و اجرای هوشمند' : 'Central Dollarino AI: Multi-LLM Consensus Execution',
+      shortTitle: isFa ? 'هوش مصنوعی مرکزی' : 'Central AI',
       icon: Bot,
       color: '#10b981',
       desc: isFa
-        ? 'مناسب همه افراد حتی بدون دانش فنی! فقط میزان سرمایه و ریسک‌پذیری (کم‌ریسک، متعادل یا پرقدرت) را انتخاب کنید تا هوش مصنوعی دلارینو ۲۴ ساعته بهترین فرصت‌ها را پیدا کند، معامله باز کند و با ۳ تارگت + استاپ‌لاس خودکار مدیریت کند.'
-        : 'Designed for everyone. Choose your comfort level and Dollarino AI scans markets 24/7, enters trades, and manages 3 take-profits + stop-loss automatically.',
+        ? 'به‌صورت پیش‌فرض خاموش است و هر زمان خودتان روشنش کنید فعال می‌شود! با اجماع چند مدل AI، ساختار بازار، لیکوییدیتی و حجم را تحلیل کرده و معاملات را با ۳ تارگت و Risk-Free خودکار مدیریت می‌کند.'
+        : 'Starts OFF by default until you switch it on. Multi-LLM consensus analyzes structure, liquidity & momentum and executes with 3 TPs + automatic Risk-Free protection.',
       bullets: isFa
-        ? ['فقط با یک لمس روشن و خاموش می‌شود', 'بدون نیاز به دانش کدنویسی یا تحلیل پیچیده', 'مدیریت خودکار ریسک‌فری و حد ضرر هوشمند']
-        : ['1-tap start & stop', 'Zero technical setup required', 'Automatic 3-TP & Risk-Free management'],
+        ? ['پیش‌فرض خاموش با راهنمای گام‌به‌گام تک‌باره روی کارت', 'انتخاب سطح اطمینان و مدیریت ۳ تارگت + استاپ‌لاس هوشمند', 'امکان پرش مستقیم از معامله به سوپرچارت و مشاهده دلیل سیگنال']
+        : ['Default OFF with interactive guide card', 'Configurable confidence threshold & 3-TP + smart SL', '1-click jump from active position to Superchart & AI reason'],
     },
     {
       id: 'myai' as const,
-      badge: '۰۲ · RAW PERSONAL AI',
-      title: isFa ? 'هوش مصنوعی خام (شخصی): هوش مصنوعی خودت را آموزش بده' : 'Raw Personal AI: Train Your Own AI Trader',
-      shortTitle: isFa ? 'هوش مصنوعی خام (شخصی)' : 'Raw Personal AI',
+      badge: '۰۲ · PERSONAL RAW AI',
+      title: isFa ? 'هوش مصنوعی شخصی (خام): استراتژی خودت را به فارسی آموزش بده' : 'Personal Raw AI: Train Your Own AI Strategist',
+      shortTitle: isFa ? 'هوش مصنوعی من' : 'My Personal AI',
       icon: Brain,
       color: '#1652f0',
       desc: isFa
-        ? 'یک هوش مصنوعی کاملاً خام که استراتژی شما را با چت فارسی یاد می‌گیرد! به او بگویید چه تایم‌فریمی، چه اندیکاتورهایی (مثلاً RSI، EMA، MACD یا سوپرترند)، چه حد ضرر و سودی و کدام ارزها را دوست دارید — روی بازار تست بگیرید و فعال کنید تا دقیقاً مثل خودتان ترید کند.'
-        : 'Starts as a blank AI. Chat in plain language to teach your exact rules, indicators, coins, SL & TP — test on live candles and activate 24/7 execution.',
+        ? 'یک ایجنت AI کاملاً شخصی! به زبان طبیعی (فارسی یا انگلیسی) یا با ارسال عکس چارت به آن بگویید دنبال چه ستاپ، اندیکاتور یا سطوحی بگردد؛ قوانین را به دستورالعمل ساختاریافته تبدیل می‌کند و ۲۴/۷ در خدمت شماست.'
+        : 'Your private blank AI agent. Teach it in plain Persian/English or send chart screenshots; it extracts structured rules, validates setups on live candles, and trades 24/7.',
       bullets: isFa
-        ? ['یادگیری سریع از طریق گفتگو به زبان ساده', 'استخراج خودکار قوانین و بک‌تست روی بازار زنده', 'امکان ریست و آموزش استراتژی جدید در هر لحظه']
-        : ['Teaches easily through natural chat', 'Extracts structured rules & runs instant backtests', 'Reset and retrain anytime'],
-    },
-    {
-      id: 'copy' as const,
-      badge: '۰۳ · VERIFIED & SMART WALLET COPY V2',
-      title: isFa ? 'کپی‌ترید دوگانه: تریدرهای تاییدشده + شکار ولت نهنگ‌ها (V2)' : 'Dual Copy Trade: Verified VIPs + Smart-Money Wallets (V2)',
-      shortTitle: isFa ? 'کپی‌ترید ولت و VIP' : 'Copy Trade V2',
-      icon: Trophy,
-      color: '#f59e0b',
-      desc: isFa
-        ? 'هم معاملات تریدرهای تاییدشده سایت را روی Trust Wallet و شبیه‌ساز قابل تنظیم (\u2066$50–$10M\u2069) کپی کنید و هم ۱۰ ولت برتر هوشمند یا هر ولت دلخواه در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین جداگانه، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
-        : 'Mirror verified site traders on Trust Wallet & Custom Demo ($50–$10M) AND track Top-10 Smart-Money or custom wallets across Solana, Base, ETH, BSC, TON & TRON with isolated margin boxes, 7-day backtest, Anti-Rug shield, 3-TP + Moonbag, and 24/7 Copy-Vault.',
-      bullets: isFa
-        ? [
-            'کپی فقط معاملات جدید از لحظه فالو + باکس مارجین ایزوله برای هر تریدر',
-            'سپر ضدراگ واقعی (GoPlus + Honeypot.is + RugCheck) و خروج خودکار Dev-Sell',
-            'حالت اجرای تک‌کلیک Trust Wallet یا خزانه تمام‌اتومات ۲۴/۷ با بک‌آپ کلید',
-          ]
-        : [
-            'Follows only fresh trades from follow-time forward + isolated margin box per trader',
-            'Real-time Anti-Rug (GoPlus + Honeypot.is + RugCheck) & Dev-Sell auto exit',
-            'Trust Wallet 1-Click DApp or 24/7 Auto Copy-Vault with encrypted key backup',
-          ],
+        ? ['پشتیبانی از تحلیل تصویر چارت (Vision) و تبدیل ایده به استراتژی', 'ایزوله‌شده برای حساب شما بدون تداخل با موتورهای دیگر', 'امکان تنظیم فیلتر ارسال سیگنال اختصاصی در تلگرام و پنل']
+        : ['Supports Chart Vision screenshots & idea-to-rule conversion', 'Strictly isolated to your account preferences', 'Dedicated Telegram & web signal delivery filters'],
     },
     {
       id: 'ide' as const,
-      badge: '۰۴ · HUNTING STRATEGY (2 MODES)',
-      title: isFa ? 'استراتژی شکار: استراتژی‌های آماده ما + استراتژی شخصی شما' : 'Hunting Strategy: Our Presets + Your Custom Code',
-      shortTitle: isFa ? 'استراتژی شکار' : 'Hunting Strategy',
+      badge: '۰۳ · SUPERCHARTS & PINE V6 LAB',
+      title: isFa ? 'استراتژی شکار و آزمایشگاه Pine Script v4/v5/v6 + Python' : 'Strategy Hunter & Pine Script v4/v5/v6 + Python Lab',
+      shortTitle: isFa ? 'استراتژی و Pine v6' : 'Strategy & Pine',
       icon: Code2,
       color: '#8b5cf6',
       desc: isFa
-        ? 'دو راه در یک موتور: می‌توانید از استراتژی‌های آماده و تست‌شده دلارینو (دُرنا V1، KBOS و شکار نقدینگی SP2L) استفاده کنید، یا استراتژی Pine Script / Python شخصی خودتان را در آزمایشگاه بسازید و با بک‌تست ۹۰۰ کندلی ۲۴/۷ اجرا کنید.'
-        : 'Two modes in one engine: trade Dollarino preset hunters (Dorna V1, KBOS, SP2L) OR write/paste your own Pine Script or Python strategy.',
+        ? 'استراتژی‌های آماده دُرنا V1، KBOS V11 و SP2L را اجرا کنید یا کد Pine Script v4/v5/v6 و Python خودتان را روی ۸۲۰+ جفت‌ارز Trust Wallet با بک‌تست زنده ۹۰۰ کندلی و گرافیک کامل TradingView تست و خودکارسازی کنید.'
+        : 'Run proven Dorna V1, KBOS V11 & SP2L presets or paste Pine Script v4/v5/v6 & Python code across 820+ Trust Wallet pairs with 900-candle live backtests and Superchart overlays.',
       bullets: isFa
-        ? ['بخش ۱: استراتژی‌های آماده و غیرریپینت دُرنا V1، KBOS و SP2L', 'بخش ۲: ورود Pine Script v5 (با گرافیک کامل روی چارت)، Python و TP/SL درصدی/قیمتی', 'بک‌تست زنده ۹۰۰ کندلی و اجرای همزمان با بقیه موتورها روی Trust Wallet و شبیه‌ساز دمو']
-        : ['Mode 1: Preset Dorna V1, KBOS & SP2L hunters', 'Mode 2: Full Pine Script v5 chart plots + Python & %/$ TP/SL', '24/7 concurrent multi-engine Trust Wallet & Simulator execution'],
+        ? ['اجرای بومی Pine Script v4/v5/v6 با رسم خطوط، پلات، جدول و HUD روی سوپرچارت', 'بخش رادار و اسکنر یکپارچه روی کل دسته‌بندی‌های Trust Wallet', 'ذخیره و اجرای ۲۴/۷ بدون نیاز به روشن ماندن سیستم شما']
+        : ['Native Pine v4/v5/v6 runtime with Superchart lines, fills & HUD tables', 'Paginated Radar scanner across full Trust Wallet categories', '24/7 cloud execution with zero local PC uptime required'],
+    },
+    {
+      id: 'copy' as const,
+      badge: '۰۴ · SMART WALLET COPY V2',
+      title: isFa ? 'کپی‌ترید دوگانه: تریدرهای تاییدشده + شکار ولت نهنگ‌ها (V2)' : 'Dual Copy Trade: Verified VIPs + Smart-Money Wallets (V2)',
+      shortTitle: isFa ? 'کپی‌ترید V2' : 'Copy Trade V2',
+      icon: Trophy,
+      color: '#f59e0b',
+      desc: isFa
+        ? 'معاملات تریدرهای تاییدشده سایت یا ولت‌های اسمارت‌مانی در Solana، Base، ETH، BSC، TON و TRON را با باکس مارجین ایزوله، بک‌تست ۷ روزه، سپر ضدراگ، ۳ تارگت + Moonbag و خزانه ۲۴/۷ دنبال کنید.'
+        : 'Mirror verified site traders or Top-10 Smart-Money wallets across Solana, Base, ETH, BSC, TON & TRON with isolated margin boxes, 7-day backtest, Anti-Rug & 24/7 Copy-Vault.',
+      bullets: isFa
+        ? ['کپی فقط معاملات جدید از لحظه فالو + باکس مارجین جداگانه', 'فیلتر هوشمند ضدراگ (GoPlus + Honeypot.is + RugCheck) و خروج Dev-Sell', 'خروجی کارت سود تاییدشده ۱۶:۹ و ۹:۱۶ با کد استعلام']
+        : ['Copies only fresh trades from follow-time with isolated margin boxes', 'Multi-source Anti-Rug & automatic Dev-Sell protection', 'Verified 16:9 & 9:16 PNG profit cards upon position close'],
+    },
+    {
+      id: 'sniper' as const,
+      badge: '۰۵ · 5M PRO LISTING & MEME SNIPER',
+      title: isFa ? 'اسنایپر لیستینگ صرافی و شکار میم‌کوین‌های پرجهش (۵ دقیقه‌ای)' : '5m Pro Exchange Listing & Booming Meme Sniper',
+      shortTitle: isFa ? 'اسنایپر ۵ دقیقه' : '5m Pro Sniper',
+      icon: Flame,
+      color: '#f97316',
+      desc: isFa
+        ? 'رصد مداوم لیستینگ‌های تازه و استخرهای نقدینگی ۵ دقیقه‌ای با فیلترهای پرو (حداقل نقدینگی، امتیاز امنیت قرارداد، جلوگیری از Honeypot)، اجرای خودکار روی خزانه سولانا یا Trust Wallet و ارسال سیگنال لحظه‌ای.'
+        : 'Continuously tracks fresh exchange listings and 5-minute meme pools with Pro safety guards (min liquidity, contract audit score, honeypot shield) + instant Telegram/web alerts.',
+      bullets: isFa
+        ? ['کارت اختصاصی سیگنال اسنایپر با امتیاز امنیت و نقدینگی استخر', 'تنظیم اختصاصی حداقل امنیت اسنایپر در بخش فیلتر ارسال سیگنال', 'پشتیبانی مستقیم از شارژ و سوآپ SOL / USDC در خزانه سولانا']
+        : ['Dedicated Sniper signal cards with liquidity & safety scoring', 'Per-user Sniper minimum safety filter for alert delivery', 'Direct Solana SOL/USDC Vault funding & Jupiter execution'],
     },
   ];
 
@@ -332,7 +345,7 @@ export function LandingPage({
 
   return (
     <div dir={isFa ? 'rtl' : 'ltr'} className="min-h-screen app-shell relative overflow-x-clip">
-      {/* Clean Subtle Dot Pattern (no color halos on mobile) */}
+      {/* Subtle Clean Background Grid */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-[560px] z-0 overflow-hidden">
         <div
           className={`absolute inset-0 ${look === 'paper' ? 'opacity-15' : 'opacity-20'}`}
@@ -344,58 +357,61 @@ export function LandingPage({
         />
       </div>
 
-      {/* Sticky Floating Pill Navbar (Clean mobile layout without overlap) */}
-      <header className="sticky top-0 z-40 px-2.5 sm:px-6 pt-2.5 sm:pt-3">
+      {/* Sticky Floating Pill Navbar */}
+      <header className="sticky top-0 z-40 px-2.5 sm:px-5 pt-2.5 sm:pt-3">
         <div
-          className="mx-auto max-w-6xl panel rounded-full px-3 sm:px-5 py-2 flex items-center gap-2 shadow-xl lg:backdrop-blur-2xl"
+          className="mx-auto max-w-7xl panel rounded-full px-3 sm:px-4 py-2 flex items-center gap-1.5 shadow-xl lg:backdrop-blur-2xl"
           style={{ background: 'color-mix(in srgb, var(--panel) 92%, transparent)' }}
         >
           <button type="button" onClick={() => scrollTo('top')} className="flex items-center gap-2 shrink-0 min-w-0">
-            <DollarinoBrandMark size={34} glow />
+            <DollarinoBrandMark size={36} glow />
             <span className="leading-none text-start">
-              <span dir="ltr" className="block font-display font-bold text-sm sm:text-base text-main">
+              <span dir="ltr" className="block font-display font-black text-sm sm:text-base text-main">
                 Dollarino<span style={{ color: 'var(--gold)' }}>.</span>
               </span>
-              <span className="hidden sm:block text-[9px] font-black tracking-[0.18em] text-dim">V11.7.2 · AI &amp; DAPP</span>
+              <span className="hidden xl:block text-[9px] font-black tracking-[0.14em] text-dim">
+                V11.9 · TRUST &amp; SUPERCHARTS
+              </span>
             </span>
           </button>
 
-          <nav className="hidden lg:flex items-center gap-0.5 mx-auto text-[11px] font-bold text-dim">
+          <nav className="hidden lg:flex items-center gap-0.5 mx-auto text-[10.5px] font-bold text-dim">
             {[
-              ['whats-new', isFa ? 'جدید V11.7.2' : 'New in V11.7.2'],
-              ['live-markets', isFa ? 'بازار زنده' : 'Live Markets'],
-              ['pillars', isFa ? '۴ روش' : '4 Ways'],
-              ['smart-v2', isFa ? 'کپی ولت V2' : 'Smart Copy'],
+              ['capabilities', isFa ? 'قابلیت‌ها' : 'Features'],
+              ['digital-proof', isFa ? 'بک‌تست و استعلام ۳۰ روزه' : '30d Audit'],
+              ['signals-preview', isFa ? 'سیگنال و نتایج' : 'Signals'],
+              ['pillars', isFa ? '۵ موتور و آموزش' : 'Engines'],
+              ['roadmap', isFa ? 'نقشه راه' : 'Roadmap'],
               ['pricing', isFa ? 'کارمزد ۳٪' : '3% Fee'],
-              ['trust-founder', isFa ? 'سازنده و اصالت' : 'Founder & Trust'],
-              ['faq', isFa ? 'سوالات' : 'FAQ'],
+              ['trust-founder', isFa ? 'اصالت و سازنده' : 'Trust'],
             ].map(([id, label]) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => scrollTo(id!)}
-                className="px-2.5 py-2 rounded-full hover:text-main hover:bg-[var(--soft)] transition whitespace-nowrap"
+                className="px-2 py-1.5 rounded-full hover:text-main hover:bg-[var(--soft)] transition whitespace-nowrap"
               >
                 {label}
               </button>
             ))}
           </nav>
 
-          <div className="ms-auto flex items-center gap-1.5 shrink-0">
+          <div className="ms-auto flex items-center gap-1 shrink-0">
             {onOpenSupport && (
               <button
                 type="button"
                 onClick={onOpenSupport}
-                className="hidden md:inline-flex items-center gap-1.5 h-9 px-3 rounded-full btn-ghost text-xs font-bold"
+                title={isFa ? 'پشتیبانی آنلاین' : 'Support'}
+                className="hidden md:inline-flex items-center gap-1 h-8 px-2.5 rounded-full btn-ghost text-[11px] font-bold"
               >
                 <Headphones className="w-3.5 h-3.5 text-jade" />
-                <span>{isFa ? 'پشتیبانی آنلاین' : 'Support'}</span>
+                <span className="hidden xl:inline">{isFa ? 'پشتیبانی' : 'Support'}</span>
               </button>
             )}
             <button
               type="button"
               onClick={() => setLang(isFa ? 'en' : 'fa')}
-              className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-2 rounded-full btn-ghost"
+              className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-full btn-ghost"
             >
               <Globe className="h-3.5 w-3.5" />
               <span>{isFa ? 'EN' : 'فارسی'}</span>
@@ -404,34 +420,34 @@ export function LandingPage({
               type="button"
               onClick={onToggleDaylight}
               title={isFa ? 'تغییر حالت روز و شب' : 'Day / Night'}
-              className="inline-flex items-center justify-center h-8 w-8 sm:h-9 sm:w-auto sm:px-3 gap-1.5 rounded-full btn-ghost text-xs font-bold"
+              className="inline-flex items-center justify-center h-8 w-8 sm:h-8 sm:w-auto sm:px-2.5 gap-1 rounded-full btn-ghost text-[11px] font-bold"
             >
               {look === 'paper' ? (
                 <>
-                  <Moon className="h-4 w-4 text-[var(--gold)]" />
-                  <span className="hidden sm:inline">{isFa ? 'حالت شب' : 'Night'}</span>
+                  <Moon className="h-3.5 w-3.5 text-[var(--gold)]" />
+                  <span className="hidden xl:inline">{isFa ? 'حالت شب' : 'Night'}</span>
                 </>
               ) : (
                 <>
-                  <Sun className="h-4 w-4 text-[#f59e0b]" />
-                  <span className="hidden sm:inline">{isFa ? 'حالت روز' : 'Day'}</span>
+                  <Sun className="h-3.5 w-3.5 text-[#f59e0b]" />
+                  <span className="hidden xl:inline">{isFa ? 'حالت روز' : 'Day'}</span>
                 </>
               )}
             </button>
             <button
               type="button"
               onClick={() => onGoAuth('login')}
-              className="hidden sm:inline-flex btn-ghost px-3.5 py-2 rounded-full text-xs font-bold"
+              className="hidden sm:inline-flex btn-ghost px-3 py-1.5 rounded-full text-[11px] font-bold"
             >
               {isFa ? 'ورود' : 'Sign In'}
             </button>
             <button
               type="button"
               onClick={() => onGoAuth('register')}
-              className="btn-gold inline-flex items-center gap-1 text-[11px] font-black px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full shrink-0"
+              className="btn-gold inline-flex items-center gap-1 text-[11px] font-black px-3.5 sm:px-4 py-2 rounded-full shrink-0"
             >
-              <span className="sm:hidden">{isFa ? 'ورود / پنل' : 'Enter'}</span>
-              <span className="hidden sm:inline">{isFa ? 'ورود به میز کار' : 'Enter Workspace'}</span>
+              <span className="sm:hidden">{isFa ? 'شروع' : 'Start'}</span>
+              <span className="hidden sm:inline">{isFa ? 'شروع رایگان' : 'Start Free'}</span>
               <ArrowLeft className={`h-3.5 w-3.5 ${isFa ? '' : 'rotate-180'}`} />
             </button>
             <button
@@ -459,14 +475,15 @@ export function LandingPage({
               </button>
             </div>
             {[
-              ['whats-new', isFa ? 'جدیدترین امکانات نسخه V11.7.2 (پنل کروم، کارت ۱۶:۹/۹:۱۶، اسنایپر)' : "What's New in V11.7.2"],
-              ['live-markets', isFa ? 'نبض زنده بازار و قیمت ارزهای برتر' : 'Live Top Markets'],
-              ['pillars', isFa ? '۴ روش معامله (ساده تا حرفه‌ای)' : '4 Ways to Trade'],
-              ['smart-v2', isFa ? 'کپی‌ترید ولت نهنگ‌ها و سپر ضدراگ (V2)' : 'Smart Wallet Copy & Anti-Rug V2'],
-              ['copy-leaders', isFa ? 'تریدرهای تاییدشده کپی‌ترید' : 'Verified Copy Traders'],
-              ['pricing', isFa ? '۳ معامله رایگان + ۳٪ از سود' : '3 Free · 3% Profit Fee'],
-              ['trust-founder', isFa ? 'معرفی سازنده و شفافیت ضدپانزی' : 'Founder Verification & Anti-Ponzi'],
-              ['faq', isFa ? 'راهنما و سوالات پرتکرار' : 'FAQ'],
+              ['capabilities', isFa ? 'معرفی و قابلیت‌های نسخه V11.9' : 'V11.9 Capabilities'],
+              ['digital-proof', isFa ? 'بک‌تست زنده و استعلام دیجیتال ۳۰ روزه ولت' : 'Live Backtests & 30d Wallet Audit'],
+              ['signals-preview', isFa ? 'کانال سیگنال و نتایج قبل از عضویت' : 'Signals & Results Channels'],
+              ['live-markets', isFa ? 'نبض زنده بازار ارزهای برتر' : 'Live Top Markets'],
+              ['pillars', isFa ? '۵ موتور معاملاتی + آموزش گام‌به‌گام' : '5 Engines & Quick Academy'],
+              ['roadmap', isFa ? 'نقشه راه دلارینو (V10 تا V12)' : 'Roadmap (V10–V12)'],
+              ['pricing', isFa ? '۳ معامله رایگان + ۳٪ فقط از سود' : '3 Free · 3% Profit Fee'],
+              ['trust-founder', isFa ? 'معرفی سازنده و تضمین ضدپانزی' : 'Founder & Anti-Ponzi Proof'],
+              ['faq', isFa ? 'سوالات پرتکرار' : 'FAQ'],
             ].map(([id, label]) => (
               <button
                 key={id}
@@ -499,24 +516,11 @@ export function LandingPage({
                 {isFa ? 'ورود به میز کار' : 'Open Workspace'}
               </button>
             </div>
-            {onOpenSupport && (
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenu(false);
-                  onOpenSupport();
-                }}
-                className="btn-emerald w-full py-2.5 rounded-2xl font-black text-xs inline-flex items-center justify-center gap-1.5"
-              >
-                <Headphones className="w-3.5 h-3.5" />
-                <span>{isFa ? 'پشتیبانی آنلاین و تلگرام' : 'Online Support'}</span>
-              </button>
-            )}
           </div>
         )}
       </header>
 
-      {/* Seamless Infinite Live Market Ticker (Click any coin -> Live Markets Spotlight) */}
+      {/* Live Top Ticker Bar */}
       <LiveTickerBar
         items={liveCoins}
         selectedSymbol={heroCoin}
@@ -525,241 +529,544 @@ export function LandingPage({
       />
 
       {/* Main Content */}
-      <main id="top" className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 space-y-16 sm:space-y-20 py-10 sm:py-14">
-        {/* 1. Hero Section */}
-        <section className="grid grid-cols-1 lg:grid-cols-[1.06fr_0.94fr] gap-8 xl:gap-12 items-center">
-          <div className="text-center lg:text-start reveal-up space-y-5">
-            <div className="flex flex-wrap justify-center lg:justify-start gap-2">
-              {[
-                { icon: Bot, text: isFa ? '۵ موتور ترید همزمان' : '5 Concurrent Engines', color: 'var(--jade)' },
-                { icon: PanelRight, text: isFa ? 'اکستنشن پنل کناری کروم (ساده)' : 'Chrome Side Panel (Simple)', color: 'var(--gold)' },
-                { icon: Trophy, text: isFa ? 'شروع مستقیم DApp تراست‌ولت + ضدراگ V2' : 'Trust DApp Signup + Anti-Rug V2', color: '#f59e0b' },
-              ].map((b) => {
-                const Icon = b.icon;
-                return (
-                  <span key={b.text} className="inline-flex items-center gap-1.5 panel rounded-full px-3.5 py-1.5 text-[11px] font-black text-main">
-                    <Icon className="h-3.5 w-3.5" style={{ color: b.color }} />
-                    <span>{b.text}</span>
-                  </span>
-                );
-              })}
-            </div>
+      <main id="top" className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 space-y-16 sm:space-y-20 py-8 sm:py-12">
+        {/* 1. HERO SECTION with Clear Brand Logo + Subtle Giant Watermark */}
+        <section className="relative rounded-[34px] panel p-6 sm:p-9 lg:p-10 border hairline overflow-hidden">
+          {/* Giant Low-Opacity Brand Logo Watermark */}
+          <img
+            src="/logo-hd.webp"
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none select-none absolute -top-12 end-[-60px] w-[380px] h-[380px] sm:w-[460px] sm:h-[460px] object-contain opacity-[0.055]"
+          />
 
-            <h1 className="font-display font-bold tracking-tight leading-[1.42] text-[clamp(30px,6.4vw,56px)] text-main">
-              {isFa ? (
-                <>
-                  پلتفرم جامع ترید هوشمند <span className="text-[0.55em] align-middle px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] font-black">V11.7.2</span>
-                  <br />
-                  <span style={{ color: 'var(--gold)' }}>ساده برای همه، </span>
-                  <span className="mark-lime">حرفه‌ای</span>
-                  <br />
-                  برای معامله‌گران.
-                </>
-              ) : (
-                <>
-                  One Smart Trading Platform <span className="text-[0.55em] align-middle px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] font-black">V11.7.2</span>
-                  <br />
-                  <span style={{ color: 'var(--gold)' }}>Effortless </span>
-                  <span className="mark-lime">AI Trading</span>
-                  <br />
-                  for Every Skill Level.
-                </>
-              )}
-            </h1>
-
-            <p className="text-sm sm:text-[15px] leading-[1.9] text-dim max-w-xl mx-auto lg:mx-0">
-              {isFa ? (
-                <>
-                  با دلارینو V11.7.2 همزمان با ۵ موتور هوشمند (هوش مصنوعی مرکزی، هوش مصنوعی شخصی، استراتژی دُرنا/Pine v5 گرافیکی، کپی‌ترید V2 و اسنایپر ۵ دقیقه‌ای با فیلتر پرو) ترید کنید — متصل به کیف‌پول غیرامانی چندزنجیره‌ای Trust Wallet (تایید دستی یا تمام‌اتوترید ۲۴/۷ و شارژ سریع خزانه سولانا)، اکستنشن پنل کناری کروم، استودیو کارت سود ۱۶:۹ و ۹:۱۶، TP/SL درصدی (%) و شبیه‌ساز رایگان (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>)
-                  {publicBotInfo.botUsername ? (
-                    <>
-                      {' '}همراه ربات تلگرام{' '}
-                      <span dir="ltr" className="inline-block font-bold text-main">
-                        @{publicBotInfo.botUsername}
-                      </span>
-                    </>
-                  ) : null}
-                  .
-                </>
-              ) : (
-                `Trade with Dollarino V11.7.2 across 5 simultaneous engines (Central AI, Personal AI, Pine v5 Chart Strategy, Copy Trade V2 & 5m Pro Sniper) — powered by multi-chain Trust Wallet DApp (with Solana SOL/USDC Vault funding), Chrome Side Panel Extension, 16:9 & 9:16 Profit Card Studio, %/$ TP/SL, and Free Demo ($50–$10M)${publicBotInfo.botUsername ? ` with Telegram Bot @${publicBotInfo.botUsername}` : ''}.`
-              )}
-            </p>
-
-            {/* Brand Ecosystem Strip (Trust Wallet, Perps & Blockchains) */}
-            <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 pt-1">
-              {[
-                { kind: 'w' as const, id: 'trustwallet', label: 'Trust Wallet' },
-                { kind: 'ex' as const, id: 'paper', label: 'Custom Demo ($50–$10M)' },
-                { kind: 'c' as const, id: 'arbitrum', label: 'Hyperliquid 24/7' },
-                { kind: 'w' as const, id: 'tonkeeper', label: 'TON' },
-                { kind: 'c' as const, id: 'solana', label: 'Solana · Jupiter' },
-                { kind: 'c' as const, id: 'bsc', label: 'BSC' },
-                { kind: 'c' as const, id: 'ethereum', label: 'Ethereum' },
-                { kind: 'c' as const, id: 'base', label: 'Base' },
-              ].map((item) => (
-                <span
-                  key={item.id}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full surface-soft border hairline text-[11px] font-bold text-main"
-                >
-                  {item.kind === 'ex' ? (
-                    <ExchangeLogo provider={item.id} size={16} />
-                  ) : item.kind === 'w' ? (
-                    <WalletLogo wallet={item.id === 'tonkeeper' ? 'ton' : 'trustwallet'} size={16} />
-                  ) : (
-                    <ChainLogo chain={item.id} size={16} />
-                  )}
-                  <span>{item.label}</span>
-                </span>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap justify-center lg:justify-start gap-3 pt-1">
-              <button
-                type="button"
-                onClick={() => onGoAuth('register')}
-                className="btn-lime inline-flex items-center gap-2 font-black px-7 py-4 rounded-2xl text-sm"
-              >
-                <Zap className="h-[18px] w-[18px]" />
-                <span>{isFa ? 'ثبت‌نام سریع (تراست‌ولت / گوگل / تلگرام)' : 'Quick Sign Up (Trust Wallet / Google / TG)'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onGoAuth('login')}
-                className="btn-gold inline-flex items-center gap-2 font-black px-6 py-4 rounded-2xl text-sm"
-              >
-                <span>{isFa ? 'ورود به میز کار' : 'Sign In to Workspace'}</span>
-                <ArrowLeft className={`h-4 w-4 ${isFa ? '' : 'rotate-180'}`} />
-              </button>
-              <button
-                type="button"
-                onClick={() => scrollTo('whats-new')}
-                className="btn-ghost inline-flex items-center gap-2 font-bold px-5 py-4 rounded-2xl text-sm"
-              >
-                <Play className="h-4 w-4" />
-                <span>{isFa ? 'جدید در V11.7.2' : 'What’s New V11.7.2'}</span>
-              </button>
-            </div>
-
-            <div className="flex flex-wrap justify-center lg:justify-start gap-x-5 gap-y-2 text-xs font-bold text-dim pt-1">
-              {[
-                isFa ? 'ثبت‌نام مستقیم DApps تراست‌ولت + گوگل + تلگرام + کد معرف خودکار' : 'Direct Trust Wallet DApp, Google & Telegram Signup',
-                isFa ? 'اکستنشن پنل کناری کروم (ساده) + کارت سود ۱۶:۹ و ۹:۱۶' : 'Chrome Side Panel Extension + 16:9 & 9:16 Profit Cards',
-                isFa ? '۰٪ اشتراک برای همیشه · ۳ معامله اول ۰٪ · ۳٪ فقط از سود خالص' : '0% Subscription · 3 Free Live Wins · Keep 97% Profit',
-              ].map((x) => (
-                <span key={x} className="inline-flex items-center gap-1.5">
-                  <Check className="h-4 w-4 text-jade" />
-                  <span>{x}</span>
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {/* Right Live Market & 4-Mode Interactive Card */}
-          <div className="panel glow-card-anim rounded-[30px] p-5 sm:p-6 space-y-4">
-            <div className="relative rounded-2xl overflow-hidden border hairline h-36 sm:h-40">
-              <img
-                src="/images/hero-quant-desk.webp"
-                alt="Dollarino AI Quantitative Desk"
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#081022]/90 via-[#081022]/30 to-transparent flex items-end p-3.5">
-                <div className="flex items-center justify-between gap-2 w-full">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--gold)' }}>
-                      DOLLARINO QUANT DESK
-                    </p>
-                    <p className="text-xs font-bold text-white">
-                      {isFa ? 'ترید هوشمند، کپی‌ترید، و Trust Wallet DApp' : 'AI Trading, Copy-Trade & Trust Wallet DApp'}
-                    </p>
+          <div className="relative z-10 grid grid-cols-1 lg:grid-cols-[1.06fr_0.94fr] gap-8 xl:gap-10 items-center">
+            <div className="text-center lg:text-start reveal-up space-y-5">
+              {/* Prominent Brand Crest + Status Pills */}
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3">
+                <div className="inline-flex items-center gap-2.5 surface-soft rounded-2xl px-3.5 py-2 border hairline shadow-sm">
+                  <DollarinoBrandMark size={40} glow />
+                  <div className="text-start">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--gold)] block">
+                      DOLLARINO QUANT PLATFORM
+                    </span>
+                    <span className="text-xs font-black text-main">
+                      {isFa ? 'نسخه V11.9 · هم‌تراز Trust Wallet' : 'V11.9 · Trust Wallet Parity'}
+                    </span>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black shrink-0">
-                    {isFa ? 'آنلاین ۲۴/۷' : '24/7 LIVE'}
-                  </span>
                 </div>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] text-[11px] font-black">
+                  <PowerOff className="h-3.5 w-3.5" />
+                  <span>{isFa ? '۵ موتور پیش‌فرض خاموش و تحت کنترل شما' : '5 Engines Default-OFF · User-Controlled'}</span>
+                </span>
               </div>
-            </div>
 
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--gold)' }}>
-                  LIVE MARKET TELEMETRY
-                </p>
-                <h3 className="font-display font-bold text-lg text-main">
-                  {isFa ? 'نبض زنده بازار و ۵ موتور همزمان' : 'Live Market & 5-Engine Feed'}
-                </h3>
-              </div>
-              <div className="flex gap-1 flex-wrap justify-end">
-                {(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'TONUSDT'] as const).map((sym) => (
-                  <button
-                    key={sym}
-                    type="button"
-                    onClick={() => setHeroCoin(sym)}
-                    className={`px-2.5 py-1.5 rounded-xl text-[11px] font-black transition ${
-                      heroCoin === sym ? 'btn-gold' : 'btn-ghost text-dim'
-                    }`}
+              <h1 className="font-display font-bold tracking-tight leading-[1.35] text-[clamp(26px,4.3vw,43px)] text-main">
+                {isFa ? (
+                  <>
+                    سوپرچارت <span dir="ltr" className="mark-lime inline-block">TradingView</span>
+                    <br />
+                    <span style={{ color: 'var(--gold)' }}>هوش مصنوعی چندمدله</span> و
+                    <br />
+                    ترید غیرامانی در <span dir="ltr" className="inline-block whitespace-nowrap">Trust Wallet</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="mark-lime">TradingView</span> Supercharts,
+                    <br />
+                    <span style={{ color: 'var(--gold)' }}>Multi-Model AI</span> &amp;
+                    <br />
+                    Non-Custodial <span className="whitespace-nowrap">Trust Wallet</span>
+                  </>
+                )}
+              </h1>
+
+              <p className="text-sm sm:text-[15px] leading-[1.88] text-dim max-w-xl mx-auto lg:mx-0">
+                {isFa ? (
+                  <>
+                    همه‌چیز قبل از ثبت‌نام قابل بررسی و استعلام است: نتایج زنده بک‌تست الگوریتم‌ها، دفتر دیجیتال ۳۰ روزه ولت‌های کاربران، کانال سیگنال <span dir="ltr" className="font-bold text-main">01</span> و نتایج <span dir="ltr" className="font-bold text-main">02</span>، سوپرچارت با <span dir="ltr" className="font-bold text-main">Pine v6</span>، اکستنشن کروم و کارمزد منصفانه <strong className="text-main">۰٪ اشتراک + فقط ۳٪ از سود خالص واقعی</strong>.
+                  </>
+                ) : (
+                  'Inspect everything before signing up: live strategy backtests, verifiable 30-day wallet audit sheets, preview signals (01) & results (02), TradingView Supercharts + Pine v6, Trust Wallet portfolio parity, Chrome Side Panel, and 0% subscription with just 3% fee on net profits.'
+                )}
+              </p>
+
+              {/* Ecosystem Trust Badges */}
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 pt-0.5">
+                {[
+                  { kind: 'w' as const, id: 'trustwallet', label: 'Trust Wallet 820+ Markets' },
+                  { kind: 'ex' as const, id: 'paper', label: 'Free Demo ($50–$10M)' },
+                  { kind: 'c' as const, id: 'arbitrum', label: 'Hyperliquid Perp' },
+                  { kind: 'c' as const, id: 'solana', label: 'Solana · Jupiter' },
+                  { kind: 'c' as const, id: 'ethereum', label: 'EVM' },
+                  { kind: 'w' as const, id: 'tonkeeper', label: 'TON' },
+                  { kind: 'c' as const, id: 'tron', label: 'TRON' },
+                ].map((item) => (
+                  <span
+                    key={item.id}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full surface-soft border hairline text-[11px] font-bold text-main"
                   >
-                    {sym.replace('USDT', '')}
-                  </button>
+                    {item.kind === 'ex' ? (
+                      <ExchangeLogo provider={item.id} size={15} />
+                    ) : item.kind === 'w' ? (
+                      <WalletLogo wallet={item.id === 'tonkeeper' ? 'ton' : 'trustwallet'} size={15} />
+                    ) : (
+                      <ChainLogo chain={item.id} size={15} />
+                    )}
+                    <span>{item.label}</span>
+                  </span>
                 ))}
               </div>
+
+              <div className="flex flex-wrap justify-center lg:justify-start gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => onGoAuth('register')}
+                  className="btn-lime inline-flex items-center gap-2 font-black px-6 py-3.5 rounded-2xl text-sm"
+                >
+                  <Zap className="h-[18px] w-[18px]" />
+                  <span>{isFa ? 'شروع رایگان (تراست‌ولت / گوگل / تلگرام)' : 'Start Free (Trust Wallet / Google / TG)'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollTo('digital-proof')}
+                  className="btn-gold inline-flex items-center gap-2 font-black px-5 py-3.5 rounded-2xl text-sm"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  <span>{isFa ? 'استعلام ولت و بک‌تست زنده' : 'Verify 30d Audits & Backtests'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollTo('signals-preview')}
+                  className="btn-ghost inline-flex items-center gap-2 font-bold px-4 py-3.5 rounded-2xl text-sm"
+                >
+                  <Play className="h-4 w-4 text-jade" />
+                  <span>{isFa ? 'مشاهده سیگنال‌ها قبل از عضویت' : 'Preview Signals'}</span>
+                </button>
+              </div>
             </div>
 
-            <div className="ios-wallet-card rounded-[24px] p-5 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <CoinIcon symbol={activeCoin.symbol} size={34} />
-                  <div>
-                    <p dir="ltr" className="font-display font-bold text-base">{activeCoin.symbol}</p>
-                    <p className="text-[11px] text-white/75">
-                      {coinDisplayName(activeCoin.base || activeCoin.symbol.replace(/USDT$/, ''), isFa)} · Perp
-                    </p>
+            {/* Right Column: Live Market Card + Supercharts Showcase */}
+            <div className="surface-soft rounded-[28px] p-4 sm:p-5 border hairline space-y-4 shadow-xl">
+              <div className="relative rounded-2xl overflow-hidden border hairline h-40 sm:h-44">
+                <img
+                  src="/images/landing-supercharts-pine.webp"
+                  alt="Dollarino TradingView Supercharts & Pine v6"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#060d1f]/90 via-transparent to-transparent flex items-end justify-between p-3.5">
+                  <div className="flex items-center gap-2">
+                    <img src="/logo-sm.webp" alt="" className="w-7 h-7 object-contain" />
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-[var(--gold)]">
+                        SUPERCHARTS · PINE V6 · TECHNICALS GAUGE
+                      </p>
+                      <p className="text-xs font-bold text-white">
+                        {isFa ? 'نمایش مستقیم Entry/SL/TP از معامله روی چارت' : 'Direct Entry/SL/TP Chart Overlay & Watchlist'}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="text-end" dir="ltr">
-                  <p className="font-num font-black text-2xl">{fmtUsdPrice(activeCoin.price)}</p>
-                  <p className={`text-xs font-black ${activeCoin.changePct24h >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                    {activeCoin.changePct24h >= 0 ? '+' : ''}{activeCoin.changePct24h.toFixed(2)}% (24h)
-                  </p>
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black shrink-0">
+                    24/7 LIVE
+                  </span>
                 </div>
               </div>
-              {liveCandles.length > 4 && (
-                <div className="h-24 pt-2">
-                  <Sparkline
-                    values={liveCandles}
-                    color={activeCoin.changePct24h >= 0 ? '#10d9a3' : '#f43f5e'}
-                    height={82}
-                  />
-                </div>
-              )}
-            </div>
 
-            <div className="grid grid-cols-2 gap-2.5 text-xs">
-              {pillars.map((p) => {
-                const Icon = p.icon;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => {
-                      setActivePillar(p.id);
-                      scrollTo('pillars');
-                    }}
-                    className="surface-soft hover:border-[var(--gold)] border border-transparent rounded-2xl p-3 text-start transition space-y-1"
-                  >
-                    <div className="flex items-center gap-1.5 font-black text-main">
-                      <Icon className="w-4 h-4 shrink-0" style={{ color: p.color }} />
-                      <span className="truncate">{p.shortTitle}</span>
+              <div className="ios-wallet-card rounded-[22px] p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <CoinIcon symbol={activeCoin.symbol} size={32} />
+                    <div>
+                      <p dir="ltr" className="font-display font-bold text-sm">{activeCoin.symbol}</p>
+                      <p className="text-[10.5px] text-white/75">
+                        {coinDisplayName(activeCoin.base || activeCoin.symbol.replace(/USDT$/, ''), isFa)} · Perp
+                      </p>
                     </div>
-                    <p className="text-[10px] text-dim">{p.badge}</p>
-                  </button>
-                );
-              })}
+                  </div>
+                  <div className="flex gap-1">
+                    {(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'TONUSDT'] as const).map((sym) => (
+                      <button
+                        key={sym}
+                        type="button"
+                        onClick={() => setHeroCoin(sym)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-black transition ${
+                          heroCoin === sym ? 'bg-white text-slate-900' : 'bg-white/10 text-white/80 hover:bg-white/20'
+                        }`}
+                      >
+                        {sym.replace('USDT', '')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-end justify-between gap-3">
+                  <div dir="ltr">
+                    <p className="font-num font-black text-2xl">{fmtUsdPrice(activeCoin.price)}</p>
+                    <p className={`text-[11px] font-black ${activeCoin.changePct24h >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {activeCoin.changePct24h >= 0 ? '+' : ''}{activeCoin.changePct24h.toFixed(2)}% (24h)
+                    </p>
+                  </div>
+                  {liveCandles.length > 4 && (
+                    <div className="w-36 h-14">
+                      <Sparkline
+                        values={liveCandles}
+                        color={activeCoin.changePct24h >= 0 ? '#10d9a3' : '#f43f5e'}
+                        height={54}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {pillars.slice(0, 4).map((p) => {
+                  const Icon = p.icon;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setActivePillar(p.id);
+                        scrollTo('pillars');
+                      }}
+                      className="panel hover:border-[var(--gold)] border border-transparent rounded-xl p-2.5 text-start transition space-y-0.5"
+                    >
+                      <div className="flex items-center gap-1.5 font-black text-main">
+                        <Icon className="w-3.5 h-3.5 shrink-0" style={{ color: p.color }} />
+                        <span className="truncate">{p.shortTitle}</span>
+                      </div>
+                      <p className="text-[9.5px] text-dim truncate">{p.badge}</p>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </section>
 
-        {/* Live Market Explorer (Triggered by clicking ANY coin in the Top Infinite Ticker Bar) */}
+        {/* 2. V11.9 COMPLETE CAPABILITIES OVERVIEW */}
+        <section id="capabilities" className="space-y-6">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div className="space-y-2 max-w-2xl">
+              <span className="inline-flex items-center gap-1.5 badge-signal px-3.5 py-1 rounded-full text-[11px] font-black">
+                <Sparkles className="w-3.5 h-3.5 text-jade" />
+                <span>FULL PLATFORM ARCHITECTURE · V11.9</span>
+              </span>
+              <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
+                {isFa ? 'معرفی کامل امکانات پلتفرم معاملاتی دلارینو' : 'Complete Dollarino V11.9 Trading Ecosystem'}
+              </h2>
+            </div>
+            <p className="text-xs sm:text-sm text-dim max-w-md leading-relaxed">
+              {isFa
+                ? 'تمامی ابزارهای یک تریدر مدرن — از چارت حرفه‌ای و کیف‌پول غیرامانی تا ربات تلگرام، اکستنشن کروم و استودیو کارت سود — در یک میز کار سریع و بدون اشتراک ماهانه.'
+                : 'Every pro tool — Supercharts, non-custodial Trust Wallet portfolio, Telegram automation, Chrome side panel, and Verified PNG profit cards — unified with $0 monthly fee.'}
+            </p>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+            {[
+              {
+                icon: CandlestickChart,
+                badge: 'TRADINGVIEW SUPERCHARTS + PINE V6',
+                color: '#1652f0',
+                title: isFa ? 'سوپرچارت کامل + واچ‌لیست و عقربه تکنیکال' : 'TradingView Supercharts + Watchlist & Technicals Dial',
+                desc: isFa
+                  ? 'نمودار تمیز پیش‌فرض، نوار تایم‌فریم 1D تا All، عقربه خلاصه تکنیکال (Buy/Neutral/Sell)، داک کدنویسی Pine Script v4/v5/v6 و پرش یک‌کلیک از هر معامله روی چارت همراه با رسم Entry/SL/TP.'
+                  : 'Clean chart default, 1D–All range bar, live Technicals gauge, Pine v4/v5/v6 dock, and 1-click trade-to-chart jump drawing exact Entry/SL/TP levels.',
+              },
+              {
+                icon: Wallet,
+                badge: 'TRUST WALLET PARITY · 820+ ASSETS',
+                color: '#059669',
+                title: isFa ? 'هم‌تراز با Trust Wallet + پورتفوی زنده ۴ شبکه' : 'Trust Wallet Market & Multi-Chain Portfolio Parity',
+                desc: isFa
+                  ? 'پوشش کامل ۸۲۰+ جفت ارز دسته‌بندی‌شده (L1، DeFi، AI، Meme، Gaming، RWA)، نمایش زنده موجودی ETH، BNB، USDT، USDC، SOL، TON و TRX مستقیماً از کیف‌پول شخصی و جداسازی شفاف از خزانه ۳٪.'
+                  : '820+ categorized pairs (L1, DeFi, AI, Meme, Gaming, RWA), live on-chain balance tracking across EVM, Solana, TON & TRON, cleanly separated from the 3% fee hub.',
+              },
+              {
+                icon: PowerOff,
+                badge: 'DEFAULT OFF + ONE-TIME GUIDES',
+                color: '#f59e0b',
+                title: isFa ? 'کنترل کامل ۵ موتور + راهنمای آموزشی روی هر کارت' : 'All 5 Engines Default-OFF + Built-in Guides',
+                desc: isFa
+                  ? 'برخلاف ربات‌های خودسر، در دلارینو تمام ۵ موتور در شروع خاموش هستند و هیچ معامله‌ای بدون انتخاب آگاهانه شما باز نمی‌شود؛ هر موتور یک راهنمای تعاملی تک‌باره و آیکن ؟ دارد.'
+                  : 'All 5 trading engines start OFF by default — nothing executes until you intentionally enable an engine, each documented with an interactive guide modal.',
+              },
+              {
+                icon: Flame,
+                badge: 'SMART COPY V2 + ANTI-RUG + SNIPER',
+                color: '#f97316',
+                title: isFa ? 'کپی‌ترید ولت نهنگ‌ها + سپر ضدراگ + اسنایپر ۵م' : 'Smart Copy V2 + Anti-Rug Shield + 5m Sniper',
+                desc: isFa
+                  ? 'رصد ۱۰ ولت برتر هوشمند هر شبکه با بک‌تست ۷ روزه، باکس مارجین ایزوله و بررسی خودکار Honeypot، مالیات و قفل نقدینگی (GoPlus / RugCheck) به همراه اسنایپر ۵ دقیقه‌ای لیستینگ.'
+                  : 'Follow Top-10 smart wallets with 7-day backtest, isolated margin boxes, live Honeypot/Tax/LP verification (GoPlus + RugCheck), and 5-minute listing sniper.',
+              },
+              {
+                icon: Send,
+                badge: '1+7+1 TELEGRAM + PER-ENGINE FILTER',
+                color: '#0ea5e9',
+                title: isFa ? 'اکوسیستم تلگرام + فیلتر هوشمند سیگنال و اخبار' : 'Telegram 1+7+1 + Per-Engine Filters & 240m News',
+                desc: isFa
+                  ? 'فیلتر کردن اخبار بی‌اهمیت بازار در چرخه ۲۴۰ دقیقه‌ای و امکان شخصی‌سازی دریافت سیگنال‌ها بر اساس موتور، حداقل درصد اطمینان، امنیت اسنایپر، جهت معامله و ساعت سکوت شبانه.'
+                  : 'Importance-filtered market news every 240 minutes plus granular signal routing per engine, min confidence, sniper safety score, direction & quiet hours.',
+              },
+              {
+                icon: PanelRight,
+                badge: 'CHROME EXTENSION + 16:9 / 9:16 CARDS',
+                color: '#8b5cf6',
+                title: isFa ? 'اکستنشن پنل کناری کروم + کارت سود QR دار' : 'Chrome Side Panel Extension + Verified PnL Cards',
+                desc: isFa
+                  ? 'سنجاق پنل ساده دلارینو در کنار صرافی‌ها در مرورگر Chrome و صدور کارت‌های گرافیکی PNG تاییدشده با امضای HMAC در سایز افقی ۱۶:۹ و استوری ۹:۱۶ قابل استعلام.'
+                  : 'Native Chrome Side Panel Extension locked to clean Simple Mode plus cryptographically signed 16:9 & 9:16 PNG PnL Cards verifiable by QR code.',
+              },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.title} className="panel panel-hover rounded-[26px] p-5 space-y-3 border hairline">
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className="w-10 h-10 rounded-2xl grid place-items-center shrink-0"
+                      style={{ background: `color-mix(in srgb, ${item.color} 16%, transparent)`, color: item.color }}
+                    >
+                      <Icon className="w-5 h-5" />
+                    </span>
+                    <span className="text-[9px] font-black tracking-wider text-dim uppercase text-end">{item.badge}</span>
+                  </div>
+                  <h3 className="font-display font-bold text-base text-main leading-snug">{item.title}</h3>
+                  <p className="text-dim leading-relaxed text-[11.5px]">{item.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Promo Banners */}
+        <section className="reveal-up">
+          <PromoBannerCarousel lang={lang} placement="LANDING" onGuestAction={() => onGoAuth('register')} />
+        </section>
+
+        {/* 3 & 4. LIVE DIGITAL BACKTEST, 30-DAY WALLET AUDIT & PRE-SIGNUP SIGNAL/RESULTS CHANNELS */}
+        <LandingLiveProofHub
+          lang={lang}
+          onGoAuth={onGoAuth}
+          publicBotInfo={publicBotInfo}
+        />
+
+        {/* 5. INTERACTIVE 5-ENGINE SHOWCASE & QUICK ACADEMY */}
+        <section id="pillars" className="space-y-6">
+          <div className="text-center max-w-2xl mx-auto space-y-2">
+            <span className="inline-flex items-center gap-1.5 badge-signal px-3.5 py-1 rounded-full text-[11px] font-black">
+              <BookOpen className="w-3.5 h-3.5 text-jade" />
+              <span>5 MODULAR ENGINES · STEP-BY-STEP ACADEMY</span>
+            </span>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
+              {isFa ? '۵ موتور تخصصی + آموزش سریع شروع کار از صفر' : '5 Specialized Engines + Step-by-Step Starter Guide'}
+            </h2>
+            <p className="text-xs sm:text-sm text-dim">
+              {isFa
+                ? 'هر سطحی که دارید — از اولین تجربه ترید روی شبیه‌ساز رایگان تا کدنویسی Pine v6 و شکار ولت نهنگ‌ها — موتور اختصاصی خودش را دارد.'
+                : 'Whether you are starting on the free simulator or writing Pine v6 and mirroring whale wallets, choose the exact engine you want.'}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+            {pillars.map((p) => {
+              const Icon = p.icon;
+              const active = activePillar === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setActivePillar(p.id)}
+                  className={`rounded-2xl p-3 text-start transition flex items-center gap-2.5 border ${
+                    active ? 'btn-gold border-transparent shadow-lg' : 'panel border-transparent hover:border-[var(--line-strong)] text-main'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" style={{ color: active ? '#fff' : p.color }} />
+                  <div className="min-w-0">
+                    <p className="text-[11.5px] font-black truncate">{p.shortTitle}</p>
+                    <p className={`text-[9px] truncate ${active ? 'text-white/80' : 'text-dim'}`}>{p.badge}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="panel glow-card-anim rounded-[30px] p-6 sm:p-8 grid md:grid-cols-[1.1fr_0.9fr] gap-6 items-center">
+            <div className="space-y-4">
+              <span className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[11px] font-black">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{selectedPillar.badge}</span>
+              </span>
+              <h3 className="font-display font-bold text-2xl sm:text-3xl text-main">{selectedPillar.title}</h3>
+              <p className="text-xs sm:text-sm text-dim leading-relaxed">{selectedPillar.desc}</p>
+              <ul className="space-y-2 text-xs text-sub">
+                {selectedPillar.bullets.map((b) => (
+                  <li key={b} className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-jade shrink-0" />
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="pt-2 flex flex-wrap gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => onGoAuth('register')}
+                  className="btn-emerald px-5 py-3 rounded-2xl text-xs font-black"
+                >
+                  {isFa ? 'تنظیم و تست این موتور در پنل' : 'Configure This Engine'}
+                </button>
+                {publicBotInfo.botUsername && (
+                  <a
+                    href={`https://t.me/${publicBotInfo.botUsername}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5"
+                  >
+                    <Send className="w-3.5 h-3.5 text-brand" />
+                    <span>{isFa ? `ربات تلگرام @${publicBotInfo.botUsername}` : `Bot @${publicBotInfo.botUsername}`}</span>
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="surface-soft rounded-[26px] p-5 space-y-3 border hairline">
+              <p className="text-[11px] font-black text-dim uppercase">
+                {isFa ? 'آموزش ۴ قدمه شروع سریع (برای تازه‌کار تا حرفه‌ای)' : '4-Step Quick Academy Walkthrough'}
+              </p>
+              {[
+                {
+                  n: '۱',
+                  t: isFa ? 'ثبت‌نام یک‌کلیک (Trust Wallet / گوگل / تلگرام)' : '1-Tap Onboarding (Trust Wallet / Google / TG)',
+                  d: isFa
+                    ? 'حساب در چند ثانیه ساخته می‌شود؛ بدون دریافت کارمزد ورودی یا اطلاعات بانکی.'
+                    : 'Create your workspace in seconds with zero upfront fee.',
+                },
+                {
+                  n: '۲',
+                  t: isFa ? 'تمرین با دمو قابل تنظیم ($50–$10M) یا اتصال Trust Wallet' : 'Practice on Demo ($50–$10M) or Connect Trust Wallet',
+                  d: isFa
+                    ? 'ابتدا با سرمایه مجازی دلخواه معامله کنید یا از ۱۰ دلار واقعی روی ولت شخصی خودتان شروع کنید.'
+                    : 'Practice risk-free on the custom simulator or trade live from $10+ inside Trust Wallet.',
+                },
+                {
+                  n: '۳',
+                  t: isFa ? 'فعال‌سازی دقیق موتور دلخواه (همگی پیش‌فرض خاموش‌اند)' : 'Pick & Toggle Desired Engines (Default OFF)',
+                  d: isFa
+                    ? 'راهنمای هر موتور را ببینید، فیلتر ارسال سیگنال و حد سود/ضرر را تنظیم کرده و استارت بزنید.'
+                    : 'Read each built-in guide, configure signal filters & TP/SL, then switch on what you choose.',
+                },
+                {
+                  n: '۴',
+                  t: isFa ? 'مشاهده روی سوپرچارت و دریافت کارت سود قابل استعلام' : 'Inspect on Supercharts & Issue Verified Cards',
+                  d: isFa
+                    ? 'روی دکمه «نمودار و سیگنال» بزنید تا سطوح ورود و تارگت‌ها را روی کندل زنده ببینید و کارت سود بگیرید.'
+                    : 'Tap Chart & Signal to view Entry/SL/TP directly on candles and export verifiable PnL cards.',
+                },
+              ].map((step) => (
+                <div key={step.n} className="panel rounded-2xl p-3 flex items-start gap-3">
+                  <span className="w-7 h-7 rounded-xl btn-gold grid place-items-center text-xs font-black shrink-0">{step.n}</span>
+                  <div>
+                    <p className="text-xs font-black text-main">{step.t}</p>
+                    <p className="text-[10.5px] text-dim mt-0.5 leading-relaxed">{step.d}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 6. TRANSPARENT PRODUCT ROADMAP */}
+        <section id="roadmap" className="space-y-6">
+          <div className="text-center max-w-3xl mx-auto space-y-2">
+            <span className="inline-flex items-center gap-1.5 badge-signal px-3.5 py-1 rounded-full text-[11px] font-black">
+              <Compass className="w-3.5 h-3.5 text-[var(--gold)]" />
+              <span>TRANSPARENT DELIVERY ROADMAP</span>
+            </span>
+            <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
+              {isFa ? 'نقشه راه دلارینو: دستاوردهای تکمیل‌شده و چشم‌انداز آینده' : 'Dollarino Roadmap: Shipped Milestones & Next Horizon'}
+            </h2>
+            <p className="text-xs sm:text-sm text-dim">
+              {isFa
+                ? 'تمام بخش‌های فاز ۱ تا ۳ هم‌اکنون در پلتفرم پیاده‌سازی و فعال هستند و توسعه فاز ۴ در حال برنامه‌ریزی است.'
+                : 'Phases 1–3 are live and tested in production today; Phase 4 outlines upcoming multi-sig & mobile expansions.'}
+            </p>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            {[
+              {
+                phase: 'PHASE 01 · V10 – V11.5',
+                status: isFa ? 'تکمیل و فعال ✓' : 'COMPLETED ✓',
+                done: true,
+                title: isFa ? 'حذف اشتراک و مدل عادلانه ۳٪' : 'Zero Subscriptions & 3% Profit Model',
+                items: isFa
+                  ? ['حذف کامل اشتراک ماهانه برای همیشه', '۳ معامله سودده اول ۰٪ کارمزد واقعی', 'اکوسیستم تلگرام ۱+۷+۱ با ربات هوشمند', 'شبیه‌ساز دمو با سقف دلخواه $50 تا $10M']
+                  : ['Permanent $0 monthly subscription', 'First 3 live wins at 0% fee', '1+7+1 Telegram bot & channel network', 'Custom $50–$10M Paper Simulator'],
+              },
+              {
+                phase: 'PHASE 02 · V11.6 – V11.7.2',
+                status: isFa ? 'تکمیل و فعال ✓' : 'COMPLETED ✓',
+                done: true,
+                title: isFa ? 'کپی‌ترید V2، اکستنشن و کارت سود' : 'Smart Copy V2, Extension & PnL Cards',
+                items: isFa
+                  ? ['کپی‌ترید ولت نهنگ‌ها + سپر ضدراگ زنده', 'اکستنشن پنل کناری کروم (Chrome Side Panel)', 'استودیو کارت سود ۱۶:۹ و ۹:۱۶ با تایید QR', 'ورود تک‌کلیک Trust Wallet DApp + گوگل']
+                  : ['Whale Copy V2 + GoPlus/RugCheck shield', 'Chrome Side Panel simple extension', 'Signed 16:9 & 9:16 Profit Card Studio', 'Trust DApp + Google + Telegram onboarding'],
+              },
+              {
+                phase: 'PHASE 03 · V11.9 (NOW)',
+                status: isFa ? 'نسخه فعلی (فعال) ✓' : 'LIVE NOW ✓',
+                done: true,
+                title: isFa ? 'هم‌ترازی Trust، سوپرچارت و استعلام ۳۰ روزه' : 'Trust Parity, Supercharts & 30d Audits',
+                items: isFa
+                  ? ['پیش‌فرض خاموش تمام ۵ موتور + راهنمای تک‌باره', 'همگام با ۸۲۰+ ارز و پورتفوی ۴ شبکه Trust Wallet', 'سوپرچارت TradingView + عقربه تکنیکال + Pine v6', 'فیلتر اخبار ۲۴۰م + استعلام زنده ۳۰ روزه ولت']
+                  : ['All 5 engines Default-OFF + guided setup', '820+ Trust Wallet markets & live multi-chain portfolio', 'TradingView Supercharts + Gauge + Pine v6', '240m filtered news + live 30d wallet audit page'],
+              },
+              {
+                phase: 'PHASE 04 · V12 VISION',
+                status: isFa ? 'در مسیر توسعه 🚀' : 'UPCOMING 🚀',
+                done: false,
+                title: isFa ? 'آربیتراژ DEX و خزانه چندامضایی' : 'Cross-DEX Arbitrage & Multi-Sig Vaults',
+                items: isFa
+                  ? ['خزانه غیرامانی با محدودیت سقف امضای هوشمند', 'رادار آربیتراژ لحظه‌ای میان Perp DEX و Spot', 'اشتراک‌گذاری لینک استراتژی‌های تاییدشده Pine v6', 'اپلیکیشن موبایل بومی با اعلان نیتیو']
+                  : ['Session-key capped smart contract vaults', 'Real-time Perp/DEX spread & arbitrage radar', 'Shareable verified Pine v6 strategy presets', 'Native mobile push & biometric signing'],
+              },
+            ].map((rm) => (
+              <div
+                key={rm.phase}
+                className={`panel rounded-[26px] p-5 border space-y-3 ${
+                  rm.done ? 'border-emerald-500/30' : 'border-amber-500/30'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black text-dim">{rm.phase}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[9.5px] font-black ${
+                      rm.done ? 'bg-emerald-500/15 text-jade' : 'bg-amber-500/15 text-[var(--gold)]'
+                    }`}
+                  >
+                    {rm.status}
+                  </span>
+                </div>
+                <h3 className="font-display font-bold text-base text-main">{rm.title}</h3>
+                <ul className="space-y-1.5 text-[11px] text-dim">
+                  {rm.items.map((it) => (
+                    <li key={it} className="flex items-start gap-1.5">
+                      {rm.done ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-jade shrink-0 mt-0.5" />
+                      ) : (
+                        <Rocket className="w-3.5 h-3.5 text-[var(--gold)] shrink-0 mt-0.5" />
+                      )}
+                      <span>{it}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* 7. LIVE MARKETS EXPLORER */}
         <section id="live-markets" className="space-y-4">
           <div className="panel rounded-[28px] p-5 sm:p-6 border hairline space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -768,7 +1075,7 @@ export function LandingPage({
                   LIVE TOP MARKETS · CLICK ANY TICKER COIN
                 </p>
                 <h2 className="font-display font-bold text-2xl text-main mt-0.5">
-                  {isFa ? 'نبض زنده بازار ارزهای برتر (با کلیک از نوار بالا)' : 'Live Top Crypto Markets Explorer'}
+                  {isFa ? 'نبض زنده بازار ارزهای برتر (همگام با نوار بالا)' : 'Live Top Crypto Markets Explorer'}
                 </h2>
               </div>
               <div className="flex items-center gap-2 text-xs">
@@ -780,12 +1087,11 @@ export function LandingPage({
                   onClick={() => onGoAuth('register')}
                   className="btn-gold px-4 py-2 rounded-xl text-xs font-black"
                 >
-                  {isFa ? 'ورود به بازار کامل' : 'Open Full Markets'}
+                  {isFa ? 'مشاهده ۸۲۰+ بازار Trust' : 'Explore 820+ Markets'}
                 </button>
               </div>
             </div>
 
-            {/* Active Spotlight Card for Clicked Ticker Coin */}
             <div className="surface-soft rounded-2xl p-4 border-2 border-[var(--gold)]/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5 min-w-0">
                 <CoinIcon symbol={activeCoin.symbol} size={42} />
@@ -835,12 +1141,11 @@ export function LandingPage({
                   className="btn-emerald px-4 py-2.5 rounded-xl text-xs font-black inline-flex items-center gap-1.5"
                 >
                   <Zap className="w-3.5 h-3.5" />
-                  <span>{isFa ? `شروع ترید ${activeCoin.base || activeCoin.symbol.replace(/USDT$/, '')}` : `Trade ${activeCoin.base || activeCoin.symbol}`}</span>
+                  <span>{isFa ? `تحلیل و ترید ${activeCoin.base || activeCoin.symbol.replace(/USDT$/, '')}` : `Trade ${activeCoin.base || activeCoin.symbol}`}</span>
                 </button>
               </div>
             </div>
 
-            {/* Top Markets Quick Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
               {liveCoins.slice(0, 8).map((c) => {
                 const up = c.changePct24h >= 0;
@@ -876,244 +1181,9 @@ export function LandingPage({
           </div>
         </section>
 
-        {/* What's New in V11.7.2 Feature Showcase */}
-        <section id="whats-new" className="space-y-6">
-          <div className="text-center max-w-3xl mx-auto space-y-2">
-            <span className="inline-flex items-center gap-1.5 badge-signal px-3.5 py-1 rounded-full text-[11px] font-black">
-              <Sparkles className="w-3.5 h-3.5 text-jade" />
-              <span>DOLLARINO V11.5 – V11.7.2 RELEASE HIGHLIGHTS</span>
-            </span>
-            <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-              {isFa ? 'جدیدترین امکانات و آپدیت‌های دلارینو (نسخه V11.7.2)' : 'Everything New in Dollarino V11.7.2'}
-            </h2>
-            <p className="text-xs sm:text-sm text-dim leading-relaxed">
-              {isFa
-                ? 'تمامی قابلیت‌های جدید از اکستنشن پنل کناری کروم، ثبت‌نام مستقیم در DApps تراست‌ولت، اسنایپر ۵ دقیقه‌ای و شارژ خزانه سولانا تا استودیو کارت سود ۱۶:۹ و ۹:۱۶ آماده استفاده هستند.'
-                : 'Explore Chrome Side Panel Simple Mode, direct Trust Wallet DApp signup, 5-minute Pro Sniper with Solana Vault funding, Pine v5 chart graphics, %/$ TP/SL, and 16:9 / 9:16 Profit Cards.'}
-            </p>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-            {[
-              {
-                icon: PanelRight,
-                badge: 'V11.7.2 · CHROME EXTENSION',
-                color: '#1652f0',
-                title: isFa ? 'اکستنشن پنل کناری کروم (حالت ساده)' : 'Chrome Side Panel Extension (Simple-Only)',
-                desc: isFa
-                  ? 'با یک کلیک روی آیکون افزونه، دلارینو مثل Trust Wallet به کنار مرورگر Chrome سنجاق می‌شود و بدون شلوغی، فقط حالت ساده را کنار صرافی‌ها و نمودارهای شما نگه می‌دارد.'
-                  : 'Docks permanently inside Chrome’s native Side Panel just like Trust Wallet, locked to clean Simple Mode alongside your tabs.',
-              },
-              {
-                icon: KeyRound,
-                badge: 'V11.7.2 · INSTANT ONBOARDING',
-                color: '#10b981',
-                title: isFa ? 'ثبت‌نام مستقیم DApp تراست‌ولت + گوگل + تلگرام' : 'Direct Trust DApp, Google & Telegram Signup',
-                desc: isFa
-                  ? 'دکمه ثبت‌نام کیف‌پول سایت را مستقیماً داخل مرورگر DApps تراست‌ولت باز می‌کند؛ همچنین ورود با گوگل و تلگرام فرم یکپارچه شماره تماس، اسم مستعار، نام کاربری و رمز + کد معرف خودکار دارند.'
-                  : 'Opens straight inside Trust Wallet DApp browser, plus Google & Telegram onboarding with unified phone, nickname, username & password completion and automatic admin referral.',
-              },
-              {
-                icon: Flame,
-                badge: 'V11.7.1 · SNIPER & SOLANA VAULT',
-                color: '#f59e0b',
-                title: isFa ? 'ذخیره چندموتوره + اسنایپر ۵ دقیقه + شارژ سولانا' : 'Multi-Engine Persist, 5m Sniper & Solana Fund',
-                desc: isFa
-                  ? 'موتورهای انتخابی شما با استارت ربات خودکار ذخیره می‌شوند؛ اسنایپر ۵ دقیقه‌ای پرو توکن‌های جدید و میم‌کوین‌ها را فیلتر می‌کند و شارژ خزانه SOL / USDC مستقیماً از تراست‌ولت انجام می‌شود.'
-                  : 'Auto-saves active engines on bot start, filters fresh pools with 5m Pro Sniper guards, and funds your Solana Jupiter vault directly from Trust Wallet.',
-              },
-              {
-                icon: Percent,
-                badge: 'V11.7.1 · PINE V5 + %/$ TP/SL',
-                color: '#8b5cf6',
-                title: isFa ? 'گرافیک کامل Pine v5 + حد سود و ضرر درصدی (%)' : 'Pine v5 Chart Plots + % / $ TP & SL Modes',
-                desc: isFa
-                  ? 'نمایش کامل اندیکاتورها، خطوط و HUD در استراتژی‌های Pine Script v5 روی چارت و انتخاب آسان حد سود و ضرر به صورت درصدی (%) یا قیمتی ($) در ترمینال و Perp DEX.'
-                  : 'Full chart lines & HUD rendering for Pine v5 scripts plus 1-tap switching between Percentage (%) and Price ($) TP/SL in Terminal and Perp DEX.',
-              },
-              {
-                icon: Image,
-                badge: 'V11.7 · 16:9 & 9:16 CARDS',
-                color: '#0ea5e9',
-                title: isFa ? 'استودیو کارت سود ۱۶:۹ افقی و ۹:۱۶ استوری' : 'Verified 16:9 & 9:16 Profit Card Studio',
-                desc: isFa
-                  ? 'صدور کارت گرافیکی PNG تاییدشده از معاملات Perp DEX، DEX Swap، کپی‌ترید و ربات در ۸ بازه زمانی (تک‌معامله تا سالانه) با QR کد پیگیری اصالت آنلاین.'
-                  : 'Render Verified PNG PnL Cards in 16:9 Landscape & 9:16 Mobile Story across Perp, DEX, Copy Trade & Bot with public QR verification.',
-              },
-              {
-                icon: Layers,
-                badge: 'V11.7.2 · ZERO SUB · SAFE RESET',
-                color: '#059669',
-                title: isFa ? '۰٪ اشتراک، ۳٪ فقط از سود + صفرسازی امن مدیریت' : '0% Subscription, 3% Net Fee & Safe Admin Reset',
-                desc: isFa
-                  ? 'اشتراک پولی برای همیشه حذف شده؛ ۳ معامله اول رایگان و پس از آن ۹۷٪ سود برای شماست. حساب‌های مدیر نیز از کارمزد/محدودیت معاف هستند و قابلیت صفرسازی ایمن به ۰ بدون حذف اکانت دارند.'
-                  : 'Zero monthly subscriptions, 3 free live wins, then keep 97% of real profit — plus full Admin exemption and reset-to-zero without losing account access.',
-              },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <div key={item.title} className="panel panel-hover rounded-[26px] p-5 space-y-3 border hairline">
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className="w-10 h-10 rounded-2xl grid place-items-center shrink-0"
-                      style={{ background: `color-mix(in srgb, ${item.color} 16%, transparent)`, color: item.color }}
-                    >
-                      <Icon className="w-5 h-5" />
-                    </span>
-                    <span className="text-[9px] font-black tracking-wider text-dim uppercase">{item.badge}</span>
-                  </div>
-                  <h3 className="font-display font-bold text-base text-main leading-snug">{item.title}</h3>
-                  <p className="text-dim leading-relaxed text-[11.5px]">{item.desc}</p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Animated Auto-Rotating Promo Banners Carousel */}
-        <section className="reveal-up">
-          <PromoBannerCarousel lang={lang} placement="LANDING" onGuestAction={() => onGoAuth('register')} />
-        </section>
-
-        {/* 2. Interactive 4 Pillars Clear Walkthrough */}
-        <section id="pillars" className="space-y-6">
-          <div className="text-center max-w-2xl mx-auto space-y-2">
-            <p className="text-[10px] font-black tracking-[0.2em] uppercase" style={{ color: 'var(--gold)' }}>
-              HOW DOLLARINO WORKS · SUPER EASY FOR EVERYONE
-            </p>
-            <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-              {isFa ? '۴ روش ساده و قدرتمند برای کسب سود در دلارینو' : '4 Simple & Powerful Ways to Trade'}
-            </h2>
-            <p className="text-xs sm:text-sm text-dim">
-              {isFa
-                ? 'هر سطحی که دارید — از کسی که فقط یک دکمه می‌خواهد تا تریدر حرفه‌ای — بخش مناسب خودتان آماده است.'
-                : 'Whether you want 1-tap automated AI or full Pine Script control, pick your lane cleanly.'}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {pillars.map((p) => {
-              const Icon = p.icon;
-              const active = activePillar === p.id;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setActivePillar(p.id)}
-                  className={`rounded-2xl p-3.5 text-start transition flex items-center gap-2.5 border ${
-                    active ? 'btn-gold border-transparent shadow-lg' : 'panel border-transparent hover:border-[var(--line-strong)] text-main'
-                  }`}
-                >
-                  <Icon className="w-5 h-5 shrink-0" style={{ color: active ? '#fff' : p.color }} />
-                  <div className="min-w-0">
-                    <p className="text-xs font-black truncate">{p.shortTitle}</p>
-                    <p className={`text-[10px] truncate ${active ? 'text-white/80' : 'text-dim'}`}>{p.badge}</p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="panel glow-card-anim rounded-[30px] p-6 sm:p-8 grid md:grid-cols-[1.15fr_0.85fr] gap-6 items-center">
-            <div className="space-y-4">
-              <span className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[11px] font-black">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{selectedPillar.badge}</span>
-              </span>
-              <h3 className="font-display font-bold text-2xl sm:text-3xl text-main">{selectedPillar.title}</h3>
-              <p className="text-xs sm:text-sm text-dim leading-relaxed">{selectedPillar.desc}</p>
-              <ul className="space-y-2 text-xs text-sub">
-                {selectedPillar.bullets.map((b) => (
-                  <li key={b} className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-jade shrink-0" />
-                    <span>{b}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="pt-2 flex flex-wrap gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => onGoAuth('register')}
-                  className="btn-emerald px-5 py-3 rounded-2xl text-xs font-black"
-                >
-                  {isFa ? 'شروع با همین روش' : 'Get Started Now'}
-                </button>
-                {publicBotInfo.botUsername && (
-                  <a
-                    href={`https://t.me/${publicBotInfo.botUsername}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-ghost px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5"
-                  >
-                    <Send className="w-3.5 h-3.5 text-brand" />
-                    <span>{isFa ? 'اجرا در ربات تلگرام' : 'Open Telegram Bot'}</span>
-                  </a>
-                )}
-              </div>
-            </div>
-
-            <div className="surface-soft rounded-[26px] p-5 space-y-3 border hairline">
-              <p className="text-[11px] font-black text-dim uppercase">
-                {isFa ? 'چطور در ۳ قدم شروع کنم؟' : '3 Simple Steps to Start'}
-              </p>
-              {[
-                {
-                  n: '۱',
-                  t: publicBotInfo.botUsername
-                    ? isFa
-                      ? `ثبت‌نام یا ورود با ربات @${publicBotInfo.botUsername}`
-                      : `Sign In via @${publicBotInfo.botUsername} or Web`
-                    : isFa
-                      ? 'ورود به حساب یا روش فعال‌شده مدیریت'
-                      : 'Sign In via Enabled Method',
-                  d: isFa
-                    ? 'با نام کاربری و رمز عبور یا هر روش احراز هویتی که مدیر سایت فعال کرده وارد شوید.'
-                    : 'Sign in with credentials or any authentication provider enabled by the site admin.',
-                },
-                {
-                  n: '۲',
-                  t: isFa ? 'اتصال Trust Wallet (یا شبیه‌ساز رایگان قابل تنظیم)' : 'Connect Trust Wallet (or Free Custom Demo)',
-                  d: isFa ? 'با حداقل ۱۰ دلار واقعی شروع کنید یا رایگان با شبیه‌ساز قابل تنظیم (\u2066$50–$10M\u2069) تمرین کنید.' : 'Trade real with $10+ in Trust Wallet or practice free with Custom Demo ($50–$10M).',
-                },
-                {
-                  n: '۳',
-                  t: isFa ? 'روشن کردن ربات یا آموزش هوش مصنوعی من' : 'Launch Auto AI, My AI, or Copy Trade',
-                  d: isFa ? 'به سادگی در سایت یا ربات تلگرام دکمه شروع را بزنید.' : 'Start automated trades on Web or Telegram.',
-                },
-              ].map((step) => (
-                <div key={step.n} className="panel rounded-2xl p-3.5 flex items-start gap-3">
-                  <span className="w-7 h-7 rounded-xl btn-gold grid place-items-center text-xs font-black shrink-0">{step.n}</span>
-                  <div>
-                    <p className="text-xs font-black text-main">{step.t}</p>
-                    <p className="text-[11px] text-dim mt-0.5">{step.d}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* 2.5 Smart Copy-Trading V2 & Anti-Rug Multi-DApp Showcase */}
+        {/* 8. SMART COPY-TRADING V2 + ANTI-RUG SHOWCASE */}
         <section id="smart-v2" className="space-y-6">
-          <div className="text-center max-w-3xl mx-auto space-y-2">
-            <span className="inline-flex items-center gap-1.5 badge-signal px-3.5 py-1 rounded-full text-[11px] font-black">
-              <Radar className="w-3.5 h-3.5 text-jade" />
-              <span>SMART COPY-TRADING V2 · MULTI-CHAIN ANTI-RUG & TRUST DAPP</span>
-            </span>
-            <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-              {isFa
-                ? 'شکار نهنگ‌ها، سپر ضدراگ واقعی و سوآپ Multi-DApp در یک پلتفرم'
-                : 'Whale Wallet Copy-Trading, Real Anti-Rug & Trust Multi-DApp'}
-            </h2>
-            <p className="text-xs sm:text-sm text-dim leading-relaxed">
-              {isFa
-                ? 'بهترین ولت‌های اسمارت‌مانی را در کل شبکه‌ها پیدا کنید، قبل از اتصال ۷ روز بک‌تست واقعی بگیرید، برای هر تریدر باکس مارجین اختصاصی بسازید و بدون نیاز به ترس از اسکم، معاملات جدیدشان را ۲۴/۷ یا با یک کلیک در Trust Wallet کپی کنید.'
-                : 'Discover Top-10 smart-money wallets or add any custom wallet, run a 7-day backtest, isolate per-trader margin boxes, and copy live trades safely with GoPlus/Honeypot/RugCheck protection.'}
-            </p>
-          </div>
-
           <div className="grid lg:grid-cols-2 gap-5">
-            {/* Banner Card 1: Smart Wallet Copy + Isolated Boxes + 24/7 Copy-Vault */}
             <div className="panel glow-card-anim rounded-[30px] overflow-hidden flex flex-col justify-between border border-amber-500/25">
               <div>
                 <div className="relative h-48 sm:h-52 overflow-hidden">
@@ -1137,7 +1207,7 @@ export function LandingPage({
                 <div className="p-5 sm:p-6 space-y-3 text-xs">
                   <p className="text-dim leading-relaxed">
                     {isFa
-                      ? 'برترین ولت‌های Solana، Base، Ethereum، BSC، Arbitrum، TON و TRON را رصد کنید یا آدرس هر ولت شخصی را ثبت کنید. سیستم به‌صورت خودکار فقط تراکنش‌هایی را که از لحظه فالو باز می‌شوند رصد و کپی می‌کند.'
+                      ? 'برترین ولت‌های Solana، Base، Ethereum، BSC، Arbitrum، TON و TRON را رصد کنید یا آدرس هر ولت شخصی را ثبت کنید. سیستم به‌صورت خودکار فقط معاملاتی را که از لحظه فالو باز می‌شوند رصد و کپی می‌کند.'
                       : 'Track leaderboard whales or paste any custom address across Solana, Base, ETH, BSC, Arbitrum, TON & TRON. Strictly copies new positions opened after follow time.'}
                   </p>
                   <div className="grid sm:grid-cols-2 gap-2">
@@ -1150,23 +1220,17 @@ export function LandingPage({
                       {
                         icon: Sparkles,
                         title: isFa ? 'بک‌تست ۷ روزه + پله‌های پرو' : '7-Day Backtest & Pro TP/SL',
-                        desc: isFa ? 'TP1/2/3، Moonbag، Trailing، Break-Even و تایم‌لیمیت.' : 'TP1/2/3, Moonbag, Trailing SL, Break-Even & Reverse Copy.',
+                        desc: isFa ? 'TP1/2/3، Moonbag، Trailing، Break-Even و معکوس.' : 'TP1/2/3, Moonbag, Trailing SL, Break-Even & Reverse Copy.',
                       },
                       {
                         icon: KeyRound,
-                        title: isFa ? 'خزانه ۲۴/۷ + دریافت کلید خصوصی' : '24/7 Copy-Vault + Key Backup',
+                        title: isFa ? 'خزانه ۲۴/۷ + بک‌آپ کلید' : '24/7 Copy-Vault + Key Backup',
                         desc: isFa ? 'اجرای خودکار روی Jupiter سولانا و خروجی کلید AES-256.' : 'Automated Solana Jupiter swaps & encrypted key export.',
                       },
                       {
                         icon: Trophy,
                         title: isFa ? 'کنترل در تلگرام + کارت سود' : 'Telegram Bot + Verified Card',
-                        desc: publicBotInfo.botUsername
-                          ? isFa
-                            ? `مدیریت پوزیشن‌ها در @${publicBotInfo.botUsername} و کارت سود PNG.`
-                            : `Manage V2 trades in @${publicBotInfo.botUsername} & issue Verified PnL Cards.`
-                          : isFa
-                            ? 'مدیریت پوزیشن‌ها در ربات تلگرام متصل و کارت سود PNG.'
-                            : 'Manage V2 trades in connected Telegram bot & issue Verified PnL Cards.',
+                        desc: isFa ? 'مدیریت پوزیشن‌ها در ربات متصل و صدور کارت سود PNG.' : 'Manage V2 trades in Telegram bot & issue Verified PnL Cards.',
                       },
                     ].map((f) => {
                       const FIcon = f.icon;
@@ -1194,7 +1258,6 @@ export function LandingPage({
               </div>
             </div>
 
-            {/* Banner Card 2: Real Anti-Rug Shield + Trust Wallet Multi-DApp Router */}
             <div className="panel glow-card-anim rounded-[30px] overflow-hidden flex flex-col justify-between border border-emerald-500/25">
               <div>
                 <div className="relative h-48 sm:h-52 overflow-hidden">
@@ -1206,7 +1269,7 @@ export function LandingPage({
                   <div className="absolute inset-0 bg-gradient-to-t from-[#081022] via-[#081022]/35 to-transparent flex items-end p-5">
                     <div>
                       <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black">
-                        {isFa ? 'GOPLUS · HONEYPOT.IS · RUGCHECK · TRUST DAPP' : 'GOPLUS · HONEYPOT.IS · RUGCHECK · TRUST DAPP'}
+                        GOPLUS · HONEYPOT.IS · RUGCHECK · TRUST DAPP
                       </span>
                       <h3 className="font-display font-bold text-lg sm:text-xl text-white mt-1.5">
                         {isFa ? 'سپر ضدراگ چندمنبعی + تمام صرافی‌های DEX در Trust Wallet' : 'Multi-Source Anti-Rug + All Network DEXs in Trust Wallet'}
@@ -1218,8 +1281,8 @@ export function LandingPage({
                 <div className="p-5 sm:p-6 space-y-3 text-xs">
                   <p className="text-dim leading-relaxed">
                     {isFa
-                      ? 'قبل از هر خرید غیرحضانتی، قرارداد توکن به‌صورت زنده از نظر Honeypot، مالیات خرید/فروش، مجوز Mint، قفل بودن نقدینگی و ریسک دولوپر بررسی می‌شود. سپس می‌توانید معامله را مستقیماً در برترین صرافی‌های همان شبکه باز کنید.'
-                      : 'Before any non-custodial swap, every contract is scanned live for Honeypot traps, Buy/Sell tax, Mint authority, and LP locks — then routed straight into the top DApps inside Trust Wallet.'}
+                      ? 'قبل از هر خرید غیرامانی، قرارداد توکن به‌صورت زنده از نظر Honeypot، مالیات خرید/فروش، مجوز Mint و قفل بودن نقدینگی بررسی می‌شود. سپس می‌توانید معامله را مستقیماً در برترین DAppهای Trust Wallet باز کنید.'
+                      : 'Before any non-custodial swap, every contract is scanned live for Honeypot traps, Buy/Sell tax, Mint authority, and LP locks — then routed straight into Trust Wallet DApps.'}
                   </p>
                   <div className="grid sm:grid-cols-2 gap-2">
                     {[
@@ -1231,7 +1294,7 @@ export function LandingPage({
                       {
                         icon: Zap,
                         title: isFa ? 'مسیریاب Multi-DApp همه‌شبکه‌ها' : 'All-Chain Multi-DApp Router',
-                        desc: isFa ? 'Jupiter, Raydium, PancakeSwap, Uniswap, 1inch, STON.fi, SunSwap, Cetus.' : 'Jupiter, Raydium, PancakeSwap, Uniswap, 1inch, STON.fi & Cetus.',
+                        desc: isFa ? 'Jupiter, Raydium, PancakeSwap, Uniswap, 1inch, STON.fi, SunSwap.' : 'Jupiter, Raydium, PancakeSwap, Uniswap, 1inch, STON.fi & Cetus.',
                       },
                       {
                         icon: ShieldCheck,
@@ -1270,95 +1333,7 @@ export function LandingPage({
             </div>
           </div>
 
-          {/* 4-Step Visual Walkthrough Strip */}
-          <div className="panel rounded-[26px] p-5 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-              <div>
-                <p className="text-[10px] font-black tracking-[0.18em] uppercase" style={{ color: 'var(--gold)' }}>
-                  QUICK START TRAINING
-                </p>
-                <h3 className="font-display font-bold text-lg text-main">
-                  {isFa ? 'آموزش ۴ مرحله‌ای شروع کپی‌ترید هوشمند ولت‌ها (از صفر تا اجرا)' : '4-Step Smart Copy-Trading Walkthrough'}
-                </h3>
-              </div>
-              <span className="badge-signal px-3 py-1 rounded-full text-[11px] font-black">
-                {isFa ? 'بدون نیاز به دانش برنامه‌نویسی' : 'Beginner Friendly'}
-              </span>
-            </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-              {[
-                {
-                  n: '۱',
-                  t: isFa ? 'انتخاب تریدر یا ولت دلخواه' : 'Pick Top-10 or Custom Wallet',
-                  d: isFa ? 'از لیست ۱۰ تریدر برتر شبکه انتخاب کنید یا آدرس هر ولت دلخواه را بدهید (فقط تریدهای جدید کپی می‌شوند).' : 'Choose from Top-10 Smart Wallets or paste any custom address (only new trades copy).',
-                },
-                {
-                  n: '۲',
-                  t: isFa ? 'بک‌تست ۷ روزه + باکس مارجین' : '7-Day Backtest & Margin Box',
-                  d: isFa ? 'باکس سرمایه جدا، سقف ضرر روزانه، TP1/2/3، Moonbag، SL و سپر ضدراگ را تنظیم و با بک‌تست بررسی کنید.' : 'Simulate 7 days with your isolated margin box, 3-step TP, Moonbag, SL & Anti-Rug filters.',
-                },
-                {
-                  n: '۳',
-                  t: isFa ? 'انتخاب روش اجرا (Trust یا خزانه)' : 'Trust 1-Click or 24/7 Vault',
-                  d: isFa ? 'حالت تک‌کلیک Trust Wallet را انتخاب کنید یا خزانه اختصاصی ۲۴/۷ را شارژ و کلید پشتیبان آن را دریافت کنید.' : 'Choose Trust 1-Click confirmation or 24/7 Copy-Vault with instant AES-256 key backup.',
-                },
-                {
-                  n: '۴',
-                  t: isFa ? 'پایش لحظه‌ای + کارت سود' : 'Live Monitor + Profit Card',
-                  d: isFa ? 'با هر خرید جدید ولت، سپر ضدراگ اجرا می‌شود، خروج خودکار در TP/SL/Dev-Sell انجام شده و کارت سود صادر می‌گردد.' : 'Live polling + instant Dev-Sell exit, Telegram alerts, and Verified PnL PNG Cards.',
-                },
-              ].map((step) => (
-                <div key={step.n} className="surface-soft rounded-2xl p-4 space-y-2 border hairline">
-                  <span className="w-7 h-7 rounded-xl btn-gold grid place-items-center text-xs font-black">{step.n}</span>
-                  <p className="font-black text-main">{step.t}</p>
-                  <p className="text-[11px] text-dim leading-relaxed">{step.d}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* 3. Verified Copy Traders Showcase */}
-        <section id="copy-leaders" className="space-y-6">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-1.5" style={{ color: 'var(--gold)' }}>
-                VERIFIED COPY TRADE DESK
-              </p>
-              <h2 className="font-display font-bold text-2xl sm:text-3xl text-main">
-                {isFa ? 'معامله‌گران تاییدشده توسط مدیریت دلارینو' : 'Admin-Verified Copy Traders'}
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => onGoAuth('register')}
-              className="btn-cobalt px-4 py-2.5 rounded-2xl text-xs font-black"
-            >
-              {isFa ? 'مشاهده معاملات و کپی‌ترید' : 'View Trades & Copy'}
-            </button>
-          </div>
-
-          {copyTraders.length === 0 ? (
-            <div className="panel rounded-[26px] p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border hairline">
-              <div className="space-y-1.5">
-                <p className="font-display font-bold text-base text-main">
-                  {isFa ? 'کپی‌ترید دوگانه: لیست تریدرهای تاییدشده مدیریت + ۱۰ ولت هوشمند هر شبکه' : 'Dual Copy Trade: Verified VIPs + Top-10 Smart Wallets Per Chain'}
-                </p>
-                <p className="text-xs text-dim leading-relaxed max-w-2xl">
-                  {isFa
-                    ? 'پس از ورود می‌توانید هم معامله‌گران تاییدشده توسط مدیریت را دنبال کنید و هم به صورت ۲۴ ساعته معاملات ولت‌های برتر اسمارت‌مانی در Solana، Base، Ethereum، BSC، TON و TRON را با سپر ضدراگ و باکس مارجین اختصاصی کپی بگیرید.'
-                    : 'Sign in to mirror admin-verified traders or track Top-10 Smart-Money wallets across Solana, Base, Ethereum, BSC, TON & TRON with Anti-Rug protection and isolated margin boxes.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onGoAuth('register')}
-                className="btn-emerald px-5 py-3 rounded-2xl text-xs font-black shrink-0"
-              >
-                {isFa ? 'ورود به بخش کپی‌ترید V2' : 'Open Copy Trade V2'}
-              </button>
-            </div>
-          ) : (
+          {copyTraders.length > 0 && (
             <div className="grid md:grid-cols-3 gap-4">
               {copyTraders.map((t) => (
                 <div key={t.id} className="panel panel-hover rounded-[26px] p-5 space-y-4">
@@ -1374,7 +1349,6 @@ export function LandingPage({
                       {isFa ? 'تاییدشده' : 'VERIFIED'}
                     </span>
                   </div>
-
                   <div className="grid grid-cols-3 gap-2 text-center text-xs">
                     <div className="surface-soft rounded-2xl p-2.5">
                       <p dir="ltr" className="font-num font-black text-jade">+{t.roi_30d_pct}%</p>
@@ -1389,7 +1363,6 @@ export function LandingPage({
                       <p className="text-[10px] text-dim">{isFa ? 'دنبال‌کننده' : 'Followers'}</p>
                     </div>
                   </div>
-
                   <button
                     type="button"
                     onClick={() => onGoAuth('register')}
@@ -1404,21 +1377,27 @@ export function LandingPage({
           )}
         </section>
 
-        {/* 4. Free Forever + 3 Free Wins + 3% Only On Real Profit Showcase */}
+        {/* 9. ZERO SUBSCRIPTION + 3 FREE WINS + 3% PROFIT SHARE */}
         <section id="pricing" className="space-y-6">
-          <div className="panel rounded-[30px] p-6 sm:p-8 border hairline grid lg:grid-cols-[1.15fr_0.85fr] gap-6 items-center">
-            <div className="space-y-4">
+          <div className="panel rounded-[30px] p-6 sm:p-8 border hairline grid lg:grid-cols-[1.15fr_0.85fr] gap-6 items-center relative overflow-hidden">
+            <img
+              src="/logo-hd.webp"
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none select-none absolute -top-10 -left-10 w-52 h-52 object-contain opacity-[0.04]"
+            />
+            <div className="relative z-10 space-y-4">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] text-[11px] font-black">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>{isFa ? '۱۰۰٪ رایگان · اشتراک ماهانه برای همیشه حذف شد!' : 'ZERO SUBSCRIPTIONS · 100% FREE FOREVER'}</span>
               </span>
               <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
-                {isFa ? '۳ معامله اول ۰٪ · سپس فقط ۳٪ کارمزد از سود واقعی (۹۷٪ سود برای شما!)' : 'First 3 Live Wins 0% · Then Only 3% Server Fee on Net Profits (Keep 97%!)'}
+                {isFa ? '۳ معامله اول ۰٪ · سپس فقط ۳٪ کارمزد سرور از سود واقعی (۹۷٪ سود برای شما!)' : 'First 3 Live Wins 0% · Then Only 3% Server Fee on Net Profits (Keep 97%!)'}
               </h2>
               <p className="text-xs sm:text-sm text-dim leading-relaxed">
                 {isFa
-                  ? `تمام امکانات دلارینو رایگان است: کیف‌پول دمو قابل تنظیم رایگان (\u2066$50–$10M\u2069)، ۵ موتور همزمان + اسنایپر لیستینگ و میم‌کوین، ۲۵+ اندیکاتور رایگان و هوش مصنوعی چندمدلی. نرخ لحظه‌ای هر دلار تتر ایران: ${iranIrt.toLocaleString('en-US')} تومان.`
-                  : 'All Dollarino modules are free: Customizable Paper Wallet ($50–$10M), 5 concurrent engines + Listing & Meme Sniper, 25+ Free Alerts, and Multi-AI. Live trading starts from $10+ USD in your own Trust Wallet.'}
+                  ? `تمام امکانات دلارینو رایگان است: کیف‌پول دمو قابل تنظیم رایگان (\u2066$50–$10M\u2069)، ۵ موتور همزمان، سوپرچارت TradingView و ۲۵+ اندیکاتور و هوش مصنوعی چندمدلی. نرخ لحظه‌ای هر دلار تتر ایران: ${iranIrt.toLocaleString('en-US')} تومان.`
+                  : 'All Dollarino modules are free: Customizable Paper Wallet ($50–$10M), 5 concurrent engines, TradingView Supercharts, 25+ Free Alerts, and Multi-AI. Live trading starts from $10+ USD in your own Trust Wallet.'}
               </p>
               <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
                 <div className="surface-soft rounded-2xl p-3 border hairline">
@@ -1436,12 +1415,12 @@ export function LandingPage({
               </div>
               <div className="rounded-2xl p-3.5 bg-emerald-500/10 border border-emerald-500/30 text-xs leading-relaxed">
                 <p className="font-black text-[#059669] dark:text-[#34D399] mb-1">
-                  {isFa ? 'تفاوت بزرگ دلارینو با پلتفرم‌های اشتراکی:' : 'Why Dollarino Fights Harder for Your Profit:'}
+                  {isFa ? 'چرا دلارینو کاملاً هم‌جهت با سود شماست؟' : 'Why Dollarino Is 100% Aligned With Your Net Profit:'}
                 </p>
                 <p className="text-main">
                   {isFa
-                    ? 'سایر ربات‌ها و سایت‌ها از همان ابتدا هزینه اشتراک را از شما می‌گیرند و سود یا ضرر شما در بازار برایشان فرقی ندارد؛ اما دلارینو اشتراک پولی ندارد و تمام تلاشش را می‌کند تا بیشترین سود را ببرید، چون درآمد ۳٪ سرور ما هم فقط زمانی بیشتر می‌شود که شما سود بیشتری بگیرید!'
-                    : 'Competitors take upfront subscription fees and profit whether you win or lose. Dollarino charges $0 subscription and fights its hardest to maximize your net profit — because we only earn our 3% server share when YOU win more!'}
+                    ? 'سایر پلتفرم‌ها قبل از هر نتیجه‌ای حق اشتراک می‌گیرند و سود یا ضرر کاربر برایشان فرقی ندارد؛ اما دلارینو اشتراک پولی ندارد و تمام تلاشش را روی کیفیت تحلیل و فیلتر سیگنال می‌گذارد، چون درآمد ۳٪ سرور فقط زمانی ایجاد می‌شود که معاملات واقعی شما سودده شوند!'
+                    : 'Subscription bots get paid upfront whether you win or lose. Dollarino charges $0 subscription and earns its 3% server fee strictly on realized net wins — our incentives match yours.'}
                 </p>
               </div>
               <div className="pt-1 flex flex-wrap gap-2.5">
@@ -1450,11 +1429,11 @@ export function LandingPage({
                   onClick={() => onGoAuth('register')}
                   className="btn-emerald px-6 py-3 rounded-2xl text-xs font-black"
                 >
-                  {isFa ? 'شروع رایگان در ربات و وب' : 'Start Free Now'}
+                  {isFa ? 'شروع رایگان در وب و تلگرام' : 'Start Free Now'}
                 </button>
               </div>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3">
+            <div className="relative z-10 flex flex-col items-center justify-center gap-3">
               <img
                 src="/images/transparent/rocket-profit-3d.webp"
                 alt="3% Profit Share Rocket"
@@ -1469,26 +1448,25 @@ export function LandingPage({
           </div>
         </section>
 
-        {/* 4.5 Full Pre-Signup Founder Verification, Project Goals & Anti-Ponzi Transparency Showcase */}
+        {/* 10. FOUNDER VERIFICATION & ANTI-PONZI TRANSPARENCY */}
         {(founder?.showPublic ?? true) && (
           <section id="trust-founder" className="space-y-6">
             <div className="text-center max-w-3xl mx-auto space-y-2.5">
               <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-emerald-500/15 text-[#059669] dark:text-[#34D399] text-[10px] font-black tracking-wide uppercase">
                 <BadgeCheck className="w-3.5 h-3.5" />
-                <span>{isFa ? 'شفافیت کامل بنیان‌گذار · ۱۰۰٪ مستقل · تضمین فنی ضدپانزی و ضدکلاهبرداری' : 'FULL FOUNDER TRANSPARENCY · 100% SOLO-BUILT · ZERO-PONZI PROOF'}</span>
+                <span>{isFa ? 'شفافیت کامل بنیان‌گذار · ۱۰۰٪ مستقل · تضمین فنی ضدپانزی' : 'FULL FOUNDER TRANSPARENCY · 100% SOLO-BUILT · ZERO-PONZI PROOF'}</span>
               </span>
               <h2 className="font-display font-bold text-3xl sm:text-4xl text-main">
                 {isFa ? 'قبل از ثبت‌نام، سازنده و اصالت پروژه را کامل بشناسید' : 'Meet the Founder & Verify Dollarino Before Signing Up'}
               </h2>
               <p className="text-xs sm:text-sm text-dim leading-relaxed">
                 {isFa
-                  ? 'برخلاف پروژه‌های ناشناس و اسکم، تمام هویت سازنده، هدف پلتفرم، استقلال کامل بدون هیچ نهاد پشت‌پرده و ۶ دلیل فنی غیرپانزی بودن دلارینو به‌صورت شفاف قبل از ورود در دسترس شماست.'
-                  : 'Unlike anonymous schemes, Dollarino publishes full founder identity, verifiable contacts, project goals, solo-built independence, and 6 architectural proofs that Dollarino is strictly non-custodial and zero-Ponzi.'}
+                  ? 'برخلاف پروژه‌های ناشناس و اسکم، تمام هویت سازنده، راه‌های ارتباط مستقیم، استقلال کامل پروژه و ۶ دلیل فنی غیرپانزی بودن دلارینو به‌صورت شفاف قبل از ورود در دسترس شماست.'
+                  : 'Unlike anonymous schemes, Dollarino publishes full founder identity, verifiable contacts, solo-built independence, and 6 architectural proofs that Dollarino is non-custodial and zero-Ponzi.'}
               </p>
             </div>
 
             <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-5 items-stretch">
-              {/* Left: Verifiable Founder Identity & Contact Card */}
               <div className="panel rounded-[30px] p-6 sm:p-7 border hairline flex flex-col justify-between gap-5">
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-4">
@@ -1500,7 +1478,7 @@ export function LandingPage({
                       />
                     ) : (
                       <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-[24px] surface-soft border hairline flex flex-col items-center justify-center shrink-0">
-                        <DollarinoBrandMark size={48} glow />
+                        <DollarinoBrandMark size={60} glow />
                       </div>
                     )}
                     <div className="min-w-0 flex-1 space-y-1">
@@ -1518,37 +1496,32 @@ export function LandingPage({
                           ? (founder?.roleFa || 'معمار نرم‌افزار، بنیان‌گذار و توسعه‌دهنده ۱۰۰٪ مستقل (صفر تا صد)')
                           : (founder?.roleEn || '100% Independent Founder & Solo Full-Stack Architect')}
                       </p>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-dim pt-0.5">
-                        {founder?.verificationId && (
-                          <span dir="ltr" className="px-2.5 py-0.5 rounded-lg surface-soft border hairline font-mono font-bold text-main">
-                            ID: {founder.verificationId}
-                          </span>
-                        )}
-                      </div>
+                      {founder?.verificationId && (
+                        <span dir="ltr" className="inline-block px-2.5 py-0.5 rounded-lg surface-soft border hairline font-mono font-bold text-[11px] text-main">
+                          ID: {founder.verificationId}
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  {/* 0-to-100 Independence Declaration */}
                   <div className="rounded-2xl p-4 bg-emerald-500/10 border border-emerald-500/25 space-y-1.5">
                     <div className="flex items-center gap-1.5 text-xs font-black text-[#059669] dark:text-[#34D399]">
                       <Award className="w-4 h-4 shrink-0" />
-                      <span>{isFa ? 'بیانیه استقلال ۱۰۰٪ (صفر تا صد مستقل و بدون پوشش شخص ثالث)' : '100% Independent Solo-Built Declaration'}</span>
+                      <span>{isFa ? 'بیانیه استقلال ۱۰۰٪ (صفر تا صد مستقل و بدون واسطه)' : '100% Independent Solo-Built Declaration'}</span>
                     </div>
                     <p className="text-xs text-main leading-relaxed">
                       {isFa
-                        ? (founder?.independenceFa || 'تمامی بخش‌های دلارینو از صفر تا صد توسط یک نفر (آوید کیا) طراحی، کدنویسی و نگهداری شده و زیر پوشش هیچ شرکت، گروه یا واسطه ثالثی نیست.')
-                        : (founder?.independenceEn || 'Designed, engineered, and operated 0-to-100 solely by Avid Kiya without any third-party cover, syndicate, or intermediary.')}
+                        ? (founder?.independenceFa || 'تمامی بخش‌های دلارینو از صفر تا صد توسط یک نفر (آوید کیا) طراحی، کدنویسی و نگهداری شده و زیر پوشش هیچ شرکت یا واسطه ثالثی نیست.')
+                        : (founder?.independenceEn || 'Designed, engineered, and operated 0-to-100 solely by Avid Kiya without any third-party cover or intermediary.')}
                     </p>
                   </div>
 
-                  {/* Bio */}
                   <p className="text-xs text-sub leading-relaxed">
                     {isFa
                       ? (founder?.bioFa || 'طراح و مهندس تمام کدهای کلاینت، سرور ابری، موتورهای چندمدلی AI، سیستم امنیتی و ربات تلگرام دلارینو با تمرکز بر شفافیت و نگهداری غیرامانی سرمایه کاربران.')
                       : (founder?.bioEn || 'Creator of the entire Dollarino web platform, edge AI engine, security layer, and Telegram automation stack focused on non-custodial transparency.')}
                   </p>
 
-                  {/* Verifiable Identities & Contacts */}
                   <div className="grid sm:grid-cols-2 gap-2.5 text-xs">
                     {founder?.email && (
                       <a
@@ -1558,7 +1531,7 @@ export function LandingPage({
                       >
                         <Mail className="w-4 h-4 text-[var(--gold)] shrink-0" />
                         <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">Gmail / Official Email</span>
+                          <span className="text-[10px] text-dim block">Official Email</span>
                           <span className="font-bold text-main truncate block">{founder.email}</span>
                         </div>
                       </a>
@@ -1567,7 +1540,7 @@ export function LandingPage({
                       <div dir="ltr" className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 min-w-0">
                         <Phone className="w-4 h-4 text-jade shrink-0" />
                         <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">Phone / Direct</span>
+                          <span className="text-[10px] text-dim block">Direct Contact</span>
                           <span className="font-mono font-bold text-main truncate block">{founder.phone}</span>
                         </div>
                       </div>
@@ -1598,49 +1571,6 @@ export function LandingPage({
                         </div>
                       </a>
                     )}
-                    {(founder?.channelUrl || founder?.channel || publicBotInfo.officialChannelInvite) && (
-                      <a
-                        href={publicBotInfo.officialChannelInvite || founder?.channelUrl || `https://t.me/${String(founder?.channel || '').replace(/^@/, '')}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        dir="ltr"
-                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                      >
-                        <ShieldCheck className="w-4 h-4 text-jade shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">{isFa ? '🌟 چنل رسمی و اصلی دلارینو' : 'Official Main Channel'}</span>
-                          <span className="font-bold text-main truncate block">{publicBotInfo.officialChannel || founder?.channel || founder?.channelUrl}</span>
-                        </div>
-                      </a>
-                    )}
-                    {publicBotInfo.signalsChannelInvite && (
-                      <a
-                        href={publicBotInfo.signalsChannelInvite}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="surface-soft rounded-2xl p-3 border border-emerald-500/30 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                      >
-                        <Send className="w-4 h-4 text-jade shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">{isFa ? '01. سیگنال دلارینو' : '01. Signals'}</span>
-                          <span dir="ltr" className="font-bold text-main truncate block">{publicBotInfo.signalsChannel || (isFa ? 'کانال سیگنال‌های معاملاتی' : 'Trading Signals')}</span>
-                        </div>
-                      </a>
-                    )}
-                    {publicBotInfo.resultsChannelInvite && (
-                      <a
-                        href={publicBotInfo.resultsChannelInvite}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="surface-soft rounded-2xl p-3 border border-amber-500/30 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                      >
-                        <ShieldCheck className="w-4 h-4 text-gold shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">{isFa ? '02. نتایج سیگنال دلارینو' : '02. Signal Results'}</span>
-                          <span className="font-bold text-main truncate block">{publicBotInfo.resultsChannel || (isFa ? 'نتایج، سود و عملکرد' : 'Results & PnL')}</span>
-                        </div>
-                      </a>
-                    )}
                     {(communityInvite || publicBotInfo.communityGroupInvite) && (
                       <a
                         href={publicBotInfo.communityGroupInvite || communityInvite}
@@ -1655,68 +1585,22 @@ export function LandingPage({
                         </div>
                       </a>
                     )}
-                    {publicBotInfo.newsChannelInvite && (
-                      <a
-                        href={publicBotInfo.newsChannelInvite}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="surface-soft rounded-2xl p-3 border border-sky-500/30 flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                      >
-                        <Send className="w-4 h-4 text-[#0EA5E9] shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">{isFa ? '07. اخبار دلارینو' : '07. Crypto News'}</span>
-                          <span className="font-bold text-main truncate block">{publicBotInfo.newsChannel || (isFa ? 'اخبار کریپتو و بازار' : 'Crypto & Market News')}</span>
-                        </div>
-                      </a>
-                    )}
-                    {(founder?.instagramUrl || founder?.instagram) && (
-                      <a
-                        href={founder?.instagramUrl || `https://instagram.com/${String(founder?.instagram || '').replace(/^@/, '')}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        dir="ltr"
-                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                      >
-                        <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">Instagram</span>
-                          <span className="font-bold text-main truncate block">{founder?.instagram || founder?.instagramUrl}</span>
-                        </div>
-                      </a>
-                    )}
-                    {(founder?.twitterUrl || founder?.twitter) && (
-                      <a
-                        href={founder?.twitterUrl || `https://x.com/${String(founder?.twitter || '').replace(/^@/, '')}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        dir="ltr"
-                        className="surface-soft rounded-2xl p-3 border hairline flex items-center gap-2.5 hover:border-[var(--gold)] transition min-w-0"
-                      >
-                        <Globe className="w-4 h-4 text-brand shrink-0" />
-                        <div className="min-w-0">
-                          <span className="text-[10px] text-dim block">X (Twitter)</span>
-                          <span className="font-bold text-main truncate block">{founder?.twitter || founder?.twitterUrl}</span>
-                        </div>
-                      </a>
-                    )}
                   </div>
                 </div>
 
-                {/* Project Goals & Promotional Value */}
                 <div className="surface-soft rounded-2xl p-4 border hairline space-y-2">
                   <div className="flex items-center gap-1.5 text-xs font-black text-main">
                     <FileCheck2 className="w-4 h-4 text-[var(--gold)]" />
-                    <span>{isFa ? 'هدف، کاربرد و ارزش پروژه دلارینو برای کاربران' : 'Project Mission & Core Value'}</span>
+                    <span>{isFa ? 'هدف، کاربرد و ارزش پروژه دلارینو' : 'Project Mission & Core Value'}</span>
                   </div>
                   <p className="text-xs text-sub leading-relaxed">
                     {isFa
-                      ? (founder?.missionFa || 'هدف دلارینو دموکراتیک‌سازی ترید الگوریتمی و هوش مصنوعی برای همه کاربران بدون نیاز به پرداخت اشتراک است: آموزش و تمرین ۱۰۰٪ رایگان روی کیف‌پول دمو قابل تنظیم و در حالت واقعی ۳ معامله اول رایگان + فقط کارمزد شفاف ۳٪ از سود واقعی در کیف‌پول شخصی خود کاربر.')
-                      : (founder?.missionEn || 'Dollarino democratizes AI and algorithmic trading for everyone with zero upfront fees: free customizable paper training, first 3 live wins at 0% fee, plus a transparent 3% profit-only fee.')}
+                      ? (founder?.missionFa || 'هدف دلارینو دموکراتیک‌سازی ترید الگوریتمی و هوش مصنوعی برای همه کاربران بدون نیاز به پرداخت اشتراک است: آموزش ۱۰۰٪ رایگان روی دمو قابل تنظیم و در حالت واقعی ۳ معامله اول رایگان + فقط ۳٪ از سود واقعی در کیف‌پول شخصی خود کاربر.')
+                      : (founder?.missionEn || 'Dollarino democratizes AI and algorithmic trading with zero upfront fees: free customizable paper training, first 3 live wins at 0% fee, plus a transparent 3% profit-only fee.')}
                   </p>
                 </div>
               </div>
 
-              {/* Right: 6-Point Technical Anti-Ponzi & Anti-Scam Proof */}
               <div className="panel rounded-[30px] p-6 sm:p-7 border hairline flex flex-col justify-between gap-5">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1747,7 +1631,7 @@ export function LandingPage({
                           ['۳. کلید بدون مجوز برداشت', 'اتصال Web3 و Agent Key منحصراً برای ثبت سفارش و حد ضرر است و امکان برداشت به ولت دیگر از پایه مسدود است.'],
                           ['۴. ۳ معامله رایگان · ۳٪ فقط از سود', '۳ معامله سودده اول رایگان است و پس از آن فقط ۳٪ از سود واقعی محاسبه می‌شود (۹۷٪ سود مال شماست).'],
                           ['۵. سپر ضدراگ و هانی‌پات زنده', 'تمام توکن‌ها قبل از ورود با GoPlus، Honeypot.is و RugCheck اسکن می‌شوند تا از کلاهبرداری قراردادها جلوگیری شود.'],
-                          ['۶. هویت باز و قابل پیگیری قانونی', 'مشخصات واقعی سازنده، کد تایید و راه‌های تماس مستقیم در دسترس عموم و مراجع قانونی جهت بررسی کامل قرار دارد.'],
+                          ['۶. هویت باز و استعلام ۳۰ روزه', 'مشخصات واقعی سازنده، نتایج زنده بک‌تست و صفحه استعلام دیجیتال ۳۰ روزه برای راستی‌آزمایی عموم باز است.'],
                         ]
                       : [
                           ['1. Zero Pooled Deposits', 'Dollarino never collects or holds trading capital. Your funds stay inside your own self-custodial Trust Wallet.'],
@@ -1755,7 +1639,7 @@ export function LandingPage({
                           ['3. Zero Withdrawal Permission', 'Execution scopes only sign orders & SL/TP. Funds cannot be withdrawn to third-party wallets.'],
                           ['4. 3 Free Wins · 3% Profit Only', 'First 3 profitable live trades carry 0% fee, then you keep 97% of net profits. Demo simulation is 100% free.'],
                           ['5. Real-Time Anti-Rug Scanner', 'Every token is verified via GoPlus, Honeypot.is & RugCheck before copy or swap orders trigger.'],
-                          ['6. Traceable Solo Founder', 'Real identity, verification ID, and direct channels are published openly for user & legal inspection.'],
+                          ['6. Traceable Identity & 30d Audits', 'Founder identity, live candle backtests, and the 30-day wallet audit lookup are publicly verifiable.'],
                         ]
                     ).map(([title, desc]) => (
                       <div key={title} className="surface-soft rounded-2xl p-3.5 border hairline space-y-1">
@@ -1770,7 +1654,7 @@ export function LandingPage({
                   <span className="text-[11px] font-bold text-dim">
                     {isFa ? (
                       <>
-                        ابتدا با شبیه‌ساز دمو قابل تنظیم (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>) رایگان امتحان کنید؛ بدون ریسک و بدون واریز وجه!
+                        ابتدا با شبیه‌ساز دمو قابل تنظیم (<span dir="ltr" className="inline-block font-bold" style={{ unicodeBidi: 'isolate' }}>$50–$10M</span>) رایگان امتحان کنید؛ بدون ریسک!
                       </>
                     ) : (
                       'Test free on the Custom Demo Simulator ($50–$10M) first — zero deposit required!'
@@ -1789,19 +1673,19 @@ export function LandingPage({
           </section>
         )}
 
-        {/* 5. Security & FAQ */}
+        {/* 11. SECURITY & FAQ */}
         <section id="faq" className="grid lg:grid-cols-[0.9fr_1.1fr] gap-6 items-start">
           <div className="panel rounded-[28px] p-6 space-y-4">
             <span className="inline-flex items-center gap-1.5 badge-signal px-3 py-1 rounded-full text-[10px] font-black">
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>ZERO-TRUST SECURITY</span>
+              <span>ZERO-TRUST SECURITY · PWA + EXTENSION</span>
             </span>
             <h3 className="font-display font-bold text-2xl text-main">
-              {isFa ? 'امنیت کامل سرمایه + پشتیبانی آنلاین واقعی' : 'Bank-Grade Security + Real Online Support'}
+              {isFa ? 'امنیت کامل سرمایه + اکستنشن کروم + پشتیبانی واقعی' : 'Bank-Grade Security + Chrome Side Panel + Live Support'}
             </h3>
             <p className="text-xs sm:text-sm text-dim leading-relaxed">
               {isFa
-                ? 'دارایی واقعی شما در کیف‌پول غیرامانی Trust Wallet باقی می‌ماند و با امضای استاندارد Web3 و کلید محدود (بدون مجوز برداشت) عمل می‌کند. در تمام ساعات شبانه‌روز از طریق چت پشتیبانی آنلاین داخل سایت یا ربات تلگرام کنار شما هستیم.'
+                ? 'دارایی واقعی شما در کیف‌پول غیرامانی Trust Wallet باقی می‌ماند و با امضای استاندارد Web3 و کلید محدود (بدون مجوز برداشت) عمل می‌کند. در تمام ساعات شبانه‌روز از طریق چت پشتیبانی آنلاین یا ربات تلگرام همراه شما هستیم.'
                 : 'Your live funds remain inside your self-custody Trust Wallet using scoped non-withdrawable execution keys. Reach our support desk live inside the app or via Telegram anytime.'}
             </p>
             <div className="flex flex-wrap gap-2.5">
@@ -1823,30 +1707,53 @@ export function LandingPage({
                 <Download className="w-4 h-4" />
                 <span>{pwa.canPromptNatively ? (isFa ? 'نصب اپلیکیشن' : 'Install App') : isFa ? 'نصب وب‌اپ (PWA)' : 'Install PWA'}</span>
               </button>
+              <a
+                href="/downloads/dollarino-extension.zip"
+                download="dollarino-extension-chrome-v11.9.1.zip"
+                className="btn-cobalt px-4 py-3 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <PanelRight className="w-4 h-4" />
+                <span>{isFa ? 'اکستنشن کروم V11.9.1' : 'Chrome Extension'}</span>
+              </a>
+              <a
+                href="/downloads/dollarino-extension-firefox.zip"
+                download="dollarino-extension-firefox-v11.9.1.zip"
+                className="btn-ghost px-3.5 py-3 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <Download className="w-4 h-4" />
+                <span>{isFa ? 'فایرفاکس' : 'Firefox'}</span>
+              </a>
+              <a
+                href="/downloads/dollarino-extension-edge.zip"
+                download="dollarino-extension-edge-v11.9.1.zip"
+                className="btn-ghost px-3.5 py-3 rounded-2xl text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <Download className="w-4 h-4" />
+                <span>{isFa ? 'اج (Edge)' : 'Edge'}</span>
+              </a>
             </div>
           </div>
 
           <div className="panel rounded-[28px] p-5 space-y-2.5">
             <h3 className="font-display font-bold text-lg text-main px-1 pb-1">
-              {isFa ? 'سوالات پرتکرار کاربران' : 'Frequently Asked Questions'}
+              {isFa ? 'سوالات پرتکرار کاربران (نسخه V11.9)' : 'Frequently Asked Questions (V11.9)'}
             </h3>
             {(isFa
               ? [
-                  ['اکستنشن پنل کناری کروم (V11.7.2) چه تفاوتی با پاپ‌آپ قدیمی دارد؟', 'افزونه جدید مستقیماً از API رسمی Chrome Side Panel استفاده می‌کند و دقیقاً مثل افزونه Trust Wallet کنار صفحه مرورگر شما باز و ثابت می‌ماند. این پنل به‌طور اختصاصی فقط روی حالت ساده قفل شده تا کنار چارت‌ها یا صرافی‌ها سریع و بدون شلوغی با ربات و بازار کار کنید.'],
-                  ['ثبت‌نام مستقیم DApps تراست‌ولت، گوگل و تلگرام چطور انجام می‌شود؟', 'اگر روی ثبت‌نام با کیف‌پول کلیک کنید سایت مستقیماً در مرورگر DApps تراست‌ولت باز شده و درخواست امضای ورود می‌دهد. پس از ورود با کیف‌پول، گوگل یا تلگرام، یک فرم کوتاه برای تکمیل شماره تماس، اسم مستعار، نام کاربری و رمز عبور نمایش داده می‌شود و در صورت نداشتن کد معرف، کد معرف مدیر به‌صورت خودکار اعمال می‌گردد.'],
-                  ['کارت سود ۱۶:۹ و ۹:۱۶، اسنایپر ۵ دقیقه‌ای و TP/SL درصدی چطور کار می‌کنند؟', 'در استودیو کارت سود می‌توانید برای هر معامله یا بازه زمانی (Perp DEX، DEX Swap، کپی‌ترید و ربات) کارت PNG در ابعاد ۱۶:۹ افقی یا ۹:۱۶ استوری بسازید. اسنایپر ۵ دقیقه‌ای با فیلترهای پرو توکن‌های جدید و شارژ خزانه سولانا (SOL/USDC) را پشتیبانی می‌کند و در ترمینال و Perp DEX حد سود/ضرر را می‌توانید با یک کلیک روی درصد (%) یا قیمت ($) تنظیم کنید.'],
-                  ['کپی‌ترید هوشمند ولت‌ها (V2) و باکس مارجین اختصاصی چطور کار می‌کند؟', 'در بخش کپی‌ترید می‌توانید هم تریدرهای تاییدشده سایت را فالو کنید و هم از ۱۰ ولت برتر هوشمند هر شبکه یا هر ولت دلخواه (Solana, Base, ETH, BSC, TON, TRON) کپی بگیرید. پس از فعال‌سازی فالو، سیستم فقط معاملاتی که از همان لحظه به بعد باز می‌شوند را کپی می‌کند و برای هر تریدر باکس مارجین جداگانه و سقف ضرر روزانه دارد.'],
-                  ['سپر ضدراگ و Multi-DApp Trust Wallet چه فایده‌ای دارد؟', 'قبل از هر سوآپ یا کپی، قرارداد توکن به‌صورت خودکار با GoPlus، Honeypot.is و RugCheck از نظر قفل نقدینگی، مالیات خرید/فروش و مجوز Mint اسکن می‌شود. همچنین می‌توانید هر توکن را با یک کلیک روی همه صرافی‌های معتبر آن شبکه (Jupiter, Uniswap, PancakeSwap, 1inch, STON.fi و...) داخل مرورگر Trust Wallet باز کنید.'],
-                  ['خزانه کپی‌ترید ۲۴/۷ چقدر امن است و آیا کلید خصوصی در اختیار من است؟', 'بله؛ برای اجرای تمام‌اتومات ۲۴/۷ می‌توانید از آدرس خزانه اختصاصی خودتان استفاده کنید. کلیدهای شما با رمزنگاری AES-256-GCM نگهداری می‌شوند و هر زمان خواستید از دکمه «نمایش و بک‌آپ کلیدهای خزانه» پس از تایید ۲ مرحله‌ای (رمز حساب یا کد تلگرام)، کلید خصوصی EVM و سولانا را دریافت یا سودتان را به Trust Wallet منتقل کنید.'],
-                  ['چرا دلارینو اشتراک نمی‌گیرد و فقط ۳٪ از سود واقعی محاسبه می‌کند؟', 'پلتفرم‌های اشتراکی پولشان را از پیش می‌گیرند و فرقی به حالشان ندارد که شما ضرر کنید یا سود؛ اما در دلارینو هیچ اشتراک ماهانه‌ای نیست (دمو قابل تنظیم و ۲۵+ اندیکاتور هم ۱۰۰٪ رایگانند). علاوه بر ۳ معامله سودده اول رایگان (۰٪)، بعد از آن ۹۷٪ سود برای شما و فقط ۳٪ از سود خالص هزینه سرور است — یعنی ما فقط وقتی بیشتر درآمد داریم که شما سود بیشتری بگیرید!'],
+                  ['چرا تمام ۵ موتور معاملاتی در ابتدا خاموش هستند؟', 'برای ایمنی کامل سرمایه شما در نسخه V11.9، هیچ موتوری به‌صورت خودکار روشن نمی‌شود. هنگام ورود، راهنمای هر موتور با کلیک روی کارت یا علامت ؟ در دسترس است و ربات فقط موتورهایی را اجرا می‌کند که خودتان آگاهانه فعال کرده باشید.'],
+                  ['استعلام دیجیتال ۳۰ روزه ولت‌ها چطور کار می‌کند؟', 'در بخش «صفحه دیجیتال استعلام ۳۰ روزه» بالای همین صفحه می‌توانید آدرس کیف‌پول خود یا هر کد استعلام AUD-... یا شناسه کارت سود CRD_... را وارد کنید تا وین‌ریت، تعداد معاملات، سود خالص دلاری، ROI و تاریخچه ۳۰ روزه به صورت زنده از سرور استعلام شود — بدون افشای ایمیل یا اطلاعات شخصی.'],
+                  ['سوپرچارت TradingView و دکمه «نمودار و سیگنال» چه کمکی می‌کند؟', 'پلتفرم دارای سوپرچارت کامل با واچ‌لیست، عقربه خلاصه تکنیکال (Technicals Gauge) و ادیتور Pine Script v4/v5/v6 است. همچنین کنار هر معامله باز دکمه «نمودار و سیگنال» وجود دارد که شما را مستقیماً به همان تایم‌فریم سیگنال برده و خطوط Entry، SL و TP1..TP3 را با متن دلیل روی چارت رسم می‌کند.'],
+                  ['هم‌ترازی کامل با Trust Wallet یعنی چه؟', 'تمام ۸۲۰+ جفت‌ارز در بخش بازارها و اسکنر رادار دقیقاً با دسته‌بندی و لوگوی Trust Wallet هماهنگ شده‌اند و در صفحه کیف‌پول من، موجودی لحظه‌ای توکن‌های شما روی شبکه‌های EVM، Solana، TON و TRON مستقل از صفحه خزانه ۳٪ نمایش داده می‌شود.'],
+                  ['اکستنشن پنل کناری کروم و کارت سود ۱۶:۹ / ۹:۱۶ چطور کار می‌کنند؟', 'افزونه کروم مستقیماً در Side Panel مرورگر کنار سایت‌های صرافی سنجاق می‌شود و در حالت ساده کار می‌کند. همچنین پس از بسته‌شدن هر معامله، می‌توانید کارت سود PNG تاییدشده با امضای HMAC و QR استعلام آنلاین در سایز ۱۶:۹ یا ۹:۱۶ صادر کنید.'],
+                  ['آیا امکان پیش‌نمایش سیگنال‌ها و نتایج قبل از عضویت وجود دارد؟', 'بله! در بخش «پیش‌نمایش زنده کانال سیگنال (01) و نتایج (02)» در همین صفحه می‌توانید جدیدترین سیگنال‌ها، سطوح ورود/تارگت و لینک مستقیم کانال‌های تلگرام ما را پیش از ثبت‌نام مشاهده کنید.'],
                 ]
               : [
-                  ['How does the new Chrome Side Panel Extension (V11.7.2) work?', 'The upgraded MV3 extension uses Chrome’s native Side Panel API to stay docked alongside any tab — just like Trust Wallet — locked to Simple Mode so you can control your bot and live prices effortlessly without clutter.'],
-                  ['How do Direct Trust Wallet DApp, Google & Telegram signups work?', 'Clicking Wallet signup launches Dollarino straight inside Trust Wallet’s DApps browser to register/sign in with 1 tap. Wallet, Google & Telegram signups all open the unified profile completion form (Phone, Nickname, Username, Password) with automatic admin referral fallback.'],
-                  ['What are 16:9 & 9:16 Profit Cards, 5m Pro Sniper & %/$ TP/SL?', 'Issue verified PNG PnL cards in 16:9 Landscape or 9:16 Story across Perp, DEX, Copy & Bot; filter fresh tokens with the 5m Sniper + Solana SOL/USDC Vault funding; and toggle Terminal / Perp TP & SL between % and $ price.'],
-                  ['How does Smart-Wallet Copy Trading V2 & Isolated Margin Boxes work?', 'Track Top-10 smart-money wallets or add any custom wallet across Solana, Base, ETH, BSC, Arbitrum, TON & TRON. Only fresh trades opened after follow-time are mirrored, each inside an isolated margin box with its own daily max loss, 3-step TP, Moonbag, Trailing SL, and 7-day backtest.'],
-                  ['What does the Anti-Rug Shield & Trust Multi-DApp Router do?', 'Before every trade or copy order, contracts are scanned live via GoPlus, Honeypot.is & RugCheck for honeypots, high taxes, mint/freeze traps, and liquidity depth — plus 1-click Multi-DApp links directly into Trust Wallet.'],
-                  ['How does the 24/7 Copy-Vault & Key Backup work?', 'Each user gets an encrypted AES-256-GCM Copy-Vault for 24/7 automated Solana Jupiter execution, plus 2-step (Password or Telegram 6-digit PIN) verified export of private keys anytime inside the dashboard.'],
+                  ['Why are all 5 trading engines OFF by default?', 'For strict user safety in V11.9, zero engines are pre-enabled. Each engine card includes an interactive guide modal (? button), and the bot strictly starts only after you choose and activate at least one engine.'],
+                  ['How does the 30-day digital wallet audit lookup work?', 'Enter any connected wallet address, audit code (AUD-...), or Profit Card ID (CRD_...) in the Digital Audit Hub above to verify real 30-day trade counts, win rate, net USD PnL, ROI, and recent closed trades directly from the server — with zero personal PII exposed.'],
+                  ['How do TradingView Supercharts & Chart-Signal Jump work?', 'Dollarino includes Supercharts with a collapsible Watchlist, Technicals Dial Gauge, and Pine v4/v5/v6 runtime. Every open trade also offers a "Chart & Signal" button that switches to the exact signal timeframe and draws Entry, SL & TP1–TP3 right on the candles.'],
+                  ['What does Trust Wallet parity cover?', 'Markets & Radar scan across 820+ Trust Wallet-aligned assets by category (L1, DeFi, AI, Meme, Gaming, RWA), while My Trust Wallet tracks live multi-chain balances across EVM, Solana, TON & TRON cleanly separated from the 3% Treasury page.'],
+                  ['How do Chrome Side Panel & 16:9 / 9:16 Profit Cards work?', 'The MV3 Chrome extension docks cleanly in Chrome’s Side Panel locked to Simple Mode, while the Studio exports HMAC-signed 16:9 & 9:16 PNG PnL cards verifiable publicly via QR code.'],
+                  ['Can I inspect signals & results before registering?', 'Yes! The Public Signal (01) & Results (02) Showcase right on this page displays recent live signals, target hits, verified cards, and direct Telegram channel invites before signup.'],
                 ]
             ).map(([q, a], i) => (
               <div key={q} className="surface-soft rounded-2xl overflow-hidden">
@@ -1865,15 +1772,21 @@ export function LandingPage({
         </section>
       </main>
 
-      <footer className="border-t hairline py-10 px-4 text-center text-xs text-dim space-y-3">
+      {/* Branded Footer with Clear Logo + Subtle Watermark */}
+      <footer className="border-t hairline py-10 px-4 text-center text-xs text-dim space-y-3 relative overflow-hidden">
+        <img
+          src="/logo-hd.webp"
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none select-none mx-auto mb-1 w-14 h-14 object-contain opacity-85"
+        />
         <div className="flex items-center justify-center gap-2">
-          <DollarinoBrandMark size={26} />
-          <span className="font-bold text-main">Dollarino V11.7.2 AI Trading Platform</span>
+          <span className="font-display font-black text-sm text-main">Dollarino V11.9 · Trust Parity &amp; Supercharts</span>
         </div>
         <p className="opacity-85">
           {isFa
-            ? `۵ موتور همزمان + اکستنشن پنل کناری کروم + Trust Wallet DApp + کارت سود ۱۶:۹/۹:۱۶${publicBotInfo.botUsername ? ` · ربات تلگرام @${publicBotInfo.botUsername}` : ''}`
-            : `5 Concurrent Engines · Chrome Side Panel · Trust Wallet DApp · 16:9 & 9:16 Profit Cards${publicBotInfo.botUsername ? ` · @${publicBotInfo.botUsername}` : ''}`}
+            ? `۵ موتور پیش‌فرض خاموش + سوپرچارت Pine v6 + کیف‌پول Trust Wallet + استعلام ۳۰ روزه دیجیتال${publicBotInfo.botUsername ? ` · ربات تلگرام @${publicBotInfo.botUsername}` : ''}`
+            : `5 Default-OFF Engines · Supercharts Pine v6 · Trust Wallet Parity · 30d Digital Audit${publicBotInfo.botUsername ? ` · @${publicBotInfo.botUsername}` : ''}`}
         </p>
         {(publicBotInfo.botUsername ||
           publicBotInfo.officialChannelInvite ||

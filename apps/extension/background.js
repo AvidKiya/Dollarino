@@ -1,77 +1,129 @@
-const DEFAULT_SITE_URL = 'https://dollarino.pages.dev';
+const DEFAULT_BASE = 'https://dollarino.pages.dev';
+const ext = typeof browser !== 'undefined' ? browser : typeof chrome !== 'undefined' ? chrome : null;
 
-function enableSidePanelOnClick() {
+function storageGet(keys) {
+  return new Promise((resolve) => {
+    try {
+      if (!ext?.storage?.local) return resolve({});
+      if (ext.storage.local.get.length <= 1) {
+        Promise.resolve(ext.storage.local.get(keys)).then(resolve).catch(() => resolve({}));
+      } else {
+        ext.storage.local.get(keys, (res) => resolve(res || {}));
+      }
+    } catch {
+      resolve({});
+    }
+  });
+}
+
+function setBadge(text, color) {
   try {
-    if (chrome.sidePanel && typeof chrome.sidePanel.setPanelBehavior === 'function') {
-      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-    }
-    if (chrome.sidePanel && typeof chrome.sidePanel.setOptions === 'function') {
-      chrome.sidePanel.setOptions({ path: 'sidepanel.html', enabled: true }).catch(() => {});
-    }
+    const actionApi = ext?.action || ext?.browserAction;
+    if (!actionApi) return;
+    if (actionApi.setBadgeText) actionApi.setBadgeText({ text });
+    if (actionApi.setBadgeBackgroundColor && color) actionApi.setBadgeBackgroundColor({ color });
   } catch {
-    // ignore on non-Chromium browsers
+    // ignore badge errors across browser versions
   }
 }
 
-enableSidePanelOnClick();
-
-chrome.runtime.onStartup?.addListener(() => {
-  enableSidePanelOnClick();
-});
-
-chrome.runtime.onInstalled.addListener(() => {
-  enableSidePanelOnClick();
-  chrome.alarms?.create?.('dollarino-badge-sync', { periodInMinutes: 1 });
-  syncBadgeState();
-});
-
-chrome.action?.onClicked?.addListener(async (tab) => {
+function configureSidePanelBehavior() {
   try {
-    if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function' && tab?.windowId) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
+    if (typeof chrome !== 'undefined' && chrome.sidePanel?.setPanelBehavior) {
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
     }
   } catch {
-    // openPanelOnActionClick handles the action click on Chrome 116+
+    // ignore on Firefox / legacy Chromium
   }
-});
-
-chrome.alarms?.onAlarm?.addListener((alarm) => {
-  if (alarm.name === 'dollarino-badge-sync') {
-    syncBadgeState();
-  }
-});
-
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === 'SYNC_BADGE') {
-    syncBadgeState().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-});
+}
 
 async function syncBadgeState() {
   try {
-    const cfg = await chrome.storage.local.get(['apiBase', 'siteOrigin', 'extKey']);
-    const apiBase = (cfg.siteOrigin || cfg.apiBase || DEFAULT_SITE_URL).replace(/\/+$/, '');
-    const extKey = (cfg.extKey || '').trim();
-    if (!extKey) {
-      await chrome.action.setBadgeText({ text: '' });
+    const stored = await storageGet(['apiBase', 'extKey', 'authToken']);
+    const base = (stored.apiBase || DEFAULT_BASE).replace(/\/$/, '');
+    const headers = {};
+    if (stored.authToken) {
+      headers['Authorization'] = `Bearer ${stored.authToken}`;
+    } else if (stored.extKey) {
+      headers['X-Dollarino-Extension-Key'] = stored.extKey;
+    } else {
+      setBadge('', '#64748b');
       return;
     }
-    const res = await fetch(`${apiBase}/api/trading/overview?poll=1`, {
-      headers: { 'X-Dollarino-Extension-Key': extKey },
-    });
+
+    const res = await fetch(`${base}/api/trading/dashboard?lite=1`, { headers });
     if (!res.ok) {
-      await chrome.action.setBadgeText({ text: '!' });
-      await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+      setBadge('!', '#f59e0b');
       return;
     }
     const data = await res.json();
-    const state = data?.config?.bot_state || 'STOPPED';
-    const isRunning = state === 'RUNNING_PAPER' || state === 'RUNNING_LIVE';
-    const openCnt = Array.isArray(data?.openTrades) ? data.openTrades.length : 0;
-    await chrome.action.setBadgeText({ text: isRunning ? (openCnt > 0 ? String(openCnt) : 'ON') : 'OFF' });
-    await chrome.action.setBadgeBackgroundColor({ color: isRunning ? '#059669' : '#64748b' });
+    const isRunning = data?.config?.bot_state?.startsWith?.('RUNNING');
+    const openCount =
+      (Array.isArray(data?.openTrades) ? data.openTrades.length : 0) +
+      (Array.isArray(data?.openDexTrades) ? data.openDexTrades.length : 0) +
+      (Array.isArray(data?.openCopyPositionsV2) ? data.openCopyPositionsV2.length : 0);
+    if (isRunning) {
+      setBadge(openCount > 0 ? String(openCount) : 'ON', '#10b981');
+    } else {
+      setBadge(openCount > 0 ? String(openCount) : 'OFF', '#64748b');
+    }
   } catch {
-    // ignore transient offline error
+    // silent when offline
   }
+}
+
+if (ext?.runtime?.onInstalled) {
+  ext.runtime.onInstalled.addListener(() => {
+    configureSidePanelBehavior();
+    try {
+      ext.alarms?.create?.('dollarino_badge_sync', { periodInMinutes: 1 });
+    } catch { /* ignore */ }
+    void syncBadgeState();
+  });
+}
+
+if (ext?.runtime?.onStartup) {
+  ext.runtime.onStartup.addListener(() => {
+    configureSidePanelBehavior();
+    void syncBadgeState();
+  });
+}
+
+configureSidePanelBehavior();
+
+if (ext?.action?.onClicked) {
+  ext.action.onClicked.addListener(async (tab) => {
+    try {
+      // Chrome / Edge native sidePanel
+      if (typeof chrome !== 'undefined' && chrome.sidePanel?.open && tab?.windowId !== undefined) {
+        await chrome.sidePanel.open({ windowId: tab.windowId });
+        return;
+      }
+      // Firefox native sidebar_action
+      if (ext.sidebarAction?.open) {
+        await ext.sidebarAction.open();
+        return;
+      }
+      // Fallback tab
+      if (ext.tabs?.create && ext.runtime?.getURL) {
+        await ext.tabs.create({ url: ext.runtime.getURL('sidepanel.html') });
+      }
+    } catch {
+      // ignore click fallback failures
+    }
+  });
+}
+
+if (ext?.alarms?.onAlarm) {
+  ext.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'dollarino_badge_sync') void syncBadgeState();
+  });
+}
+
+if (ext?.runtime?.onMessage) {
+  ext.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === 'SYNC_BADGE_NOW') {
+      void syncBadgeState();
+    }
+  });
 }

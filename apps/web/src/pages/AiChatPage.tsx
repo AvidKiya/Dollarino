@@ -440,6 +440,8 @@ export function AiChatPage({
         <DedicatedAiChatSurface
           lang={lang}
           compact={false}
+          currentSymbol={data?.config?.symbol || 'BTCUSDT'}
+          activeTab="aichat"
           onNavigate={onNavigate}
           onSelectSymbolForTerminal={onSelectSymbolForTerminal}
         />

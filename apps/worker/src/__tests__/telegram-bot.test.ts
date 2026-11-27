@@ -281,7 +281,7 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
         return new Response(
           JSON.stringify({
             Data: [
-              { title: 'Bitcoin Holds Key Support as Institutional Flows Rise', source: 'CoinDesk' },
+              { title: 'SEC Approves BlackRock Bitcoin ETF Amid Record Institutional Flows', source: 'CoinDesk' },
               { title: 'TON & Solana DEX Activity Hits New Weekly High', source: 'TheBlock' },
             ],
           }),
@@ -442,15 +442,16 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const autoMagicCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('tg_login='));
     expect(autoMagicCall).toBeTruthy();
 
-    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو V11.7</b> خوش آمدید، علی!'));
+    const welcomeCall = tgCalls.find((c) => c.method === 'sendMessage' && String(c.body.text).includes('به <b>دلارینو V11.9.1</b> خوش آمدید، علی!'));
     expect(welcomeCall).toBeTruthy();
     expect(String(welcomeCall!.body.text)).not.toContain('**');
     expect(welcomeCall!.body.parse_mode).toBe('HTML');
     const kbText = JSON.stringify(welcomeCall!.body.reply_markup);
-    expect(kbText).toContain('🛡 Trust Wallet و کارمزد ۳٪');
+    expect(kbText).toContain('🏠 پنل ساده من');
+    expect(kbText).toContain('🛡 Trust Wallet');
     expect(kbText).toContain('⚡ حالت حرفه‌ای');
-    expect(kbText).toContain('🔍 رادار DEX & خرید مستقیم');
-    expect(kbText).toContain('🏆 کپی‌ترید حرفه‌ای (V2)');
+    expect(kbText).toContain('🎛 ۵ موتور ترید');
+    expect(kbText).toContain('🛠 ابزارها و پشتیبانی');
 
     // Help text must never emit literal backslash-n or giant 10-row inline menu
     tgCalls = [];
@@ -1882,9 +1883,10 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
       .first<{ is_active_for_trading: number }>();
     expect(agAfterStrat?.is_active_for_trading).toBe(1);
 
-    // 5. Verify 15m Signal Scan Cooldown & 30m Crypto News Cadence
+    // 5. Verify 15m Signal Scan Cooldown & 240m High-Impact Crypto News Cadence (with duplicate/low-impact filtering)
     const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
     const thirtyFiveMinAgo = new Date(Date.now() - 35 * 60_000).toISOString();
+    const fourHoursFiveMinAgo = new Date(Date.now() - 245 * 60_000).toISOString();
     await db
       .prepare(
         `INSERT INTO system_settings (key, value) VALUES ('intel_last_scan_at', ?)
@@ -1896,12 +1898,13 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     expect(radarSkipped.published).toBe(false);
     expect(radarSkipped.reason).toBe('scan_cooldown');
 
+    // Clear previous news titles so the first 240m check publishes the high-impact SEC/BlackRock ETF news
     await db
       .prepare(
-        `INSERT INTO system_settings (key, value) VALUES ('intel_last_ai_check_at', ?), ('intel_last_news_at', ?), ('intel_last_alert_at', ?)
+        `INSERT INTO system_settings (key, value) VALUES ('intel_last_ai_check_at', ?), ('intel_last_news_at', ?), ('intel_last_alert_at', ?), ('intel_last_news_titles', '[]')
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`
       )
-      .bind(thirtyFiveMinAgo, thirtyFiveMinAgo, tenMinAgo)
+      .bind(thirtyFiveMinAgo, fourHoursFiveMinAgo, tenMinAgo)
       .run();
     const newsPub = await runAlwaysOnAiIntel(env);
     expect(newsPub.published).toBe(true);
@@ -1910,6 +1913,17 @@ describe('Dollarino Telegram Bot Full Spec, Trust Wallet, DexScreener & Extensio
     const newsImmediateRetry = await runAlwaysOnAiIntel(env);
     expect(newsImmediateRetry.published).toBe(false);
     expect(newsImmediateRetry.reason).toBe('check_cooldown');
+
+    // Re-running after 245m with the SAME already-sent headline must suppress duplicate news spam
+    await db
+      .prepare(
+        `INSERT INTO system_settings (key, value) VALUES ('intel_last_ai_check_at', ?), ('intel_last_news_at', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      )
+      .bind(thirtyFiveMinAgo, fourHoursFiveMinAgo)
+      .run();
+    const newsDupSkipped = await runAlwaysOnAiIntel(env);
+    expect(newsDupSkipped.published).toBe(false);
 
     // 6. Verify 3-channel binding via forwarded channel post / my_chat_member + Signal & Results routing
     tgCalls = [];

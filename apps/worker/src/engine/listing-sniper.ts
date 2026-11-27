@@ -1,8 +1,10 @@
 import { randomId } from '../crypto.js';
 import type { Env } from '../env.js';
-import { fetchUltraFreshSniperPoolFeed, type DexTokenEnriched } from '../dex/screener.js';
+import { fetchUltraFreshSniperPoolFeed, normalizeDexChainId, type DexTokenEnriched } from '../dex/screener.js';
 import { executeLiveEvmVaultSwap, executeLiveSolanaVaultJupiterSwap } from '../dex/smart-copy.js';
 import { checkLiveFeeEnforcement } from '../services/server-fee.js';
+import { isPaperDexTradeRow, isSniperDexTradeRow } from '../services/portfolio-accounting.js';
+import { publishSniperSignal } from '../telegram/publisher.js';
 import { logAudit, notifyUserTelegram, pushNotification, resolveUserCapitalSummary, type UserBotConfigRow } from './executor.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 
@@ -101,11 +103,11 @@ export async function discoverListingAndBoomCandidates(options?: {
   advancedFilters?: SniperAdvancedFilters;
 }): Promise<SniperCandidate[]> {
   const allowedChains = new Set(
-    (options?.allowedChains?.length ? options.allowedChains : DEFAULT_SNIPER_CHAINS).map((c) => c.toLowerCase())
+    (options?.allowedChains?.length ? options.allowedChains : DEFAULT_SNIPER_CHAINS).map((c) => normalizeDexChainId(c))
   );
   const adv = options?.advancedFilters || {};
-  const minSafety = Math.max(30, Math.min(98, options?.minSafetyScore ?? 75));
-  const minLiquidity = Math.max(1000, options?.minLiquidityUsd ?? 25_000);
+  const minSafety = Math.max(30, Math.min(98, options?.minSafetyScore ?? 68));
+  const minLiquidity = Math.max(1000, options?.minLiquidityUsd ?? 15_000);
   const rawMaxMin =
     options?.maxPairAgeMinutes ??
     adv.maxPairAgeMinutes ??
@@ -125,7 +127,7 @@ export async function discoverListingAndBoomCandidates(options?: {
   const nowMs = Date.now();
 
   for (const p of poolFeed) {
-    const chain = (p.chainId || '').toLowerCase();
+    const chain = normalizeDexChainId(p.chainId || '');
     if (!allowedChains.has(chain)) continue;
 
     const sym = (p.baseToken?.symbol || '').toUpperCase().trim();
@@ -159,8 +161,8 @@ export async function discoverListingAndBoomCandidates(options?: {
         : null;
     const ageHours = ageMinutes !== null ? Number((ageMinutes / 60).toFixed(2)) : null;
 
-    if (maxAgeMinutes <= 180 && ageMinutes === null) {
-      // When user explicitly filters ultra-fresh launches (<=3h), skip unknown-timestamp legacy pairs
+    if (maxAgeMinutes <= 60 && ageMinutes === null) {
+      // Only enforce strict exclusion of unknown-timestamp pairs when user asks for <=1h ultra-fresh launches
       continue;
     }
     if (ageMinutes !== null) {
@@ -246,10 +248,14 @@ export async function discoverListingAndBoomCandidates(options?: {
     if (sortBy === 'VOLUME_1H') return (b.volume1hUsd ?? 0) - (a.volume1hUsd ?? 0);
     if (sortBy === 'LIQUIDITY') return b.liquidityUsd - a.liquidityUsd;
     if (sortBy === 'SAFETY') return b.safetyScore - a.safetyScore;
-    const freshnessBoostA = (a.ageMinutes !== null && a.ageMinutes !== undefined && a.ageMinutes <= 15) ? 18 : (a.ageMinutes !== null && a.ageMinutes !== undefined && a.ageMinutes <= 60) ? 10 : 0;
-    const freshnessBoostB = (b.ageMinutes !== null && b.ageMinutes !== undefined && b.ageMinutes <= 15) ? 18 : (b.ageMinutes !== null && b.ageMinutes !== undefined && b.ageMinutes <= 60) ? 10 : 0;
-    const aScore = (a.source === 'CEX_NEW_LISTING' ? 22 : 0) + a.safetyScore + freshnessBoostA + Math.min(35, Math.max(-10, a.change1hPct + a.change5mPct));
-    const bScore = (b.source === 'CEX_NEW_LISTING' ? 22 : 0) + b.safetyScore + freshnessBoostB + Math.min(35, Math.max(-10, b.change1hPct + b.change5mPct));
+    const freshnessBoostA = (a.ageMinutes !== null && a.ageMinutes !== undefined && a.ageMinutes <= 15) ? 20 : (a.ageMinutes !== null && a.ageMinutes !== undefined && a.ageMinutes <= 60) ? 12 : 0;
+    const freshnessBoostB = (b.ageMinutes !== null && b.ageMinutes !== undefined && b.ageMinutes <= 15) ? 20 : (b.ageMinutes !== null && b.ageMinutes !== undefined && b.ageMinutes <= 60) ? 12 : 0;
+    const ratioBoostA = Math.min(14, Math.max(-8, ((a.buySellRatio1h ?? 1) - 1) * 10));
+    const ratioBoostB = Math.min(14, Math.max(-8, ((b.buySellRatio1h ?? 1) - 1) * 10));
+    const turnoverA = a.liquidityUsd > 0 ? Math.min(15, ((a.volume1hUsd ?? 0) / a.liquidityUsd) * 6) : 0;
+    const turnoverB = b.liquidityUsd > 0 ? Math.min(15, ((b.volume1hUsd ?? 0) / b.liquidityUsd) * 6) : 0;
+    const aScore = (a.source === 'CEX_NEW_LISTING' ? 22 : 0) + a.safetyScore + freshnessBoostA + ratioBoostA + turnoverA + Math.min(28, Math.max(-10, a.change1hPct * 0.4 + a.change5mPct));
+    const bScore = (b.source === 'CEX_NEW_LISTING' ? 22 : 0) + b.safetyScore + freshnessBoostB + ratioBoostB + turnoverB + Math.min(28, Math.max(-10, b.change1hPct * 0.4 + b.change5mPct));
     return bScore - aScore;
   });
 
@@ -277,14 +283,18 @@ export async function executeSniperBuyForCandidate(params: {
     }
   }
 
-  const maxOpenSniper = Math.max(1, Math.min(12, Number(cfg.sniper_max_open_positions ?? 3)));
-  const openCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS cnt FROM dex_trades WHERE user_id = ? AND status = 'OPEN'`
+  const maxOpenSniper = Math.max(1, Math.min(50, Number(cfg.sniper_max_open_positions ?? 5)));
+  const openDexRows = await env.DB.prepare(
+    `SELECT tx_hash, note, dex_id FROM dex_trades WHERE user_id = ? AND status = 'OPEN'`
   )
     .bind(userId)
-    .first<{ cnt: number }>()
-    .catch(() => ({ cnt: 0 }));
-  if ((openCountRow?.cnt ?? 0) >= maxOpenSniper) {
+    .all<{ tx_hash: string | null; note: string | null; dex_id: string | null }>()
+    .catch(() => ({ results: [] as Array<{ tx_hash: string | null; note: string | null; dex_id: string | null }> }));
+  const isPaperMode = cfg.trading_mode !== 'LIVE';
+  const openSniperCount = (openDexRows.results || []).filter(
+    (r) => isSniperDexTradeRow(r) && isPaperDexTradeRow(r) === isPaperMode
+  ).length;
+  if (openSniperCount >= maxOpenSniper) {
     return { ok: false, reason: 'SNIPER_MAX_OPEN_POSITIONS_REACHED' };
   }
 
@@ -366,15 +376,29 @@ export async function executeSniperBuyForCandidate(params: {
       `🎯 شکار خودکار ${pick.symbol} ($${budgetUsd})`,
       `${pick.source === 'CEX_NEW_LISTING' ? 'لیستینگ صرافی معتبر' : 'میم‌کوین داغ و تاییدشده'} روی ${pick.chainId} · امتیاز امنیت ${pick.safetyScore}/100`
     );
-    await notifyUserTelegram(
-      env,
+    await publishSniperSignal(env, {
       userId,
-      `🎯 **شکارچی خودکار لیستینگ جدید و میم‌کوین**\n` +
-        `• ارز: **${pick.symbol}** (${pick.chainId.toUpperCase()})\n` +
-        `• نوع: ${pick.source === 'CEX_NEW_LISTING' ? '🆕 لیستینگ جدید صرافی معتبر' : '🔥 میم‌کوین داغ'}\n` +
-        `• بودجه: $${budgetUsd} (حالت دمو) · امنیت آن‌چین: **${pick.safetyScore}/100**\n` +
-        `• ورود: $${pick.priceUsd} | 🎯 TP1 (+${tpPct}%): $${tp1Usd} | ⛔️ SL (-${slPct}%): $${slUsd}`
-    ).catch(() => {});
+      symbol: pick.symbol,
+      name: pick.name,
+      chainId: pick.chainId,
+      dexId: pick.dexId,
+      source: pick.source,
+      tokenAddress: pick.tokenAddress,
+      priceUsd: pick.priceUsd,
+      tpUsd: tp1Usd,
+      slUsd,
+      tpPct,
+      slPct,
+      safetyScore: pick.safetyScore,
+      liquidityUsd: pick.liquidityUsd,
+      mcapUsd: pick.mcapUsd,
+      ageMinutes: pick.ageMinutes,
+      change5mPct: pick.change5mPct,
+      change1hPct: pick.change1hPct,
+      buySellRatio1h: pick.buySellRatio1h,
+      modeLabel: 'حساب دمو',
+      trustWalletSwapUrl: pick.trustWalletSwapUrl,
+    }).catch(() => {});
 
     return { ok: true, tradeId };
   }
@@ -445,15 +469,30 @@ export async function executeSniperBuyForCandidate(params: {
         `⚡ خرید خودکار واقعی ${pick.symbol} ($${budgetUsd})`,
         `${vaultExec.note} · TX: ${vaultExec.txHash.slice(0, 14)}...`
       );
-      await notifyUserTelegram(
-        env,
+      await publishSniperSignal(env, {
         userId,
-        `⚡ **شکار خودکار واقعی ۲۴/۷ روی بلاکچین انجام شد!**\n` +
-          `• ارز: **${pick.symbol}** (${pick.chainId.toUpperCase()})\n` +
-          `• مبلغ: $${budgetUsd} · امتیاز امنیت: **${pick.safetyScore}/100**\n` +
-          `• ورود: $${pick.priceUsd} | 🎯 TP1 (+${tpPct}%): $${tp1Usd} | ⛔️ SL (-${slPct}%): $${slUsd}\n` +
-          `• تراکنش: \`${vaultExec.txHash}\``
-      ).catch(() => {});
+        symbol: pick.symbol,
+        name: pick.name,
+        chainId: pick.chainId,
+        dexId: pick.dexId,
+        source: pick.source,
+        tokenAddress: pick.tokenAddress,
+        priceUsd: pick.priceUsd,
+        tpUsd: tp1Usd,
+        slUsd,
+        tpPct,
+        slPct,
+        safetyScore: pick.safetyScore,
+        liquidityUsd: pick.liquidityUsd,
+        mcapUsd: pick.mcapUsd,
+        ageMinutes: pick.ageMinutes,
+        change5mPct: pick.change5mPct,
+        change1hPct: pick.change1hPct,
+        buySellRatio1h: pick.buySellRatio1h,
+        slippagePct,
+        modeLabel: `خرید آن‌چین واقعی (TX: ${vaultExec.txHash.slice(0, 10)}...)`,
+        trustWalletSwapUrl: pick.trustWalletSwapUrl,
+      }).catch(() => {});
 
       return { ok: true, tradeId };
     }
@@ -489,15 +528,30 @@ export async function executeSniperBuyForCandidate(params: {
     `🎯 فرصت شکار واقعی ${pick.symbol} ($${budgetUsd})`,
     `امتیاز امنیت ${pick.safetyScore}/100 · نقدینگی $${Math.round(pick.liquidityUsd).toLocaleString()} · برای تایید ۱-کلیک در Trust Wallet کلیک کنید.`
   );
-  await notifyUserTelegram(
-    env,
+  await publishSniperSignal(env, {
     userId,
-    `🎯 **فرصت شکار واقعی لیستینگ / میم‌کوین داغ!**\n` +
-      `• ارز: **${pick.symbol}** (${pick.chainId.toUpperCase()})\n` +
-      `• بودجه: $${budgetUsd} · امتیاز امنیت: **${pick.safetyScore}/100** · نقدینگی: $${Math.round(pick.liquidityUsd).toLocaleString()}\n` +
-      `👇 به دلیل غیرامانی بودن Trust Wallet، برای امضا و خرید فوری با ۱ کلیک لمس کنید:`,
-    [[{ text: `خرید ${pick.symbol} در Trust Wallet 🛡`, url: pick.trustWalletSwapUrl }]]
-  ).catch(() => {});
+    symbol: pick.symbol,
+    name: pick.name,
+    chainId: pick.chainId,
+    dexId: pick.dexId,
+    source: pick.source,
+    tokenAddress: pick.tokenAddress,
+    priceUsd: pick.priceUsd,
+    tpUsd: tp1Usd,
+    slUsd,
+    tpPct,
+    slPct,
+    safetyScore: pick.safetyScore,
+    liquidityUsd: pick.liquidityUsd,
+    mcapUsd: pick.mcapUsd,
+    ageMinutes: pick.ageMinutes,
+    change5mPct: pick.change5mPct,
+    change1hPct: pick.change1hPct,
+    buySellRatio1h: pick.buySellRatio1h,
+    slippagePct,
+    modeLabel: 'آماده امضا در Trust Wallet',
+    trustWalletSwapUrl: pick.trustWalletSwapUrl,
+  }).catch(() => {});
 
   return { ok: true, tradeId, trustWalletSwapUrl: pick.trustWalletSwapUrl };
 }
@@ -535,15 +589,16 @@ export async function runNewListingAndMemeSniperForUser(
     if (cfg.sniper_networks_json) {
       const parsed = JSON.parse(cfg.sniper_networks_json) as unknown;
       if (Array.isArray(parsed) && parsed.length > 0) {
-        allowedChains = parsed.map((c) => String(c).toLowerCase());
+        const cleaned = Array.from(new Set(parsed.map((c) => normalizeDexChainId(String(c))))).filter(Boolean);
+        if (cleaned.length > 0) allowedChains = cleaned;
       }
     }
   } catch {
     allowedChains = DEFAULT_SNIPER_CHAINS;
   }
 
-  const minSafetyScore = Math.max(30, Math.min(98, Number(cfg.sniper_min_safety_score ?? 75)));
-  const minLiquidityUsd = Math.max(1000, Math.min(10_000_000, Number(cfg.sniper_min_liquidity_usd ?? 25_000)));
+  const minSafetyScore = Math.max(30, Math.min(98, Number(cfg.sniper_min_safety_score ?? 70)));
+  const minLiquidityUsd = Math.max(1000, Math.min(10_000_000, Number(cfg.sniper_min_liquidity_usd ?? 15_000)));
   let advancedFilters: Record<string, unknown> = {};
   try {
     if (cfg.sniper_advanced_filters_json) advancedFilters = JSON.parse(cfg.sniper_advanced_filters_json);

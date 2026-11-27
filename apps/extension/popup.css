@@ -279,7 +279,7 @@ body {
   position: absolute;
   top: 4px;
   bottom: 4px;
-  left: 4px;
+  inset-inline-start: 4px;
   width: calc(25% - 2px);
   border-radius: 9999px;
   background: linear-gradient(135deg, var(--gold-a), var(--gold-b) 55%, var(--gold-c));
@@ -1273,3 +1273,408 @@ input:focus {
 .text-end {
   text-align: end;
 }
+
+/* ==========================================================================
+   V11.9.1 SIDEPANEL / SIDEBAR RESPONSIVE OVERRIDES & AUTH / SIMPLE PARITY
+   ========================================================================== */
+html.mode-sidepanel,
+body.mode-sidepanel {
+  width: 100%;
+  min-width: 280px;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.mode-sidepanel .shell {
+  padding: 8px;
+  gap: 7px;
+}
+
+.auth-hero {
+  border-radius: 22px;
+  padding: 13px;
+  background:
+    radial-gradient(240px 140px at 90% 10%, rgba(56, 189, 248, 0.34), transparent 70%),
+    linear-gradient(135deg, #2563eb 0%, #1652f0 55%, #0a34a6 100%);
+  color: #ffffff;
+  box-shadow: 0 14px 30px -12px rgba(22, 82, 240, 0.55);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+
+.auth-tab-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 6px 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.auth-tab-btn.active {
+  background: linear-gradient(135deg, var(--gold-a), var(--gold-b));
+  color: #ffffff;
+  box-shadow: 0 4px 12px -4px rgba(22, 82, 240, 0.5);
+}
+
+.auth-error {
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--rose) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rose) 35%, transparent);
+  color: var(--rose);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.auth-info {
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.55;
+  margin-bottom: 8px;
+}
+
+.gate-card {
+  border-radius: 20px;
+  padding: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--amber) 55%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--amber) 14%, transparent), color-mix(in srgb, var(--jade) 8%, transparent)), var(--panel-translucent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gate-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.gate-mode-btn {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--text);
+  border-radius: 13px;
+  padding: 8px;
+  text-align: start;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: all 0.18s ease;
+}
+
+.gate-mode-btn.active-paper {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+}
+
+.gate-mode-btn.active-live {
+  border-color: var(--jade);
+  background: color-mix(in srgb, var(--jade) 16%, transparent);
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.check-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  accent-color: #059669;
+}
+
+/* 5-Mode Unified Portfolio Accounting Grid */
+.acct-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--sub);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 9px;
+  margin-bottom: 8px;
+}
+
+.acct-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.acct-card {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.acct-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 900;
+}
+
+.acct-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.acct-card-row strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Engine cards with guide trigger */
+.engine-card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.engine-row-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  transition: all 0.2s ease;
+}
+
+.engine-row-card.active {
+  border-color: color-mix(in srgb, var(--jade) 50%, transparent);
+  background: color-mix(in srgb, var(--jade) 10%, var(--soft));
+}
+
+.engine-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.engine-row-info {
+  min-width: 0;
+}
+
+.engine-row-info strong {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 900;
+}
+
+.engine-row-info span {
+  display: block;
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.engine-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.help-dot-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-translucent);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.help-dot-btn:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.toggle-pill {
+  border: 1px solid var(--line);
+  background: var(--panel-translucent);
+  color: var(--dim);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.toggle-pill.on {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+/* Demo Editor & Budget Strip */
+.budget-strip {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(5, 12, 32, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.budget-strip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10.5px;
+}
+
+.inline-editor {
+  background: var(--soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Modal Sheet inside extension */
+.ext-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.ext-modal-card {
+  width: 100%;
+  max-width: 390px;
+  max-height: 88vh;
+  overflow-y: auto;
+  border-radius: 22px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.popup-banner {
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--gold) 18%, transparent), color-mix(in srgb, var(--jade) 10%, transparent)), var(--panel-translucent);
+  border: 1px solid var(--line-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fee-warn-banner {
+  border-radius: 16px;
+  padding: 9px 11px;
+  background: color-mix(in srgb, var(--amber) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.maint-box {
+  border-radius: 22px;
+  padding: 18px 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+
+.playbook-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.select-field {
+  width: 100%;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: inherit;
+  border-radius: 13px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  outline: none;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+

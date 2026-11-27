@@ -18,6 +18,15 @@ export interface ExchangeMarket {
   basePrecision: number;
   quotePrecision: number;
   marketType?: 'SPOT' | 'FUTURES';
+  nameEn?: string;
+  nameFa?: string;
+  category?: string;
+  primaryChain?: string;
+  chains?: string[];
+  contractAddress?: string;
+  logoUrl?: string;
+  marketCapUsd?: number;
+  priceSource?: string;
 }
 
 const FAV_KEY = 'dollarino_fav_pairs';

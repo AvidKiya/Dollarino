@@ -139,6 +139,7 @@ function SetupActionCard({
   onOpenTerminal?: (symbol: string) => void;
 }) {
   const isLong = setup.direction === 'LONG';
+  const [copiedSetup, setCopiedSetup] = useState(false);
   return (
     <div
       className={`mt-2.5 rounded-2xl border p-3.5 space-y-2.5 ${
@@ -204,15 +205,30 @@ function SetupActionCard({
         )}
       </div>
 
-      {onOpenTerminal && (
+      <div className="flex flex-wrap items-center gap-2">
+        {onOpenTerminal && (
+          <button
+            type="button"
+            onClick={() => onOpenTerminal(setup.symbol)}
+            className="btn-cobalt flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-[11px] font-black"
+          >
+            {isFa ? 'باز کردن در ترمینال معاملاتی' : 'Open Symbol in Terminal'}
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => onOpenTerminal(setup.symbol)}
-          className="btn-cobalt w-full sm:w-auto px-3.5 py-2 rounded-xl text-[11px] font-black"
+          onClick={() => {
+            const summary = `${setup.symbol} ${setup.direction}${setup.timeframe ? ` (${setup.timeframe})` : ''}\nEntry: ${setup.entry}\nSL: ${setup.stopLoss}\nTP1: ${setup.tp1}${setup.tp2 ? ` | TP2: ${setup.tp2}` : ''}${setup.tp3 ? ` | TP3: ${setup.tp3}` : ''}`;
+            void navigator.clipboard?.writeText(summary).catch(() => {});
+            setCopiedSetup(true);
+            setTimeout(() => setCopiedSetup(false), 1800);
+          }}
+          className="btn-ghost px-3 py-2 rounded-xl text-[11px] font-bold inline-flex items-center gap-1"
         >
-          {isFa ? 'باز کردن در ترمینال معاملاتی' : 'Open Symbol in Terminal'}
+          {copiedSetup ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          <span>{copiedSetup ? (isFa ? 'کپی شد' : 'Copied') : isFa ? 'کپی ستاپ' : 'Copy Setup'}</span>
         </button>
-      )}
+      </div>
     </div>
   );
 }
@@ -231,6 +247,8 @@ export function DedicatedAiChatSurface({
   lang,
   authenticated = true,
   compact = false,
+  currentSymbol,
+  activeTab,
   onNavigate,
   onSelectSymbolForTerminal,
   onExpandFullScreen,
@@ -240,6 +258,8 @@ export function DedicatedAiChatSurface({
   lang: Lang;
   authenticated?: boolean;
   compact?: boolean;
+  currentSymbol?: string;
+  activeTab?: NavTab;
   onNavigate?: (tab: NavTab) => void;
   onSelectSymbolForTerminal?: (symbol: string) => void;
   onExpandFullScreen?: () => void;
@@ -425,6 +445,8 @@ export function DedicatedAiChatSurface({
         modelId: selectedModelId || undefined,
         message: cleanText,
         imageDataUrl: attachedImg,
+        currentSymbol: currentSymbol || undefined,
+        activeTab: activeTab || undefined,
         history: !authenticated ? historySnapshot : undefined,
       });
 
@@ -452,6 +474,7 @@ export function DedicatedAiChatSurface({
                   modelId: selectedModelId || undefined,
                   message: cleanText,
                   imageDataUrl: attachedImg,
+                  currentSymbol: currentSymbol || undefined,
                   history: historySnapshot,
                 }),
               });
@@ -508,18 +531,19 @@ export function DedicatedAiChatSurface({
   };
 
   const activeModel = models.find((m) => m.id === selectedModelId) || models[0];
+  const symClean = (currentSymbol || 'BTCUSDT').toUpperCase();
   const quickStarters = isFa
     ? [
-        'تحلیل لحظه‌ای بیت‌کوین و ستاپ امروز',
+        `تحلیل لحظه‌ای ${symClean.replace('USDT', '')} و ستاپ امروز`,
+        authenticated ? 'وضعیت پوزیشن‌های باز و ربات من چطوره؟' : 'امکانات اتوترید ۲۴/۷ و دمو دلارینو چیه؟',
         'کد Pine Script استراتژی EMA + RSI بنویس',
         'با سرمایه ۵۰۰ دلار و ریسک ۲٪ چقدر حجم بگیرم؟',
-        'دلارینو و سازنده‌اش آوید کیا را معرفی کن',
       ]
     : [
-        'Live BTC analysis & setup',
+        `Live ${symClean.replace('USDT', '')} analysis & setup`,
+        authenticated ? 'Review my open positions & bot risk' : 'Explain 24/7 Auto-Trade & Demo mode',
         'Write an EMA + RSI Pine Script strategy',
         'Position sizing for $500 & 2% risk',
-        'Who built Dollarino?',
       ];
 
   return (
@@ -792,15 +816,25 @@ export function DedicatedAiChatSurface({
                     </div>
                   )}
 
-                  {m.role === 'assistant' && m.modelLabel && (
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-[var(--gold)] mb-1">
-                      <Bot className="w-3 h-3" />
-                      <span>{m.modelLabel}</span>
-                      {m.usedVision && (
-                        <span className="inline-flex items-center gap-1">
-                          · <Eye className="w-3 h-3" /> Vision
-                        </span>
-                      )}
+                  {m.role === 'assistant' && (
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-bold text-[var(--gold)] mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <Bot className="w-3 h-3" />
+                        <span>{m.modelLabel || (isFa ? 'هوش مصنوعی دلارینو' : 'Dollarino AI')}</span>
+                        {m.usedVision && (
+                          <span className="inline-flex items-center gap-1">
+                            · <Eye className="w-3 h-3" /> Vision
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void navigator.clipboard?.writeText(m.content).catch(() => {})}
+                        title={isFa ? 'کپی پاسخ' : 'Copy reply'}
+                        className="opacity-65 hover:opacity-100 text-dim hover:text-main p-0.5 transition"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
                     </div>
                   )}
 
@@ -1078,6 +1112,7 @@ export function FloatingAiChat({
   lang,
   authenticated,
   activeTab,
+  currentSymbol,
   onNavigate,
   onSelectSymbolForTerminal,
   onGoAuth,
@@ -1085,6 +1120,7 @@ export function FloatingAiChat({
   lang: Lang;
   authenticated: boolean;
   activeTab?: NavTab;
+  currentSymbol?: string;
   onNavigate?: (tab: NavTab) => void;
   onSelectSymbolForTerminal?: (symbol: string) => void;
   onGoAuth?: () => void;
@@ -1175,6 +1211,8 @@ export function FloatingAiChat({
               lang={lang}
               authenticated={authenticated}
               compact
+              currentSymbol={currentSymbol}
+              activeTab={activeTab}
               onNavigate={onNavigate}
               onSelectSymbolForTerminal={onSelectSymbolForTerminal}
               onGoAuth={onGoAuth}

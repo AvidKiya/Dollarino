@@ -139,7 +139,9 @@ aiAssistantRoutes.post('/chat', async (c) => {
     modelId?: string | null;
     message?: string;
     imageDataUrl?: string | null;
-  }>().catch(() => ({} as { sessionId?: string; modelId?: string; message?: string; imageDataUrl?: string }));
+    currentSymbol?: string | null;
+    activeTab?: string | null;
+  }>().catch(() => ({} as { sessionId?: string; modelId?: string; message?: string; imageDataUrl?: string; currentSymbol?: string; activeTab?: string }));
 
   const message = String(body.message || '').trim();
   const imageDataUrl = body.imageDataUrl ? String(body.imageDataUrl).trim() : null;
@@ -169,6 +171,8 @@ aiAssistantRoutes.post('/chat', async (c) => {
     modelId: body.modelId || null,
     message,
     imageDataUrl,
+    currentSymbol: body.currentSymbol || null,
+    activeTab: body.activeTab || null,
   });
 
   return c.json(res);

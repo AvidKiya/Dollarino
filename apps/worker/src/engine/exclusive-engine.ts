@@ -62,6 +62,12 @@ export function parseActiveEnginesFromConfig(
     }
   }
 
+  // If the bot is STOPPED and the user never explicitly enabled engines, keep ALL 5 engines OFF by default
+  const isRunning = botState === 'RUNNING_PAPER' || botState === 'RUNNING_LIVE';
+  if (!isRunning && !sniperEnabled && !myAiActive) {
+    return [];
+  }
+
   const out: TradingEngineChoice[] = [];
   if (strategyKey === 'copy_trade' || (activeCopyCount > 0 && botState === 'STOPPED')) {
     out.push('COPY_TRADE');
@@ -69,7 +75,7 @@ export function parseActiveEnginesFromConfig(
     out.push('CENTRAL_AI');
   } else if (strategyKey === 'my_custom_ai' || myAiActive) {
     out.push('MY_AI');
-  } else if (strategyKey) {
+  } else if (strategyKey && isRunning) {
     out.push('STRATEGY');
   }
   if (sniperEnabled && !out.includes('LISTING_SNIPER')) {

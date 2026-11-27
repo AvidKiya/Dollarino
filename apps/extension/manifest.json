@@ -1,28 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "Dollarino — پایانه ساده در پنل کناری",
+  "name": "Dollarino V11.9.1 — ترید هوشمند و حالت ساده",
   "short_name": "Dollarino",
   "version": "11.7.2",
-  "description": "Dollarino V11.7.2 Chrome Side Panel Companion: Opens Dollarino Simple Mode docked inside the browser window just like Trust Wallet.",
-  "minimum_chrome_version": "114",
-  "permissions": ["storage", "alarms", "sidePanel"],
-  "host_permissions": ["https://*/*", "http://*/*"],
-  "side_panel": {
-    "default_path": "sidepanel.html"
+  "version_name": "11.9.1",
+  "description": "اکستنشن کروم/اج/فایرفاکس دلارینو V11.9.1 — حالت ساده کامل، ثبت‌نام و ورود، ۵ موتور همزمان، تراز ۵ بخش، رادار DEX و اسنایپر و Trust Wallet.",
+  "icons": {
+    "16": "icons/icon-192.png",
+    "48": "icons/icon-192.png",
+    "128": "icons/icon-512.png"
   },
   "action": {
-    "default_title": "دلارینو | باز کردن حالت ساده در پنل کناری مرورگر",
+    "default_title": "باز کردن حالت ساده دلارینو V11.9.1",
     "default_icon": {
       "16": "icons/icon-192.png",
       "48": "icons/icon-192.png",
       "128": "icons/icon-512.png"
     }
   },
-  "icons": {
-    "16": "icons/icon-192.png",
-    "48": "icons/icon-192.png",
-    "128": "icons/icon-512.png"
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
+  "permissions": ["storage", "alarms", "sidePanel"],
+  "host_permissions": ["https://*/*", "http://*/*"],
   "background": {
     "service_worker": "background.js"
   }

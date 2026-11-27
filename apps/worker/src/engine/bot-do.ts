@@ -109,8 +109,8 @@ export class TradingBotCoordinator implements DurableObject {
     }
 
     if (allUserIds.size > 0) {
-      // Check every 60s when open trades/pending orders exist; otherwise every 180s to preserve D1 quota
-      const nextDelay = openSet.size > 0 || pendingSet.size > 0 ? 60_000 : 180_000;
+      // Check every 90s when open trades/pending orders exist; otherwise every 300s (5m) to preserve D1 quota
+      const nextDelay = openSet.size > 0 || pendingSet.size > 0 ? 90_000 : 300_000;
       await this.state.storage.setAlarm(Date.now() + nextDelay);
     }
   }

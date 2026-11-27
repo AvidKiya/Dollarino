@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { callMultimodalChatAI, detectVisionSupport, resolveModelRecordById } from '../ai/assistant.js';
+import { callMultimodalChatAI, detectVisionSupport, listSelectableAIModels, resolveModelRecordById } from '../ai/assistant.js';
 import { generateSupportAIReply } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
@@ -12,7 +12,7 @@ export const supportRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }
 supportRoutes.use('*', requireAuth);
 
 async function buildUserSupportContext(db: D1Database, user: AppVariables['user']): Promise<string> {
-  const [cfg, ent, userRow, exRows] = await Promise.all([
+  const [cfg, ent, userRow, exRows, mobileRow] = await Promise.all([
     db.prepare(`SELECT bot_state, trading_mode, strategy_key, symbol FROM bot_configs WHERE user_id = ? LIMIT 1`)
       .bind(user.id)
       .first<{ bot_state: string; trading_mode: string; strategy_key: string; symbol: string }>()
@@ -33,6 +33,10 @@ async function buildUserSupportContext(db: D1Database, user: AppVariables['user'
       .bind(user.id)
       .all<{ provider: string }>()
       .catch(() => ({ results: [] })),
+    db.prepare(`SELECT COUNT(*) as cnt FROM mobile_push_devices WHERE user_id = ? AND is_active = 1`)
+      .bind(user.id)
+      .first<{ cnt: number }>()
+      .catch(() => ({ cnt: 0 })),
   ]);
 
   const plan = ent ? `${ent.planNameFa}${ent.daysRemaining ? ` (${ent.daysRemaining}d left)` : ''}` : 'Standard';
@@ -44,7 +48,8 @@ async function buildUserSupportContext(db: D1Database, user: AppVariables['user'
     userRow?.trust_wallet_tron ? 'TRON' : '',
   ].filter(Boolean);
   const tw = twChains.length ? `Connected [${twChains.join(', ')}]` : 'Not linked';
-  return `Plan: ${plan} | Bot: ${cfg?.bot_state || 'STOPPED'} (${cfg?.trading_mode || 'PAPER'}, strategy: ${cfg?.strategy_key || 'dollarino_v01'}) | Exchanges: ${exchanges} | TrustWallet: ${tw}`;
+  const androidCount = Number(mobileRow?.cnt || 0);
+  return `Plan: ${plan} | Bot: ${cfg?.bot_state || 'STOPPED'} (${cfg?.trading_mode || 'PAPER'}, strategy: ${cfg?.strategy_key || 'dollarino_v01'}) | Exchanges: ${exchanges} | TrustWallet: ${tw} | Android Push Devices: ${androidCount}`;
 }
 
 supportRoutes.get('/tickets', async (c) => {
@@ -182,8 +187,10 @@ supportRoutes.post('/message', async (c) => {
   let usedModelLabel = 'Dollarino AI Support Core';
 
   if (imageDataUrl) {
-    const resolved = await resolveModelRecordById(c.env, user.id, null).catch(() => null);
-    if (resolved && detectVisionSupport(resolved.record.provider, resolved.record.model, resolved.record.label)) {
+    const { models } = await listSelectableAIModels(c.env, user.id).catch(() => ({ models: [] }));
+    const visionCandidate = models.find((m) => m.supportsVision);
+    const resolved = await resolveModelRecordById(c.env, user.id, visionCandidate?.id || null).catch(() => null);
+    if (resolved && detectVisionSupport(resolved.record.provider, resolved.record.model, resolved.record.label, resolved.record.baseUrl)) {
       try {
         const visionAns = await callMultimodalChatAI(
           resolved.record,

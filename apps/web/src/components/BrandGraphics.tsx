@@ -7,16 +7,17 @@ export function DollarinoBrandMark({
   glow?: boolean;
   className?: string;
 }) {
+  const src = size >= 72 ? '/logo-hd.webp' : '/logo-sm.webp';
   return (
     <img
-      src="/logo-sm.webp"
+      src={src}
       alt="Dollarino"
       width={size}
       height={size}
       style={{
         width: size,
         height: size,
-        filter: glow ? 'drop-shadow(0 2px 6px rgba(0, 0, 0, 0.16))' : undefined,
+        filter: glow ? 'drop-shadow(0 4px 12px rgba(12, 68, 200, 0.28))' : undefined,
       }}
       className={`object-contain shrink-0 select-none ${className}`}
     />

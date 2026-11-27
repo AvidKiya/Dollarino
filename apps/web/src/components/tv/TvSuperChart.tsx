@@ -126,6 +126,91 @@ function fmtPx(n?: number): string {
   return n.toFixed(6);
 }
 
+function calcEmaVal(closes: number[], period: number): number {
+  if (!closes.length) return 0;
+  const k = 2 / (period + 1);
+  let val = closes[0]!;
+  for (let i = 1; i < closes.length; i++) {
+    val = closes[i]! * k + val * (1 - k);
+  }
+  return val;
+}
+
+function computeTechnicalsSummary(candles: Candle[]): {
+  verdictEn: string;
+  verdictFa: string;
+  score: number; // -1 to +1
+  sellCount: number;
+  neutralCount: number;
+  buyCount: number;
+} {
+  if (candles.length < 20) {
+    return { verdictEn: 'Neutral', verdictFa: 'خنثی', score: 0, sellCount: 4, neutralCount: 6, buyCount: 4 };
+  }
+  const closes = candles.map((c) => c.close);
+  const last = closes[closes.length - 1]!;
+  let sellCount = 0;
+  let neutralCount = 0;
+  let buyCount = 0;
+
+  // Moving averages (10, 20, 30, 50, 100, 200)
+  for (const p of [10, 20, 30, 50, 100, 200]) {
+    const e = calcEmaVal(closes, Math.min(p, closes.length));
+    const diffPct = e > 0 ? (last - e) / e : 0;
+    if (diffPct > 0.002) buyCount++;
+    else if (diffPct < -0.002) sellCount++;
+    else neutralCount++;
+  }
+
+  // RSI (14)
+  let gains = 0;
+  let losses = 0;
+  const rsiStart = Math.max(1, closes.length - 14);
+  for (let i = rsiStart; i < closes.length; i++) {
+    const d = closes[i]! - closes[i - 1]!;
+    if (d >= 0) gains += d;
+    else losses += -d;
+  }
+  const rs = losses > 0 ? gains / losses : 100;
+  const rsi14 = 100 - 100 / (1 + rs);
+  if (rsi14 > 55 && rsi14 < 78) buyCount += 2;
+  else if (rsi14 < 45 && rsi14 > 22) sellCount += 2;
+  else neutralCount += 2;
+
+  // MACD(12,26)
+  const ema12 = calcEmaVal(closes, 12);
+  const ema26 = calcEmaVal(closes, 26);
+  const macdVal = ema12 - ema26;
+  if (macdVal > 0) buyCount += 2;
+  else if (macdVal < 0) sellCount += 2;
+  else neutralCount += 2;
+
+  // Momentum(10)
+  const prev10 = closes[Math.max(0, closes.length - 11)]!;
+  if (last > prev10 * 1.002) buyCount += 2;
+  else if (last < prev10 * 0.998) sellCount += 2;
+  else neutralCount += 2;
+
+  const total = Math.max(1, buyCount + sellCount + neutralCount);
+  const score = Math.max(-1, Math.min(1, (buyCount - sellCount) / total));
+  let verdictEn = 'Neutral';
+  let verdictFa = 'خنثی';
+  if (score >= 0.45) {
+    verdictEn = 'Strong Buy';
+    verdictFa = 'خرید قوی';
+  } else if (score >= 0.15) {
+    verdictEn = 'Buy';
+    verdictFa = 'خرید';
+  } else if (score <= -0.45) {
+    verdictEn = 'Strong Sell';
+    verdictFa = 'فروش قوی';
+  } else if (score <= -0.15) {
+    verdictEn = 'Sell';
+    verdictFa = 'فروش';
+  }
+  return { verdictEn, verdictFa, score, sellCount, neutralCount, buyCount };
+}
+
 export function TvSuperChart({
   lang,
   symbol,
@@ -193,7 +278,48 @@ export function TvSuperChart({
   const [showDrawings, setShowDrawings] = useState(true);
   const [showMarkers, setShowMarkers] = useState(true);
   const [showCustomOverlay, setShowCustomOverlay] = useState(true);
+  const [showWatchlistSidebar, setShowWatchlistSidebar] = useState(false);
+  const [activeRangePreset, setActiveRangePreset] = useState<string>('3M');
+  const [utcClock, setUtcClock] = useState<string>(() => new Date().toISOString().slice(11, 19));
   const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setUtcClock(new Date().toISOString().slice(11, 19));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const applyTimeRangePreset = (preset: string) => {
+    setActiveRangePreset(preset);
+    const chart = chartApiRef.current;
+    if (!chart || !candles.length) return;
+    if (preset === 'All') {
+      chart.timeScale().fitContent();
+      return;
+    }
+    const barsMap: Record<string, number> = {
+      '1D': 48,
+      '5D': 120,
+      '1M': 160,
+      '3M': 240,
+      '6M': 300,
+      YTD: 320,
+      '1Y': 360,
+      '5Y': candles.length,
+    };
+    const count = Math.min(candles.length, barsMap[preset] ?? 180);
+    const to = candles.length - 1;
+    const from = Math.max(0, to - count);
+    chart.timeScale().setVisibleLogicalRange({ from, to: to + 4 });
+  };
+
+  const techSummary = useMemo(() => computeTechnicalsSummary(candles), [candles]);
+  const watchlistRows = useMemo(() => {
+    const core = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'TONUSDT', 'AVAXUSDT', 'DOGEUSDT', 'SUIUSDT'];
+    const map = new Map(markets.map((m) => [m.symbol, m]));
+    return core.map((s) => map.get(s)).filter((x): x is ExchangeMarket => Boolean(x));
+  }, [markets]);
 
   // Interactive Drawing Tools
   const [activeTool, setActiveTool] = useState<DrawingToolType>('cursor');
@@ -1465,6 +1591,18 @@ export function TvSuperChart({
 
           <button
             type="button"
+            onClick={() => setShowWatchlistSidebar((v) => !v)}
+            className={`px-2.5 py-1.5 rounded-xl font-black inline-flex items-center gap-1 transition ${
+              showWatchlistSidebar ? 'btn-cobalt' : 'bg-[var(--panel)] border hairline text-dim hover:text-main'
+            }`}
+            title={isFa ? 'پنل واچ‌لیست و عقربه تکنیکال' : 'Watchlist & Technicals'}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isFa ? 'تکنیکال و واچ‌لیست' : 'Watchlist'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={onTogglePineDock}
             className={`px-2.5 py-1.5 rounded-xl font-black inline-flex items-center gap-1 transition ${
               pineDockOpen || customOverlays ? 'btn-lime' : 'bg-[var(--panel)] border hairline text-dim hover:text-main'
@@ -1617,25 +1755,36 @@ export function TvSuperChart({
               activeTool !== 'cursor' ? 'cursor-crosshair' : ''
             }`}
           >
+            {/* Subtle TradingView Center Background Watermark (e.g. SOLUSDT, 1D) */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-0 select-none overflow-hidden">
+              <div className="text-center opacity-[0.065]">
+                <p dir="ltr" className="font-display font-black text-4xl sm:text-6xl tracking-tight text-main">
+                  {symbol}, {timeframe.toUpperCase()}
+                </p>
+                <p className="text-xs sm:text-sm font-black tracking-[0.25em] uppercase text-main mt-1">
+                  DOLLARINO SUPERCHARTS
+                </p>
+              </div>
+            </div>
             <div ref={containerRef} className="w-full" />
             <svg ref={svgOverlayRef} className="pointer-events-none absolute inset-0 w-full h-full z-10" />
 
             {/* Floating TradingView OHLC + Active Indicator Legend */}
             <div
               dir="ltr"
-              className="pointer-events-none absolute top-2 left-2.5 right-20 z-20 flex flex-col gap-1 items-start"
+              className="pointer-events-none absolute top-2 left-2.5 right-24 z-20 flex flex-col gap-1 items-start"
             >
-              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 px-2.5 py-1 rounded-xl bg-slate-950/65 backdrop-blur-md border border-white/10 text-[10.5px]">
-                <span className="inline-flex items-center gap-1.5 font-black text-white">
+              <div className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-0.5 px-2.5 py-1 rounded-xl bg-[var(--panel)]/88 backdrop-blur-md border hairline text-[10.5px] shadow-sm">
+                <span className="inline-flex items-center gap-1.5 font-black text-main">
                   <CoinIcon symbol={symbol} size={14} />
                   <span>{symbol} · {timeframe}</span>
                 </span>
                 {ohlcShown && (
                   <div className="flex flex-wrap items-center gap-2 font-num text-[10px]">
-                    <span className="text-slate-400">O <strong className="text-slate-100">{fmtPx(ohlcShown.open)}</strong></span>
-                    <span className="text-slate-400">H <strong className="text-jade">{fmtPx(ohlcShown.high)}</strong></span>
-                    <span className="text-slate-400">L <strong className="text-loss">{fmtPx(ohlcShown.low)}</strong></span>
-                    <span className="text-slate-400">
+                    <span className="text-dim">O <strong className="text-main">{fmtPx(ohlcShown.open)}</strong></span>
+                    <span className="text-dim">H <strong className="text-jade">{fmtPx(ohlcShown.high)}</strong></span>
+                    <span className="text-dim">L <strong className="text-loss">{fmtPx(ohlcShown.low)}</strong></span>
+                    <span className="text-dim">
                       C <strong className={ohlcShown.chgPct >= 0 ? 'text-jade' : 'text-loss'}>{fmtPx(ohlcShown.close)}</strong>
                     </span>
                     <span className={`font-black ${ohlcShown.chgPct >= 0 ? 'text-jade' : 'text-loss'}`}>
@@ -1866,6 +2015,57 @@ export function TvSuperChart({
             )}
           </div>
 
+          {/* TradingView Bottom Time Range Bar (1D..All + UTC Clock + % / log / Auto) */}
+          <div
+            dir="ltr"
+            className="rounded-xl border hairline bg-[var(--soft)]/80 px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[10.5px]"
+          >
+            <div className="flex items-center gap-0.5 flex-wrap">
+              {['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'All'].map((rng) => (
+                <button
+                  key={rng}
+                  type="button"
+                  onClick={() => applyTimeRangePreset(rng)}
+                  className={`px-2 py-0.5 rounded-md font-num font-bold transition ${
+                    activeRangePreset === rng
+                      ? 'bg-[var(--panel)] text-main border hairline shadow-xs'
+                      : 'text-dim hover:text-main'
+                  }`}
+                >
+                  {rng}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 font-num text-dim">
+              <span>{utcClock} (UTC)</span>
+              <span className="text-[var(--line-strong)]">|</span>
+              <button
+                type="button"
+                onClick={() => setScaleMode((m) => (m === 'percent' ? 'normal' : 'percent'))}
+                className={`px-1.5 py-0.5 rounded font-bold ${scaleMode === 'percent' ? 'text-brand bg-sky-500/15' : 'hover:text-main'}`}
+              >
+                %
+              </button>
+              <button
+                type="button"
+                onClick={() => setScaleMode((m) => (m === 'log' ? 'normal' : 'log'))}
+                className={`px-1.5 py-0.5 rounded font-bold ${scaleMode === 'log' ? 'text-brand bg-sky-500/15' : 'hover:text-main'}`}
+              >
+                log
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setScaleMode('normal');
+                  chartApiRef.current?.timeScale().fitContent();
+                }}
+                className={`px-1.5 py-0.5 rounded font-bold ${scaleMode === 'normal' ? 'text-brand bg-sky-500/15' : 'hover:text-main'}`}
+              >
+                auto
+              </button>
+            </div>
+          </div>
+
           {/* Synchronized Oscillator Sub-Panes (RSI, MACD, Stoch, ADX, Pine Sub-Pane) */}
           {allSubPanes.map((sp) => (
             <div key={sp.uid} className="relative w-full rounded-2xl overflow-hidden border hairline">
@@ -1895,6 +2095,113 @@ export function TvSuperChart({
             </div>
           ))}
         </div>
+
+        {/* Right TradingView Dock (Watchlist + Technicals Summary Gauge matching image-11.png) */}
+        {showWatchlistSidebar && (
+          <aside
+            style={{ maxHeight: effectiveHeight + 40 }}
+            className="hidden lg:flex w-[215px] shrink-0 flex-col justify-between gap-2 rounded-2xl border hairline bg-[var(--soft)]/85 p-2 select-none overflow-hidden"
+          >
+            {/* Top: Watchlist Table */}
+            <div className="space-y-1 min-h-0 flex-1 overflow-y-auto pe-0.5">
+              <div className="flex items-center justify-between px-1 pb-1 border-b hairline sticky top-0 bg-[var(--soft)] z-10">
+                <span className="text-[11px] font-black text-main">
+                  {isFa ? 'واچ‌لیست' : 'Watchlist'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowWatchlistSidebar(false)}
+                  className="text-dim hover:text-main"
+                  title={isFa ? 'بستن ستون' : 'Close panel'}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="space-y-0.5">
+                {watchlistRows.map((m) => {
+                  const pct = Number(m.changePct24h || 0);
+                  const active = m.symbol === symbol;
+                  return (
+                    <button
+                      key={m.symbol}
+                      type="button"
+                      dir="ltr"
+                      onClick={() => onChangeSymbol(m.symbol)}
+                      className={`w-full flex items-center justify-between gap-2 px-1.5 py-1 rounded-lg text-[10.5px] transition ${
+                        active ? 'bg-sky-500/15 text-main font-black' : 'hover:bg-[var(--panel)] text-sub'
+                      }`}
+                    >
+                      <span className="font-bold truncate inline-flex items-center gap-1.5 shrink-0">
+                        <CoinIcon symbol={m.symbol} size={14} />
+                        <span>{m.base}</span>
+                      </span>
+                      <span className="text-end leading-tight font-num">
+                        <strong className="block text-[10.5px] font-bold text-main">
+                          ${fmtPx(Number(m.lastPrice))}
+                        </strong>
+                        <span className={`block text-[9.5px] font-black ${pct >= 0 ? 'text-jade' : 'text-loss'}`}>
+                          {pct >= 0 ? '+' : ''}
+                          {pct.toFixed(2)}%
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Bottom: TradingView Technicals Semicircle Gauge */}
+            <div className="rounded-xl border hairline bg-[var(--panel)] p-2 space-y-1.5 shrink-0">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="font-black text-main">{isFa ? 'خلاصه تکنیکال' : 'Technicals'}</span>
+                <span dir="ltr" className="text-[9px] font-bold text-dim">{timeframe.toUpperCase()}</span>
+              </div>
+              <div className="relative flex flex-col items-center">
+                <svg viewBox="0 0 180 96" className="w-32 h-16 overflow-visible">
+                  <path d="M 18 84 A 70 70 0 0 1 48 29" fill="none" stroke="#ef4444" strokeWidth="8" strokeLinecap="round" opacity="0.85" />
+                  <path d="M 52 26 A 70 70 0 0 1 78 17" fill="none" stroke="#f97316" strokeWidth="8" opacity="0.85" />
+                  <path d="M 82 16 A 70 70 0 0 1 98 16" fill="none" stroke="#94a3b8" strokeWidth="8" opacity="0.7" />
+                  <path d="M 102 17 A 70 70 0 0 1 128 26" fill="none" stroke="#38bdf8" strokeWidth="8" opacity="0.85" />
+                  <path d="M 132 29 A 70 70 0 0 1 162 84" fill="none" stroke="#10b981" strokeWidth="8" strokeLinecap="round" opacity="0.9" />
+                  {(() => {
+                    const angleDeg = -90 + techSummary.score * 75;
+                    return (
+                      <g transform={`translate(90, 84) rotate(${angleDeg})`}>
+                        <line x1="0" y1="0" x2="0" y2="-52" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-main" />
+                        <circle cx="0" cy="0" r="4" fill="currentColor" className="text-main" />
+                      </g>
+                    );
+                  })()}
+                </svg>
+                <p
+                  className={`text-[11px] font-black -mt-1 ${
+                    techSummary.score >= 0.15
+                      ? 'text-jade'
+                      : techSummary.score <= -0.15
+                        ? 'text-loss'
+                        : 'text-dim'
+                  }`}
+                >
+                  {isFa ? techSummary.verdictFa : techSummary.verdictEn}
+                </p>
+              </div>
+              <div className="grid grid-cols-3 text-center text-[9.5px] pt-1 border-t hairline">
+                <div>
+                  <span className="text-dim block">{isFa ? 'فروش' : 'Sell'}</span>
+                  <strong className="font-num text-loss">{techSummary.sellCount}</strong>
+                </div>
+                <div>
+                  <span className="text-dim block">{isFa ? 'خنثی' : 'Neutral'}</span>
+                  <strong className="font-num text-main">{techSummary.neutralCount}</strong>
+                </div>
+                <div>
+                  <span className="text-dim block">{isFa ? 'خرید' : 'Buy'}</span>
+                  <strong className="font-num text-jade">{techSummary.buyCount}</strong>
+                </div>
+              </div>
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* Indicators & Pine Scripts Catalog Modal */}

@@ -1,14 +1,23 @@
-# Dollarino Chrome Side Panel Extension (V11.7.2)
+# Dollarino V11.9.1 Browser Extensions (Chrome · Edge · Firefox)
 
-اکستنشن رسمی دلارینو نسخه **V11.7.2** با قابلیت **Chrome Native Side Panel (`chrome.sidePanel`)** — دقیقاً مشابه نحوه باز شدن Trust Wallet در پنل کناری مرورگر Chrome:
+افزونه رسمی دلارینو **V11.9.1** با **حالت ساده یکسان با سایت**، **ورود و ثبت‌نام مستقیم (به همراه 2FA، کلید اکستنشن و تلگرام)**، **۵ موتور ترید همزمان (پیش‌فرض خاموش)**، **تراز یکپارچه ۵ بخش**، **گام الزامی دمو/واقعی و قوانین ریسک**، **رادار DEX + اسنایپر زیر ۵ دقیقه (`70 / $15k / 5`)** و **راهنما و اتصال Trust Wallet** برای مرورگرهای **Chrome**، **Microsoft Edge** و **Mozilla Firefox**.
 
-## ویژگی‌های کلیدی V11.7.2
-- **پنل کناری بومی مرورگر (`sidePanel`):** با کلیک روی آیکون اکستنشن دلارینو در نوار ابزار Chrome، به جای پاپ‌آپ شناور موقت، **پنل کناری دائمی مرورگر (Docked Side Panel)** باز می‌شود و همراه با پنجره مرورگر باقی می‌ماند.
-- **حالت ساده اختصاصی (`Simple Mode Only`):** داخل پنل کناری، **فقط رابط کاربری ساده دلارینو (`?ui_mode=simple&embed=sidepanel`)** اجرا می‌شود تا در عرض باریک پنل کناری بیشترین خوانایی و کارایی را داشته باشید.
-- **انتخاب سرور دلخواه:** به‌طور پیش‌فرض به `https://dollarino.pages.dev` متصل است و از آیکون تنظیمات (`⚙`) می‌توانید آدرس دلخواه یا محیط لوکال (`http://localhost:5173`) را ذخیره کنید.
+## بسته‌های آماده دانلود
+اسکریپت ساخت بسته‌ها (`node scripts/build-extensions.mjs`) فایل‌های ZIP آماده نصب هر مرورگر را در `apps/web/public/downloads/` می‌سازد:
+- **Google Chrome / Brave / Opera:** `dollarino-extension-chrome.zip` (و `dollarino-extension.zip`) — با **Side Panel** بومی MV3
+- **Microsoft Edge:** `dollarino-extension-edge.zip` — با **Side Panel** بومی (`minimum_edge_version: 114`)
+- **Mozilla Firefox:** `dollarino-extension-firefox.zip` — با **Sidebar Action** بومی (`sidebar_action` + `browser_specific_settings.gecko`)
 
-## راهنمای نصب (Chrome / Edge / Brave / Opera)
-1. وارد صفحه `chrome://extensions` شوید.
-2. گزینه **Developer mode** (حالت برنامه‌نویس) را فعال کنید.
-3. دکمه **Load unpacked** را بزنید و پوشه `apps/extension` (یا فایل اکسترکت‌شده `dollarino-extension-v11.7.2.zip`) را انتخاب کنید.
-4. آیکون دلارینو را پین (Pin) کنید و رویش کلیک کنید — پنل کناری حالت ساده دلارینو فوراً در کنار صفحه مرورگر باز می‌شود.
+## راهنمای نصب سریع
+### ۱. Google Chrome / Brave / Arc
+1. آدرس `chrome://extensions` را باز کنید و **Developer mode** را روشن کنید.
+2. فایل `dollarino-extension-chrome-v11.9.1.zip` را استخراج (Extract) کنید.
+3. دکمه **Load unpacked** را زده و پوشه استخراج‌شده (یا مستقیم پوشه `apps/extension`) را انتخاب کنید.
+
+### ۲. Microsoft Edge
+1. آدرس `edge://extensions` را باز کنید و **Developer mode** را فعال کنید.
+2. فایل `dollarino-extension-edge-v11.9.1.zip` را استخراج کنید و **Load unpacked** را بزنید.
+
+### ۳. Mozilla Firefox
+1. فایل `dollarino-extension-firefox-v11.9.1.zip` را در `about:debugging#/runtime/this-firefox` با گزینه **Load Temporary Add-on** (انتخاب `manifest.json` داخل پوشه استخراج‌شده یا مستقیم فایل zip) بارگذاری کنید، یا پس از امضا روی AMO نصب دائمی کنید.
+2. روی آیکون دلارینو در نوار ابزار کلیک کنید (یا `Ctrl+B` بزنید) تا سایدبار بومی فایرفاکس باز شود.
