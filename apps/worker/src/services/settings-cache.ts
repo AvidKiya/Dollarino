@@ -1,3 +1,5 @@
+import { invalidateDbPublicCache } from './d1-cache.js';
+
 // Lightweight per-D1-instance TTL settings cache to eliminate dozens of repeated SELECTs
 // Using WeakMap<D1Database, ...> guarantees total isolation across Vitest suites & fresh Miniflare DBs.
 
@@ -176,6 +178,7 @@ export function setCachedPublicCopyTraders(db: D1Database, traders: unknown[]): 
 export function invalidatePublicCopyTradersCache(db?: D1Database): void {
   if (db) {
     PUBLIC_COPIES_CACHE.delete(db as unknown as object);
+    invalidateDbPublicCache(db, 'public:copy-traders');
   } else {
     PUBLIC_COPIES_CACHE = new WeakMap();
   }

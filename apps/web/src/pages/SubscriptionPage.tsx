@@ -22,7 +22,7 @@ import type { Lang } from '../lib/i18n';
 import { formatTomanEq } from '../lib/format';
 import { tgNotifyHaptic } from '../lib/telegram';
 import { pushFloatingToast } from '../lib/toast';
-import type { NavTab } from '../lib/types';
+import type { AuthUserInfo, NavTab } from '../lib/types';
 import { TreasuryBankingHub } from '../components/TreasuryBankingHub';
 
 interface ServerFeeEntry {
@@ -100,10 +100,12 @@ interface ServerFeePayload {
 
 export function SubscriptionPage({
   lang,
+  user,
   onRefreshDashboard,
   onNavigate,
 }: {
   lang: Lang;
+  user?: AuthUserInfo | null;
   onRefreshDashboard: () => Promise<void>;
   onNavigate?: (tab: NavTab) => void;
 }) {
@@ -388,12 +390,17 @@ export function SubscriptionPage({
         </div>
       )}
 
-      {/* Unified Trust Wallet Banking, Fee Settlement, Prepaid Top-Up & Formal Invoices */}
+      {/* Unified Trust Wallet Banking, Treasury Cap, Fee Settlement, Prepaid Top-Up & Formal Invoices */}
       <TreasuryBankingHub
         lang={lang}
-        mode="fees"
+        mode="full"
         defaultCategory={enf && enf.totalDueUsd > 0 ? 'FEE_SETTLEMENT' : 'CREDIT_TOPUP'}
         defaultAmountUsd={enf && enf.totalDueUsd > 0 ? enf.totalDueUsd : undefined}
+        connectedEvmAddress={user?.trust_wallet_address}
+        connectedSolanaAddress={user?.trust_wallet_solana}
+        connectedTonAddress={user?.trust_wallet_ton}
+        connectedTronAddress={user?.trust_wallet_tron}
+        onOpenWalletTab={() => onNavigate?.('dex')}
         onAfterSuccess={async () => {
           await loadAll();
           await onRefreshDashboard();

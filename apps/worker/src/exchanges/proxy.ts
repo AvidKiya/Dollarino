@@ -1,3 +1,5 @@
+import { isSafeExternalHttpUrl } from '../security.js';
+
 export interface ToobitProxyConfig {
   proxyUrl?: string;
   proxySecret?: string;
@@ -6,13 +8,8 @@ export interface ToobitProxyConfig {
 export function normalizeProxyBaseUrl(raw?: string | null): string | undefined {
   const trimmed = (raw ?? '').trim().replace(/\/+$/, '');
   if (!trimmed) return undefined;
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined;
-    return trimmed;
-  } catch {
-    return undefined;
-  }
+  if (!isSafeExternalHttpUrl(trimmed)) return undefined;
+  return trimmed;
 }
 
 export function buildToobitRequest(

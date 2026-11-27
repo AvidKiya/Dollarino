@@ -15,8 +15,10 @@ import {
   fetchDexTrendingOverview,
   getDexOrdersCheck,
   getDexTokenPools,
+  normalizeDexChainId,
   searchDexPairs,
 } from '../dex/screener.js';
+import { round2 } from '../services/portfolio-accounting.js';
 import { resolveOnchainApiKey, runTokenRugAndSafetyScan } from '../dex/smart-copy.js';
 import {
   buildPerpDappLinks,
@@ -49,7 +51,7 @@ dexRoutes.get('/search', async (c) => {
 });
 
 dexRoutes.get('/token/:chainId/:tokenAddress', async (c) => {
-  const chainId = c.req.param('chainId');
+  const chainId = normalizeDexChainId(c.req.param('chainId'));
   const tokenAddress = c.req.param('tokenAddress');
   const [pools, orders] = await Promise.all([
     getDexTokenPools(chainId, tokenAddress),
@@ -72,7 +74,7 @@ dexRoutes.get('/token/:chainId/:tokenAddress', async (c) => {
 });
 
 dexRoutes.get('/routes', async (c) => {
-  const chainId = (c.req.query('chainId') || 'solana').trim();
+  const chainId = normalizeDexChainId(c.req.query('chainId') || 'solana');
   const tokenAddress = (c.req.query('tokenAddress') || '').trim();
   if (!tokenAddress) return c.json({ error: 'tokenAddress الزامی است' }, 400);
   const pools = await getDexTokenPools(chainId, tokenAddress).catch(() => []);
@@ -90,7 +92,7 @@ dexRoutes.get('/routes', async (c) => {
 });
 
 dexRoutes.get('/safety', async (c) => {
-  const chainId = (c.req.query('chainId') || 'solana').trim();
+  const chainId = normalizeDexChainId(c.req.query('chainId') || 'solana');
   const tokenAddress = (c.req.query('tokenAddress') || '').trim();
   if (!tokenAddress) return c.json({ error: 'tokenAddress الزامی است' }, 400);
   const report = await runTokenRugAndSafetyScan(c.env, chainId, tokenAddress);
@@ -372,11 +374,12 @@ dexRoutes.post('/direct-buy', requireAuth, async (c) => {
     return c.json({ error: 'دریافت قیمت لحظه‌ای توکن از DexScreener انجام نشد.' }, 400);
   }
 
+  const normalizedChain = normalizeDexChainId(body.chainId);
   const slUsd = Number((entryPx * (1 - slPct / 100)).toPrecision(6));
   const tp1Usd = Number((entryPx * (1 + tpPct / 100)).toPrecision(6));
   const tokenQty = amountUsd / entryPx;
   const id = randomId('dext');
-  const twLinks = buildTrustWalletSwapLinks(body.chainId, body.tokenAddress);
+  const twLinks = buildTrustWalletSwapLinks(normalizedChain, body.tokenAddress);
 
   if (mode === 'PAPER') {
     if (paperBal < amountUsd) {
@@ -385,32 +388,38 @@ dexRoutes.post('/direct-buy', requireAuth, async (c) => {
         400
       );
     }
-    await c.env.DB.prepare(
-      `UPDATE bot_configs SET paper_balance = MAX(0, paper_balance - ?), updated_at = datetime('now') WHERE user_id = ?`
-    ).bind(amountUsd, user.id).run();
-
-    await c.env.DB.prepare(
-      `INSERT INTO dex_trades (
-        id, user_id, chain_id, dex_id, pair_address, token_address, token_symbol, quote_symbol,
-        direction, amount_usd, token_qty, entry_price_usd, stop_loss_usd, tp1_usd, wallet_address, tx_hash, status, note
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'BUY', ?, ?, ?, ?, ?, 'PAPER_SIMULATOR', ?, 'OPEN', ?)`
-    ).bind(
-      id,
-      user.id,
-      body.chainId.toLowerCase(),
-      dexId,
-      pairAddr,
-      body.tokenAddress,
-      resolvedSymbol.toUpperCase(),
-      body.quoteSymbol || 'USDT',
-      amountUsd,
-      tokenQty,
-      entryPx,
-      slUsd,
-      tp1Usd,
-      `paper_${id}`,
-      `خرید مستقیم سایت (تنظیمات از پیش تعیین‌شده · TP +${tpPct}% / SL -${slPct}%)`
-    ).run();
+    const nextBal = round2(Math.max(0, paperBal - amountUsd));
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(String(nextBal), user.id),
+      c.env.DB.prepare(
+        `INSERT INTO dex_trades (
+          id, user_id, chain_id, dex_id, pair_address, token_address, token_symbol, quote_symbol,
+          direction, amount_usd, token_qty, entry_price_usd, stop_loss_usd, tp1_usd, wallet_address, tx_hash, status, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'BUY', ?, ?, ?, ?, ?, 'PAPER_SIMULATOR', ?, 'OPEN', ?)`
+      ).bind(
+        id,
+        user.id,
+        normalizedChain,
+        dexId,
+        pairAddr,
+        body.tokenAddress,
+        resolvedSymbol.toUpperCase(),
+        body.quoteSymbol || 'USDT',
+        amountUsd,
+        tokenQty,
+        entryPx,
+        slUsd,
+        tp1Usd,
+        `paper_${id}`,
+        `خرید مستقیم سایت (تنظیمات از پیش تعیین‌شده · TP +${tpPct}% / SL -${slPct}%)`
+      ),
+      c.env.DB.prepare(
+        `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+         VALUES (?, ?, 'PAPER', 'DEX_OPEN', ?, ?, ?)`
+      ).bind(randomId('wl'), user.id, -round2(amountUsd), nextBal, `خرید دمو DEX ${resolvedSymbol.toUpperCase()} ($${round2(amountUsd)})`),
+    ]);
 
     return c.json({
       ok: true,
@@ -436,7 +445,7 @@ dexRoutes.post('/direct-buy', requireAuth, async (c) => {
       403
     );
   }
-  const chainLower = body.chainId.toLowerCase();
+  const chainLower = normalizedChain;
   const walletAddr =
     chainLower === 'solana'
       ? uRow?.trust_wallet_solana

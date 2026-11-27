@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">دلارینو</string>
+    <string name="app_tagline">معاملات هوشمند، اسنایپر و کپی‌ترید</string>
+    <string name="channel_signals_name">سیگنال‌ها و رادار AI</string>
+    <string name="channel_signals_desc">سیگنال‌های فوری هوش مصنوعی، رادار و تحلیل چارت</string>
+    <string name="channel_trades_name">معاملات، سود و حد ضرر</string>
+    <string name="channel_trades_desc">ورود پوزیشن، رسیدن به TP1/2/3 و مدیریت ریسک</string>
+    <string name="channel_sniper_name">اسنایپر و لیستینگ‌های جدید</string>
+    <string name="channel_sniper_desc">توکن‌های جدید صرافی‌ها، اسنایپر و میم‌کوین‌ها</string>
+    <string name="channel_security_name">امنیت حساب و خزانه</string>
+    <string name="channel_security_desc">هشدارهای ۲FA، خزانه کپی‌ترید و تراکنش‌ها</string>
+    <string name="channel_system_name">سیستم و کارمزد</string>
+    <string name="channel_system_desc">اعلان‌های کارمزد، بروزرسانی و وضعیت ربات</string>
+    <string name="back_press_exit_hint">برای خروج یک بار دیگر دکمه بازگشت را بزنید</string>
+</resources>

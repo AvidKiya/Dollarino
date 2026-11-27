@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
-import { callBYOAI, getPlatformAISummary, resolveUserActiveAI } from '../ai/providers.js';
+import { callBYOAI, discoverGatewayModels, getPlatformAISummary, isArenaGatewayUrl, resolveUserActiveAI } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { decryptVaultJson, encryptVaultJson, maskSecret, randomId } from '../crypto.js';
 import { executeSignalForUser } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { resolveUserExchangeAdapter } from '../exchanges/factory.js';
 import { normalizeProxyBaseUrl } from '../exchanges/proxy.js';
+import { isSafeExternalHttpUrl } from '../security.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { resolveUserEntitlement } from './subscriptions.js';
 
@@ -299,6 +300,10 @@ connectionRoutes.post('/ai', async (c) => {
 
   const id = randomId('ai');
   const defaultBaseUrl = body.provider === 'deepseek' ? 'https://api.deepseek.com' : null;
+  const cleanBaseUrl = body.baseUrl?.trim() || defaultBaseUrl;
+  if (cleanBaseUrl && !isSafeExternalHttpUrl(cleanBaseUrl)) {
+    return c.json({ error: 'آدرس Base URL نامعتبر یا غیرمجاز است (دسترسی به شبکه داخلی مسدود است).' }, 400);
+  }
   const encrypted = await encryptVaultJson({ apiKey: body.apiKey.trim() }, c.env.MASTER_ENCRYPTION_KEY);
   await c.env.DB.prepare('UPDATE ai_connections SET is_active = 0 WHERE user_id = ?').bind(user.id).run();
   await c.env.DB.prepare(
@@ -308,9 +313,9 @@ connectionRoutes.post('/ai', async (c) => {
     id,
     user.id,
     body.provider,
-    body.label?.trim() || `${body.provider.toUpperCase()} (${body.model})`,
+    body.label?.trim() || (isArenaGatewayUrl(cleanBaseUrl) ? `Arena AI (${body.model})` : `${body.provider.toUpperCase()} (${body.model})`),
     body.model.trim(),
-    body.baseUrl?.trim() || defaultBaseUrl,
+    cleanBaseUrl,
     maskSecret(body.apiKey),
     encrypted,
     body.temperature ?? 0.15,
@@ -319,6 +324,37 @@ connectionRoutes.post('/ai', async (c) => {
   ).run();
 
   return c.json({ id, ok: true });
+});
+
+connectionRoutes.post('/ai/discover-models', async (c) => {
+  const body = await c.req
+    .json<{
+      baseUrl?: string;
+      apiKey?: string;
+      provider?: 'deepseek' | 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
+    }>()
+    .catch(
+      () =>
+        ({}) as {
+          baseUrl?: string;
+          apiKey?: string;
+          provider?: 'deepseek' | 'anthropic' | 'openai' | 'gemini' | 'openai_compatible';
+        }
+    );
+  const baseUrl = String(body.baseUrl || 'https://api.arena.ai/v1').trim();
+  const apiKey = String(body.apiKey || '').trim();
+  if (!apiKey) return c.json({ error: 'API Key is required' }, 400);
+  if (!isSafeExternalHttpUrl(baseUrl)) return c.json({ error: 'Invalid or blocked Base URL' }, 400);
+  try {
+    const models = await discoverGatewayModels({
+      baseUrl,
+      apiKey,
+      provider: body.provider || 'openai_compatible',
+    });
+    return c.json({ ok: true, count: models.length, models });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : 'Discovery failed' }, 400);
+  }
 });
 
 connectionRoutes.post('/ai/:id/activate', async (c) => {
@@ -388,7 +424,11 @@ connectionRoutes.post('/telegram-bots', async (c) => {
   ).bind(botId, user.id, me.username, maskSecret(token), encrypted, webhookSecret, allowedChannelId).run();
 
   let webhookConfigured = false;
-  const baseUrl = body.publicBaseUrl?.trim() || new URL(c.req.url).origin;
+  const rawBaseUrl = body.publicBaseUrl?.trim() || '';
+  if (rawBaseUrl && !isSafeExternalHttpUrl(rawBaseUrl)) {
+    return c.json({ error: 'آدرس Webhook URL نامعتبر یا غیرمجاز است.' }, 400);
+  }
+  const baseUrl = rawBaseUrl || new URL(c.req.url).origin;
   if (baseUrl.startsWith('https://')) {
     await client.setWebhook(`${baseUrl.replace(/\/$/, '')}/api/telegram/webhook/${botId}`, webhookSecret)
       .then(() => { webhookConfigured = true; })

@@ -16,6 +16,7 @@ import {
 } from '@dollarino/core';
 import { decryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
+import { isSafeExternalHttpUrl } from '../security.js';
 import { getCachedSystemSetting } from '../services/settings-cache.js';
 
 export type AIConsensusMode = 'SINGLE' | 'DUAL' | 'ENSEMBLE_3' | 'ENSEMBLE_AUTO';
@@ -37,16 +38,136 @@ export interface ChartAIAnalysisResult {
   consensusMode?: string;
   telemetry?: {
     htfTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    marketRegime?: 'TRENDING_BULL' | 'TRENDING_BEAR' | 'EXPANSION_VOLATILE' | 'RANGING_SQUEEZE' | 'RANGING';
     ema20: number;
     ema50: number;
     ema200?: number;
     rsi14: number;
     atr14: number;
+    atrPct?: number;
+    bbWidthPct?: number;
     kbosSignal: string;
     demaAtrTrend: string;
     mixerScore: number;
     mixerConfidence: number;
   };
+}
+
+export function isArenaGatewayUrl(baseUrl?: string | null): boolean {
+  const clean = (baseUrl || '').trim().toLowerCase();
+  return clean.includes('arena.ai');
+}
+
+export function stripReasoningArtifacts(raw: string): string {
+  return raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<analysis>[\s\S]*?<\/analysis>/gi, '')
+    .trim();
+}
+
+export function extractJsonObjectFromLLM<T = Record<string, unknown>>(rawText: string): T | null {
+  const cleaned = stripReasoningArtifacts(rawText)
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  const first = cleaned.indexOf('{');
+  const last = cleaned.lastIndexOf('}');
+  if (first === -1 || last <= first) return null;
+  const candidate = cleaned.slice(first, last + 1);
+  try {
+    return JSON.parse(candidate) as T;
+  } catch {
+    try {
+      const relaxed = candidate.replace(/,\s*([}\]])/g, '$1');
+      return JSON.parse(relaxed) as T;
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function resolveAnthropicMessagesEndpoint(baseUrl?: string | null): string {
+  const rawBase = (baseUrl || 'https://api.anthropic.com').trim().replace(/\/+$/, '');
+  if (!isSafeExternalHttpUrl(rawBase)) throw new Error('Unsafe Anthropic/Arena Base URL blocked');
+  if (rawBase.endsWith('/messages')) return rawBase;
+  if (rawBase.endsWith('/v1')) return `${rawBase}/messages`;
+  return `${rawBase}/v1/messages`;
+}
+
+export function resolveOpenAIChatEndpoint(baseUrl: string): string {
+  const rawBase = baseUrl.trim().replace(/\/+$/, '');
+  if (!isSafeExternalHttpUrl(rawBase)) throw new Error('Unsafe AI Base URL blocked');
+  if (rawBase.endsWith('/chat/completions')) return rawBase;
+  if (isArenaGatewayUrl(rawBase) && !rawBase.endsWith('/v1')) {
+    return `${rawBase}/v1/chat/completions`;
+  }
+  return `${rawBase}/chat/completions`;
+}
+
+export function resolveGatewayModelsEndpoint(baseUrl: string): string {
+  const rawBase = baseUrl.trim().replace(/\/+$/, '');
+  if (!isSafeExternalHttpUrl(rawBase)) throw new Error('Unsafe AI Base URL blocked');
+  const clean = rawBase.replace(/\/(chat\/completions|messages)$/i, '');
+  if (isArenaGatewayUrl(clean) && !clean.endsWith('/v1')) {
+    return `${clean}/v1/models`;
+  }
+  return `${clean}/models`;
+}
+
+export function detectModelVisionCapability(provider: AIProviderId | string, model: string, baseUrl?: string | null): boolean {
+  const m = (model || '').toLowerCase();
+  if (provider === 'anthropic' || provider === 'gemini') return true;
+  if (m.includes('gpt-4o') || m.includes('gpt-4.1') || m.includes('gpt-4.5') || m.includes('gpt-5')) return true;
+  if (m.includes('claude-3') || m.includes('claude-sonnet-4') || m.includes('claude-opus-4') || m.includes('claude-haiku-4')) return true;
+  if (m.includes('gemini-2') || m.includes('gemini-1.5') || m.includes('gemini-3')) return true;
+  if (m.includes('vision') || m.includes('-vl') || m.includes('vl-')) return true;
+  if (isArenaGatewayUrl(baseUrl) && (m.includes('claude') || m.includes('gpt-4') || m.includes('gpt-5') || m.includes('gemini') || m.includes('grok-4') || m.includes('grok-2-vision'))) {
+    return true;
+  }
+  return false;
+}
+
+export async function discoverGatewayModels(opts: {
+  baseUrl: string;
+  apiKey: string;
+  provider?: AIProviderId;
+}): Promise<Array<{ id: string; ownedBy?: string; supportsVision: boolean }>> {
+  const endpoint = resolveGatewayModelsEndpoint(opts.baseUrl);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${opts.apiKey.trim()}`,
+    Accept: 'application/json',
+  };
+  if (opts.provider === 'anthropic') {
+    headers['x-api-key'] = opts.apiKey.trim();
+    headers['anthropic-version'] = '2023-06-01';
+  }
+  const res = await fetch(endpoint, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(12_000),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    data?: Array<{ id?: string; owned_by?: string }>;
+    models?: Array<{ id?: string; owned_by?: string }>;
+    error?: { message?: string };
+  };
+  if (!res.ok) {
+    throw new Error(json.error?.message ?? `Gateway models HTTP ${res.status}`);
+  }
+  const list = Array.isArray(json.data) ? json.data : Array.isArray(json.models) ? json.models : [];
+  const seen = new Set<string>();
+  const out: Array<{ id: string; ownedBy?: string; supportsVision: boolean }> = [];
+  for (const item of list) {
+    const id = String(item?.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      ownedBy: item?.owned_by ? String(item.owned_by) : undefined,
+      supportsVision: detectModelVisionCapability(opts.provider || 'openai_compatible', id, opts.baseUrl),
+    });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export interface AIModelVote {
@@ -210,6 +331,7 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
   const cacheTtlSec = Math.max(30, Math.min(900, Number(ttlRaw) || 180));
   const engines = [...(enginesRes.results ?? [])];
   const hasExternalHilinkup = Boolean(env.HILINKUP_API_KEY?.trim());
+  const hasExternalArena = Boolean(env.ARENA_API_KEY?.trim());
   if (!engines.some((e) => e.is_active === 1) && hasExternalHilinkup) {
     engines.push({
       id: 'env-hilinkup-default',
@@ -218,6 +340,19 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
       label: 'Hilinkup DeepSeek v4.1 Flash',
       model: env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017',
       base_url: env.HILINKUP_BASE_URL?.trim() || 'https://api.hilinkup.com/v1',
+      weight: 100,
+      is_active: 1,
+      last_test_status: 'READY (ENV)',
+    });
+  }
+  if (hasExternalArena && !engines.some((e) => isArenaGatewayUrl(e.base_url))) {
+    engines.push({
+      id: 'env-arena-default',
+      slot_order: engines.length + 1,
+      provider: 'openai_compatible',
+      label: 'Arena AI Router',
+      model: env.ARENA_MODEL?.trim() || 'coding-router-preview',
+      base_url: env.ARENA_BASE_URL?.trim() || 'https://api.arena.ai/v1',
       weight: 100,
       is_active: 1,
       last_test_status: 'READY (ENV)',
@@ -291,7 +426,14 @@ export async function getPlatformAISummary(env: Env): Promise<PlatformAISummary>
 export async function recordPlatformEngineUsage(env: Env, engines: AIRecord[]): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   for (const eng of engines) {
-    if (!eng.id || eng.id === 'env-hilinkup-default' || eng.id === 'user-personal') continue;
+    if (
+      !eng.id ||
+      eng.id === 'env-hilinkup-default' ||
+      eng.id === 'env-arena-default' ||
+      eng.id === 'user-personal'
+    ) {
+      continue;
+    }
     await env.DB.prepare(
       `UPDATE platform_ai_engines
        SET calls_today = CASE WHEN calls_reset_date = ? THEN calls_today + 1 ELSE 1 END,
@@ -358,12 +500,15 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
     let normalizedModel = (row.model || '').trim();
     const cleanBase = (row.base_url || '').trim();
     const isHilinkup = cleanBase.includes('hilinkup.com');
+    const isArena = isArenaGatewayUrl(cleanBase);
     const modelLower = normalizedModel.toLowerCase();
     if (
       isHilinkup &&
       (!normalizedModel || modelLower === 'deep' || modelLower === 'deepseek' || modelLower === 'دیپی' || modelLower === 'deepseek-v4' || modelLower === 'deepseek-chat')
     ) {
       normalizedModel = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+    } else if (isArena && !normalizedModel) {
+      normalizedModel = env.ARENA_MODEL?.trim() || 'coding-router-preview';
     } else if (row.provider === 'deepseek' && (!normalizedModel || modelLower === 'deep' || modelLower === 'دیپی')) {
       normalizedModel = isHilinkup ? (env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017') : 'deepseek-chat';
     }
@@ -382,7 +527,7 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
     });
   }
 
-  // Fallback to Cloudflare Worker secret Hilinkup AI Gateway if no D1 platform engine is active yet
+  // Fallback to Cloudflare Worker secret Hilinkup / Arena AI Gateway if configured in env
   if (engines.length === 0 && env.HILINKUP_API_KEY?.trim()) {
     engines.push({
       id: 'env-hilinkup-default',
@@ -393,6 +538,20 @@ export async function resolvePlatformAIEngines(env: Env): Promise<{
       model: env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017',
       baseUrl: env.HILINKUP_BASE_URL?.trim() || 'https://api.hilinkup.com/v1',
       apiKey: env.HILINKUP_API_KEY.trim(),
+      temperature: 0.2,
+      maxTokens: 2048,
+    });
+  }
+  if (env.ARENA_API_KEY?.trim() && !engines.some((e) => isArenaGatewayUrl(e.baseUrl))) {
+    engines.push({
+      id: 'env-arena-default',
+      slotOrder: engines.length + 1,
+      label: 'Arena AI Router',
+      weight: 100,
+      provider: 'openai_compatible',
+      model: env.ARENA_MODEL?.trim() || 'coding-router-preview',
+      baseUrl: env.ARENA_BASE_URL?.trim() || 'https://api.arena.ai/v1',
+      apiKey: env.ARENA_API_KEY.trim(),
       temperature: 0.2,
       maxTokens: 2048,
     });
@@ -480,6 +639,24 @@ export async function resolveAIEnsemble(env: Env, userId?: string): Promise<{
   };
 }
 
+async function fetchAIWithShortRetry(
+  url: string,
+  init: RequestInit
+): Promise<Response> {
+  const res = await fetch(url, init);
+  if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
+    const retryAfterSec = Number(res.headers.get('retry-after') || '0');
+    const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+      ? Math.min(1800, Math.max(350, retryAfterSec * 1000))
+      : 650;
+    if (retryAfterSec <= 3) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      return fetch(url, init);
+    }
+  }
+  return res;
+}
+
 export async function callBYOAI(
   ai: AIRecord,
   systemPrompt: string,
@@ -487,30 +664,37 @@ export async function callBYOAI(
   opts?: { fastJson?: boolean }
 ): Promise<string> {
   if (ai.provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const endpoint = resolveAnthropicMessagesEndpoint(ai.baseUrl);
+    const isArena = isArenaGatewayUrl(ai.baseUrl);
+    const res = await fetchAIWithShortRetry(endpoint, {
       method: 'POST',
       headers: {
         'x-api-key': ai.apiKey,
+        ...(isArena ? { Authorization: `Bearer ${ai.apiKey}` } : {}),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: ai.model || 'claude-3-5-sonnet-20241022',
+        model: ai.model || (isArena ? 'coding-router-preview' : 'claude-3-5-sonnet-20241022'),
         max_tokens: ai.maxTokens || 1536,
         temperature: ai.temperature,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(30_000),
     });
-    const json = await res.json() as { content?: Array<{ text?: string }>; error?: { message?: string } };
-    if (!res.ok) throw new Error(json.error?.message ?? `Anthropic HTTP ${res.status}`);
-    return json.content?.[0]?.text ?? '';
+    const json = (await res.json().catch(() => ({}))) as {
+      content?: Array<{ type?: string; text?: string }>;
+      error?: { message?: string };
+    };
+    if (!res.ok) throw new Error(json.error?.message ?? `Anthropic/Arena HTTP ${res.status}`);
+    const text = (json.content ?? []).map((b) => b.text || '').join('\n').trim();
+    return stripReasoningArtifacts(text);
   }
 
   if (ai.provider === 'gemini') {
     const model = ai.model || 'gemini-2.0-flash';
-    const res = await fetch(
+    const res = await fetchAIWithShortRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(ai.apiKey)}`,
       {
         method: 'POST',
@@ -522,21 +706,24 @@ export async function callBYOAI(
         signal: AbortSignal.timeout(25_000),
       }
     );
-    const json = await res.json() as {
+    const json = (await res.json().catch(() => ({}))) as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
       error?: { message?: string };
     };
     if (!res.ok) throw new Error(json.error?.message ?? `Gemini HTTP ${res.status}`);
-    return json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    return stripReasoningArtifacts(json.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
   }
 
   if (ai.provider === 'deepseek') {
     const rawBase = (ai.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
-    const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
-    const primaryModel = ai.model || 'deepseek-chat';
+    const endpoint = resolveOpenAIChatEndpoint(rawBase);
+    const isArena = isArenaGatewayUrl(rawBase);
+    const primaryModel = ai.model || (isArena ? 'coding-router-preview' : 'deepseek-chat');
     const fallbackModels = rawBase.includes('hilinkup.com')
       ? Array.from(new Set([primaryModel, 'baidu/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4.1-flash-1017', 'doubao/deepseek-v4.1-flash-1017']))
-      : Array.from(new Set([primaryModel, 'deepseek-chat']));
+      : isArena
+        ? [primaryModel]
+        : Array.from(new Set([primaryModel, 'deepseek-chat']));
 
     let lastErr = '';
     for (const model of fallbackModels) {
@@ -563,7 +750,7 @@ export async function callBYOAI(
         bodyPayload.thinking = { type: 'disabled' };
       }
 
-      const res = await fetch(endpoint, {
+      const res = await fetchAIWithShortRetry(endpoint, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${ai.apiKey}`,
@@ -572,13 +759,13 @@ export async function callBYOAI(
         body: JSON.stringify(bodyPayload),
         signal: AbortSignal.timeout(35_000),
       });
-      const json = await res.json() as {
+      const json = (await res.json().catch(() => ({}))) as {
         choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
         error?: { message?: string };
       };
       if (res.ok) {
         const msg = json.choices?.[0]?.message;
-        return msg?.content || msg?.reasoning_content || '';
+        return stripReasoningArtifacts(msg?.content || msg?.reasoning_content || '');
       }
       lastErr = json.error?.message ?? `DeepSeek HTTP ${res.status}`;
       if (!/model|not found|unsupported/i.test(lastErr)) {
@@ -589,8 +776,9 @@ export async function callBYOAI(
   }
 
   const rawBase = (ai.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
-  const primaryModel = ai.model || 'gpt-4o-mini';
+  const endpoint = resolveOpenAIChatEndpoint(rawBase);
+  const isArena = isArenaGatewayUrl(rawBase);
+  const primaryModel = ai.model || (isArena ? 'coding-router-preview' : 'gpt-4o-mini');
   const candidateModels = rawBase.includes('hilinkup.com')
     ? Array.from(new Set([primaryModel, 'baidu/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4.1-flash-1017', 'doubao/deepseek-v4.1-flash-1017']))
     : [primaryModel];
@@ -603,7 +791,7 @@ export async function callBYOAI(
       model.includes('flash-1017') ||
       /\bo1\b|\bo3\b|\br1\b/i.test(model);
 
-    const res = await fetch(endpoint, {
+    const res = await fetchAIWithShortRetry(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${ai.apiKey}`,
@@ -623,14 +811,14 @@ export async function callBYOAI(
       }),
       signal: AbortSignal.timeout(35_000),
     });
-    const json = await res.json() as {
+    const json = (await res.json().catch(() => ({}))) as {
       choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
       error?: { message?: string };
     };
     if (res.ok) {
-      return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+      return stripReasoningArtifacts(json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '');
     }
-    lastGatewayErr = json.error?.message ?? `OpenAI/Gateway HTTP ${res.status}`;
+    lastGatewayErr = json.error?.message ?? `${isArena ? 'Arena AI' : 'OpenAI/Gateway'} HTTP ${res.status}`;
     if (!/model|not found|unsupported/i.test(lastGatewayErr)) {
       throw new Error(lastGatewayErr);
     }
@@ -710,13 +898,32 @@ function buildMarketContext(
   const supports = uniqueSortedLevels(rawLowCandidates, price, false);
   const resistances = uniqueSortedLevels(rawHighCandidates, price, true);
 
+  const atrPct = price > 0 ? Number(((a14 / price) * 100).toFixed(3)) : 0;
+  const bbWidthPct =
+    Number.isFinite(bbUpper) && Number.isFinite(bbLower) && price > 0
+      ? Number((((bbUpper! - bbLower!) / price) * 100).toFixed(3))
+      : 0;
+  const marketRegime: 'TRENDING_BULL' | 'TRENDING_BEAR' | 'EXPANSION_VOLATILE' | 'RANGING_SQUEEZE' | 'RANGING' =
+    atrPct >= 2.2
+      ? 'EXPANSION_VOLATILE'
+      : bbWidthPct > 0 && bbWidthPct <= 1.6
+        ? 'RANGING_SQUEEZE'
+        : e20 > e50 && htfTrend === 'BULLISH'
+          ? 'TRENDING_BULL'
+          : e20 < e50 && htfTrend === 'BEARISH'
+            ? 'TRENDING_BEAR'
+            : 'RANGING';
+
   const telemetry = {
     htfTrend,
+    marketRegime,
     ema20: roundPx(e20, price),
     ema50: roundPx(e50, price),
     ema200: e200 !== undefined ? roundPx(e200, price) : undefined,
     rsi14: Number(r14.toFixed(1)),
     atr14: roundPx(a14, price),
+    atrPct,
+    bbWidthPct,
     bbUpper: Number.isFinite(bbUpper) ? roundPx(bbUpper!, price) : undefined,
     bbLower: Number.isFinite(bbLower) ? roundPx(bbLower!, price) : undefined,
     kbosSignal: kbosLatest?.signal ?? 'NONE',
@@ -771,7 +978,9 @@ function normalizeSingleDecision(
   const action: 'LONG' | 'SHORT' | 'HOLD' | 'CLOSE' =
     rawAction === 'LONG' || rawAction === 'SHORT' || rawAction === 'CLOSE' ? rawAction : 'HOLD';
   const confidence = Math.min(100, Math.max(0, Math.round(Number(parsed.confidence ?? 0))));
-  const leverage = Math.min(Math.max(1, maxLeverage), Math.max(1, Math.round(Number(parsed.leverage ?? Math.min(5, maxLeverage)))));
+  const atrPct = priceRef > 0 ? (atrRef / priceRef) * 100 : 0.8;
+  const volSafeMaxLev = atrPct >= 2.2 ? Math.min(maxLeverage, 4) : atrPct >= 1.3 ? Math.min(maxLeverage, 7) : maxLeverage;
+  const leverage = Math.min(Math.max(1, volSafeMaxLev), Math.max(1, Math.round(Number(parsed.leverage ?? Math.min(5, volSafeMaxLev)))));
   const entry = roundPx(Number(parsed.entry) > 0 ? Number(parsed.entry) : priceRef, priceRef);
   const safeRisk = Math.max(atrRef * 1.8, priceRef * 0.005);
   let stopLoss = Number(parsed.stopLoss) > 0 ? roundPx(Number(parsed.stopLoss), priceRef) : 0;
@@ -785,7 +994,7 @@ function normalizeSingleDecision(
     }
     const risk = entry - stopLoss;
     if (tp1 <= entry) tp1 = roundPx(entry + risk * 1.3, priceRef);
-    if (tp2 <= tp1) tp2 = roundPx(entry + risk * 2.3, priceRef);
+    if (tp2 <= tp1 || tp2 - entry < risk * 1.8) tp2 = roundPx(Math.max(tp1 + risk * 0.6, entry + risk * 2.2), priceRef);
     if (tp3 <= tp2) tp3 = roundPx(entry + risk * 3.5, priceRef);
   } else if (action === 'SHORT') {
     if (stopLoss <= 0 || stopLoss <= entry || stopLoss - entry < atrRef * 0.8) {
@@ -793,7 +1002,7 @@ function normalizeSingleDecision(
     }
     const risk = stopLoss - entry;
     if (tp1 <= 0 || tp1 >= entry) tp1 = roundPx(entry - risk * 1.3, priceRef);
-    if (tp2 <= 0 || tp2 >= tp1) tp2 = roundPx(entry - risk * 2.3, priceRef);
+    if (tp2 <= 0 || tp2 >= tp1 || entry - tp2 < risk * 1.8) tp2 = roundPx(Math.min(tp1 - risk * 0.6, entry - risk * 2.2), priceRef);
     if (tp3 <= 0 || tp3 >= tp2) tp3 = roundPx(entry - risk * 3.5, priceRef);
   }
 
@@ -806,8 +1015,8 @@ function normalizeSingleDecision(
     tp1,
     tp2,
     tp3,
-    thesis: String(parsed.thesis || 'AI thesis generated.').slice(0, 700),
-    invalidation: String(parsed.invalidation || 'Structure break beyond Stop Loss').slice(0, 260),
+    thesis: stripReasoningArtifacts(String(parsed.thesis || 'AI thesis generated.')).slice(0, 700),
+    invalidation: stripReasoningArtifacts(String(parsed.invalidation || 'Structure break beyond Stop Loss')).slice(0, 260),
   };
 }
 
@@ -1150,11 +1359,9 @@ Rules:
         }
         const rawText = await callBYOAI(lightEng, sysPrompt, userPrompt, { fastJson: true });
         const latencyMs = Date.now() - t0;
-        const match = rawText.match(/\{[\s\S]*\}/);
-        if (!match) throw new Error('Non-JSON response from model');
-        const parsed = JSON.parse(match[0]) as Partial<AITradeDecision>;
-        if (!parsed.action || parsed.confidence === undefined) {
-          throw new Error('Incomplete AI trade decision JSON');
+        const parsed = extractJsonObjectFromLLM<Partial<AITradeDecision>>(rawText);
+        if (!parsed || !parsed.action || parsed.confidence === undefined) {
+          throw new Error('Non-JSON or incomplete trade decision from model');
         }
         const norm = normalizeSingleDecision(parsed, ctx.price, ctx.a14, params.maxLeverage);
         validResults.push({ engine: eng, norm });
@@ -1197,11 +1404,9 @@ Rules:
         const t0 = Date.now();
         const rawText = await callBYOAI(lightEng, sysPrompt, userPrompt, { fastJson: true });
         const latencyMs = Date.now() - t0;
-        const match = rawText.match(/\{[\s\S]*\}/);
-        if (!match) throw new Error('Non-JSON response from model');
-        const parsed = JSON.parse(match[0]) as Partial<AITradeDecision>;
-        if (!parsed.action || parsed.confidence === undefined) {
-          throw new Error('Incomplete AI trade decision JSON');
+        const parsed = extractJsonObjectFromLLM<Partial<AITradeDecision>>(rawText);
+        if (!parsed || !parsed.action || parsed.confidence === undefined) {
+          throw new Error('Non-JSON or incomplete trade decision from model');
         }
         const norm = normalizeSingleDecision(parsed, ctx.price, ctx.a14, params.maxLeverage);
         return { eng, norm, latencyMs };
@@ -1697,19 +1902,17 @@ Rules:
   const parsedModels: ChartAIAnalysisResult[] = [];
   for (const r of rawOutputs) {
     if (r.status !== 'fulfilled') continue;
-    const match = r.value.match(/\{[\s\S]*\}/);
-    if (!match) continue;
-    try {
-      parsedModels.push(JSON.parse(match[0]) as ChartAIAnalysisResult);
-    } catch {
-      // ignore malformed single reply
+    const parsed = extractJsonObjectFromLLM<ChartAIAnalysisResult>(r.value);
+    if (parsed && typeof parsed.summary === 'string') {
+      parsed.summary = stripReasoningArtifacts(parsed.summary);
+      parsedModels.push(parsed);
     }
   }
 
   if (parsedModels.length === 0) {
     const firstFulfilled = rawOutputs.find((r) => r.status === 'fulfilled') as PromiseFulfilledResult<string> | undefined;
     return {
-      summary: firstFulfilled?.value.slice(0, 1000) || 'تحلیل آماده است.',
+      summary: stripReasoningArtifacts(firstFulfilled?.value || '').slice(0, 1000) || 'تحلیل آماده است.',
       bias: quantBias,
       direction: quantBias === 'NEUTRAL' ? undefined : quantBias,
       confidence: mixer.confidence || 55,
@@ -1811,11 +2014,26 @@ export async function generateSupportAIReply(
     cacheTtlSec: 180,
   }));
 
-  const primary = ensemble.engines[0];
-  if (primary) {
+  if (ensemble.engines.length > 0) {
     const sysPrompt = isEn
-      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely about Dollarino platform features (exclusive Trust Wallet non-custodial Web3 integration across EVM/Solana/TON/TRON, customizable $50–$10M Demo Simulator, choice between Manual Confirmation and Full 24/7 Autonomous Auto-Trade via Perp Agent Key + Copy-Vault, DEX Screener radar, Central Multi-AI, My Custom AI, Dorna V1 strategy, Smart Copy V2, Browser Extension, and 0% Subscription fee model: platform is 100% free with first 3 profitable live trades at 0% fee and only 3% server fee strictly on net live profit afterward — so unlike subscription platforms that take money upfront regardless of losses, Dollarino only earns more when the user profits more). Never ask for passwords or seed phrases. If the user asks about settlement or manual review, advise them they can click "Speak with Human Admins" anytime.`
-      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. به زبان فارسی روان، محترمانه، دقیق و کوتاه پاسخ بدهید. اطلاعات کامل پلتفرم: اتصال انحصاری و غیرامانی به Trust Wallet روی تمام شبکه‌های EVM/BSC/Base/Solana/TON/TRON به‌همراه شبیه‌ساز دمو رایگان قابل تنظیم (۵۰ تا ۱۰ میلیون دلار)، امکان انتخاب بین تایید دستی یا تمام‌اتوترید خودکار ۲۴/۷، اسکنر ضدراگ و توکن‌های DEX، ۴ موتور معاملاتی، افزونه کروم و مدل شفاف درآمدی بدون اشتراک: پلتفرم کاملاً رایگان است، ۳ معامله سودده اول واقعی ۰٪ کارمزد دارد و بعد از آن فقط ۳٪ از سود واقعی (۹۷٪ سود برای کاربر) بابت هزینه سرور کسر می‌شود؛ یعنی برعکس پلتفرم‌های اشتراکی که اول پول می‌گیرند و سود یا ضرر کاربر برایشان مهم نیست، دلارینو فقط وقتی بیشتر سود می‌برد که کاربر سود بیشتری بگیرد. هرگز رمز یا ۱۲ کلمه بازیابی نخواهید.`;
+      ? `You are Dollarino Official AI Support Concierge. Help the user clearly, warmly, and concisely using their live account context.
+Platform capabilities (V11.9):
+- Non-custodial Trust Wallet Web3 integration across EVM (ETH/BSC/Base/Arbitrum), Solana, TON, and TRON — NEVER ask for passwords, private keys, or 12-word seed phrases.
+- Customizable $50–$10M Demo Simulator mirroring live order books & Trust Wallet mode.
+- Choice between 1-click Manual Confirmation inside Trust Wallet or Full 24/7 Autonomous Auto-Trade via Trade-Only Hyperliquid Perp Agent Key + budgeted Copy-Vault.
+- Multi-model AI Stack: DeepSeek + Arena AI ensemble/failover, My Custom AI rule-trainer, Dedicated Chart Vision AI Chat, and Dorna V1 Quant Engine.
+- DEX Screener anti-rug safety radar + New Listing Sniper alerts.
+- Native Android App with 5 priority OS notification channels (Signals, Trades, Security, Sniper, System) + Chrome/Edge/Firefox Browser Extensions.
+- Pricing: $0 subscription fee! First 3 profitable live trades at 0% fee; strictly 3% server fee on net realized live profit afterward (97% kept by the user).
+Format responses cleanly with bold section headers or short bullet steps. If manual account settlement, deposit dispute, or human review is requested, advise clicking "Speak with Human Admins".`
+      : `شما دستیار هوشمند پشتیبانی رسمی پلتفرم دلارینو (Dollarino) هستید. با لحن حرفه‌ای، محترمانه، دقیق و ساختاریافته (با بولت‌پوینت کوتاه و بولد کردن نکات کلیدی) پاسخ بدهید.
+امکانات و قوانین دقیق دلارینو:
+- **اتصال غیرامانی Trust Wallet**: پشتیبانی از EVM (اتریوم، BSC، Base، Arbitrum)، Solana، TON و TRON. هرگز رمز عبور، کلید خصوصی یا ۱۲ کلمه بازیابی نخواهید.
+- **حالت دمو و واقعی**: شبیه‌ساز دمو رایگان قابل تنظیم از ۵۰ تا ۱۰ میلیون دلار + امکان انتخاب بین تایید دستی یک‌کلیکی در تراست‌ولت یا **تمام‌اتوترید خودکار ۲۴/۷** (از طریق کلید Trade-Only بدون حق برداشت Hyperliquid Perp Agent و صندوق Copy-Vault).
+- **موتورهای هوش مصنوعی**: ترکیب یا Failover مدل‌های **DeepSeek** و **Arena AI**، دستیار اختصاصی تحلیل تصویر چارت، هوش مصنوعی شخصی (My AI) و موتور دُرنا V1.
+- **اپ اندروید بومی و افزونه‌های مرورگر**: اپلیکیشن اندروید با ۵ کانال نوتیفیکیشن فوری (سیگنال، معامله، امنیت، اسنایپر و سیستم) و افزونه‌های Chrome/Edge/Firefox.
+- **مدل درآمدی بدون اشتراک**: پلتفرم کاملاً رایگان است؛ ۳ معامله سودده واقعی اول **۰٪ کارمزد** دارد و بعد از آن فقط **۳٪ از سود خالص واقعی** (۹۷٪ سود برای کاربر) کسر می‌شود.
+اگر کاربر درخواست بررسی دستی، تسویه یا رفع محدودیت دارد، یادآوری کنید می‌تواند دکمه «گفتگو با مدیران انسانی» را بزند.`;
 
     const historyText = (params.recentMessages ?? [])
       .slice(-6)
@@ -1831,19 +2049,29 @@ export async function generateSupportAIReply(
       .filter(Boolean)
       .join('\n\n');
 
-    try {
-      const text = await callBYOAI(primary, sysPrompt, userPrompt, { fastJson: false });
-      const cleaned = text.trim().slice(0, 1600);
-      if (cleaned.length >= 12) {
-        return { reply: cleaned, usedModel: primary.label || primary.model };
+    for (const engine of ensemble.engines) {
+      try {
+        const text = await callBYOAI(engine, sysPrompt, userPrompt, { fastJson: false });
+        const cleaned = stripReasoningArtifacts(text).trim().slice(0, 1800);
+        if (cleaned.length >= 12) {
+          return { reply: cleaned, usedModel: engine.label || engine.model };
+        }
+      } catch {
+        // Fail over cleanly to the next configured AI engine (e.g. DeepSeek -> Arena AI)
       }
-    } catch {
-      // Fallback below to built-in knowledge assistant
     }
   }
 
   // Knowledge-grounded built-in assistant when no external LLM key is reachable
   const lower = q.toLowerCase();
+  if (/اندروید|android|اپ|اپلیکیشن|نوتیف|اعلان|notification|apk|افزونه|extension/.test(lower)) {
+    return {
+      usedModel: 'Dollarino AI Support Core',
+      reply: isEn
+        ? `Dollarino Native Android App & Browser Extensions:\n• **Android App**: Install the Dollarino APK, sign in, and enable Notifications — alerts auto-route into 5 dedicated OS channels (Signals, Trades, Security, Sniper, System).\n• **Extensions**: Install for Chrome, Edge, or Firefox from the Services page and connect using your Extension Token.\n\nNeed human help? Tap "Speak with Human Admins".`
+        : `**اپلیکیشن اندروید و افزونه‌های دلارینو:**\n۱. **اپلیکیشن اندروید**: پس از نصب APK و ورود به حساب، دسترسی اعلان‌ها را تایید کنید تا دستگاه شما خودکار ثبت شود و هشدارها روی ۵ کانال مجزا (سیگنال، معامله، امنیت، اسنایپر، سیستم) ارسال شوند.\n۲. **افزونه مرورگر**: از بخش «خدمات» می‌توانید افزونه Chrome، Edge یا Firefox را دریافت و با توکن افزونه متصل کنید.\n\nدر صورت نیاز به بررسی مدیران، دکمه «گفتگو با مدیران انسانی» را بزنید.`,
+    };
+  }
   if (/trust|wallet|تراست|ولت|دکس|dex|swap|سوآپ|چین|solana|tron|bsc/.test(lower)) {
     return {
       usedModel: 'Dollarino AI Support Core',

@@ -83,7 +83,7 @@ interface CopyVaultPayload {
 const CHAIN_TABS = ['ALL', 'solana', 'base', 'bsc', 'ethereum', 'arbitrum', 'ton', 'tron'] as const;
 
 const DEFAULT_RULE_FORM = {
-  executionMode: 'TRUST_ONE_CLICK' as 'TRUST_ONE_CLICK' | 'AUTO_COPY_VAULT' | 'AUTO_EVM_ALLOWANCE',
+  executionMode: 'TRUST_ONE_CLICK' as 'PAPER_SIMULATOR' | 'TRUST_ONE_CLICK' | 'AUTO_COPY_VAULT' | 'AUTO_EVM_ALLOWANCE',
   allocatedMarginUsd: 150,
   sizingMode: 'FIXED_USD' as 'FIXED_USD' | 'PCT_ALLOCATION' | 'PROPORTIONAL',
   orderSizeUsd: 25,
@@ -1617,14 +1617,14 @@ export function SmartCopyProHub({
                 onClick={async () => {
                   setPollingNow(true);
                   try {
-                    const res = await apiFetch<{ checked: number; triggered: number; reconciled: number }>(
+                    const res = await apiFetch<{ checked: number; triggered: number; baselined?: number; reconciled: number }>(
                       '/api/copy-trade/poll-now',
                       { method: 'POST' }
                     );
                     onMsg(
                       isFa
-                        ? `اسکن زنده ولت‌ها انجام شد: ${res.checked} ولت بررسی و ${res.triggered} ورود جدید کشف شد.`
-                        : `Polled ${res.checked} wallets, triggered ${res.triggered} entries.`
+                        ? `اسکن زنده ولت‌ها انجام شد: ${res.checked} ولت بررسی و ${res.triggered} ورود جدید کشف شد${res.baselined ? ` (${res.baselined} ولت ثبت پایه برای رصد بعدی)` : ''}.`
+                        : `Polled ${res.checked} wallets, triggered ${res.triggered} entries${res.baselined ? ` (${res.baselined} baselined)` : ''}.`
                     );
                     await loadAll(false);
                   } finally {
@@ -1859,7 +1859,26 @@ export function SmartCopyProHub({
               </div>
 
               {/* Execution Mode Selector */}
-              <div className="grid sm:grid-cols-2 gap-2.5 text-xs">
+              <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setRuleForm((f) => ({ ...f, executionMode: 'PAPER_SIMULATOR' }))}
+                  className={`p-3 rounded-2xl border text-start transition ${
+                    ruleForm.executionMode === 'PAPER_SIMULATOR'
+                      ? 'border-sky-400 bg-sky-500/12'
+                      : 'surface-soft hairline'
+                  }`}
+                >
+                  <div className="font-black text-main flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-sky-400" />
+                    <span>{isFa ? 'شبیه‌ساز دمو (بدون ریسک)' : 'Demo Simulator (Paper)'}</span>
+                  </div>
+                  <p className="text-[10px] text-dim mt-1">
+                    {isFa
+                      ? 'با کسر و بازگشت دقیق از موجودی دمو و قیمت لحظه‌ای واقعی DexScreener.'
+                      : 'Simulates with exact demo balance ledger & live DexScreener prices.'}
+                  </p>
+                </button>
                 <button
                   type="button"
                   onClick={() => setRuleForm((f) => ({ ...f, executionMode: 'TRUST_ONE_CLICK' }))}
@@ -1871,11 +1890,11 @@ export function SmartCopyProHub({
                 >
                   <div className="font-black text-main flex items-center gap-1.5">
                     <Wallet className="w-4 h-4 text-amber-400" />
-                    <span>{isFa ? 'Trust Wallet 1-Click (غیرحضانتی محض)' : 'Trust Wallet 1-Click (Pure Non-Custodial)'}</span>
+                    <span>{isFa ? 'Trust Wallet 1-Click' : 'Trust Wallet 1-Click'}</span>
                   </div>
                   <p className="text-[10px] text-dim mt-1">
                     {isFa
-                      ? 'با هر شکار تریدر، پیام با لینک مستقیم برترین DApp همان شبکه به تلگرام و وب شما می‌آید و با امضای خودتان خرید می‌شود.'
+                      ? 'در حالت واقعی پیام با لینک مستقیم DApp به تلگرام و وب شما می‌آید تا امضا کنید.'
                       : 'Instant Telegram + web swap route for you to sign in Trust Wallet.'}
                   </p>
                 </button>
@@ -1890,11 +1909,11 @@ export function SmartCopyProHub({
                 >
                   <div className="font-black text-main flex items-center gap-1.5">
                     <Bot className="w-4 h-4 text-jade" />
-                    <span>{isFa ? 'خزانه ۲۴ ساعته خودکار (Auto Copy-Vault)' : 'Auto 24/7 Copy-Vault'}</span>
+                    <span>{isFa ? 'خزانه ۲۴/۷ خودکار (Vault)' : 'Auto 24/7 Copy-Vault'}</span>
                   </div>
                   <p className="text-[10px] text-dim mt-1">
                     {isFa
-                      ? 'بدون نیاز به بیداری شما؛ فقط از بودجه مارجین‌باکس اختصاصی همین تریدر به صورت آنی خرید و با TP/SL فروخته می‌شود.'
+                      ? 'خرید و فروش آنی ۲۴ ساعته فقط از بودجه مارجین‌باکس همین تریدر با TP/SL.'
                       : 'Fully autonomous 24/7 execution using isolated vault margin.'}
                   </p>
                 </button>

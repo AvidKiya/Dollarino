@@ -6,8 +6,8 @@ import {
   type VisualStrategyDefinition,
 } from '@dollarino/core';
 import { Hono } from 'hono';
-import { callMultimodalChatAI } from '../ai/assistant.js';
-import { callBYOAI, resolveAIEnsemble } from '../ai/providers.js';
+import { callMultimodalChatAI, detectVisionSupport } from '../ai/assistant.js';
+import { callBYOAI, resolveAIEnsemble, stripReasoningArtifacts } from '../ai/providers.js';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { randomId } from '../crypto.js';
 import { toggleTradingEngine } from '../engine/exclusive-engine.js';
@@ -320,61 +320,74 @@ myAiRoutes.post('/chat', async (c) => {
   let replyText = '';
 
   if (ensemble.engines.length > 0) {
-    try {
-      const extractorSys = [
-        'You are the user’s blank, personal trainable AI trading assistant inside Dollarino ("هوش مصنوعی من").',
-        'Analyze the user’s instructions (and optional chart/setup screenshot) and return a warm concise reply + updated JSON rules at the very end wrapped in <RULES_JSON>{...}</RULES_JSON>.',
-        'Allowed JSON keys: style ("SCALP"|"SWING"|"TREND"|"HYBRID"), timeframe ("1m"|"5m"|"15m"|"30m"|"1h"|"4h"|"1d"), directionMode ("BOTH"|"LONG_ONLY"|"SHORT_ONLY"), symbols (string[] like ["BTCUSDT","ETHUSDT"]), indicators (subset of ["EMA_CROSS","RSI","MACD","BOLLINGER","SUPERTREND","VOLUME"]), rsiOversold (10-45), rsiOverbought (55-90), emaFast (3-50), emaSlow (10-200), stopLossPct (0.3-15), takeProfitPct (0.5-40), maxLeverage (1-50).',
-        `Current rules baseline: ${JSON.stringify(next)}`,
-      ].join('\n');
-      const rawReply = imageDataUrl
-        ? await callMultimodalChatAI(ensemble.engines[0]!, extractorSys, [], msgText, imageDataUrl)
-        : await callBYOAI(ensemble.engines[0]!, extractorSys, msgText, { fastJson: false });
+    const orderedEngines = imageDataUrl
+      ? [
+          ...ensemble.engines.filter((e) => detectVisionSupport(e.provider, e.model, e.label, e.baseUrl)),
+          ...ensemble.engines.filter((e) => !detectVisionSupport(e.provider, e.model, e.label, e.baseUrl)),
+        ]
+      : ensemble.engines;
 
-      const jsonMatch = rawReply.match(/<RULES_JSON>([\s\S]*?)<\/RULES_JSON>/i);
-      if (jsonMatch?.[1]) {
-        try {
-          const parsed = JSON.parse(jsonMatch[1].trim()) as Partial<TrainedAIRules>;
-          if (parsed.timeframe) next.timeframe = parsed.timeframe;
-          if (parsed.style) next.style = parsed.style;
-          if (parsed.directionMode) next.directionMode = parsed.directionMode;
-          if (Array.isArray(parsed.symbols) && parsed.symbols.length) {
-            next.symbols = parsed.symbols.map((s) => String(s).toUpperCase()).slice(0, 12);
+    const extractorSys = [
+      'You are the user’s blank, personal trainable AI trading assistant inside Dollarino ("هوش مصنوعی من").',
+      'Analyze the user’s instructions (and optional chart/setup screenshot) and return a warm concise reply + updated JSON rules at the very end wrapped in <RULES_JSON>{...}</RULES_JSON>.',
+      'Allowed JSON keys: style ("SCALP"|"SWING"|"TREND"|"HYBRID"), timeframe ("1m"|"5m"|"15m"|"30m"|"1h"|"4h"|"1d"), directionMode ("BOTH"|"LONG_ONLY"|"SHORT_ONLY"), symbols (string[] like ["BTCUSDT","ETHUSDT"]), indicators (subset of ["EMA_CROSS","RSI","MACD","BOLLINGER","SUPERTREND","VOLUME"]), rsiOversold (10-45), rsiOverbought (55-90), emaFast (3-50), emaSlow (10-200), stopLossPct (0.3-15), takeProfitPct (0.5-40), maxLeverage (1-50).',
+      `Current rules baseline: ${JSON.stringify(next)}`,
+    ].join('\n');
+
+    for (const eng of orderedEngines) {
+      try {
+        const useVision = Boolean(imageDataUrl && detectVisionSupport(eng.provider, eng.model, eng.label, eng.baseUrl));
+        const rawReply = useVision
+          ? await callMultimodalChatAI(eng, extractorSys, [], msgText, imageDataUrl)
+          : await callBYOAI(eng, extractorSys, msgText, { fastJson: false });
+
+        const cleanRaw = stripReasoningArtifacts(rawReply);
+        const jsonMatch = cleanRaw.match(/<RULES_JSON>([\s\S]*?)<\/RULES_JSON>/i);
+        if (jsonMatch?.[1]) {
+          try {
+            const parsed = JSON.parse(jsonMatch[1].trim()) as Partial<TrainedAIRules>;
+            if (parsed.timeframe) next.timeframe = parsed.timeframe;
+            if (parsed.style) next.style = parsed.style;
+            if (parsed.directionMode) next.directionMode = parsed.directionMode;
+            if (Array.isArray(parsed.symbols) && parsed.symbols.length) {
+              next.symbols = parsed.symbols.map((s) => String(s).toUpperCase()).slice(0, 12);
+            }
+            if (Array.isArray(parsed.indicators) && parsed.indicators.length) {
+              const validInd = parsed.indicators.filter((x) =>
+                ['EMA_CROSS', 'RSI', 'MACD', 'BOLLINGER', 'SUPERTREND', 'VOLUME'].includes(String(x))
+              );
+              if (validInd.length) next.indicators = Array.from(new Set(validInd));
+            }
+            if (typeof parsed.stopLossPct === 'number' && parsed.stopLossPct >= 0.3 && parsed.stopLossPct <= 15) {
+              next.stopLossPct = Number(parsed.stopLossPct);
+            }
+            if (typeof parsed.takeProfitPct === 'number' && parsed.takeProfitPct >= 0.5 && parsed.takeProfitPct <= 40) {
+              next.takeProfitPct = Number(parsed.takeProfitPct);
+            }
+            if (typeof parsed.maxLeverage === 'number' && parsed.maxLeverage >= 1 && parsed.maxLeverage <= 50) {
+              next.maxLeverage = Math.round(parsed.maxLeverage);
+            }
+            if (typeof parsed.emaFast === 'number' && parsed.emaFast >= 3 && parsed.emaFast <= 100) {
+              next.emaFast = Math.round(parsed.emaFast);
+            }
+            if (typeof parsed.emaSlow === 'number' && parsed.emaSlow >= 10 && parsed.emaSlow <= 250) {
+              next.emaSlow = Math.round(parsed.emaSlow);
+            }
+            if (typeof parsed.rsiOversold === 'number' && parsed.rsiOversold >= 10 && parsed.rsiOversold <= 48) {
+              next.rsiOversold = Math.round(parsed.rsiOversold);
+            }
+            if (typeof parsed.rsiOverbought === 'number' && parsed.rsiOverbought >= 52 && parsed.rsiOverbought <= 90) {
+              next.rsiOverbought = Math.round(parsed.rsiOverbought);
+            }
+          } catch {
+            /* keep regex extraction */
           }
-          if (Array.isArray(parsed.indicators) && parsed.indicators.length) {
-            const validInd = parsed.indicators.filter((x) =>
-              ['EMA_CROSS', 'RSI', 'MACD', 'BOLLINGER', 'SUPERTREND', 'VOLUME'].includes(String(x))
-            );
-            if (validInd.length) next.indicators = Array.from(new Set(validInd));
-          }
-          if (typeof parsed.stopLossPct === 'number' && parsed.stopLossPct >= 0.3 && parsed.stopLossPct <= 15) {
-            next.stopLossPct = Number(parsed.stopLossPct);
-          }
-          if (typeof parsed.takeProfitPct === 'number' && parsed.takeProfitPct >= 0.5 && parsed.takeProfitPct <= 40) {
-            next.takeProfitPct = Number(parsed.takeProfitPct);
-          }
-          if (typeof parsed.maxLeverage === 'number' && parsed.maxLeverage >= 1 && parsed.maxLeverage <= 50) {
-            next.maxLeverage = Math.round(parsed.maxLeverage);
-          }
-          if (typeof parsed.emaFast === 'number' && parsed.emaFast >= 3 && parsed.emaFast <= 100) {
-            next.emaFast = Math.round(parsed.emaFast);
-          }
-          if (typeof parsed.emaSlow === 'number' && parsed.emaSlow >= 10 && parsed.emaSlow <= 250) {
-            next.emaSlow = Math.round(parsed.emaSlow);
-          }
-          if (typeof parsed.rsiOversold === 'number' && parsed.rsiOversold >= 10 && parsed.rsiOversold <= 48) {
-            next.rsiOversold = Math.round(parsed.rsiOversold);
-          }
-          if (typeof parsed.rsiOverbought === 'number' && parsed.rsiOverbought >= 52 && parsed.rsiOverbought <= 90) {
-            next.rsiOverbought = Math.round(parsed.rsiOverbought);
-          }
-        } catch {
-          /* keep regex extraction */
         }
+        replyText = cleanRaw.replace(/<RULES_JSON>[\s\S]*?<\/RULES_JSON>/gi, '').trim();
+        if (replyText) break;
+      } catch {
+        // fail over to next engine (e.g. DeepSeek -> Arena AI)
       }
-      replyText = rawReply.replace(/<RULES_JSON>[\s\S]*?<\/RULES_JSON>/gi, '').trim();
-    } catch {
-      replyText = '';
     }
   }
 

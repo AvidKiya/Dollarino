@@ -92,10 +92,16 @@ interface PlatformAISignal {
 
 const ADMIN_AI_MODELS: Record<string, string[]> = {
   deepseek: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-flash', 'deepseek-v4-pro'],
-  anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-7-sonnet-20250219'],
-  openai: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'],
-  gemini: ['gemini-2.0-flash', 'gemini-2.5-pro'],
-  openai_compatible: ['baidu/deepseek-v4.1-flash-1017', 'deepseek/deepseek-chat', 'qwen/qwen-2.5-72b-instruct'],
+  anthropic: ['coding-router-preview', 'claude-sonnet-4-5', 'claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022'],
+  openai: ['gpt-4.1', 'gpt-4o-mini', 'gpt-4o', 'o3-mini'],
+  gemini: ['gemini-2.5-pro', 'gemini-2.0-flash'],
+  openai_compatible: [
+    'coding-router-preview',
+    'baidu/deepseek-v4.1-flash-1017',
+    'deepseek/deepseek-v3.2',
+    'deepseek/deepseek-chat',
+    'qwen/qwen-2.5-72b-instruct',
+  ],
 };
 
 interface AdminOverview {
@@ -278,7 +284,9 @@ export function AdminPage({
     telegramSupport: '',
   });
 
-  const [adminSection, setAdminSection] = useState<'menu' | 'overview' | 'banners' | 'founder' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'database' | 'all'>('menu');
+  const [adminSection, setAdminSection] = useState<
+    'menu' | 'overview' | 'site_controls' | 'banners' | 'founder' | 'users' | 'payments' | 'ops' | 'dex_logs' | 'database' | 'all'
+  >('menu');
   const [publishSignalsToChannels, setPublishSignalsToChannels] = useState(true);
   const [publishSignalsToBotUsers, setPublishSignalsToBotUsers] = useState(true);
   const [signalCtrlBusy, setSignalCtrlBusy] = useState(false);
@@ -476,7 +484,10 @@ export function AdminPage({
   const [consensusMode, setConsensusMode] = useState('ENSEMBLE_AUTO');
   const [cacheTtlSec, setCacheTtlSec] = useState(180);
   const [testingAi, setTestingAi] = useState(false);
+  const [discoveringAi, setDiscoveringAi] = useState(false);
+  const [discoveredAiModels, setDiscoveredAiModels] = useState<Array<{ id: string; supportsVision?: boolean }>>([]);
   const [hilinkupSecretReady, setHilinkupSecretReady] = useState(false);
+  const [arenaSecretReady, setArenaSecretReady] = useState(false);
   const [adminLightboxImg, setAdminLightboxImg] = useState<string | null>(null);
   const [aiTestResults, setAiTestResults] = useState<Array<{ slot_order: number; label: string; model: string; ok: boolean; latencyMs: number; reply: string }>>([]);
   const [aiForm, setAiForm] = useState({
@@ -699,6 +710,90 @@ export function AdminPage({
     minDepositUsd: '10',
   });
   const [treasuryBusy, setTreasuryBusy] = useState(false);
+  const [feeReport, setFeeReport] = useState<{
+    totals: {
+      totalUsersWithFeeActivity: number;
+      totalAccruedDebtUsd: number;
+      totalPendingVerifyUsd: number;
+      totalPenaltyUsd: number;
+      totalPrepaidCreditUsd: number;
+      totalSettledUsd: number;
+      lockedUsersCount: number;
+      warningUsersCount: number;
+    };
+    users: Array<{
+      user_id: string;
+      username: string;
+      email: string;
+      role: string;
+      prepaid_credit_usd: number;
+      penalty_usd: number;
+      lock_status: string;
+      accrued_usd: number;
+      pending_verify_usd: number;
+      settled_usd: number;
+      free_trials_used: number;
+      profitable_pnl_usd: number;
+    }>;
+    ledgerEntries: Array<{
+      id: string;
+      user_id: string;
+      username?: string;
+      email?: string;
+      source: string;
+      symbol?: string;
+      realized_pnl_usd: number;
+      fee_usd: number;
+      status: string;
+      tx_hash: string | null;
+      note: string | null;
+      created_at: string;
+    }>;
+  } | null>(null);
+  const [feeReconcileBusy, setFeeReconcileBusy] = useState(false);
+  const [siteMaintenanceForm, setSiteMaintenanceForm] = useState({
+    enabled: false,
+    titleFa: 'سایت در حال بروزرسانی فنی است',
+    titleEn: 'Scheduled Platform Maintenance',
+    messageFa: 'پلتفرم دلارینو موقتاً برای ارتقای هسته و بهینه‌سازی زیرساخت برای کاربران بسته شده است. لطفاً ساعاتی دیگر مجدداً تلاش فرمایید.',
+    messageEn: 'Dollarino is temporarily closed for maintenance and infrastructure upgrades. Please check back shortly.',
+    eta: '',
+    updatedAt: null as string | null,
+  });
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [adminPopups, setAdminPopups] = useState<
+    Array<{
+      id: string;
+      title_fa: string;
+      title_en: string | null;
+      body_fa: string;
+      body_en: string | null;
+      severity: string;
+      target_scope: string;
+      target_user_id: string | null;
+      target_username?: string | null;
+      cta_label_fa: string | null;
+      cta_route: string | null;
+      dismissible: number;
+      is_active: number;
+      ack_count?: number;
+      expires_at: string | null;
+      created_at: string;
+    }>
+  >([]);
+  const [popupForm, setPopupForm] = useState({
+    titleFa: '',
+    titleEn: '',
+    bodyFa: '',
+    bodyEn: '',
+    severity: 'INFO',
+    targetUserId: '',
+    ctaLabelFa: '',
+    ctaRoute: '',
+    dismissible: true,
+    expiresAt: '',
+  });
+  const [popupBusy, setPopupBusy] = useState(false);
   const [adminProfitCards, setAdminProfitCards] = useState<
     Array<{
       id: string;
@@ -756,87 +851,18 @@ export function AdminPage({
 
   const load = async () => {
     if (!isOwnerOrAdmin) return;
-    const [ov, ordRes, subMe, aiRes, ctRes, topTrRes, chStatusRes, supRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes, feeAdminRes, founderRes, treasuryRes, tvRes, cardsAdminRes, botsAdminRes] = await Promise.all([
+    const [ov, maintenanceRes, popupsRes] = await Promise.all([
       apiFetch<AdminOverview>('/api/admin/overview'),
-      apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
-      apiFetch<{ paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
-      apiFetch<{
-        engines: PlatformAIEngine[];
-        consensusMode: string;
-        cacheTtlSec: number;
-        latestSignals: PlatformAISignal[];
-        hilinkupSecretConfigured?: boolean;
-      }>('/api/admin/ai-engines').catch(() => null),
-      apiFetch<{ traders: AdminCopyTrader[]; trades: Array<{ id: string; trader_id: string; symbol: string; direction: string; entry_price: string; leverage: number; pnl_pct: number; status: string }> }>('/api/admin/copy-traders').catch(() => ({ traders: [], trades: [] })),
-      apiFetch<{ candidates?: typeof siteTopTraders; autoConfig?: typeof siteTraderAutoCfg }>('/api/admin/site-traders/top').catch(() => ({ candidates: [], autoConfig: undefined })),
-      apiFetch<{
-        ok?: boolean;
-        channelHandle?: string;
-        status?: string;
-        canPostMessages?: boolean;
-        botUsername?: string;
-        error?: string;
-        tokenStatus?: typeof botTokenStatus;
-        webhookInfo?: typeof botWebhookInfo;
-        automation?: typeof autoPublishingCfg;
-      }>('/api/admin/telegram/channel-status').catch(() => null),
-      apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
-      apiFetch<{ news: Array<{ id: string; title: string; category: string; impact: string; created_at: string }> }>('/api/admin/channel/news').catch(() => ({ news: [] })),
-      apiFetch<{ trades: AdminDexTrade[] }>('/api/admin/dex-trades').catch(() => ({ trades: [] })),
-      apiFetch<{ logs: AdminAuditLog[] }>('/api/admin/audit-logs').catch(() => ({ logs: [] })),
-      apiFetch<{ referrals: typeof adminReferrals; withdrawals: typeof refWithdrawals }>('/api/admin/referrals').catch(() => ({ referrals: [], withdrawals: [] })),
-      apiFetch<{ providers: OnchainApiProviderItem[] }>('/api/admin/onchain-apis').catch(() => ({ providers: [] })),
-      apiFetch<{ banners: PromoBannerItem[] }>('/api/admin/banners').catch(() => ({ banners: [] })),
-      apiFetch<{ health: typeof systemHealth }>('/api/admin/system-health').catch(() => ({ health: null })),
-      apiFetch<{ broadcasts?: typeof broadcastList }>('/api/admin/broadcasts').catch(() => ({ broadcasts: [] })),
-      apiFetch<{ policy?: { graceLimitUsd: number; graceHours: number; latePenaltyPct: number; autoLockEnabled: boolean }; accounts?: typeof adminFeeAccounts }>('/api/subscriptions/admin/server-fees').catch(() => ({ policy: undefined, accounts: [] })),
-      apiFetch<{ profile?: FounderProfile }>('/api/admin/founder-profile').catch(() => ({ profile: undefined })),
-      apiFetch<{ ok?: boolean } & NonNullable<typeof treasurySummary>>('/api/admin/treasury').catch(() => null),
-      apiFetch<{ webhookUrl?: string | null }>('/api/webhook/alerts').catch(() => null),
-      apiFetch<{ cards: typeof adminProfitCards }>('/api/admin/profit-cards').catch(() => ({ cards: [] })),
-      apiFetch<{ bots: typeof adminActiveBots }>('/api/admin/active-bots').catch(() => ({ bots: [] })),
+      apiFetch<{ ok?: boolean; maintenance?: typeof siteMaintenanceForm }>('/api/admin/site-maintenance').catch(() => null),
+      apiFetch<{ ok?: boolean; popups?: typeof adminPopups }>('/api/admin/popups').catch(() => ({ popups: [] })),
     ]);
-    setAdminProfitCards(cardsAdminRes?.cards || []);
-    setAdminActiveBots(botsAdminRes?.bots || []);
-    if (tvRes?.webhookUrl) {
-      setAdminTvWebhookUrl(tvRes.webhookUrl);
-    }
+
+    if (maintenanceRes?.maintenance) setSiteMaintenanceForm(maintenanceRes.maintenance);
+    setAdminPopups(popupsRes?.popups || []);
     if (ov.settings.signals_channel_id || ov.settings.official_channel) {
       setAdminTvChannel(ov.settings.signals_channel_id || ov.settings.official_channel || '');
     }
-    if (treasuryRes) {
-      setTreasurySummary(treasuryRes);
-      setTreasuryReceiversForm({
-        evm: treasuryRes.receivers?.evm || '',
-        tron: treasuryRes.receivers?.tron || '',
-        solana: treasuryRes.receivers?.solana || '',
-        ton: treasuryRes.receivers?.ton || '',
-        minDepositUsd: String(treasuryRes.minDepositUsd ?? 10),
-      });
-    }
-    if (founderRes.profile) {
-      setFounderProfile(founderRes.profile);
-    }
-    setAdminFeeAccounts(feeAdminRes.accounts || []);
-    if (feeAdminRes.policy) {
-      setAdminFeePolicy({
-        graceLimitUsd: String(feeAdminRes.policy.graceLimitUsd ?? 2),
-        graceHours: String(feeAdminRes.policy.graceHours ?? 72),
-        latePenaltyPct: String(feeAdminRes.policy.latePenaltyPct ?? 25),
-        autoLockEnabled: feeAdminRes.policy.autoLockEnabled !== false,
-      });
-    }
-    setOnchainApis(onchainRes.providers || []);
-    setPromoBanners(bannersRes.banners || []);
-    setSystemHealth(healthRes.health || null);
-    setBroadcastList(broadcastsRes.broadcasts || []);
     setData(ov);
-    setOrders(ordRes.orders);
-    setChannelNewsList(newsRes.news || []);
-    setDexTrades(dexRes.trades || []);
-    setAuditLogs(logRes.logs || []);
-    setAdminReferrals(refAdminRes.referrals || []);
-    setRefWithdrawals(refAdminRes.withdrawals || []);
     setRequirePhoneKyc(ov.settings.require_telegram_phone_kyc === 'true');
     setAuthCfg({
       ownerTelegramId: ov.settings.owner_telegram_id || '',
@@ -879,15 +905,6 @@ export function AdminPage({
       enableEdu: ov.settings.channel_education_enabled !== 'false',
       enableAlerts: ov.settings.channel_alerts_enabled !== 'false',
     });
-    setSiteTopTraders(topTrRes.candidates || []);
-    if (topTrRes.autoConfig) {
-      setSiteTraderAutoCfg(topTrRes.autoConfig);
-    }
-    if (chStatusRes) {
-      if (chStatusRes.tokenStatus) setBotTokenStatus(chStatusRes.tokenStatus);
-      setBotWebhookInfo(chStatusRes.webhookInfo ?? null);
-      if (chStatusRes.automation) setAutoPublishingCfg(chStatusRes.automation);
-    }
     setAutoPublishingCfg({
       alwaysOnSignals: (ov.settings.always_on_signals_enabled ?? 'true') !== 'false',
       alwaysOnAiBroadcast: (ov.settings.always_on_ai_broadcast_enabled ?? 'true') !== 'false',
@@ -906,6 +923,97 @@ export function AdminPage({
     });
     if (!botWebhookBaseInput) {
       setBotWebhookBaseInput(ov.settings.public_web_url || window.location.origin);
+    }
+    setHelpText((ov.settings.help_text || '').replace(/\\n/g, '\n'));
+
+    const [ordRes, subMe, aiRes, ctRes, topTrRes, chStatusRes, supRes, newsRes, dexRes, logRes, refAdminRes, onchainRes, bannersRes, healthRes, broadcastsRes, feeAdminRes, founderRes, treasuryRes, tvRes, cardsAdminRes, botsAdminRes, feeReportRes, authProviders] = await Promise.all([
+      apiFetch<{ orders: SubOrder[] }>('/api/subscriptions/admin/orders').catch(() => ({ orders: [] })),
+      apiFetch<{ paymentConfig: Record<string, string> }>('/api/subscriptions/me').catch(() => null),
+      apiFetch<{
+        engines: PlatformAIEngine[];
+        consensusMode: string;
+        cacheTtlSec: number;
+        latestSignals: PlatformAISignal[];
+        hilinkupSecretConfigured?: boolean;
+        arenaSecretConfigured?: boolean;
+      }>('/api/admin/ai-engines').catch(() => null),
+      apiFetch<{ traders: AdminCopyTrader[]; trades: Array<{ id: string; trader_id: string; symbol: string; direction: string; entry_price: string; leverage: number; pnl_pct: number; status: string }> }>('/api/admin/copy-traders').catch(() => ({ traders: [], trades: [] })),
+      apiFetch<{ candidates?: typeof siteTopTraders; autoConfig?: typeof siteTraderAutoCfg }>('/api/admin/site-traders/top').catch(() => ({ candidates: [], autoConfig: undefined })),
+      apiFetch<{
+        ok?: boolean;
+        channelHandle?: string;
+        status?: string;
+        canPostMessages?: boolean;
+        botUsername?: string;
+        error?: string;
+        tokenStatus?: typeof botTokenStatus;
+        webhookInfo?: typeof botWebhookInfo;
+        automation?: typeof autoPublishingCfg;
+      }>('/api/admin/telegram/channel-status').catch(() => null),
+      apiFetch<{ tickets: AdminSupportTicket[]; messages: AdminSupportMessage[] }>('/api/admin/support').catch(() => ({ tickets: [], messages: [] })),
+      apiFetch<{ news: Array<{ id: string; title: string; category: string; impact: string; created_at: string }> }>('/api/admin/channel/news').catch(() => ({ news: [] })),
+      apiFetch<{ trades: AdminDexTrade[] }>('/api/admin/dex-trades').catch(() => ({ trades: [] })),
+      apiFetch<{ logs: AdminAuditLog[] }>('/api/admin/audit-logs').catch(() => ({ logs: [] })),
+      apiFetch<{ referrals: typeof adminReferrals; withdrawals: typeof refWithdrawals }>('/api/admin/referrals').catch(() => ({ referrals: [], withdrawals: [] })),
+      apiFetch<{ providers: OnchainApiProviderItem[] }>('/api/admin/onchain-apis').catch(() => ({ providers: [] })),
+      apiFetch<{ banners: PromoBannerItem[] }>('/api/admin/banners').catch(() => ({ banners: [] })),
+      apiFetch<{ health: typeof systemHealth }>('/api/admin/system-health').catch(() => ({ health: null })),
+      apiFetch<{ broadcasts?: typeof broadcastList }>('/api/admin/broadcasts').catch(() => ({ broadcasts: [] })),
+      apiFetch<{ policy?: { graceLimitUsd: number; graceHours: number; latePenaltyPct: number; autoLockEnabled: boolean }; accounts?: typeof adminFeeAccounts }>('/api/subscriptions/admin/server-fees').catch(() => ({ policy: undefined, accounts: [] })),
+      apiFetch<{ profile?: FounderProfile }>('/api/admin/founder-profile').catch(() => ({ profile: undefined })),
+      apiFetch<{ ok?: boolean } & NonNullable<typeof treasurySummary>>('/api/admin/treasury').catch(() => null),
+      apiFetch<{ webhookUrl?: string | null }>('/api/webhook/alerts').catch(() => null),
+      apiFetch<{ cards: typeof adminProfitCards }>('/api/admin/profit-cards').catch(() => ({ cards: [] })),
+      apiFetch<{ bots: typeof adminActiveBots }>('/api/admin/active-bots').catch(() => ({ bots: [] })),
+      apiFetch<NonNullable<typeof feeReport>>('/api/admin/fee-report').catch(() => null),
+      apiFetch<{ googleConfigured?: boolean; googleClientId?: string | null }>('/api/auth/providers').catch(() => null),
+    ]);
+    if (feeReportRes?.totals) setFeeReport(feeReportRes);
+    setAdminProfitCards(cardsAdminRes?.cards || []);
+    setAdminActiveBots(botsAdminRes?.bots || []);
+    if (tvRes?.webhookUrl) {
+      setAdminTvWebhookUrl(tvRes.webhookUrl);
+    }
+    if (treasuryRes) {
+      setTreasurySummary(treasuryRes);
+      setTreasuryReceiversForm({
+        evm: treasuryRes.receivers?.evm || '',
+        tron: treasuryRes.receivers?.tron || '',
+        solana: treasuryRes.receivers?.solana || '',
+        ton: treasuryRes.receivers?.ton || '',
+        minDepositUsd: String(treasuryRes.minDepositUsd ?? 10),
+      });
+    }
+    if (founderRes.profile) {
+      setFounderProfile(founderRes.profile);
+    }
+    setAdminFeeAccounts(feeAdminRes.accounts || []);
+    if (feeAdminRes.policy) {
+      setAdminFeePolicy({
+        graceLimitUsd: String(feeAdminRes.policy.graceLimitUsd ?? 2),
+        graceHours: String(feeAdminRes.policy.graceHours ?? 72),
+        latePenaltyPct: String(feeAdminRes.policy.latePenaltyPct ?? 25),
+        autoLockEnabled: feeAdminRes.policy.autoLockEnabled !== false,
+      });
+    }
+    setOnchainApis(onchainRes.providers || []);
+    setPromoBanners(bannersRes.banners || []);
+    setSystemHealth(healthRes.health || null);
+    setBroadcastList(broadcastsRes.broadcasts || []);
+    setOrders(ordRes.orders);
+    setChannelNewsList(newsRes.news || []);
+    setDexTrades(dexRes.trades || []);
+    setAuditLogs(logRes.logs || []);
+    setAdminReferrals(refAdminRes.referrals || []);
+    setRefWithdrawals(refAdminRes.withdrawals || []);
+    setSiteTopTraders(topTrRes.candidates || []);
+    if (topTrRes.autoConfig) {
+      setSiteTraderAutoCfg(topTrRes.autoConfig);
+    }
+    if (chStatusRes) {
+      if (chStatusRes.tokenStatus) setBotTokenStatus(chStatusRes.tokenStatus);
+      setBotWebhookInfo(chStatusRes.webhookInfo ?? null);
+      if (chStatusRes.automation) setAutoPublishingCfg(chStatusRes.automation);
     }
     const tradesMap = new Map<string, AdminCopyTrader['trades']>();
     for (const td of ctRes.trades || []) {
@@ -928,8 +1036,6 @@ export function AdminPage({
     }
     setTickets(supRes.tickets || []);
     setAllTicketMsgs(supRes.messages || []);
-    setHelpText((ov.settings.help_text || '').replace(/\\n/g, '\n'));
-    const authProviders = await apiFetch<{ googleConfigured?: boolean; googleClientId?: string | null }>('/api/auth/providers').catch(() => null);
     setGoogleOauthForm((prev) => ({
       ...prev,
       clientId: authProviders?.googleClientId || ov.settings.google_client_id || '',
@@ -943,6 +1049,7 @@ export function AdminPage({
       setCacheTtlSec(aiRes.cacheTtlSec || 180);
       setAiSignals(aiRes.latestSignals || []);
       setHilinkupSecretReady(Boolean(aiRes.hilinkupSecretConfigured));
+      setArenaSecretReady(Boolean(aiRes.arenaSecretConfigured));
     }
 
     if (subMe) {
@@ -1521,6 +1628,7 @@ export function AdminPage({
               {[
                 { id: 'menu' as const, label: isFa ? 'منوی اصلی' : 'Menu', icon: Shield },
                 { id: 'overview' as const, label: isFa ? 'سلامت و AI' : 'Health & AI', icon: BrainCircuit },
+                { id: 'site_controls' as const, label: isFa ? 'قفل سایت و پاپ‌آپ' : 'Site Lock & Popups', icon: ShieldAlert },
                 { id: 'ops' as const, label: isFa ? 'سیگنال و تلگرام' : 'Signals & TG', icon: Radio },
                 { id: 'database' as const, label: isFa ? 'دیتابیس (بکاپ/پاکسازی)' : 'D1 Backup/Wipe', icon: Database },
                 { id: 'users' as const, label: isFa ? 'کاربران و ۳٪' : 'Users & 3%', icon: Users },
@@ -1594,6 +1702,7 @@ export function AdminPage({
                 <div className="min-w-0">
                   <h2 className="text-sm sm:text-base font-black text-main truncate">
                     {adminSection === 'overview' && (isFa ? 'سلامت سیستم، موتورهای AI و بهینه‌سازی D1' : 'System Health, AI Engines & D1')}
+                    {adminSection === 'site_controls' && (isFa ? 'قفل موقت سایت، حالت تعمیرات و پاپ‌آپ‌های اطلاع‌رسانی کاربران' : 'Site Maintenance Lock & Targeted User Popups')}
                     {adminSection === 'database' && (isFa ? 'بانک اطلاعاتی D1: بکاپ، بازیابی و پاکسازی کامل (Owner)' : 'D1 Database Backup, Restore & Wipe (Owner)')}
                     {adminSection === 'banners' && (isFa ? 'بنرهای متحرک و کمپین تبلیغاتی' : 'Promo Banners & Campaigns')}
                     {adminSection === 'founder' && (isFa ? 'هویت بنیان‌گذار، عکس و شفافیت ضدپانزی' : 'Founder Identity, Photo & Anti-Scam Proof')}
@@ -1753,6 +1862,16 @@ export function AdminPage({
                         ? `وضعیت زنده هوش مصنوعی (${aiEngines.length} مدل) · ورود گوگل (${googleOauthForm.configured ? 'فعال' : 'تنظیم‌نشده'}) · بهینه‌سازی D1`
                         : `${aiEngines.length} AI models · Google OAuth (${googleOauthForm.configured ? 'Ready' : 'Pending'}) · D1 vacuum`,
                       pill: systemHealth ? `${systemHealth.runningBots ?? 0} Bot` : 'Live',
+                    },
+                    {
+                      id: 'site_controls' as const,
+                      icon: ShieldAlert,
+                      badgeBg: siteMaintenanceForm.enabled ? 'bg-[#DC2626]' : 'bg-[#0EA5E9]',
+                      title: isFa ? 'قفل موقت / حالت تعمیرات سایت و پاپ‌آپ‌های اطلاع‌رسانی کاربران' : 'Site Maintenance Lock & Custom User Popups',
+                      subtitle: isFa
+                        ? `وضعیت سایت: ${siteMaintenanceForm.enabled ? '🔒 قفل تعمیرات فعال' : '✅ باز و آنلاین'} · پاپ‌آپ‌های فعال: ${adminPopups.filter((p) => p.is_active).length}`
+                        : `Site: ${siteMaintenanceForm.enabled ? '🔒 Locked' : '✅ Online'} · Active Popups: ${adminPopups.filter((p) => p.is_active).length}`,
+                      pill: siteMaintenanceForm.enabled ? 'LOCKED' : `${adminPopups.filter((p) => p.is_active).length} Popups`,
                     },
                     {
                       id: 'banners' as const,
@@ -2214,34 +2333,80 @@ export function AdminPage({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="space-y-0.5">
                   <span className="font-bold text-sub block">
-                    {isFa ? 'افزودن یا ویرایش موتور هوش مصنوعی (پشتیبانی کامل از گیت‌وی Hilinkup / DeepSeek):' : 'Add / Edit AI Engine Slot (Supports custom Base URL / Gateway):'}
+                    {isFa
+                      ? 'افزودن یا ویرایش موتور هوش مصنوعی (پشتیبانی کامل از DeepSeek + Arena AI با کلید شخصی خودتان):'
+                      : 'Add / Edit AI Engine Slot (Full DeepSeek + Arena AI support — paste your API key below):'}
                   </span>
-                  <span className={`inline-flex items-center gap-1 text-[10.5px] font-bold ${hilinkupSecretReady ? 'text-jade' : 'text-amber-400'}`}>
-                    {hilinkupSecretReady
-                      ? isFa
-                        ? '✓ کلید مرکزی DeepSeek / Hilinkup روی سرور (Secret) فعال است.'
-                        : '✓ Central DeepSeek / Hilinkup Secret is active on Worker.'
-                      : isFa
-                        ? 'ℹ️ برای اتصال سریع DeepSeek، کلید API خود را در اسلات ۱ ذخیره کنید (یا در Cloudflare Secret ست کنید).'
-                        : 'ℹ️ Paste your DeepSeek / Hilinkup API key in Slot 1 to connect immediately.'}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className={`inline-flex items-center gap-1 text-[10.5px] font-bold ${hilinkupSecretReady ? 'text-jade' : 'text-amber-400'}`}>
+                      {hilinkupSecretReady
+                        ? isFa
+                          ? '✓ کلید DeepSeek / Hilinkup روی سرور فعال است'
+                          : '✓ DeepSeek / Hilinkup Secret active'
+                        : isFa
+                          ? 'ℹ️ DeepSeek را در اسلات ۱ و Arena AI را در اسلات ۲ ثبت کنید'
+                          : 'ℹ️ Set DeepSeek in Slot 1 & Arena AI in Slot 2'}
+                    </span>
+                    {arenaSecretReady && (
+                      <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-jade">
+                        {isFa ? '✓ کلید Arena AI روی سرور فعال است' : '✓ Arena AI Secret active'}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAiForm({
-                      ...aiForm,
-                      provider: 'openai_compatible',
-                      baseUrl: 'https://api.hilinkup.com/v1',
-                      model: 'baidu/deepseek-v4.1-flash-1017',
-                      label: `مدل ${aiForm.slotOrder} (Hilinkup DeepSeek v4.1)`,
-                    })
-                  }
-                  className="px-3 py-1.5 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px] inline-flex items-center gap-1"
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>{isFa ? 'پرکردن سریع DeepSeek / Hilinkup' : 'Fill DeepSeek / Hilinkup'}</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDiscoveredAiModels([]);
+                      setAiForm({
+                        ...aiForm,
+                        provider: 'openai_compatible',
+                        baseUrl: 'https://api.arena.ai/v1',
+                        model: 'coding-router-preview',
+                        label: `مدل ${aiForm.slotOrder} (Arena AI)`,
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold text-[11px] inline-flex items-center gap-1 hover:brightness-110"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'پرکردن سریع Arena AI (OpenAI)' : 'Fill Arena AI (OpenAI)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDiscoveredAiModels([]);
+                      setAiForm({
+                        ...aiForm,
+                        provider: 'anthropic',
+                        baseUrl: 'https://api.arena.ai',
+                        model: 'coding-router-preview',
+                        label: `مدل ${aiForm.slotOrder} (Arena Claude)`,
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-violet-500/15 text-violet-400 border border-violet-500/30 font-bold text-[11px] inline-flex items-center gap-1 hover:brightness-110"
+                  >
+                    <BrainCircuit className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'Arena AI (Anthropic)' : 'Arena AI (Anthropic)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDiscoveredAiModels([]);
+                      setAiForm({
+                        ...aiForm,
+                        provider: 'openai_compatible',
+                        baseUrl: 'https://api.hilinkup.com/v1',
+                        model: 'baidu/deepseek-v4.1-flash-1017',
+                        label: `مدل ${aiForm.slotOrder} (Hilinkup DeepSeek v4.1)`,
+                      });
+                    }}
+                    className="px-3 py-1.5 rounded-xl banner-cobalt-soft text-brand font-bold text-[11px] inline-flex items-center gap-1"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>{isFa ? 'DeepSeek / Hilinkup' : 'DeepSeek / Hilinkup'}</span>
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                 <div>
@@ -2270,8 +2435,10 @@ export function AdminPage({
                           : p === 'openai'
                             ? 'https://api.openai.com/v1'
                             : p === 'openai_compatible'
-                              ? 'https://api.hilinkup.com/v1'
-                              : '';
+                              ? 'https://api.arena.ai/v1'
+                              : p === 'anthropic'
+                                ? 'https://api.anthropic.com'
+                                : '';
                       setAiForm({
                         ...aiForm,
                         provider: p,
@@ -2282,9 +2449,9 @@ export function AdminPage({
                     }}
                     className="w-full surface-input rounded-xl px-3 py-2"
                   >
-                    <option value="openai_compatible">Hilinkup / OpenAI-Compatible</option>
+                    <option value="openai_compatible">Arena AI / Hilinkup / OpenAI-Compatible</option>
                     <option value="deepseek">DeepSeek Direct</option>
-                    <option value="anthropic">Claude (Anthropic)</option>
+                    <option value="anthropic">Arena Anthropic / Claude</option>
                     <option value="openai">OpenAI GPT</option>
                     <option value="gemini">Google Gemini</option>
                   </select>
@@ -2292,13 +2459,54 @@ export function AdminPage({
 
                 <div className="sm:col-span-2 lg:col-span-2">
                   <label className="text-[11px] font-bold text-sub block mb-1">Base URL</label>
-                  <input
-                    dir="ltr"
-                    placeholder="https://api.hilinkup.com/v1"
-                    value={aiForm.baseUrl}
-                    onChange={(e) => setAiForm({ ...aiForm, baseUrl: e.target.value })}
-                    className="w-full surface-input rounded-xl px-3 py-2 font-mono-num text-left"
-                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      dir="ltr"
+                      placeholder="https://api.arena.ai/v1"
+                      value={aiForm.baseUrl}
+                      onChange={(e) => setAiForm({ ...aiForm, baseUrl: e.target.value })}
+                      className="w-full surface-input rounded-xl px-3 py-2 font-mono-num text-left"
+                    />
+                    <button
+                      type="button"
+                      disabled={discoveringAi}
+                      onClick={async () => {
+                        setDiscoveringAi(true);
+                        setMsg(null);
+                        try {
+                          const res = await apiFetch<{
+                            ok: boolean;
+                            count: number;
+                            models: Array<{ id: string; supportsVision?: boolean }>;
+                          }>('/api/admin/ai-engines/discover-models', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                              baseUrl: aiForm.baseUrl || 'https://api.arena.ai/v1',
+                              apiKey: aiForm.apiKey.trim() || undefined,
+                              slotOrder: aiForm.slotOrder,
+                              provider: aiForm.provider,
+                            }),
+                          });
+                          setDiscoveredAiModels(res.models || []);
+                          if (res.models?.length && !aiForm.model.trim()) {
+                            setAiForm((prev) => ({ ...prev, model: res.models[0]!.id }));
+                          }
+                          setMsg(
+                            isFa
+                              ? `✅ ${res.count} مدل زنده از گیت‌وی دریافت شد! مدل دلخواه را از زیر انتخاب کنید.`
+                              : `✅ Loaded ${res.count} live models from gateway.`
+                          );
+                        } catch (err) {
+                          setMsg(err instanceof Error ? err.message : 'Model discovery failed');
+                        } finally {
+                          setDiscoveringAi(false);
+                        }
+                      }}
+                      className="px-3 py-2 rounded-xl surface-soft border hairline font-bold text-[11px] shrink-0 hover:border-[var(--gold)]"
+                    >
+                      {discoveringAi ? '...' : isFa ? 'دریافت مدل‌ها' : 'Discover'}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
@@ -2311,7 +2519,12 @@ export function AdminPage({
                     className="w-full surface-input rounded-xl px-3 py-2 font-mono-num text-left"
                   />
                   <datalist id="admin-ai-models">
-                    {(ADMIN_AI_MODELS[aiForm.provider] || []).map((m) => (
+                    {Array.from(
+                      new Set([
+                        ...discoveredAiModels.map((m) => m.id),
+                        ...(ADMIN_AI_MODELS[aiForm.provider] || []),
+                      ])
+                    ).map((m) => (
                       <option key={m} value={m} />
                     ))}
                   </datalist>
@@ -2327,7 +2540,7 @@ export function AdminPage({
                 </div>
 
                 <div>
-                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'کلید API (اختیاری)' : 'API Key'}</label>
+                  <label className="text-[11px] font-bold text-sub block mb-1">{isFa ? 'کلید API (از پنل وارد کنید)' : 'API Key'}</label>
                   <input
                     type="password"
                     dir="ltr"
@@ -2343,6 +2556,30 @@ export function AdminPage({
                   <span>{isFa ? 'ثبت اسلات' : 'Save Slot'}</span>
                 </button>
               </div>
+              {discoveredAiModels.length > 0 && (
+                <div className="pt-2 space-y-1.5">
+                  <span className="text-[10.5px] font-bold text-sub block">
+                    {isFa ? 'مدل‌های کشف‌شده زنده از سرور شما (برای انتخاب کلیک کنید):' : 'Discovered live gateway models (click to select):'}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                    {discoveredAiModels.slice(0, 40).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setAiForm((prev) => ({ ...prev, model: m.id }))}
+                        className={`px-2 py-1 rounded-lg text-[10.5px] font-mono-num border transition ${
+                          aiForm.model === m.id
+                            ? 'bg-[var(--cobalt)] text-white border-[var(--cobalt)] font-black'
+                            : 'surface-soft hairline text-sub hover:text-main'
+                        }`}
+                      >
+                        {m.supportsVision ? '👁 ' : ''}
+                        {m.id}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </form>
 
             {aiSignals.length > 0 && (
@@ -3064,6 +3301,555 @@ export function AdminPage({
               </div>
             )}
           </div>
+
+          {/* Comprehensive 3% Fee Report, Prepayments & On-Chain Verification */}
+          <div className="surface-card p-5 space-y-4 text-xs border border-amber-500/25">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="font-black text-sm text-main flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-amber-400" />
+                  <span>{isFa ? 'گزارش جامع مالی کارمزد ۳٪، پیش‌پرداخت و تایید تراکنش آن‌چین' : 'Comprehensive 3% Server Fee Report & On-Chain Ledger'}</span>
+                </h3>
+                <p className="text-[11px] text-dim mt-0.5">
+                  {isFa
+                    ? 'ردیابی ریز به ریز کارمزد ۳٪ بدهکار، تراکنش‌های در انتظار تایید شبکه (EVM/TRON/Solana)، اعتبارهای پیش‌پرداخت و تایید/رد دستی.'
+                    : 'Full accounting of accrued 3% fees, pending on-chain settlements (EVM/TRON/Solana), prepaid credits, and manual override controls.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={feeReconcileBusy}
+                onClick={async () => {
+                  setFeeReconcileBusy(true);
+                  try {
+                    const res = await apiFetch<{
+                      ok: boolean;
+                      reconcile?: { checked: number; confirmed: number; rejected: number; stillPending: number };
+                      report?: typeof feeReport;
+                    }>('/api/admin/fee-report/reconcile', { method: 'POST' });
+                    if (res.report) setFeeReport(res.report);
+                    const rc = res.reconcile;
+                    setMsg(
+                      isFa
+                        ? `بررسی آن‌چین انجام شد ✅ (بررسی: ${rc?.checked ?? 0} · تایید خودکار: ${rc?.confirmed ?? 0} · رد: ${rc?.rejected ?? 0} · معلق: ${rc?.stillPending ?? 0})`
+                        : `Reconcile complete: checked ${rc?.checked ?? 0}, confirmed ${rc?.confirmed ?? 0}, rejected ${rc?.rejected ?? 0}`
+                    );
+                    await load();
+                  } catch (err) {
+                    setMsg(err instanceof Error ? err.message : 'Reconcile failed');
+                  } finally {
+                    setFeeReconcileBusy(false);
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl btn-emerald font-black inline-flex items-center gap-1.5"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${feeReconcileBusy ? 'animate-spin' : ''}`} />
+                <span>{feeReconcileBusy ? (isFa ? 'در حال استعلام شبکه...' : 'Checking RPC...') : isFa ? 'بررسی و تایید آن‌چین الان' : 'Verify Pending On-Chain Now'}</span>
+              </button>
+            </div>
+
+            {feeReport && (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                  <div className="surface-soft rounded-2xl p-3 border hairline">
+                    <div className="text-[10px] text-dim font-bold">{isFa ? 'بدهی باز ۳٪ کل' : 'Accrued Debt'}</div>
+                    <div dir="ltr" className="font-mono-num font-black text-sm text-loss mt-0.5">${feeReport.totals.totalAccruedDebtUsd.toFixed(2)}</div>
+                  </div>
+                  <div className="surface-soft rounded-2xl p-3 border hairline">
+                    <div className="text-[10px] text-dim font-bold">{isFa ? 'در انتظار تایید شبکه' : 'Pending Verify'}</div>
+                    <div dir="ltr" className="font-mono-num font-black text-sm text-amber-400 mt-0.5">${feeReport.totals.totalPendingVerifyUsd.toFixed(2)}</div>
+                  </div>
+                  <div className="surface-soft rounded-2xl p-3 border hairline">
+                    <div className="text-[10px] text-dim font-bold">{isFa ? 'وصول‌شده قطعی' : 'Settled Total'}</div>
+                    <div dir="ltr" className="font-mono-num font-black text-sm text-jade mt-0.5">${feeReport.totals.totalSettledUsd.toFixed(2)}</div>
+                  </div>
+                  <div className="surface-soft rounded-2xl p-3 border hairline">
+                    <div className="text-[10px] text-dim font-bold">{isFa ? 'پیش‌پرداخت کاربران' : 'Prepaid Credits'}</div>
+                    <div dir="ltr" className="font-mono-num font-black text-sm text-brand mt-0.5">${feeReport.totals.totalPrepaidCreditUsd.toFixed(2)}</div>
+                  </div>
+                  <div className="surface-soft rounded-2xl p-3 border hairline">
+                    <div className="text-[10px] text-dim font-bold">{isFa ? 'جرایم تاخیر' : 'Penalties'}</div>
+                    <div dir="ltr" className="font-mono-num font-black text-sm text-flame mt-0.5">${feeReport.totals.totalPenaltyUsd.toFixed(2)}</div>
+                  </div>
+                  <div className="surface-soft rounded-2xl p-3 border hairline">
+                    <div className="text-[10px] text-dim font-bold">{isFa ? 'حساب قفل / اخطار' : 'Locked / Warn'}</div>
+                    <div dir="ltr" className="font-mono-num font-black text-sm text-main mt-0.5">
+                      {feeReport.totals.lockedUsersCount} / {feeReport.totals.warningUsersCount}
+                    </div>
+                  </div>
+                </div>
+
+                {/* User Fee Breakdown */}
+                {feeReport.users.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead className="text-dim border-b hairline">
+                        <tr>
+                          <th className="py-2 px-2 text-start">{isFa ? 'کاربر' : 'User'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'وضعیت' : 'Standing'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'بدهکار' : 'Accrued'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'در انتظار' : 'Pending'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'پیش‌پرداخت' : 'Prepaid'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'پرداخت‌شده' : 'Settled'}</th>
+                          <th className="py-2 px-2 text-start">{isFa ? 'سود واقعی' : 'Live Profit'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y hairline">
+                        {feeReport.users.slice(0, 30).map((u) => (
+                          <tr key={u.user_id}>
+                            <td className="py-2 px-2">
+                              <div className="font-bold text-main">{u.username}</div>
+                              <div className="text-[10px] text-dim">{u.email}</div>
+                            </td>
+                            <td className="py-2 px-2">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                  u.lock_status === 'LOCKED'
+                                    ? 'bg-rose-500/20 text-loss'
+                                    : u.lock_status === 'WARNING'
+                                      ? 'bg-amber-500/20 text-amber-400'
+                                      : 'badge-signal'
+                                }`}
+                              >
+                                {u.lock_status}
+                              </span>
+                            </td>
+                            <td dir="ltr" className="py-2 px-2 font-mono-num text-loss">${Number(u.accrued_usd || 0).toFixed(2)}</td>
+                            <td dir="ltr" className="py-2 px-2 font-mono-num text-amber-400">${Number(u.pending_verify_usd || 0).toFixed(2)}</td>
+                            <td dir="ltr" className="py-2 px-2 font-mono-num text-brand">${Number(u.prepaid_credit_usd || 0).toFixed(2)}</td>
+                            <td dir="ltr" className="py-2 px-2 font-mono-num text-jade">${Number(u.settled_usd || 0).toFixed(2)}</td>
+                            <td dir="ltr" className="py-2 px-2 font-mono-num text-main">${Number(u.profitable_pnl_usd || 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Detailed Fee Ledger Entries with Manual Decide */}
+                {feeReport.ledgerEntries.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t hairline">
+                    <p className="font-black text-main">{isFa ? 'دفتر کل تراکنش‌ها و کارمزد ۳٪ (با تایید/رد دستی):' : 'Server Fee Ledger Entries (Manual Verify/Override):'}</p>
+                    <div className="max-h-96 overflow-y-auto space-y-1.5 pe-1">
+                      {feeReport.ledgerEntries.slice(0, 40).map((entry) => (
+                        <div key={entry.id} className="surface-soft rounded-2xl p-2.5 border hairline flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-black text-main">{entry.username || entry.email || entry.user_id}</span>
+                              <span className="px-2 py-0.5 rounded-full bg-white/5 border hairline text-[10px] font-mono-num">{entry.source}</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                  entry.status === 'PENDING_VERIFY'
+                                    ? 'bg-amber-500/20 text-amber-400'
+                                    : entry.status === 'ACCRUED'
+                                      ? 'bg-rose-500/15 text-loss'
+                                      : entry.status === 'REJECTED'
+                                        ? 'bg-rose-600/25 text-rose-400'
+                                        : 'badge-signal'
+                                }`}
+                              >
+                                {entry.status}
+                              </span>
+                              <span dir="ltr" className="font-mono-num font-black text-main">${Number(entry.fee_usd || 0).toFixed(2)}</span>
+                              {entry.symbol && <span className="text-[10px] text-dim">{entry.symbol}</span>}
+                            </div>
+                            {entry.tx_hash && (
+                              <div dir="ltr" className="text-[10px] font-mono-num text-sub break-all">TX: {entry.tx_hash}</div>
+                            )}
+                            {entry.note && <div className="text-[10px] text-dim">{entry.note}</div>}
+                          </div>
+                          {(entry.status === 'PENDING_VERIFY' || entry.status === 'ACCRUED') && (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const res = await apiFetch<{ report?: typeof feeReport }>(`/api/admin/fee-report/ledger/${entry.id}/decide`, {
+                                    method: 'POST',
+                                    body: JSON.stringify({ approve: true }),
+                                  });
+                                  if (res.report) setFeeReport(res.report);
+                                  setMsg(isFa ? 'ردیف کارمزد تایید و تسویه شد ✅' : 'Fee entry approved');
+                                  void load();
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-[#059669] text-white font-bold"
+                              >
+                                {isFa ? 'تایید دستی' : 'Approve'}
+                              </button>
+                              {entry.status === 'PENDING_VERIFY' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const res = await apiFetch<{ report?: typeof feeReport }>(`/api/admin/fee-report/ledger/${entry.id}/decide`, {
+                                      method: 'POST',
+                                      body: JSON.stringify({ approve: false, note: isFa ? 'تراکنش نامعتبر در بررسی دستی' : 'Invalid tx on manual audit' }),
+                                    });
+                                    if (res.report) setFeeReport(res.report);
+                                    setMsg(isFa ? 'تراکنش رد و به حالت بدهی/برگشت تغییر یافت.' : 'Fee entry rejected');
+                                    void load();
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-loss font-bold"
+                                >
+                                  {isFa ? 'رد' : 'Reject'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          </div>
+          )}
+
+          {(adminSection === 'all' || adminSection === 'site_controls') && (
+          <div className="space-y-5 tab-enter">
+            {/* Site Maintenance / Temporary Platform Lock */}
+            <div className={`panel rounded-3xl p-5 sm:p-6 space-y-4 border ${siteMaintenanceForm.enabled ? 'border-rose-500/50 bg-rose-500/5' : 'border-emerald-500/25'}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+                    <ShieldAlert className={`w-5 h-5 ${siteMaintenanceForm.enabled ? 'text-loss' : 'text-jade'}`} />
+                    <span>{isFa ? 'قفل موقت سایت / حالت تعمیرات و آپدیت (Maintenance Mode)' : 'Site Maintenance Lock & Temporary Pause'}</span>
+                  </h3>
+                  <p className="text-xs text-sub mt-1">
+                    {isFa
+                      ? 'با فعال کردن این سوئیچ، کل سایت برای همه کاربران عادی موقتاً بسته شده و صفحه شیک اطلاع‌رسانی آپدیت نمایش داده می‌شود. پنل ادمین و ورود مدیر همیشه باز می‌ماند تا هر لحظه سایت را دوباره باز کنید.'
+                      : 'When enabled, all non-admin users see a dedicated maintenance screen and API requests return 503 SITE_MAINTENANCE. Admin console and admin login always remain accessible.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={maintenanceBusy}
+                  onClick={async () => {
+                    const nextEnabled = !siteMaintenanceForm.enabled;
+                    setMaintenanceBusy(true);
+                    try {
+                      await apiFetch('/api/admin/site-maintenance', {
+                        method: 'PUT',
+                        body: JSON.stringify({ ...siteMaintenanceForm, enabled: nextEnabled }),
+                      });
+                      setSiteMaintenanceForm((p) => ({ ...p, enabled: nextEnabled, updatedAt: new Date().toISOString() }));
+                      setMsg(
+                        nextEnabled
+                          ? isFa
+                            ? '🔒 حالت تعمیرات فعال شد؛ دسترسی کاربران عادی بسته و پنل ادمین باز است.'
+                            : 'Maintenance lock enabled'
+                          : isFa
+                            ? '🔓 سایت مجدداً برای همه کاربران بازگشایی شد!'
+                            : 'Site reopened for all users'
+                      );
+                      void load();
+                    } finally {
+                      setMaintenanceBusy(false);
+                    }
+                  }}
+                  className={`px-4 py-2.5 rounded-2xl text-xs font-black inline-flex items-center gap-2 transition shadow-md ${
+                    siteMaintenanceForm.enabled ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-rose-600 hover:bg-rose-500 text-white'
+                  }`}
+                >
+                  <Power className="w-4 h-4" />
+                  <span>
+                    {siteMaintenanceForm.enabled
+                      ? isFa
+                        ? '🔓 بازگشایی فوری سایت برای کاربران'
+                        : '🔓 Reopen Site Now'
+                      : isFa
+                        ? '🔒 بستن موقت سایت (حالت تعمیرات)'
+                        : '🔒 Enable Maintenance Lock'}
+                  </span>
+                </button>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'عنوان صفحه تعمیرات (فارسی):' : 'Maintenance Title (FA):'}</label>
+                  <input
+                    value={siteMaintenanceForm.titleFa}
+                    onChange={(e) => setSiteMaintenanceForm((p) => ({ ...p, titleFa: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'عنوان انگلیسی:' : 'Maintenance Title (EN):'}</label>
+                  <input
+                    dir="ltr"
+                    value={siteMaintenanceForm.titleEn}
+                    onChange={(e) => setSiteMaintenanceForm((p) => ({ ...p, titleEn: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'متن پیام به کاربران (فارسی):' : 'Message (FA):'}</label>
+                  <textarea
+                    rows={3}
+                    value={siteMaintenanceForm.messageFa}
+                    onChange={(e) => setSiteMaintenanceForm((p) => ({ ...p, messageFa: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'متن پیام انگلیسی:' : 'Message (EN):'}</label>
+                  <textarea
+                    dir="ltr"
+                    rows={3}
+                    value={siteMaintenanceForm.messageEn}
+                    onChange={(e) => setSiteMaintenanceForm((p) => ({ ...p, messageEn: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'زمان تخمینی بازگشت (اختیاری):' : 'Estimated Return (ETA):'}</label>
+                  <input
+                    value={siteMaintenanceForm.eta}
+                    onChange={(e) => setSiteMaintenanceForm((p) => ({ ...p, eta: e.target.value }))}
+                    placeholder={isFa ? 'مثلاً تا ۳۰ دقیقه دیگر' : 'e.g. ~30 minutes'}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    disabled={maintenanceBusy}
+                    onClick={async () => {
+                      setMaintenanceBusy(true);
+                      try {
+                        await apiFetch('/api/admin/site-maintenance', {
+                          method: 'PUT',
+                          body: JSON.stringify(siteMaintenanceForm),
+                        });
+                        setMsg(isFa ? 'متن و تنظیمات حالت تعمیرات ذخیره شد ✅' : 'Maintenance copy saved');
+                        void load();
+                      } finally {
+                        setMaintenanceBusy(false);
+                      }
+                    }}
+                    className="w-full py-2.5 rounded-xl btn-cobalt font-black"
+                  >
+                    {isFa ? 'ذخیره متن و زمان صفحه تعمیرات' : 'Save Maintenance Settings'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Targeted & Global User Popup Announcements Manager */}
+            <div className="panel rounded-3xl p-5 sm:p-6 space-y-4 border border-sky-500/25">
+              <div>
+                <h3 className="text-sm sm:text-base font-black text-main flex items-center gap-2">
+                  <Megaphone className="w-5 h-5 text-sky-400" />
+                  <span>{isFa ? 'پاپ‌آپ‌های اطلاع‌رسانی فوری برای کاربران (همه کاربران یا یک کاربر خاص)' : 'Urgent In-App Popup Announcements (All Users or Specific User)'}</span>
+                </h3>
+                <p className="text-xs text-sub mt-1">
+                  {isFa
+                    ? 'پیام‌های مهم به محض ورود یا باز کردن داشبورد به صورت پنجره پاپ‌آپ (Modal) به کاربر نمایش داده می‌شوند و پس از تایید، دیگر تکرار نمی‌شوند.'
+                    : 'Displays a prominent in-app modal dialog to all users or a targeted user until acknowledged.'}
+                </p>
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setPopupBusy(true);
+                  try {
+                    await apiFetch('/api/admin/popups', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        titleFa: popupForm.titleFa,
+                        titleEn: popupForm.titleEn || undefined,
+                        bodyFa: popupForm.bodyFa,
+                        bodyEn: popupForm.bodyEn || undefined,
+                        severity: popupForm.severity,
+                        targetScope: popupForm.targetUserId ? 'USER' : 'ALL',
+                        targetUserId: popupForm.targetUserId || null,
+                        ctaLabelFa: popupForm.ctaLabelFa || undefined,
+                        ctaRoute: popupForm.ctaRoute || undefined,
+                        dismissible: popupForm.dismissible,
+                        expiresAt: popupForm.expiresAt || null,
+                      }),
+                    });
+                    setPopupForm({
+                      titleFa: '',
+                      titleEn: '',
+                      bodyFa: '',
+                      bodyEn: '',
+                      severity: 'INFO',
+                      targetUserId: '',
+                      ctaLabelFa: '',
+                      ctaRoute: '',
+                      dismissible: true,
+                      expiresAt: '',
+                    });
+                    setMsg(isFa ? 'پاپ‌آپ اطلاع‌رسانی منتشر شد ✅' : 'Popup announcement published');
+                    const pRes = await apiFetch<{ popups?: typeof adminPopups }>('/api/admin/popups').catch(() => null);
+                    if (pRes?.popups) setAdminPopups(pRes.popups);
+                    void load();
+                  } catch (err) {
+                    setMsg(err instanceof Error ? err.message : 'Popup creation failed');
+                  } finally {
+                    setPopupBusy(false);
+                  }
+                }}
+                className="surface-soft rounded-2xl p-4 border hairline grid sm:grid-cols-2 gap-3 text-xs"
+              >
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'عنوان پاپ‌آپ (فارسی) *:' : 'Title (FA) *:'}</label>
+                  <input
+                    required
+                    value={popupForm.titleFa}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, titleFa: e.target.value }))}
+                    placeholder={isFa ? 'مثلاً اطلاعیه مهم تسویه یا آپدیت ربات' : 'Popup headline'}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'عنوان انگلیسی (اختیاری):' : 'Title (EN):'}</label>
+                  <input
+                    dir="ltr"
+                    value={popupForm.titleEn}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, titleEn: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'متن پیام (فارسی) *:' : 'Body (FA) *:'}</label>
+                  <textarea
+                    required
+                    rows={3}
+                    value={popupForm.bodyFa}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, bodyFa: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'متن انگلیسی (اختیاری):' : 'Body (EN):'}</label>
+                  <textarea
+                    dir="ltr"
+                    rows={3}
+                    value={popupForm.bodyEn}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, bodyEn: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'سطح اهمیت / رنگ:' : 'Severity:'}</label>
+                  <select
+                    value={popupForm.severity}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, severity: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  >
+                    <option value="INFO">INFO (اطلاعاتی آبی)</option>
+                    <option value="SUCCESS">SUCCESS (موفقیت/هدیه سبز)</option>
+                    <option value="WARNING">WARNING (هشدار نارنجی)</option>
+                    <option value="MAINTENANCE">MAINTENANCE (فنی/آپدیت)</option>
+                    <option value="URGENT">URGENT (فوری و اضطراری قرمز)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'مخاطب:' : 'Target Audience:'}</label>
+                  <select
+                    value={popupForm.targetUserId}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, targetUserId: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  >
+                    <option value="">{isFa ? '🌐 همه کاربران سایت' : '🌐 ALL USERS'}</option>
+                    {data.users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        👤 {u.username} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'متن دکمه اقدام (اختیاری):' : 'CTA Button Label:'}</label>
+                  <input
+                    value={popupForm.ctaLabelFa}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, ctaLabelFa: e.target.value }))}
+                    placeholder={isFa ? 'مثلاً تسویه کارمزد / رفتن به رادار' : 'e.g. Open Fees'}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-dim mb-1">{isFa ? 'مسیر تب مقصد (اختیاری):' : 'Target Tab Route:'}</label>
+                  <select
+                    value={popupForm.ctaRoute}
+                    onChange={(e) => setPopupForm((p) => ({ ...p, ctaRoute: e.target.value }))}
+                    className="w-full surface-input rounded-xl px-3 py-2"
+                  >
+                    <option value="">{isFa ? 'بدون لینک' : 'No route'}</option>
+                    <option value="overview">overview (داشبورد)</option>
+                    <option value="dex">dex (Trust Wallet و رادار)</option>
+                    <option value="copy">copy (کپی‌ترید)</option>
+                    <option value="terminal">terminal (فیوچرز)</option>
+                    <option value="markets">markets (اسپات/بازار)</option>
+                    <option value="pricing">pricing (خزانه و کارمزد ۳٪)</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <label className="inline-flex items-center gap-2 font-bold text-main cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={popupForm.dismissible}
+                      onChange={(e) => setPopupForm((p) => ({ ...p, dismissible: e.target.checked }))}
+                    />
+                    <span>{isFa ? 'کاربر بتواند با دکمه بستن / تایید پاپ‌آپ را ببندد' : 'User can dismiss popup'}</span>
+                  </label>
+                  <button type="submit" disabled={popupBusy} className="px-5 py-2.5 rounded-xl btn-emerald font-black">
+                    {popupBusy ? '...' : isFa ? '🚀 انتشار فوری پاپ‌آپ' : '🚀 Publish Popup'}
+                  </button>
+                </div>
+              </form>
+
+              {adminPopups.length > 0 && (
+                <div className="space-y-2 text-xs">
+                  <p className="font-black text-main">{isFa ? 'لیست پاپ‌آپ‌های ثبت‌شده:' : 'Active & Archived Popups:'}</p>
+                  {adminPopups.map((pop) => (
+                    <div key={pop.id} className="surface-soft rounded-2xl p-3 border hairline flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${pop.is_active ? 'badge-signal' : 'bg-slate-500/20 text-dim'}`}>
+                            {pop.is_active ? (isFa ? 'فعال' : 'ACTIVE') : isFa ? 'غیرفعال' : 'PAUSED'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-white/5 border hairline text-[10px] font-bold">{pop.severity}</span>
+                          <span className="font-black text-main">{pop.title_fa}</span>
+                          <span className="text-[10px] text-dim">
+                            ({pop.target_user_id ? `👤 ${pop.target_username || pop.target_user_id}` : isFa ? '🌐 همه کاربران' : '🌐 All'}) · 👀 {pop.ack_count ?? 0} {isFa ? 'تایید' : 'acks'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-sub line-clamp-2">{pop.body_fa}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/popups/${pop.id}`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ isActive: !pop.is_active }),
+                            });
+                            void load();
+                          }}
+                          className="px-2.5 py-1 rounded-lg surface-card border hairline font-bold text-main"
+                        >
+                          {pop.is_active ? (isFa ? 'توقف' : 'Pause') : isFa ? 'فعال‌سازی' : 'Activate'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await apiFetch(`/api/admin/popups/${pop.id}`, { method: 'DELETE' });
+                            void load();
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-loss font-bold"
+                        >
+                          {isFa ? 'حذف' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           )}
 

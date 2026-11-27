@@ -100,7 +100,7 @@ export function PromoBannerCarousel({
     if (paused || banners.length <= 1) return;
     const id = window.setInterval(() => {
       setIdx((prev) => (prev + 1) % banners.length);
-    }, 5500);
+    }, 18000);
     return () => window.clearInterval(id);
   }, [paused, banners.length]);
 
@@ -169,13 +169,6 @@ export function PromoBannerCarousel({
         setPaused(false);
       }}
     >
-      {/* Top animated progress bar when auto-rotating */}
-      {banners.length > 1 && !paused && (
-        <div className="h-0.5 w-full bg-white/10 overflow-hidden">
-          <div key={`${current.id}-${safeIdx}`} className="h-full bg-[var(--gold)] banner-progress" />
-        </div>
-      )}
-
       <div
         key={current.id}
         className={`banner-slide relative bg-gradient-to-br ${style.glow} p-4 sm:p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-4 md:gap-6`}

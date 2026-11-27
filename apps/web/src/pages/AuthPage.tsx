@@ -15,7 +15,8 @@ import {
   User,
   Wallet,
 } from 'lucide-react';
-import { apiFetch, setStoredToken } from '../lib/api';
+import { apiFetch, getApiBase, setStoredToken } from '../lib/api';
+import { isAndroidNativeApp, openNativeOrBrowserUrl } from '../lib/mobile-bridge';
 import type { Lang } from '../lib/i18n';
 import {
   buildTrustWalletDappOpenUrl,
@@ -296,8 +297,14 @@ export function AuthPage({
     setGoogleLoading(true);
     const params = new URLSearchParams();
     if (cleanRef) params.set('ref', cleanRef);
+    const isAndroid = isAndroidNativeApp();
+    if (isAndroid) params.set('client', 'android');
     const qs = params.toString();
-    const startUrl = `/api/auth/google/start${qs ? `?${qs}` : ''}`;
+    const startUrl = `${getApiBase()}/api/auth/google/start${qs ? `?${qs}` : ''}`;
+    if (isAndroid && openNativeOrBrowserUrl(startUrl)) {
+      setGoogleLoading(false);
+      return;
+    }
     if (isSidePanelEmbed) {
       window.open(`${window.location.origin}${startUrl}`, '_blank', 'noopener,noreferrer');
       setGoogleLoading(false);

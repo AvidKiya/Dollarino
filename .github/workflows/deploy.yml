@@ -14,6 +14,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # D1's free tier rejects every query once the daily row-read limit is hit and only
+  # resets at 00:00 UTC. A failed deploy therefore re-arms itself: the 2-hourly
+  # schedule keeps retrying the same commit until the quota frees up and the deploy
+  # finally succeeds.
+  schedule:
+    - cron: "23 */2 * * *"
 
 concurrency:
   group: deploy-main
@@ -78,19 +84,26 @@ jobs:
         run: bash scripts/cf-step.sh "Wrangler guard" npx wrangler --version
 
       - name: Apply D1 Migrations (Remote)
+        id: migrations
         if: ${{ env.CF_API_TOKEN != '' }}
+        continue-on-error: ${{ github.event_name != 'workflow_dispatch' }}
         run: bash scripts/cf-step.sh "D1 migrations" npx wrangler d1 migrations apply dollarino-db --remote
 
+      - name: D1 migration blocked (deploy safely paused)
+        if: ${{ steps.migrations.outcome == 'failure' && env.CF_API_TOKEN != '' }}
+        run: |
+          echo "::warning title=Deploy paused::D1 migrations did not complete, so the Worker (and therefore the frontend) were NOT deployed. This keeps the live site on the previous consistent Worker + Pages pair instead of shipping a frontend that calls routes the old Worker does not have (the V11.7.1 accept-risk-terms 404 class of bug). Check the 'D1 migrations' annotation for the exact reason and re-run this workflow once it is resolved."
+
       - name: Deploy Cloudflare Worker (API + DO + Assets)
-        if: ${{ env.CF_API_TOKEN != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && steps.migrations.outcome == 'success' }}
         run: bash scripts/cf-step.sh "Worker deploy" npx wrangler deploy
 
       - name: Deploy Cloudflare Pages Frontend + Functions Proxy
-        if: ${{ env.CF_API_TOKEN != '' && vars.SKIP_PAGES_DEPLOY != 'true' }}
+        if: ${{ env.CF_API_TOKEN != '' && steps.migrations.outcome == 'success' && vars.SKIP_PAGES_DEPLOY != 'true' }}
         run: bash scripts/cf-step.sh "Pages deploy" npx wrangler pages deploy apps/web/dist --project-name=dollarino
 
       - name: Smoke-test deployed Worker version
-        if: ${{ env.CF_API_TOKEN != '' }}
+        if: ${{ env.CF_API_TOKEN != '' && steps.migrations.outcome == 'success' }}
         run: |
           VERSION=$(node -p "require('./apps/worker/package.json').dollarinoVersion || require('./package.json').version")
           echo "Expected Dollarino version: $VERSION"

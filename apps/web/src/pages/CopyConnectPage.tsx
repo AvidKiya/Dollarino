@@ -21,6 +21,7 @@ import { SmartCopyProHub } from '../components/SmartCopyProHub';
 import { SmoothSlider } from '../components/SmoothSlider';
 import { SniperWorkbench } from '../components/SniperWorkbench';
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
+import { TrustWalletTradePlaybook } from '../components/TrustWalletTradePlaybook';
 import { apiFetch } from '../lib/api';
 import type { Lang } from '../lib/i18n';
 import { pushFloatingToast } from '../lib/toast';
@@ -303,13 +304,18 @@ export function CopyConnectPage({
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
-        <div>
-          <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-1.5" style={{ color: 'var(--gold)' }}>
-            DEX RADAR · SNIPER · SMART COPY · RISK SHIELD
-          </p>
-          <h2 className="font-display font-bold text-2xl sm:text-3xl text-main">
-            {isFa ? 'رادار DEX، اسنایپر، کپی‌ترید و سپر ریسک' : 'DEX Radar, Sniper, Copy-Trade & Risk Shield'}
-          </h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black tracking-[0.2em] uppercase mb-1" style={{ color: 'var(--gold)' }}>
+              SNIPER · COPY-TRADE · DEX RADAR · RISK SHIELD
+            </p>
+            <h2 className="font-display font-bold text-2xl text-main">
+              {isFa ? 'کپی‌ترید، اسنایپر و سپر ریسک' : 'Copy-Trade, Sniper & Risk Shield'}
+            </h2>
+          </div>
+          <span className="text-[11px] font-bold text-dim">
+            {isFa ? 'هر بخش مستقل و قابل فعال‌سازی در حالت چندموتوره' : 'Independent Multi-Engine Sections'}
+          </span>
         </div>
 
         {/* 4 Clean Tabs (flex-wrap so long labels never clip or overlap adjacent buttons) */}
@@ -363,20 +369,22 @@ export function CopyConnectPage({
 
       {/* TAB 3: Unified Copy-Trade (Verified + Smart Top-10 + Custom Wallets + Vault) */}
       {tab === 'copy' && (
-        <div className="space-y-5 tab-enter">
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-[11px] font-bold text-sub flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-4 tab-enter">
+          <div className="rounded-2xl border hairline bg-[var(--soft)]/80 px-4 py-2.5 text-[11px] font-bold text-sub flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <Sliders className="w-4 h-4 text-emerald-400 shrink-0" />
+              <Sliders className="w-3.5 h-3.5 text-jade shrink-0" />
               <span>
                 {isFa
-                  ? 'حالت چندموتوره همزمان: فالو کردن تریدرها فقط لیست انتخابی شما را ذخیره می‌کند و ربات را خودکار روشن یا موتورهای دیگر را قطع نمی‌کند.'
-                  : 'Multi-Engine Mode: Following traders saves your list without auto-starting your bot or stopping other engines.'}
+                  ? 'حالت چندموتوره: فالو کردن تریدرها مستقل است و موتورهای دیگر را قطع نمی‌کند.'
+                  : 'Multi-Engine: Following traders is independent and keeps other active engines untouched.'}
               </span>
             </div>
             <span className="badge-signal px-2.5 py-0.5 rounded-full text-[10px] font-black shrink-0">
-              {isFa ? 'Trust Wallet + ولت‌های آن‌چین V2' : 'Trust Wallet + Smart Wallets V2'}
+              {isFa ? 'Trust Wallet + Smart Copy V2' : 'Trust Wallet + Smart Copy V2'}
             </span>
           </div>
+
+          <TrustWalletTradePlaybook lang={lang} focusMode="COPY_TRADE" compact onNavigate={onNavigate} />
 
           {pendingConfirmTrades.length > 0 && (
             <div className="panel rounded-[26px] p-5 border border-amber-400/45 bg-amber-500/10 space-y-3">

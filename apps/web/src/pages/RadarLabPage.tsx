@@ -107,12 +107,25 @@ export function RadarLabPage({
       window.removeEventListener('dollarino:radar-subtab', handler);
     };
   }, []);
-  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'AI' | 'DORNA' | 'TELEGRAM' | 'TRADINGVIEW'>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'AI' | 'DORNA' | 'SNIPER' | 'COPY_TRADE' | 'TELEGRAM' | 'TRADINGVIEW'>('ALL');
   const [expandedRaw, setExpandedRaw] = useState<Record<string, boolean>>({});
   const [scanning, setScanning] = useState(false);
+  const [scanningAll, setScanningAll] = useState(false);
+  const [scannerCategory, setScannerCategory] = useState<string>('ALL');
+  const [scannerQuery, setScannerQuery] = useState('');
+  const [scannerMeta, setScannerMeta] = useState<{ totalUniverse: number; scannedCount: number; hasMore: boolean; nextOffset: number }>({
+    totalUniverse: markets.length || 60,
+    scannedCount: 0,
+    hasMore: false,
+    nextOffset: 0,
+  });
   const [scanResults, setScanResults] = useState<
     Array<{
       symbol: string;
+      name?: string;
+      category?: string;
+      chains?: string[];
+      logo?: string;
       price: number;
       trend: string;
       rsi: number;
@@ -175,7 +188,9 @@ export function RadarLabPage({
     if (sourceFilter === 'ALL') return signals;
     return signals.filter((s) => {
       const src = String(s.source || '').toUpperCase();
-      if (sourceFilter === 'DORNA') return src.includes('DORNA') || src.includes('BOT') || src.includes('SCANNER');
+      if (sourceFilter === 'DORNA') return src.includes('DORNA') || src.includes('BOT') || src.includes('SCANNER') || src.includes('STRATEGY');
+      if (sourceFilter === 'SNIPER') return src.includes('SNIPER') || src.includes('LISTING');
+      if (sourceFilter === 'COPY_TRADE') return src.includes('COPY') || src.includes('WHALE') || src.includes('SMART');
       return src.includes(sourceFilter);
     });
   }, [signals, sourceFilter]);
@@ -187,23 +202,60 @@ export function RadarLabPage({
     [markets]
   );
 
-  const runLiveScanner = async () => {
-    setScanning(true);
+  const runLiveScanner = async (opts?: { append?: boolean; offset?: number; scanAllRemaining?: boolean }) => {
+    const append = Boolean(opts?.append);
+    const startOffset = opts?.offset ?? 0;
+    if (opts?.scanAllRemaining) setScanningAll(true);
+    else setScanning(true);
     setNotice('');
     try {
-      const topSyms = markets.slice(0, 14).map((m) => m.symbol);
-      const res = await apiFetch<{ results?: typeof scanResults }>('/api/trading/scanner', {
-        method: 'POST',
-        body: JSON.stringify({
-          symbols: topSyms.length ? topSyms : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT'],
-          timeframe: data.config.entry_timeframe || '15m',
-          strategyKey: data.config.strategy_key || 'dollarino_v01',
-        }),
-      });
-      if (res.results) setScanResults(res.results);
+      let curOffset = startOffset;
+      let loops = 0;
+      const maxLoops = opts?.scanAllRemaining ? 6 : 1;
+      let accumulated = append ? [...scanResults] : [];
+      let lastMeta = { totalUniverse: markets.length || 60, scannedCount: accumulated.length, hasMore: false, nextOffset: 0 };
+
+      while (loops < maxLoops) {
+        const res = await apiFetch<{
+          totalMarkets?: number;
+          hasMore?: boolean;
+          nextOffset?: number | null;
+          results?: typeof scanResults;
+        }>('/api/trading/scanner', {
+          method: 'POST',
+          body: JSON.stringify({
+            offset: curOffset,
+            limit: 24,
+            category: scannerCategory !== 'ALL' ? scannerCategory : undefined,
+            search: scannerQuery.trim() || undefined,
+            timeframe: data.config.entry_timeframe || '15m',
+            strategyKey: data.config.strategy_key || 'dollarino_v01',
+          }),
+        });
+        const batch = res.results ?? [];
+        const seen = new Set(accumulated.map((x) => x.symbol));
+        for (const item of batch) {
+          if (!seen.has(item.symbol)) {
+            accumulated.push(item);
+            seen.add(item.symbol);
+          }
+        }
+        lastMeta = {
+          totalUniverse: res.totalMarkets ?? Math.max(accumulated.length, markets.length),
+          scannedCount: accumulated.length,
+          hasMore: Boolean(res.hasMore),
+          nextOffset: res.nextOffset ?? curOffset + batch.length,
+        };
+        setScanResults([...accumulated]);
+        setScannerMeta(lastMeta);
+        if (!res.hasMore || batch.length === 0) break;
+        curOffset = res.nextOffset ?? curOffset + 24;
+        loops++;
+      }
       await onRefresh();
     } finally {
       setScanning(false);
+      setScanningAll(false);
     }
   };
 
@@ -458,7 +510,9 @@ export function RadarLabPage({
                   {([
                     ['ALL', isFa ? 'همه' : 'All'],
                     ['AI', isFa ? 'هوش مصنوعی' : 'AI'],
-                    ['DORNA', isFa ? 'دُرنا V1' : 'Dorna V1'],
+                    ['DORNA', isFa ? 'استراتژی / ربات' : 'Strategy'],
+                    ['SNIPER', isFa ? 'اسنایپر لیستینگ' : 'Sniper'],
+                    ['COPY_TRADE', isFa ? 'کپی‌ترید نهنگ‌ها' : 'Copy-Trade'],
                     ['TELEGRAM', isFa ? 'تلگرام' : 'Telegram'],
                     ['TRADINGVIEW', 'TradingView'],
                   ] as const).map(([key, lbl]) => (
@@ -475,31 +529,91 @@ export function RadarLabPage({
                   ))}
                 </div>
 
-                <button type="button" disabled={scanning} onClick={() => void runLiveScanner()} className="btn-emerald px-4 py-2 rounded-xl text-xs inline-flex items-center gap-1.5">
-                  <Play className="w-3.5 h-3.5" />
-                  <span>{scanning ? (isFa ? 'در حال اسکن...' : 'Scanning...') : isFa ? 'اسکن زنده ۱۴ ارز' : 'Scan 14 Markets Now'}</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={scanning || scanningAll}
+                    onClick={() => void runLiveScanner({ append: false, offset: 0 })}
+                    className="btn-emerald px-4 py-2 rounded-xl text-xs inline-flex items-center gap-1.5"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>
+                      {scanning
+                        ? isFa ? 'در حال اسکن...' : 'Scanning...'
+                        : isFa ? 'اسکن ارزهای Trust Wallet' : 'Scan Trust Wallet Assets'}
+                    </span>
+                  </button>
+                  {scannerMeta.hasMore && (
+                    <button
+                      type="button"
+                      disabled={scanning || scanningAll}
+                      onClick={() => void runLiveScanner({ append: true, offset: scannerMeta.nextOffset })}
+                      className="btn-cobalt px-3.5 py-2 rounded-xl text-xs font-black"
+                    >
+                      {isFa ? '+۲۴ ارز بعدی' : '+24 Next'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={scanning || scanningAll}
+                    onClick={() => void runLiveScanner({ append: false, offset: 0, scanAllRemaining: true })}
+                    className="btn-gold px-3.5 py-2 rounded-xl text-xs font-black"
+                  >
+                    {scanningAll ? (isFa ? 'اسکن کل بازار...' : 'Scanning All...') : isFa ? 'اسکن همه' : 'Scan All'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Trust Wallet Category & Search Filter Strip for Scanner */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t hairline text-[11px]">
+                <div className="flex flex-wrap items-center gap-1">
+                  {(['ALL', 'MAJOR', 'L1', 'DEFI', 'AI', 'MEME', 'GAMING', 'RWA'] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setScannerCategory(cat)}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                        scannerCategory === cat ? 'bg-sky-500/20 text-brand border border-sky-500/35' : 'surface-soft text-dim hover:text-main'
+                      }`}
+                    >
+                      {cat === 'ALL' ? (isFa ? 'همه دسته‌ها' : 'All Categories') : cat}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  value={scannerQuery}
+                  onChange={(e) => setScannerQuery(e.target.value)}
+                  placeholder={isFa ? 'فیلتر نماد (مثلاً SOL، PEPE...)' : 'Filter symbol (SOL, PEPE...)'}
+                  className="field py-1 px-2.5 text-[11px] w-44"
+                />
               </div>
 
               {scanResults.length > 0 && (
                 <div className="rounded-2xl bg-[var(--soft)] border hairline p-3.5 space-y-2.5">
-                  <div className="text-xs font-black text-main flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-jade" />
-                    <span>{isFa ? 'نتایج اسکن زنده همزمان (با قابلیت اجرای مستقیم):' : 'Live Multi-Coin Scan Results:'}</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-black text-main">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-jade" />
+                      <span>
+                        {isFa
+                          ? `نتایج اسکن زنده Trust Wallet (${scannerMeta.scannedCount} از ${scannerMeta.totalUniverse} ارز):`
+                          : `Trust Wallet Scanner (${scannerMeta.scannedCount} / ${scannerMeta.totalUniverse} assets):`}
+                      </span>
+                    </div>
                   </div>
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {scanResults.map((r) => (
                       <div key={r.symbol} className="rounded-xl surface-card p-3 space-y-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <button type="button" onClick={() => onTradeSymbol(r.symbol)} className="font-bold text-main hover:underline">
-                            {r.symbol.replace('USDT', '')}
+                        <div className="flex items-center justify-between gap-1.5">
+                          <button type="button" onClick={() => onTradeSymbol(r.symbol)} className="font-bold text-main hover:underline inline-flex items-center gap-1.5 min-w-0">
+                            <CoinIcon symbol={r.symbol} size={18} />
+                            <span className="truncate">{r.symbol.replace('USDT', '')}</span>
                           </button>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-black ${r.mixerDirection === 'LONG' ? 'bg-jade/15 text-jade' : r.mixerDirection === 'SHORT' ? 'bg-rose-500/15 text-loss' : 'text-dim'}`}>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-black shrink-0 ${r.mixerDirection === 'LONG' ? 'bg-jade/15 text-jade' : r.mixerDirection === 'SHORT' ? 'bg-rose-500/15 text-loss' : 'text-dim'}`}>
                             {r.mixerDirection} {r.mixerConfidence}%
                           </span>
                         </div>
-                        <div className="text-[10px] text-dim flex justify-between">
-                          <span>RSI {r.rsi.toFixed(0)} · {r.trend}</span>
+                        <div className="text-[10px] text-dim flex justify-between gap-1">
+                          <span>RSI {r.rsi.toFixed(0)} · {r.trend}{r.category ? ` · ${r.category}` : ''}</span>
                           <span dir="ltr">${r.price}</span>
                         </div>
                         {r.formatted && (
@@ -520,7 +634,7 @@ export function RadarLabPage({
 
               {filteredSignals.length === 0 ? (
                 <div className="py-12 text-center text-xs text-dim border border-dashed hairline rounded-2xl">
-                  {isFa ? 'هنوز سیگنالی ثبت نشده است. دکمه «اسکن زنده ۱۴ ارز» را بزنید.' : 'No signals logged yet. Click Scan Markets Now.'}
+                  {isFa ? 'هنوز سیگنالی ثبت نشده است. دکمه «اسکن ارزهای Trust Wallet» را بزنید.' : 'No signals logged yet. Click Scan Trust Wallet Assets.'}
                 </div>
               ) : (
                 <div className="space-y-3 max-h-[680px] overflow-y-auto pe-1">

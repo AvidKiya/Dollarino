@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { cors } from 'hono/cors';
 import { authRoutes, requireAuth, type AppVariables } from './auth.js';
-import { hmacSha256Hex } from './crypto.js';
+import { hmacSha256Hex, verifyJwt } from './crypto.js';
 import { TradingBotCoordinator } from './engine/bot-do.js';
 import { runAlwaysOnAiIntel, runAlwaysOnSignalRadar } from './engine/market-intel.js';
 import { pollWatchedWalletsForNewTrades, reconcileCopyPositionsV2 } from './dex/smart-copy.js';
@@ -13,7 +14,7 @@ import {
   listSelectableAIModels,
   runPublicGuestAIChat,
 } from './ai/assistant.js';
-import { buildClientFingerprints, enforceRateLimit } from './security.js';
+import { buildClientFingerprints, enforceRateLimit, resolveAllowedCorsOrigin } from './security.js';
 import { adminRoutes, dispatchDueScheduledBroadcasts } from './routes/admin.js';
 import { aiAssistantRoutes } from './routes/ai-assistant.js';
 import { buildProfitCardSvg, renderProfitCardPng, type ProfitCardRenderInput } from './cards/renderer.js';
@@ -25,21 +26,26 @@ import { dexRoutes } from './routes/dex.js';
 import { myAiRoutes } from './routes/my-ai.js';
 import { getPublicPlans, subscriptionRoutes } from './routes/subscriptions.js';
 import { supportRoutes } from './routes/support.js';
+import { mobileRoutes } from './routes/mobile.js';
 import { buildVerifiedCardCanonicalPayload, tradingRoutes } from './routes/trading.js';
 import { trustWalletRoutes } from './routes/trustwallet.js';
 import { evaluateTradingViewFreeAlerts, syncTelegramBotAutoOnVersion, webhookRoutes } from './routes/webhooks.js';
 import { getFounderProfile } from './services/founder-profile.js';
+import { buildPublicLiveProof, lookupPublicWalletOrCardAudit } from './services/public-proof.js';
 import { SERVER_PROFIT_FEE_PCT, FREE_PROFITABLE_LIVE_TRADES } from './services/server-fee.js';
+import { reconcilePendingFeeAndTreasuryTransactions } from './services/treasury.js';
 import { publishDatabaseReport, publishSystemLogEvent, publishTransactionEvent } from './telegram/publisher.js';
 import type { UserBotConfigRow } from './engine/executor.js';
 import { runNewListingAndMemeSniperForUser } from './engine/listing-sniper.js';
 import { syncAutoTopSiteTraders } from './services/site-traders.js';
 import {
+  getAllCachedSystemSettings,
   getCachedPublicCopyTraders,
   getCachedSystemSetting,
   setCachedPublicCopyTraders,
   setCachedSystemSetting,
 } from './services/settings-cache.js';
+import { serveWithEdgeAndDbCache } from './services/d1-cache.js';
 import { getSystemSettingValue } from './telegram/publisher.js';
 import { fetchIranUsdtRate } from './exchanges/iran-rate.js';
 import { DOLLARINO_VERSION, DOLLARINO_ASSET_VERSION } from './version.js';
@@ -49,7 +55,7 @@ export { TradingBotCoordinator };
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 app.use('*', cors({
-  origin: (origin) => origin || '*',
+  origin: (origin, c) => resolveAllowedCorsOrigin(origin, c.env) || '',
   allowHeaders: ['Content-Type', 'Authorization', 'X-Dollarino-Token', 'X-Dollarino-Extension-Key'],
   credentials: true,
 }));
@@ -58,6 +64,90 @@ app.use('/api/*', async (c, next) => {
   await next();
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.res.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+});
+
+const MAINTENANCE_OPEN_PREFIXES = [
+  '/api/health',
+  '/api/public/site-status',
+  '/api/public/creator',
+  '/api/public/founder-profile',
+  '/api/auth/',
+  '/api/admin/',
+  '/api/mobile/bootstrap',
+  '/api/webhook/telegram',
+  '/api/webhooks/telegram',
+];
+
+async function readSiteMaintenanceState(db: D1Database) {
+  const settings = await getAllCachedSystemSettings(db).catch(() => new Map<string, string>());
+  const enabled = settings.get('site_maintenance_mode') === 'true';
+  return {
+    enabled,
+    titleFa: settings.get('site_maintenance_title_fa') || 'سایت در حال بروزرسانی فنی است',
+    titleEn: settings.get('site_maintenance_title_en') || 'Scheduled Platform Maintenance',
+    messageFa:
+      settings.get('site_maintenance_message_fa') ||
+      'پلتفرم دلارینو موقتاً برای ارتقای هسته و بهینه‌سازی زیرساخت برای کاربران بسته شده است. لطفاً ساعاتی دیگر مجدداً تلاش فرمایید.',
+    messageEn:
+      settings.get('site_maintenance_message_en') ||
+      'Dollarino is temporarily closed for maintenance and infrastructure upgrades. Please check back shortly.',
+    eta: settings.get('site_maintenance_eta') || '',
+    updatedAt: settings.get('site_maintenance_updated_at') || null,
+  };
+}
+
+app.use('/api/*', async (c, next) => {
+  const p = c.req.path;
+  if (MAINTENANCE_OPEN_PREFIXES.some((prefix) => p === prefix || p.startsWith(prefix))) {
+    await next();
+    return;
+  }
+  const maintenance = await readSiteMaintenanceState(c.env.DB);
+  if (!maintenance.enabled) {
+    await next();
+    return;
+  }
+  // Allow owners & admins to bypass maintenance lock
+  const customHeader = c.req.header('X-Dollarino-Token');
+  const authHeader = c.req.header('Authorization');
+  const cookieToken = getCookie(c, 'dollarino_session');
+  const token = customHeader || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken);
+  if (token) {
+    const payload = await verifyJwt(token, c.env.SESSION_JWT_SECRET).catch(() => null);
+    const role = typeof payload?.role === 'string' ? payload.role : '';
+    if (payload && typeof payload.sub === 'string' && (role === 'owner' || role === 'admin')) {
+      await next();
+      return;
+    }
+    if (payload && typeof payload.sub === 'string') {
+      const row = await c.env.DB.prepare(`SELECT role FROM users WHERE id = ? LIMIT 1`)
+        .bind(payload.sub)
+        .first<{ role: string }>()
+        .catch(() => null);
+      if (row && (row.role === 'owner' || row.role === 'admin')) {
+        await next();
+        return;
+      }
+    }
+  }
+  return c.json(
+    {
+      error: maintenance.messageFa,
+      code: 'SITE_MAINTENANCE',
+      maintenance,
+    },
+    503
+  );
+});
+
+app.get('/api/public/site-status', async (c) => {
+  const maintenance = await readSiteMaintenanceState(c.env.DB);
+  return c.json({
+    ok: true,
+    version: DOLLARINO_VERSION,
+    maintenance,
+  });
 });
 
 app.onError((err, c) => {
@@ -73,7 +163,7 @@ app.onError((err, c) => {
     );
   }
   console.error('[Worker Error]', msg);
-  return c.json({ error: msg || 'Internal server error', code: 'INTERNAL_ERROR' }, 500);
+  return c.json({ error: 'خطای داخلی سرور رخ داد. لطفاً لحظاتی دیگر تلاش کنید.', code: 'INTERNAL_ERROR' }, 500);
 });
 
 async function serveAssetsWithDynamicOg(
@@ -226,9 +316,10 @@ app.post('/api/public/ai-chat', async (c) => {
       modelId?: string | null;
       message?: string;
       imageDataUrl?: string | null;
+      currentSymbol?: string | null;
       history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     }>()
-    .catch(() => ({} as { modelId?: string; message?: string; imageDataUrl?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }));
+    .catch(() => ({} as { modelId?: string; message?: string; imageDataUrl?: string; currentSymbol?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }));
 
   const message = String(body.message || '').trim();
   const imageDataUrl = body.imageDataUrl ? String(body.imageDataUrl).trim() : null;
@@ -249,6 +340,7 @@ app.post('/api/public/ai-chat', async (c) => {
     modelId: body.modelId || null,
     message,
     imageDataUrl,
+    currentSymbol: body.currentSymbol || null,
     history,
   });
 
@@ -257,16 +349,26 @@ app.post('/api/public/ai-chat', async (c) => {
 
 app.get('/api/public/banners', async (c) => {
   const placement = (c.req.query('placement') || 'ALL').toUpperCase();
-  const rows = await c.env.DB.prepare(
-    `SELECT * FROM promo_banners WHERE is_active = 1 ORDER BY sort_order ASC, created_at DESC LIMIT 20`
-  )
-    .all<Record<string, unknown>>()
-    .catch(() => ({ results: [] as Array<Record<string, unknown>> }));
-  const filtered = rows.results.filter((b) => {
-    const p = String(b.placement || 'BOTH').toUpperCase();
-    return placement === 'ALL' || p === 'BOTH' || p === placement;
-  });
-  return c.json({ ok: true, banners: filtered });
+  return serveWithEdgeAndDbCache(
+    c,
+    {
+      edgeCacheKey: `https://dollarino.internal/cache/public/banners/${placement}`,
+      dbKey: `public:banners:${placement}`,
+      ttlSeconds: 120,
+    },
+    async () => {
+      const rows = await c.env.DB.prepare(
+        `SELECT * FROM promo_banners WHERE is_active = 1 ORDER BY sort_order ASC, created_at DESC LIMIT 20`
+      )
+        .all<Record<string, unknown>>()
+        .catch(() => ({ results: [] as Array<Record<string, unknown>> }));
+      const filtered = rows.results.filter((b) => {
+        const p = String(b.placement || 'BOTH').toUpperCase();
+        return placement === 'ALL' || p === 'BOTH' || p === placement;
+      });
+      return { ok: true, banners: filtered };
+    }
+  );
 });
 
 app.get('/api/public/verify-card/:cardId', async (c) => {
@@ -477,8 +579,18 @@ app.get('/api/public/card-image/:cardId', async (c) => {
 });
 
 app.get('/api/public/plans', async (c) => {
-  const plans = await getPublicPlans(c.env.DB);
-  return c.json({ plans });
+  return serveWithEdgeAndDbCache(
+    c,
+    {
+      edgeCacheKey: 'https://dollarino.internal/cache/public/plans',
+      dbKey: 'public:plans',
+      ttlSeconds: 300,
+    },
+    async () => {
+      const plans = await getPublicPlans(c.env.DB);
+      return { plans };
+    }
+  );
 });
 
 app.get('/api/public/copy-traders', async (c) => {
@@ -487,18 +599,75 @@ app.get('/api/public/copy-traders', async (c) => {
     if (cached) {
       return c.json({ traders: cached, cached: true });
     }
-    const rows = await c.env.DB.prepare(
-      `SELECT id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level
-       FROM copy_traders
-       WHERE is_active = 1 AND is_verified = 1
-         AND id NOT IN ('ct_aria_quant', 'ct_parsa_scalp', 'ct_negin_ai')
-       ORDER BY roi_30d_pct DESC LIMIT 12`
-    ).all();
-    setCachedPublicCopyTraders(c.env.DB, rows.results);
-    return c.json({ traders: rows.results });
+    return serveWithEdgeAndDbCache(
+      c,
+      {
+        edgeCacheKey: 'https://dollarino.internal/cache/public/copy-traders',
+        dbKey: 'public:copy-traders',
+        ttlSeconds: 120,
+      },
+      async () => {
+        const rows = await c.env.DB.prepare(
+          `SELECT id, display_name, handle, specialty, win_rate, roi_30d_pct, max_drawdown_pct, followers_count, risk_level
+           FROM copy_traders
+           WHERE is_active = 1 AND is_verified = 1
+             AND id NOT IN ('ct_aria_quant', 'ct_parsa_scalp', 'ct_negin_ai')
+           ORDER BY roi_30d_pct DESC LIMIT 12`
+        ).all();
+        setCachedPublicCopyTraders(c.env.DB, rows.results);
+        return { traders: rows.results };
+      }
+    );
   } catch {
     return c.json({ traders: [] });
   }
+});
+
+app.get('/api/public/live-proof', async (c) => {
+  try {
+    return await serveWithEdgeAndDbCache(
+      c,
+      {
+        edgeCacheKey: 'https://dollarino.internal/cache/public/live-proof-v1',
+        dbKey: 'public:live-proof-v1',
+        ttlSeconds: 90,
+      },
+      async () => buildPublicLiveProof(c.env.DB, c.env)
+    );
+  } catch (err) {
+    return c.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      platformStats: {
+        totalSignals: 0,
+        tpHitSignals: 0,
+        signalHitRatePct: 0,
+        closedTrades30d: 0,
+        liveClosedTrades30d: 0,
+        paperClosedTrades30d: 0,
+        liveWinRate30dPct: 0,
+        paperWinRate30dPct: 0,
+        verifiedCardsCount: 0,
+        connectedWalletsCount: 0,
+      },
+      liveStrategyBacktests: [],
+      channelSignals: [],
+      verifiedCards: [],
+      wallet30dLedger: [],
+      warning: err instanceof Error ? err.message : 'fallback',
+    });
+  }
+});
+
+app.get('/api/public/verify-wallet', async (c) => {
+  const q = (c.req.query('q') || '').trim();
+  const fp = await buildClientFingerprints(c.req.raw, c.env).catch(() => ({ ipHash: 'anon' }));
+  const rl = await enforceRateLimit(c.env, `pub_verify_${fp.ipHash}`, 40, 60).catch(() => ({ allowed: true }));
+  if (!rl.allowed) {
+    return c.json({ found: false, error: 'درخواست‌های استعلام بیش از حد مجاز است. کمی بعد دوباره امتحان کنید.' }, 429);
+  }
+  const result = await lookupPublicWalletOrCardAudit(c.env.DB, c.env, q);
+  return c.json(result);
 });
 
 app.get('/api/public/market-snapshot', async (c) => {
@@ -616,13 +785,28 @@ app.route('/api/copy-trade', copyTradeRoutes);
 app.route('/api/dex', dexRoutes);
 app.route('/api/trustwallet', trustWalletRoutes);
 app.route('/api/support', supportRoutes);
+app.route('/api/mobile', mobileRoutes);
 app.route('/api/webhook', webhookRoutes);
 app.route('/api/admin', adminRoutes);
 
 app.get('/api/public/usdt-irt-rate', async (c) => {
   const forceRefresh = c.req.query('refresh') === '1';
-  const rate = await fetchIranUsdtRate(forceRefresh);
-  return c.json({ ok: true, ...rate });
+  if (forceRefresh) {
+    const rate = await fetchIranUsdtRate(true);
+    return c.json({ ok: true, ...rate });
+  }
+  return serveWithEdgeAndDbCache(
+    c,
+    {
+      edgeCacheKey: 'https://dollarino.internal/cache/public/usdt-irt',
+      dbKey: 'public:usdt-irt',
+      ttlSeconds: 60,
+    },
+    async () => {
+      const rate = await fetchIranUsdtRate(false);
+      return { ok: true, ...rate };
+    }
+  );
 });
 
 app.get('/api/events/stream', requireAuth, async (c) => {
@@ -699,7 +883,9 @@ export default {
            EXISTS(SELECT 1 FROM copy_follow_rules WHERE is_active = 1 AND trader_kind = 'SMART_WALLET') AS has_copy_watch,
            EXISTS(SELECT 1 FROM copy_positions_v2 WHERE status = 'OPEN') AS has_copy_pos,
            EXISTS(SELECT 1 FROM tradingview_free_alerts WHERE is_active = 1) AS has_tv_alert,
-           EXISTS(SELECT 1 FROM scheduled_broadcasts WHERE status = 'SCHEDULED') AS has_sched_bc`
+           EXISTS(SELECT 1 FROM scheduled_broadcasts WHERE status = 'SCHEDULED') AS has_sched_bc,
+           EXISTS(SELECT 1 FROM treasury_deposits WHERE status = 'PENDING_VERIFY') AS has_pending_treasury,
+           EXISTS(SELECT 1 FROM server_fee_ledger WHERE status = 'PENDING_VERIFY') AS has_pending_fee`
       )
         .first<{
           has_bot: number;
@@ -709,6 +895,8 @@ export default {
           has_copy_pos: number;
           has_tv_alert: number;
           has_sched_bc: number;
+          has_pending_treasury: number;
+          has_pending_fee: number;
         }>()
         .catch(() => null);
 
@@ -716,6 +904,10 @@ export default {
         const id = env.TRADING_BOT_DO.idFromName('global-coordinator');
         const stub = env.TRADING_BOT_DO.get(id);
         await stub.fetch('https://do/start').catch(() => {});
+      }
+
+      if (!activity || activity.has_pending_treasury || activity.has_pending_fee) {
+        await reconcilePendingFeeAndTreasuryTransactions(env.DB).catch(() => {});
       }
 
       await runAlwaysOnSignalRadar(env, { fromCron: true }).catch(() => {});

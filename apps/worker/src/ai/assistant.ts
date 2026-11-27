@@ -2,7 +2,15 @@ import { atr, ema, rsi, type AIProviderId, type Timeframe } from '@dollarino/cor
 import { decryptVaultJson, randomId } from '../crypto.js';
 import type { Env } from '../env.js';
 import { fetchPublicKlines, fetchPublicMarket24h } from '../exchanges/paper.js';
-import { resolveAIEnsemble, type AIRecord } from './providers.js';
+import {
+  detectModelVisionCapability,
+  isArenaGatewayUrl,
+  resolveAIEnsemble,
+  resolveAnthropicMessagesEndpoint,
+  resolveOpenAIChatEndpoint,
+  stripReasoningArtifacts,
+  type AIRecord,
+} from './providers.js';
 
 export const DOLLARINO_CREATOR_INFO = {
   nameFa: 'آوید کیا',
@@ -51,12 +59,9 @@ export interface AssistantChatResult {
   setup: ExtractedChartSetup | null;
 }
 
-export function detectVisionSupport(provider: AIProviderId | string, model: string, label?: string): boolean {
+export function detectVisionSupport(provider: AIProviderId | string, model: string, label?: string, baseUrl?: string | null): boolean {
+  if (detectModelVisionCapability(provider, model, baseUrl)) return true;
   const m = `${model} ${label || ''}`.toLowerCase();
-  if (provider === 'gemini') return true;
-  if (provider === 'anthropic') {
-    return /claude-(?:3|4|sonnet|opus|haiku)/.test(m);
-  }
   if (
     /vision|\bvl\b|gpt-4o|gpt-4\.1|gpt-4\.5|gpt-4-turbo|gpt-5|\bo1\b|\bo3\b|\bo4\b|pixtral|llava|grok-2-vision|grok-4|gemini|claude-3|claude-4|sonnet|qwen[\d.]*-vl|qwen3-vl|kimi-vl/.test(
       m
@@ -100,11 +105,14 @@ export async function listSelectableAIModels(
     let modelName = (r.model || '').trim();
     const lowerM = modelName.toLowerCase();
     const isHilinkup = (r.base_url || '').includes('hilinkup.com');
+    const isArena = isArenaGatewayUrl(r.base_url);
     if (
       isHilinkup &&
       (!modelName || lowerM === 'deep' || lowerM === 'deepseek' || lowerM === 'دیپی' || lowerM === 'deepseek-v4' || lowerM === 'deepseek-chat')
     ) {
       modelName = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+    } else if (isArena && !modelName) {
+      modelName = env.ARENA_MODEL?.trim() || 'coding-router-preview';
     } else if (r.provider === 'deepseek' && (!modelName || lowerM === 'deep' || lowerM === 'دیپی')) {
       modelName = isHilinkup ? (env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017') : 'deepseek-chat';
     }
@@ -114,12 +122,12 @@ export async function listSelectableAIModels(
       provider: r.provider,
       model: modelName,
       source: 'PLATFORM',
-      supportsVision: detectVisionSupport(r.provider, modelName, r.label),
+      supportsVision: detectVisionSupport(r.provider, modelName, r.label, r.base_url),
       isDefault: models.length === 0,
     });
   }
 
-  // 2) Built-in Hilinkup Gateway model (kept available both as primary and failover)
+  // 2) Built-in Hilinkup / Arena Gateway models (env fallbacks if configured)
   if (env.HILINKUP_API_KEY?.trim() && !seenIds.has('env-hilinkup-default')) {
     seenIds.add('env-hilinkup-default');
     const defModel = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
@@ -130,6 +138,19 @@ export async function listSelectableAIModels(
       model: defModel,
       source: 'PLATFORM',
       supportsVision: detectVisionSupport('openai_compatible', defModel),
+      isDefault: models.length === 0,
+    });
+  }
+  if (env.ARENA_API_KEY?.trim() && !seenIds.has('env-arena-default')) {
+    seenIds.add('env-arena-default');
+    const arenaModel = env.ARENA_MODEL?.trim() || 'coding-router-preview';
+    models.push({
+      id: 'env-arena-default',
+      label: `Arena AI (${arenaModel})`,
+      provider: 'openai_compatible',
+      model: arenaModel,
+      source: 'PLATFORM',
+      supportsVision: detectVisionSupport('openai_compatible', arenaModel, undefined, env.ARENA_BASE_URL || 'https://api.arena.ai/v1'),
       isDefault: models.length === 0,
     });
   }
@@ -244,6 +265,23 @@ export async function resolveModelRecordById(
     };
   }
 
+  if (targetMeta.id === 'env-arena-default' && env.ARENA_API_KEY?.trim()) {
+    const arenaModel = env.ARENA_MODEL?.trim() || 'coding-router-preview';
+    return {
+      meta: targetMeta,
+      record: {
+        id: 'env-arena-default',
+        label: targetMeta.label,
+        provider: 'openai_compatible',
+        model: arenaModel,
+        baseUrl: env.ARENA_BASE_URL?.trim() || 'https://api.arena.ai/v1',
+        apiKey: env.ARENA_API_KEY.trim(),
+        temperature: 0.35,
+        maxTokens: 2400,
+      },
+    };
+  }
+
   if (userId && targetMeta.id.startsWith('user:')) {
     const rawId = targetMeta.id.slice(5);
     const row = await env.DB.prepare(
@@ -310,11 +348,14 @@ export async function resolveModelRecordById(
       let modelName = (platRow.model || '').trim();
       const lowerM = modelName.toLowerCase();
       const isHilinkup = (platRow.base_url || '').includes('hilinkup.com');
+      const isArena = isArenaGatewayUrl(platRow.base_url);
       if (
         isHilinkup &&
         (!modelName || lowerM === 'deep' || lowerM === 'deepseek' || lowerM === 'دیپی' || lowerM === 'deepseek-v4' || lowerM === 'deepseek-chat')
       ) {
         modelName = env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017';
+      } else if (isArena && !modelName) {
+        modelName = env.ARENA_MODEL?.trim() || 'coding-router-preview';
       } else if (platRow.provider === 'deepseek' && (!modelName || lowerM === 'deep' || lowerM === 'دیپی')) {
         modelName = isHilinkup ? (env.HILINKUP_MODEL?.trim() || 'baidu/deepseek-v4.1-flash-1017') : 'deepseek-chat';
       }
@@ -357,6 +398,21 @@ function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } | n
   return { mimeType: match[1]!.toLowerCase(), base64: match[2]!.replace(/\s+/g, '') };
 }
 
+async function fetchChatAIWithShortRetry(url: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(url, init);
+  if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
+    const retryAfterSec = Number(res.headers.get('retry-after') || '0');
+    const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+      ? Math.min(1800, Math.max(350, retryAfterSec * 1000))
+      : 650;
+    if (retryAfterSec <= 3) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      return fetch(url, init);
+    }
+  }
+  return res;
+}
+
 export async function callMultimodalChatAI(
   ai: AIRecord,
   systemPrompt: string,
@@ -368,6 +424,8 @@ export async function callMultimodalChatAI(
   const trimmedHistory = history.slice(-10);
 
   if (ai.provider === 'anthropic') {
+    const endpoint = resolveAnthropicMessagesEndpoint(ai.baseUrl);
+    const isArena = isArenaGatewayUrl(ai.baseUrl);
     const msgs: Array<{ role: 'user' | 'assistant'; content: unknown }> = trimmedHistory.map((m) => ({
       role: m.role,
       content: m.content,
@@ -391,15 +449,16 @@ export async function callMultimodalChatAI(
       msgs.push({ role: 'user', content: currentText });
     }
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchChatAIWithShortRetry(endpoint, {
       method: 'POST',
       headers: {
         'x-api-key': ai.apiKey,
+        ...(isArena ? { Authorization: `Bearer ${ai.apiKey}` } : {}),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: ai.model || 'claude-3-5-sonnet-20241022',
+        model: ai.model || (isArena ? 'coding-router-preview' : 'claude-3-5-sonnet-20241022'),
         max_tokens: Math.max(ai.maxTokens || 2048, 2048),
         temperature: ai.temperature ?? 0.35,
         system: systemPrompt,
@@ -407,9 +466,13 @@ export async function callMultimodalChatAI(
       }),
       signal: AbortSignal.timeout(40_000),
     });
-    const json = (await res.json()) as { content?: Array<{ text?: string }>; error?: { message?: string } };
-    if (!res.ok) throw new Error(json.error?.message ?? `Anthropic HTTP ${res.status}`);
-    return json.content?.[0]?.text ?? '';
+    const json = (await res.json().catch(() => ({}))) as {
+      content?: Array<{ text?: string }>;
+      error?: { message?: string };
+    };
+    if (!res.ok) throw new Error(json.error?.message ?? `Anthropic/Arena HTTP ${res.status}`);
+    const text = (json.content ?? []).map((b) => b.text || '').join('\n').trim();
+    return stripReasoningArtifacts(text);
   }
 
   if (ai.provider === 'gemini') {
@@ -429,7 +492,7 @@ export async function callMultimodalChatAI(
     }
     contents.push({ role: 'user', parts: currentParts });
 
-    const res = await fetch(
+    const res = await fetchChatAIWithShortRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(ai.apiKey)}`,
       {
         method: 'POST',
@@ -445,22 +508,23 @@ export async function callMultimodalChatAI(
         signal: AbortSignal.timeout(40_000),
       }
     );
-    const json = (await res.json()) as {
+    const json = (await res.json().catch(() => ({}))) as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
       error?: { message?: string };
     };
     if (!res.ok) throw new Error(json.error?.message ?? `Gemini HTTP ${res.status}`);
-    return json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    return stripReasoningArtifacts(json.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
   }
 
-  // OpenAI / DeepSeek / OpenAI-Compatible Gateway (including Hilinkup)
+  // OpenAI / DeepSeek / OpenAI-Compatible Gateway (including Hilinkup & Arena AI)
   const defaultBase = ai.provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com/v1';
   const rawBase = (ai.baseUrl || defaultBase).replace(/\/+$/, '');
-  const endpoint = rawBase.endsWith('/chat/completions') ? rawBase : `${rawBase}/chat/completions`;
-  const primaryModel = ai.model || (ai.provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
+  const endpoint = resolveOpenAIChatEndpoint(rawBase);
+  const isArena = isArenaGatewayUrl(rawBase);
+  const primaryModel = ai.model || (isArena ? 'coding-router-preview' : ai.provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
   const candidateModels = rawBase.includes('hilinkup.com')
     ? Array.from(new Set([primaryModel, 'baidu/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4.1-flash-1017', 'doubao/deepseek-v4.1-flash-1017']))
-    : ai.provider === 'deepseek'
+    : ai.provider === 'deepseek' && !isArena
       ? Array.from(new Set([primaryModel, 'deepseek-chat']))
       : [primaryModel];
 
@@ -501,7 +565,7 @@ export async function callMultimodalChatAI(
       payload.temperature = ai.temperature ?? 0.35;
     }
 
-    const res = await fetch(endpoint, {
+    const res = await fetchChatAIWithShortRetry(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${ai.apiKey}`,
@@ -510,14 +574,14 @@ export async function callMultimodalChatAI(
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(40_000),
     });
-    const json = (await res.json()) as {
+    const json = (await res.json().catch(() => ({}))) as {
       choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
       error?: { message?: string };
     };
     if (res.ok) {
-      return json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '';
+      return stripReasoningArtifacts(json.choices?.[0]?.message?.content || json.choices?.[0]?.message?.reasoning_content || '');
     }
-    lastGatewayErr = json.error?.message ?? `AI Gateway HTTP ${res.status}`;
+    lastGatewayErr = json.error?.message ?? `${isArena ? 'Arena AI' : 'AI Gateway'} HTTP ${res.status}`;
     if (!/model|not found|unsupported/i.test(lastGatewayErr)) {
       throw new Error(lastGatewayErr);
     }
@@ -984,6 +1048,100 @@ async function executeAIWithFailover(
   };
 }
 
+async function buildLiveChatContext(
+  env: Env,
+  opts: { userId?: string; userText: string; currentSymbol?: string | null; activeTab?: string | null }
+): Promise<string> {
+  const parts: string[] = [];
+  const normalizedText = toEnglishDigits(opts.userText || '');
+  const detectedSym = detectSymbolFromQuery(normalizedText);
+  const symbol = detectedSym || (opts.currentSymbol ? opts.currentSymbol.trim().toUpperCase() : '');
+  const tf = detectTimeframeFromQuery(normalizedText);
+  const proxyCfg = env.TOOBIT_PROXY_URL
+    ? { proxyUrl: env.TOOBIT_PROXY_URL, proxySecret: env.EXCHANGE_PROXY_SECRET }
+    : undefined;
+
+  if (opts.activeTab) {
+    parts.push(`Active UI Screen: ${opts.activeTab}`);
+  }
+
+  // Live Market Snapshot if user mentioned a symbol or has a symbol open in Terminal
+  if (symbol && /^[A-Z0-9]{2,15}$/.test(symbol)) {
+    const [ticker, candles] = await Promise.all([
+      fetchPublicMarket24h(symbol, proxyCfg).catch(() => null),
+      fetchPublicKlines(symbol, tf, 60, proxyCfg).catch(() => []),
+    ]);
+    const closes = candles.map((c) => c.close);
+    const price = Number(ticker?.lastPrice || closes[closes.length - 1] || 0);
+    if (price > 0) {
+      const chg = Number(ticker?.changePct24h || 0);
+      const e20 = closes.length >= 22 ? ema(closes, 20).slice(-1)[0] : undefined;
+      const e50 = closes.length >= 52 ? ema(closes, 50).slice(-1)[0] : undefined;
+      const r14 = closes.length >= 16 ? rsi(closes, 14).slice(-1)[0] : undefined;
+      const a14 = candles.length >= 16 ? atr(candles, 14).slice(-1)[0] : undefined;
+      parts.push(
+        `Live Market (${symbol} ${tf}): price=$${fmtPriceSmart(price)}, 24h=${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` +
+          (e20 ? `, EMA20=${fmtPriceSmart(e20)}` : '') +
+          (e50 ? `, EMA50=${fmtPriceSmart(e50)}` : '') +
+          (r14 ? `, RSI14=${r14.toFixed(1)}` : '') +
+          (a14 ? `, ATR14=${fmtPriceSmart(a14)}` : '')
+      );
+    }
+  }
+
+  // Live Portfolio & Bot Context when authenticated
+  if (opts.userId) {
+    const [cfg, openPos] = await Promise.all([
+      env.DB.prepare(
+        `SELECT bot_state, trading_mode, strategy_key, symbol, entry_timeframe, ai_gate_enabled, max_leverage, paper_balance
+         FROM bot_configs WHERE user_id = ? LIMIT 1`
+      )
+        .bind(opts.userId)
+        .first<{
+          bot_state: string;
+          trading_mode: string;
+          strategy_key: string;
+          symbol: string;
+          entry_timeframe: string;
+          ai_gate_enabled: number;
+          max_leverage: number;
+          paper_balance: string;
+        }>()
+        .catch(() => null),
+      env.DB.prepare(
+        `SELECT symbol, direction, entry_price, leverage, current_stop_loss AS stop_loss, tp1, status
+         FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 5`
+      )
+        .bind(opts.userId)
+        .all<{
+          symbol: string;
+          direction: string;
+          entry_price: string;
+          leverage: number;
+          stop_loss: string;
+          tp1: string;
+        }>()
+        .catch(() => ({ results: [] })),
+    ]);
+
+    if (cfg) {
+      parts.push(
+        `User Bot State: ${cfg.bot_state}, mode=${cfg.trading_mode}, strategy=${cfg.strategy_key}, defaultPair=${cfg.symbol} (${cfg.entry_timeframe}), maxLev=${cfg.max_leverage}x, paperBalance=$${cfg.paper_balance}`
+      );
+    }
+    if ((openPos.results ?? []).length > 0) {
+      const posList = (openPos.results ?? [])
+        .map((p) => `${p.symbol} ${p.direction} ${p.leverage}x @${p.entry_price} (SL=${p.stop_loss}, TP1=${p.tp1})`)
+        .join('; ');
+      parts.push(`Open Positions (${openPos.results!.length}): ${posList}`);
+    }
+  }
+
+  return parts.length > 0
+    ? `\n\n[LIVE DOLLARINO REAL-TIME CONTEXT — use these live figures when answering, never stale training prices]\n${parts.join('\n')}`
+    : '';
+}
+
 export async function runDedicatedAIChat(
   env: Env,
   params: {
@@ -992,6 +1150,8 @@ export async function runDedicatedAIChat(
     modelId?: string | null;
     message: string;
     imageDataUrl?: string | null;
+    currentSymbol?: string | null;
+    activeTab?: string | null;
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   }
 ): Promise<AssistantChatResult & { sessionId: string }> {
@@ -1033,7 +1193,14 @@ export async function runDedicatedAIChat(
     history = [...(rows.results ?? [])].reverse();
   }
 
-  const systemPrompt = buildDedicatedSystemPrompt(hasImage, isEn ? 'en' : 'fa');
+  const liveContext = await buildLiveChatContext(env, {
+    userId: params.userId,
+    userText,
+    currentSymbol: params.currentSymbol,
+    activeTab: params.activeTab,
+  }).catch(() => '');
+
+  const systemPrompt = buildDedicatedSystemPrompt(hasImage, isEn ? 'en' : 'fa') + liveContext;
   const outcome = await executeAIWithFailover(env, {
     userId: params.userId,
     requestedModelId: params.modelId,
@@ -1045,7 +1212,7 @@ export async function runDedicatedAIChat(
     isEn,
   });
 
-  const { cleanReply, setup } = extractChartSetupFromReply(outcome.rawReply);
+  const { cleanReply, setup } = extractChartSetupFromReply(stripReasoningArtifacts(outcome.rawReply));
 
   const userMsgId = randomId('aim');
   const botMsgId = randomId('aim');
@@ -1099,6 +1266,7 @@ export async function runPublicGuestAIChat(
     modelId?: string | null;
     message: string;
     imageDataUrl?: string | null;
+    currentSymbol?: string | null;
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   }
 ): Promise<AssistantChatResult & { sessionId: string }> {
@@ -1111,7 +1279,12 @@ export async function runPublicGuestAIChat(
       : 'سلام!');
   const isEn = !/[\u0600-\u06FF]/.test(userText) && /[a-zA-Z]{4,}/.test(userText) && !hasImage;
 
-  const systemPrompt = buildDedicatedSystemPrompt(hasImage, isEn ? 'en' : 'fa');
+  const liveContext = await buildLiveChatContext(env, {
+    userText,
+    currentSymbol: params.currentSymbol,
+  }).catch(() => '');
+
+  const systemPrompt = buildDedicatedSystemPrompt(hasImage, isEn ? 'en' : 'fa') + liveContext;
   const outcome = await executeAIWithFailover(env, {
     requestedModelId: params.modelId,
     systemPrompt,
@@ -1122,7 +1295,7 @@ export async function runPublicGuestAIChat(
     isEn,
   });
 
-  const { cleanReply, setup } = extractChartSetupFromReply(outcome.rawReply);
+  const { cleanReply, setup } = extractChartSetupFromReply(stripReasoningArtifacts(outcome.rawReply));
   return {
     sessionId: 'public-guest',
     reply: cleanReply,

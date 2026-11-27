@@ -618,6 +618,36 @@ export function SupportModal({ open, onClose, lang, authenticated = true, onGoTo
         {/* Input with Image Upload + Modern Pill Composer */}
         {authenticated && (
         <form onSubmit={sendMessage} className="px-3 sm:px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t hairline space-y-2 bg-[var(--panel)]">
+          {messages.length <= 2 && supportMode === 'AI_ASSISTANT' && (
+            <div className="flex flex-wrap gap-1.5">
+              {(isFa
+                ? [
+                    'وضعیت ربات و تراست‌ولت من؟',
+                    'مدل کارمزد ۳٪ چطور کار می‌کنه؟',
+                    'چطور اعلان اپ اندروید رو فعال کنم؟',
+                    'اتوترید ۲۴/۷ و Copy-Vault چیه؟',
+                  ]
+                : [
+                    'Check my bot & Trust Wallet status',
+                    'How does the 3% profit fee work?',
+                    'How to enable Android push alerts?',
+                    'Explain 24/7 Copy-Vault auto-trade',
+                  ]
+              ).map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  disabled={sending}
+                  onClick={() => {
+                    setText(chip);
+                  }}
+                  className="px-2.5 py-1 rounded-full surface-soft border hairline text-[10.5px] font-bold text-sub hover:text-main hover:border-[var(--gold)] transition"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          )}
           {statusMsg && (
             <div className="text-[11px] font-bold text-jade inline-flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5" />

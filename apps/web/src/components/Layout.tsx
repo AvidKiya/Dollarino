@@ -58,10 +58,10 @@ export function DollarinoCoinMark({ size = 40 }: { size?: number }) {
 const SIMPLE_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof Home }> = [
   { id: 'overview', labelFa: 'خانه و ربات خودکار', labelEn: 'Home & Auto Bot', icon: Home },
   { id: 'markets', labelFa: 'بازارها و قیمت لحظه‌ای', labelEn: 'Markets & Live Prices', icon: Globe },
-  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و سرمایه', labelEn: 'Trust Wallet & Capital', icon: Flame },
+  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet من', labelEn: 'My Trust Wallet', icon: Wallet },
   { id: 'copy', labelFa: 'رادار، اسنایپر، کپی‌ترید و ریسک', labelEn: 'Radar, Sniper, Copy & Risk', icon: Users },
-  { id: 'portfolio', labelFa: 'کیف‌پول و پورتفوی یکپارچه', labelEn: 'Unified Portfolio & Wallet', icon: Wallet },
-  { id: 'pricing', labelFa: 'کارمزد ۳٪ و اعتبار مالی', labelEn: '3% Fee & Credit', icon: CreditCard },
+  { id: 'portfolio', labelFa: 'پورتفوی و تاریخچه معاملات', labelEn: 'Unified Portfolio & Logs', icon: Wallet },
+  { id: 'pricing', labelFa: 'خزانه دلارینو و کارمزد ۳٪', labelEn: 'Treasury & 3% Fee', icon: CreditCard },
 ];
 
 const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
@@ -75,26 +75,27 @@ const PRO_TRADING_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; i
 
 const PRO_WALLET_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof LayoutDashboard }> = [
   { id: 'copy', labelFa: 'رادار، اسنایپر، کپی‌ترید و ریسک', labelEn: 'Radar, Sniper, Copy & Risk', icon: Users },
-  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet و سرمایه', labelEn: 'Trust Wallet & Capital', icon: Flame },
-  { id: 'portfolio', labelFa: 'کیف‌پول، پورتفوی و گزارش‌ها', labelEn: 'Portfolio & Logs', icon: Wallet },
-  { id: 'services', labelFa: 'خدمات و پروفایل', labelEn: 'Services Hub', icon: LayoutGrid },
+  { id: 'dex', labelFa: 'کیف‌پول Trust Wallet من', labelEn: 'My Trust Wallet', icon: Wallet },
+  { id: 'portfolio', labelFa: 'پورتفوی و تاریخچه معاملات', labelEn: 'Portfolio & Logs', icon: Wallet },
+  { id: 'services', labelFa: 'خدمات، پروفایل و فیلتر سیگنال', labelEn: 'Services & Signal Filters', icon: LayoutGrid },
 ];
 
 const MAIN_VIEWS = [...PRO_TRADING_VIEWS, ...PRO_WALLET_VIEWS];
 
 const ACCOUNT_VIEWS: Array<{ id: NavTab; labelFa: string; labelEn: string; icon: typeof CreditCard }> = [
-  { id: 'pricing', labelFa: 'کارمزد ۳٪ و اعتبار مالی', labelEn: '3% Fee & Credit', icon: CreditCard },
+  { id: 'pricing', labelFa: 'خزانه دلارینو، کارمزد ۳٪ و اعتبار', labelEn: 'Treasury, 3% Fee & Credit', icon: CreditCard },
   { id: 'faq', labelFa: 'راهنما و سوالات', labelEn: 'FAQ & Guide', icon: CircleHelp },
 ];
 
 export function tabLabel(id: NavTab, lang: Lang): string {
   const isFa = lang === 'fa';
   if (id === 'aichat') return isFa ? 'چت هوش مصنوعی AI' : 'AI Chat & Vision';
-  if (id === 'dex') return isFa ? 'Trust Wallet و سرمایه' : 'Trust Wallet & Capital';
+  if (id === 'dex') return isFa ? 'کیف‌پول Trust Wallet من' : 'My Trust Wallet';
   if (id === 'markets') return isFa ? 'بازارها و فیوچرز Perp' : 'Markets & Perp DEX';
   if (id === 'copy') return isFa ? 'رادار، اسنایپر، کپی‌ترید و ریسک' : 'Radar, Sniper, Copy & Risk';
   if (id === 'myai') return isFa ? 'هوش مصنوعی من' : 'My AI Agent';
-  if (id === 'services') return isFa ? 'خدمات' : 'Services';
+  if (id === 'services') return isFa ? 'خدمات و فیلتر سیگنال' : 'Services & Filters';
+  if (id === 'pricing') return isFa ? 'خزانه دلارینو و کارمزد ۳٪' : 'Treasury & 3% Fee';
   if (id === 'card') return isFa ? 'کارت سود' : 'Profit Card';
   if (id === 'admin') return isFa ? 'مدیریت' : 'Admin';
   const found = [...MAIN_VIEWS, ...ACCOUNT_VIEWS].find((x) => x.id === id);
@@ -794,7 +795,11 @@ export function Layout({
                     on ? 'ios-pill-active' : 'text-sub hover:text-main hover:bg-[var(--soft)]'
                   }`}
                 >
-                  <Icon className="w-5 h-5 shrink-0" />
+                  {item.id === 'dex' ? (
+                    <WalletLogo wallet="trustwallet" size={20} />
+                  ) : (
+                    <Icon className="w-5 h-5 shrink-0" />
+                  )}
                   <span className="truncate">{isFa ? item.labelFa : item.labelEn}</span>
                 </button>
               );
@@ -921,7 +926,11 @@ export function Layout({
                       style={{ background: 'var(--gold-soft)', boxShadow: '0 0 12px var(--gold)' }}
                     />
                   )}
-                  <Icon className="w-[18px] h-[18px] shrink-0" style={on ? { color: 'var(--gold-soft)' } : undefined} />
+                  {item.id === 'dex' ? (
+                    <WalletLogo wallet="trustwallet" size={18} />
+                  ) : (
+                    <Icon className="w-[18px] h-[18px] shrink-0" style={on ? { color: 'var(--gold-soft)' } : undefined} />
+                  )}
                   <span className="truncate">{isFa ? item.labelFa : item.labelEn}</span>
                 </button>
               );
@@ -1113,7 +1122,11 @@ export function Layout({
                     : 'text-dim hover:text-main hover:bg-[var(--soft)]'
                 }`}
               >
-                <Icon className="w-[18px] h-[18px]" />
+                {item.id === 'dex' ? (
+                  <WalletLogo wallet="trustwallet" size={18} />
+                ) : (
+                  <Icon className="w-[18px] h-[18px]" />
+                )}
                 {badge > 0 && (
                   <span className="absolute top-1 end-1 h-2 w-2 rounded-full bg-jade ring-1 ring-[var(--bg-surface)]" />
                 )}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Dollarino" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/dollarino_bg</item>
+        <item name="android:statusBarColor">@color/dollarino_bg</item>
+        <item name="android:navigationBarColor">@color/dollarino_bg</item>
+        <item name="colorPrimary">@color/dollarino_jade</item>
+        <item name="colorAccent">@color/dollarino_jade</item>
+    </style>
+</resources>

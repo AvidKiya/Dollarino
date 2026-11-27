@@ -130,21 +130,40 @@ export async function signJwt(payload: Record<string, unknown>, secret?: string)
 }
 
 export async function verifyJwt(token: string, secret?: string): Promise<Record<string, unknown> | null> {
-  const parts = token.split('.');
-  if (parts.length !== 3) return null;
-  const jwtSecret = secret || 'dollarino-dev-jwt-secret-change-in-production';
-  const key = await crypto.subtle.importKey('raw', enc.encode(jwtSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
-  const data = `${parts[0]}.${parts[1]}`;
-  const sigB64 = parts[2]!.replace(/-/g, '+').replace(/_/g, '/');
-  const paddedSig = sigB64 + '='.repeat((4 - (sigB64.length % 4)) % 4);
-  const sigBytes = fromBase64(paddedSig);
-  const ok = await crypto.subtle.verify('HMAC', key, toArrayBuffer(sigBytes), enc.encode(data));
-  if (!ok) return null;
-  const payloadB64 = parts[1]!.replace(/-/g, '+').replace(/_/g, '/');
-  const paddedPayload = payloadB64 + '='.repeat((4 - (payloadB64.length % 4)) % 4);
-  const parsed = JSON.parse(dec.decode(fromBase64(paddedPayload))) as Record<string, unknown>;
-  if (typeof parsed.exp === 'number' && parsed.exp < Math.floor(Date.now() / 1000)) return null;
-  return parsed;
+  try {
+    if (!token || typeof token !== 'string' || token.length > 4096) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+
+    // Enforce HS256 JWT header strictly to prevent alg=none / algorithm confusion attacks
+    const headerB64 = parts[0]!.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedHeader = headerB64 + '='.repeat((4 - (headerB64.length % 4)) % 4);
+    const header = JSON.parse(dec.decode(fromBase64(paddedHeader))) as { alg?: unknown; typ?: unknown };
+    if (!header || header.alg !== 'HS256' || (header.typ !== undefined && header.typ !== 'JWT')) {
+      return null;
+    }
+
+    const jwtSecret = secret || 'dollarino-dev-jwt-secret-change-in-production';
+    const key = await crypto.subtle.importKey('raw', enc.encode(jwtSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    const data = `${parts[0]}.${parts[1]}`;
+    const sigB64 = parts[2]!.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedSig = sigB64 + '='.repeat((4 - (sigB64.length % 4)) % 4);
+    const sigBytes = fromBase64(paddedSig);
+    const ok = await crypto.subtle.verify('HMAC', key, toArrayBuffer(sigBytes), enc.encode(data));
+    if (!ok) return null;
+
+    const payloadB64 = parts[1]!.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedPayload = payloadB64 + '='.repeat((4 - (payloadB64.length % 4)) % 4);
+    const parsed = JSON.parse(dec.decode(fromBase64(paddedPayload))) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    // Require numeric finite expiration claim on every verified JWT
+    if (typeof parsed.exp !== 'number' || !Number.isFinite(parsed.exp) || parsed.exp < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export async function hmacSha256Hex(message: string, secret: string): Promise<string> {

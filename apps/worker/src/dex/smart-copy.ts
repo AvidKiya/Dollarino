@@ -16,6 +16,7 @@ import {
   isValidTron,
 } from '../routes/trustwallet.js';
 import { TelegramBotClient } from '../telegram/client.js';
+import { publishCopyTradeSignal, shouldDeliverEngineSignalToUser } from '../telegram/publisher.js';
 import { resolveTelegramBotToken } from '../telegram/token.js';
 import {
   buildV2SwapExactEthForTokensCalldata,
@@ -23,11 +24,13 @@ import {
   signAndBroadcastEvmTx,
 } from './evm-tx.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
+import { isPaperCopyPositionRow, round2 } from '../services/portfolio-accounting.js';
 import {
   buildMultiDappRoutes,
   buildTrustWalletSwapLinks,
   fetchDexTrendingOverview,
   getDexTokenPools,
+  normalizeDexChainId,
   searchDexPairs,
   type DexTokenEnriched,
   type MultiDappRoute,
@@ -102,7 +105,7 @@ export interface CopyFollowRuleRow {
   trader_id: string;
   trader_label: string;
   chain_id: string;
-  execution_mode: 'TRUST_ONE_CLICK' | 'AUTO_EVM_ALLOWANCE' | 'AUTO_COPY_VAULT';
+  execution_mode: 'PAPER_SIMULATOR' | 'TRUST_ONE_CLICK' | 'AUTO_EVM_ALLOWANCE' | 'AUTO_COPY_VAULT';
   allocated_margin_usd: number;
   used_margin_usd: number;
   sizing_mode: 'FIXED_USD' | 'PCT_ALLOCATION' | 'PROPORTIONAL';
@@ -2287,8 +2290,15 @@ export async function executeSmartCopySignalForRule(
     };
   }
 
+  const botModeRow = await env.DB.prepare(`SELECT trading_mode FROM bot_configs WHERE user_id = ? LIMIT 1`)
+    .bind(rule.user_id)
+    .first<{ trading_mode: string }>()
+    .catch(() => null);
+  const userIsPaper = (botModeRow?.trading_mode || 'PAPER').toUpperCase() === 'PAPER';
+  const effectiveExecutionMode: CopyFollowRuleRow['execution_mode'] = userIsPaper ? 'PAPER_SIMULATOR' : rule.execution_mode;
+
   // 0. Check 3% server profit-fee standing before opening new LIVE copy-vault trades
-  if (rule.execution_mode !== 'TRUST_ONE_CLICK') {
+  if (!userIsPaper && effectiveExecutionMode !== 'TRUST_ONE_CLICK') {
     const feeCheck = await checkLiveFeeEnforcement(env.DB, rule.user_id);
     if (!feeCheck.allowed) {
       return {
@@ -2442,12 +2452,45 @@ export async function executeSmartCopySignalForRule(
   }
 
   const qtyTokens = priceUsd > 0 ? desiredMargin / priceUsd : 0;
-  const isOneClickTrust = rule.execution_mode === 'TRUST_ONE_CLICK';
+  const isOneClickTrust = !userIsPaper && effectiveExecutionMode === 'TRUST_ONE_CLICK';
+  const isPaperCopy = userIsPaper || effectiveExecutionMode === 'PAPER_SIMULATOR';
   const nextStatus: CopyPositionV2Row['status'] = isOneClickTrust ? 'PENDING_TRUST_SIGN' : 'OPEN';
+  const normalizedSignalChain = normalizeDexChainId(signal.chainId);
   let txHash: string | null = null;
+  let paperDebited = false;
 
-  if (!isOneClickTrust) {
-    if (signal.chainId.toLowerCase() === 'solana' && !rule.reverse_copy) {
+  if (isPaperCopy) {
+    const balRow = await env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
+      .bind(rule.user_id)
+      .first<{ paper_balance: string }>()
+      .catch(() => null);
+    const curBal = Number(balRow?.paper_balance ?? 0);
+    if (curBal < desiredMargin) {
+      return {
+        ok: false,
+        status: 'INSUFFICIENT_PAPER_BALANCE',
+        message: `موجودی آزاد دمو ($${curBal.toFixed(2)}) برای کپی $${desiredMargin.toFixed(2)} کافی نیست.`,
+      };
+    }
+    const nextBal = round2(curBal - desiredMargin);
+    await env.DB.prepare(
+      `UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`
+    )
+      .bind(String(nextBal), rule.user_id)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+       VALUES (?, ?, 'PAPER', 'COPY_OPEN', ?, ?, ?)`
+    )
+      .bind(randomId('wl'), rule.user_id, -desiredMargin, nextBal, `کپی‌ترید دمو ${tokenSym} از ${rule.trader_label}`)
+      .run()
+      .catch(() => {});
+    txHash = `paper_copy_${posId}`;
+    paperDebited = true;
+    aiNote = `${aiNote} | شبیه‌ساز دمو با قیمت لحظه‌ای DexScreener (کسر از موجودی دمو)`;
+  } else if (!isOneClickTrust) {
+    const chLower = normalizeDexChainId(signal.chainId);
+    if (chLower === 'solana' && !rule.reverse_copy) {
       const liveSwap = await executeLiveSolanaVaultJupiterSwap(
         env,
         rule.user_id,
@@ -2457,11 +2500,11 @@ export async function executeSmartCopySignalForRule(
       );
       txHash = liveSwap.txHash;
       aiNote = `${aiNote} | ${liveSwap.note}`;
-    } else if (!rule.reverse_copy && EVM_CHAIN_CONFIG[signal.chainId.toLowerCase()]) {
+    } else if (!rule.reverse_copy && EVM_CHAIN_CONFIG[chLower]) {
       const evmSwap = await executeLiveEvmVaultSwap(
         env,
         rule.user_id,
-        signal.chainId,
+        chLower,
         signal.tokenAddress,
         desiredMargin,
         Number(rule.max_slippage_pct || 10)
@@ -2472,6 +2515,7 @@ export async function executeSmartCopySignalForRule(
       aiNote = `${aiNote} | رصد خودکار خزانه با قیمت لحظه‌ای DexScreener`;
     }
   }
+  void paperDebited;
 
   const dappUrl = routes[0]?.trustWalletDappUrl || primaryLink.trustWalletDappUrl;
 
@@ -2486,25 +2530,25 @@ export async function executeSmartCopySignalForRule(
       posId,
       rule.user_id,
       rule.id,
-      rule.trader_kind,
+      rule.trader_kind || 'SMART_WALLET',
       rule.trader_id,
-      rule.trader_label,
-      rule.execution_mode,
-      signal.chainId,
-      primaryLink.dexName,
+      rule.trader_label || rule.trader_id || 'Smart Trader',
+      effectiveExecutionMode,
+      normalizedSignalChain,
+      primaryLink.dexName || 'DEX',
       signal.tokenAddress,
-      tokenSym,
-      tokenName,
+      tokenSym || 'TOKEN',
+      tokenName || tokenSym || 'Token',
       rule.reverse_copy ? 'SHORT' : 'BUY',
       desiredMargin,
       priceUsd,
       priceUsd,
       qtyTokens,
-      safety.safetyScore,
-      aiNote,
+      safety.safetyScore ?? 75,
+      aiNote || '',
       nextStatus,
-      dappUrl,
-      txHash
+      dappUrl ?? null,
+      txHash ?? null
     ),
     env.DB.prepare(
       `UPDATE copy_follow_rules SET used_margin_usd = used_margin_usd + ?, updated_at = datetime('now') WHERE id = ?`
@@ -2527,13 +2571,44 @@ export async function executeSmartCopySignalForRule(
     .run()
     .catch(() => {});
 
-  const tgUser = await env.DB.prepare(`SELECT telegram_id FROM users WHERE id = ? LIMIT 1`)
+  const tgUser = await env.DB.prepare(
+    `SELECT u.telegram_id, bc.notifications_enabled, bc.notification_prefs_json
+     FROM users u LEFT JOIN bot_configs bc ON bc.user_id = u.id WHERE u.id = ? LIMIT 1`
+  )
     .bind(rule.user_id)
-    .first<{ telegram_id: string | null }>()
+    .first<{ telegram_id: string | null; notifications_enabled: number | null; notification_prefs_json?: string | null }>()
     .catch(() => null);
 
+  const tp1Price = priceUsd > 0 ? Number((priceUsd * (1 + Number(rule.tp1_pct || 25) / 100)).toPrecision(5)) : null;
+  const slPrice = priceUsd > 0 ? Number((priceUsd * (1 - Number(rule.stop_loss_pct || 12) / 100)).toPrecision(5)) : null;
+
+  // Record as a first-class Copy-Trade signal (DB + signals radar), while the single formatted Telegram card is sent below with inline execution buttons
+  await publishCopyTradeSignal(env, {
+    userId: rule.user_id,
+    traderName: rule.trader_label,
+    traderKind: rule.trader_kind === 'SMART_WALLET' ? 'SMART_WALLET' : 'SITE_TRADER',
+    chainId: signal.chainId,
+    symbol: tokenSym,
+    direction: rule.reverse_copy ? 'SHORT' : 'BUY',
+    leverage: 1,
+    entryPrice: priceUsd >= 1 ? priceUsd.toFixed(4) : priceUsd.toPrecision(4),
+    stopLoss: slPrice,
+    tp1: tp1Price,
+    traderAmountUsd: signal.traderSizeUsd ?? null,
+    userAllocUsd: desiredMargin,
+    actionNote: aiNote,
+    trustWalletSwapUrl: isOneClickTrust ? dappUrl : undefined,
+    skipTelegramSend: true,
+  }).catch(() => {});
+
   const botToken = tgUser?.telegram_id ? await resolveTelegramBotToken(env) : '';
-  if (tgUser?.telegram_id && botToken) {
+  const copyAllowed =
+    tgUser?.notifications_enabled !== 0 &&
+    shouldDeliverEngineSignalToUser(tgUser?.notification_prefs_json, {
+      engine: 'COPY_TRADE',
+      direction: rule.reverse_copy ? 'SHORT' : 'LONG',
+    });
+  if (tgUser?.telegram_id && botToken && copyAllowed) {
     const tgClient = new TelegramBotClient(botToken);
     const msg =
       `${isOneClickTrust ? '🐋 **سیگنال کپی‌ترید آماده امضا در Trust Wallet**' : '⚡ **کپی‌ترید خودکار انجام شد**'}\n\n` +
@@ -2580,7 +2655,9 @@ export async function closeCopyPositionV2(
   const entry = Math.max(1e-12, Number(pos.entry_price_usd));
   const rawPct = ((exitPriceUsd - entry) / entry) * 100;
   const dirPct = pos.direction === 'SHORT' ? -rawPct : rawPct;
-  const finalUsd = (Number(pos.margin_usd) * (Number(pos.remaining_pct) / 100) * dirPct) / 100 + Number(pos.pnl_usd || 0);
+  const remMargin = Number(pos.margin_usd) * (Math.max(0, Number(pos.remaining_pct)) / 100);
+  const closingLegPnlUsd = (remMargin * dirPct) / 100;
+  const finalUsd = closingLegPnlUsd + Number(pos.pnl_usd || 0);
   const lossIncrement = finalUsd < 0 ? Math.abs(finalUsd) : 0;
 
   await env.DB.batch([
@@ -2599,15 +2676,46 @@ export async function closeCopyPositionV2(
     ).bind(pos.margin_usd, Number(lossIncrement.toFixed(2)), pos.rule_id),
   ]);
 
-  await recordProfitShareServerFee(env.DB, {
-    userId: pos.user_id,
-    tradeId: pos.id,
-    source: 'COPY_V2_LIVE',
-    symbol: pos.token_symbol,
-    mode: pos.execution_mode === 'PAPER_SIMULATOR' ? 'PAPER' : 'LIVE',
-    realizedPnlUsd: finalUsd,
-    tradeAmountUsd: Number(pos.margin_usd || 0),
-  }).catch(() => {});
+  const isPaper = isPaperCopyPositionRow(pos);
+  if (isPaper) {
+    const balRow = await env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
+      .bind(pos.user_id)
+      .first<{ paper_balance: string }>()
+      .catch(() => null);
+    const curBal = Number(balRow?.paper_balance ?? 0);
+    // Only credit back remaining margin + this closing leg's PnL (partial TP legs were already credited when executed)
+    const creditBack = Math.max(0, remMargin + closingLegPnlUsd);
+    const nextBal = round2(curBal + creditBack);
+    await env.DB.prepare(
+      `UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`
+    )
+      .bind(String(nextBal), pos.user_id)
+      .run()
+      .catch(() => {});
+    await env.DB.prepare(
+      `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+       VALUES (?, ?, 'PAPER', 'COPY_CLOSE', ?, ?, ?)`
+    )
+      .bind(
+        randomId('wl'),
+        pos.user_id,
+        round2(closingLegPnlUsd),
+        nextBal,
+        `بستن کپی‌ترید ${pos.token_symbol} (${reason})`
+      )
+      .run()
+      .catch(() => {});
+  } else {
+    await recordProfitShareServerFee(env.DB, {
+      userId: pos.user_id,
+      tradeId: pos.id,
+      source: 'COPY_V2_LIVE',
+      symbol: pos.token_symbol,
+      mode: 'LIVE',
+      realizedPnlUsd: finalUsd,
+      tradeAmountUsd: Number(pos.margin_usd || 0),
+    }).catch(() => {});
+  }
 }
 
 export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promise<number> {
@@ -2707,11 +2815,16 @@ export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promi
     let tp1Hit = pos.tp1_hit;
     let tp2Hit = pos.tp2_hit;
     let tp3Hit = pos.tp3_hit;
+    let soldPctThisTick = 0;
+    let realizedThisTick = 0;
 
     if (!tp1Hit && pnlPct >= pos.tp1_pct) {
       const sellFrac = Math.min(rem - pos.moonbag_pct, pos.tp1_sell_pct);
       if (sellFrac > 0) {
-        realizedUsd += (pos.margin_usd * (sellFrac / 100) * pnlPct) / 100;
+        const legPnl = (pos.margin_usd * (sellFrac / 100) * pnlPct) / 100;
+        realizedUsd += legPnl;
+        realizedThisTick += legPnl;
+        soldPctThisTick += sellFrac;
         rem -= sellFrac;
       }
       tp1Hit = 1;
@@ -2719,7 +2832,10 @@ export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promi
     if (!tp2Hit && pnlPct >= pos.tp2_pct) {
       const sellFrac = Math.min(rem - pos.moonbag_pct, pos.tp2_sell_pct);
       if (sellFrac > 0) {
-        realizedUsd += (pos.margin_usd * (sellFrac / 100) * pnlPct) / 100;
+        const legPnl = (pos.margin_usd * (sellFrac / 100) * pnlPct) / 100;
+        realizedUsd += legPnl;
+        realizedThisTick += legPnl;
+        soldPctThisTick += sellFrac;
         rem -= sellFrac;
       }
       tp2Hit = 1;
@@ -2727,7 +2843,10 @@ export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promi
     if (!tp3Hit && pnlPct >= pos.tp3_pct) {
       const sellFrac = Math.max(0, rem - pos.moonbag_pct);
       if (sellFrac > 0) {
-        realizedUsd += (pos.margin_usd * (sellFrac / 100) * pnlPct) / 100;
+        const legPnl = (pos.margin_usd * (sellFrac / 100) * pnlPct) / 100;
+        realizedUsd += legPnl;
+        realizedThisTick += legPnl;
+        soldPctThisTick += sellFrac;
         rem -= sellFrac;
       }
       tp3Hit = 1;
@@ -2736,6 +2855,35 @@ export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promi
         updated++;
         continue;
       }
+    }
+
+    if (soldPctThisTick > 0 && isPaperCopyPositionRow(pos)) {
+      const marginFreed = Number(pos.margin_usd) * (soldPctThisTick / 100);
+      const balRow = await env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
+        .bind(pos.user_id)
+        .first<{ paper_balance: string }>()
+        .catch(() => null);
+      const curBal = Number(balRow?.paper_balance ?? 0);
+      const nextBal = round2(curBal + Math.max(0, marginFreed + realizedThisTick));
+      await env.DB.batch([
+        env.DB.prepare(`UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`).bind(
+          String(nextBal),
+          pos.user_id
+        ),
+        env.DB.prepare(
+          `UPDATE copy_follow_rules SET used_margin_usd = MAX(0, used_margin_usd - ?), updated_at = datetime('now') WHERE id = ?`
+        ).bind(round2(marginFreed), pos.rule_id),
+        env.DB.prepare(
+          `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+           VALUES (?, ?, 'PAPER', 'COPY_PARTIAL_TP', ?, ?, ?)`
+        ).bind(
+          randomId('wl'),
+          pos.user_id,
+          round2(realizedThisTick),
+          nextBal,
+          `سیو سود پله‌ای کپی‌ترید ${pos.token_symbol} (${soldPctThisTick.toFixed(0)}%)`
+        ),
+      ]).catch(() => {});
     }
 
     await env.DB.prepare(
@@ -2765,12 +2913,122 @@ export async function reconcileCopyPositionsV2(env: Env, userId?: string): Promi
 const SOLANA_WSOL = 'So11111111111111111111111111111111111111112';
 const SOLANA_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const SOLANA_USDT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const SOLANA_RPC_ENDPOINTS = [
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-rpc.publicnode.com',
+];
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const KEYLESS_EVM_RPCS: Record<string, string[]> = {
+  bsc: ['https://bsc-dataseed.binance.org', 'https://bsc-rpc.publicnode.com'],
+  base: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com'],
+  arbitrum: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com'],
+  ethereum: ['https://ethereum-rpc.publicnode.com', 'https://cloudflare-eth.com'],
+  polygon: ['https://polygon-bor-rpc.publicnode.com', 'https://polygon-rpc.com'],
+};
+const EVM_STABLE_OR_WRAPPED = new Set([
+  '0x55d398326f99059ff775485246999027b3197955', // BSC USDT
+  '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d', // BSC USDC
+  '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', // WBNB
+  '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // WETH
+  '0xdac17f958d2ee523a2206206994597c13d831ec7', // ETH USDT
+  '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // ETH USDC
+  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // Base USDC
+  '0x4200000000000000000000000000000000000006', // Base WETH
+  '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // ARB USDC
+  '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', // ARB USDT
+]);
+
+async function fetchEvmTransferLogFallback(
+  chainId: string,
+  walletAddress: string
+): Promise<{ txHash: string; tokenAddress: string; side: 'BUY' | 'SELL' } | null> {
+  const rpcs = KEYLESS_EVM_RPCS[chainId];
+  if (!rpcs?.length || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) return null;
+  const paddedAddr = `0x000000000000000000000000${walletAddress.slice(2).toLowerCase()}`;
+
+  for (const rpcUrl of rpcs) {
+    try {
+      const blkRes = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+        signal: AbortSignal.timeout(3500),
+      }).catch(() => null);
+      if (!blkRes?.ok) continue;
+      const blkJson = (await blkRes.json().catch(() => ({}))) as { result?: string };
+      const latestBlk = blkJson.result ? parseInt(blkJson.result, 16) : 0;
+      if (!latestBlk) continue;
+      const fromHex = `0x${Math.max(1, latestBlk - 1200).toString(16)}`;
+      const toHex = `0x${latestBlk.toString(16)}`;
+
+      const [inRes, outRes] = await Promise.all([
+        fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'eth_getLogs',
+            params: [{ fromBlock: fromHex, toBlock: toHex, topics: [ERC20_TRANSFER_TOPIC, null, paddedAddr] }],
+          }),
+          signal: AbortSignal.timeout(4500),
+        }).catch(() => null),
+        fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 3,
+            method: 'eth_getLogs',
+            params: [{ fromBlock: fromHex, toBlock: toHex, topics: [ERC20_TRANSFER_TOPIC, paddedAddr, null] }],
+          }),
+          signal: AbortSignal.timeout(4500),
+        }).catch(() => null),
+      ]);
+
+      type RpcLog = { address?: string; transactionHash?: string; blockNumber?: string };
+      const inLogs = inRes?.ok ? (((await inRes.json().catch(() => ({}))) as { result?: RpcLog[] }).result || []) : [];
+      const outLogs = outRes?.ok ? (((await outRes.json().catch(() => ({}))) as { result?: RpcLog[] }).result || []) : [];
+
+      const candidates: Array<{ blk: number; txHash: string; tokenAddress: string; side: 'BUY' | 'SELL' }> = [];
+      for (const l of inLogs) {
+        if (l.transactionHash && l.address && !EVM_STABLE_OR_WRAPPED.has(l.address.toLowerCase())) {
+          candidates.push({
+            blk: l.blockNumber ? parseInt(l.blockNumber, 16) : 0,
+            txHash: l.transactionHash,
+            tokenAddress: l.address,
+            side: 'BUY',
+          });
+        }
+      }
+      for (const l of outLogs) {
+        if (l.transactionHash && l.address && !EVM_STABLE_OR_WRAPPED.has(l.address.toLowerCase())) {
+          candidates.push({
+            blk: l.blockNumber ? parseInt(l.blockNumber, 16) : 0,
+            txHash: l.transactionHash,
+            tokenAddress: l.address,
+            side: 'SELL',
+          });
+        }
+      }
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.blk - a.blk);
+        const top = candidates[0]!;
+        return { txHash: top.txHash, tokenAddress: top.tokenAddress, side: top.side };
+      }
+      return null;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
 
 async function fetchLatestWalletActivity(
   env: Env,
   trader: SmartWalletTraderRow
 ): Promise<{ txHash: string; tokenAddress: string; tokenSymbol?: string; side: 'BUY' | 'SELL' } | null> {
-  const ch = (trader.chain_id || '').toLowerCase();
+  const ch = normalizeDexChainId(trader.chain_id || '');
   const addr = trader.wallet_address.trim();
 
   if (ch === 'solana') {
@@ -2802,49 +3060,52 @@ async function fetchLatestWalletActivity(
       }
     }
 
-    // 2) Keyless Solana Mainnet RPC fallback (getSignaturesForAddress + getTransaction)
-    const sigRes = await fetch('https://api.mainnet-beta.solana.com', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getSignaturesForAddress', params: [addr, { limit: 2 }] }),
-      signal: AbortSignal.timeout(4500),
-    }).catch(() => null);
-    if (!sigRes?.ok) return null;
-    const sigJson = (await sigRes.json().catch(() => ({}))) as { result?: Array<{ signature?: string; err?: unknown }> };
-    const latestSig = (sigJson.result || []).find((s) => s.signature && !s.err)?.signature;
-    if (!latestSig) return null;
-    if (latestSig === trader.last_seen_tx_hash) return { txHash: latestSig, tokenAddress: '', side: 'BUY' };
+    // 2) Keyless Multi-RPC Solana Mainnet fallback (getSignaturesForAddress + getTransaction)
+    for (const rpcEndpoint of SOLANA_RPC_ENDPOINTS) {
+      const sigRes = await fetch(rpcEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getSignaturesForAddress', params: [addr, { limit: 3 }] }),
+        signal: AbortSignal.timeout(4500),
+      }).catch(() => null);
+      if (!sigRes?.ok) continue;
+      const sigJson = (await sigRes.json().catch(() => ({}))) as { result?: Array<{ signature?: string; err?: unknown }> };
+      const latestSig = (sigJson.result || []).find((s) => s.signature && !s.err)?.signature;
+      if (!latestSig) continue;
+      if (latestSig === trader.last_seen_tx_hash) return { txHash: latestSig, tokenAddress: '', side: 'BUY' };
 
-    const txRes = await fetch('https://api.mainnet-beta.solana.com', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getTransaction',
-        params: [latestSig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
-      }),
-      signal: AbortSignal.timeout(5000),
-    }).catch(() => null);
-    if (!txRes?.ok) return { txHash: latestSig, tokenAddress: '', side: 'BUY' };
-    const txJson = (await txRes.json().catch(() => ({}))) as {
-      result?: {
-        meta?: {
-          preTokenBalances?: Array<{ owner?: string; mint?: string; uiTokenAmount?: { uiAmount?: number } }>;
-          postTokenBalances?: Array<{ owner?: string; mint?: string; uiTokenAmount?: { uiAmount?: number } }>;
+      const txRes = await fetch(rpcEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTransaction',
+          params: [latestSig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+        }),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => null);
+      if (!txRes?.ok) return { txHash: latestSig, tokenAddress: '', side: 'BUY' };
+      const txJson = (await txRes.json().catch(() => ({}))) as {
+        result?: {
+          meta?: {
+            preTokenBalances?: Array<{ owner?: string; mint?: string; uiTokenAmount?: { uiAmount?: number } }>;
+            postTokenBalances?: Array<{ owner?: string; mint?: string; uiTokenAmount?: { uiAmount?: number } }>;
+          };
         };
       };
-    };
-    const post = txJson.result?.meta?.postTokenBalances || [];
-    const pre = txJson.result?.meta?.preTokenBalances || [];
-    for (const p of post) {
-      if (p.owner !== addr || !p.mint || [SOLANA_WSOL, SOLANA_USDC, SOLANA_USDT].includes(p.mint)) continue;
-      const beforeAmt = pre.find((b) => b.owner === addr && b.mint === p.mint)?.uiTokenAmount?.uiAmount ?? 0;
-      const afterAmt = p.uiTokenAmount?.uiAmount ?? 0;
-      if (afterAmt > beforeAmt) return { txHash: latestSig, tokenAddress: p.mint, side: 'BUY' };
-      if (afterAmt < beforeAmt) return { txHash: latestSig, tokenAddress: p.mint, side: 'SELL' };
+      const post = txJson.result?.meta?.postTokenBalances || [];
+      const pre = txJson.result?.meta?.preTokenBalances || [];
+      for (const p of post) {
+        if (p.owner !== addr || !p.mint || [SOLANA_WSOL, SOLANA_USDC, SOLANA_USDT].includes(p.mint)) continue;
+        const beforeAmt = pre.find((b) => b.owner === addr && b.mint === p.mint)?.uiTokenAmount?.uiAmount ?? 0;
+        const afterAmt = p.uiTokenAmount?.uiAmount ?? 0;
+        if (afterAmt > beforeAmt) return { txHash: latestSig, tokenAddress: p.mint, side: 'BUY' };
+        if (afterAmt < beforeAmt) return { txHash: latestSig, tokenAddress: p.mint, side: 'SELL' };
+      }
+      return { txHash: latestSig, tokenAddress: '', side: 'BUY' };
     }
-    return { txHash: latestSig, tokenAddress: '', side: 'BUY' };
+    return null;
   }
 
   if (ch === 'tron') {
@@ -2948,6 +3209,10 @@ async function fetchLatestWalletActivity(
         }
       }
     }
+
+    // Keyless RPC Transfer Log fallback (covers BSC and any chain when Blockscout/Moralis unavailable)
+    const rpcHit = await fetchEvmTransferLogFallback(ch, addr).catch(() => null);
+    if (rpcHit) return rpcHit;
   }
   return null;
 }
@@ -2969,21 +3234,24 @@ export async function baselineWalletTxIfEmpty(env: Env, traderId: string): Promi
   }
 }
 
-export async function pollWatchedWalletsForNewTrades(env: Env): Promise<{ checked: number; triggered: number }> {
+export async function pollWatchedWalletsForNewTrades(
+  env: Env
+): Promise<{ checked: number; triggered: number; baselined: number }> {
   const watched = await env.DB.prepare(
     `SELECT DISTINCT t.*
      FROM smart_wallet_traders t
      JOIN copy_follow_rules r ON r.trader_id = t.id
      WHERE r.is_active = 1 AND r.trader_kind = 'SMART_WALLET' AND t.is_active = 1
-     LIMIT 12`
+     LIMIT 16`
   )
     .all<SmartWalletTraderRow>()
     .catch(() => ({ results: [] as SmartWalletTraderRow[] }));
 
-  if (!watched.results.length) return { checked: 0, triggered: 0 };
+  if (!watched.results.length) return { checked: 0, triggered: 0, baselined: 0 };
 
   let checked = 0;
   let triggered = 0;
+  let baselined = 0;
 
   for (const trader of watched.results) {
     checked++;
@@ -2998,6 +3266,7 @@ export async function pollWatchedWalletsForNewTrades(env: Env): Promise<{ checke
         .bind(activity.txHash, trader.id)
         .run()
         .catch(() => {});
+      baselined++;
       continue;
     }
 
@@ -3031,6 +3300,6 @@ export async function pollWatchedWalletsForNewTrades(env: Env): Promise<{ checke
     }
   }
 
-  return { checked, triggered };
+  return { checked, triggered, baselined };
 }
 

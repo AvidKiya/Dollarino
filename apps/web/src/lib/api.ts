@@ -1,8 +1,35 @@
 import { APP_VERSION } from './version';
 
 const TOKEN_KEY = 'dollarino_token';
-const API_BASE = ((import.meta as unknown as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE || '').replace(/\/+$/, '');
+const API_BASE_STORAGE_KEY = 'dollarino_api_base';
+const ENV_API_BASE = ((import.meta as unknown as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE || '').replace(/\/+$/, '');
+const DEFAULT_CLOUDFLARE_BACKEND = 'https://dollarino.pages.dev';
 let memoryToken: string | null = null;
+
+export function getApiBase(): string {
+  if (typeof window !== 'undefined') {
+    const bridgeBase = (window as unknown as { DollarinoNative?: { getApiBase?: () => string } }).DollarinoNative?.getApiBase?.();
+    if (bridgeBase && /^https?:\/\//i.test(bridgeBase)) {
+      return bridgeBase.replace(/\/+$/, '');
+    }
+    try {
+      const override = (localStorage.getItem(API_BASE_STORAGE_KEY) || '').trim();
+      if (override && /^https?:\/\//i.test(override)) {
+        return override.replace(/\/+$/, '');
+      }
+    } catch {
+      /* ignore */
+    }
+    if (ENV_API_BASE) return ENV_API_BASE;
+    if (
+      window.location.hostname === 'appassets.dollarino.local' ||
+      Boolean((window as unknown as { DollarinoNative?: unknown }).DollarinoNative)
+    ) {
+      return DEFAULT_CLOUDFLARE_BACKEND;
+    }
+  }
+  return ENV_API_BASE;
+}
 
 export function getStoredToken(): string | null {
   if (memoryToken) return memoryToken;
@@ -22,6 +49,22 @@ export function setStoredToken(token: string | null) {
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
     // Restricted iframe storage fallback uses memoryToken
+  }
+  if (typeof window !== 'undefined') {
+    const bridge = (window as unknown as {
+      DollarinoNative?: {
+        setAuthSession?: (tok: string, apiBase: string, uid: string, uname: string) => void;
+        clearAuthSession?: () => void;
+      };
+    }).DollarinoNative;
+    if (bridge) {
+      try {
+        if (token) bridge.setAuthSession?.(token, getApiBase(), '', '');
+        else bridge.clearAuthSession?.();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
@@ -46,7 +89,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
     headers['X-Dollarino-Token'] = token;
   }
 
-  const targetUrl = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  const targetUrl = path.startsWith('http') ? path : `${getApiBase()}${path}`;
   const res = await fetch(targetUrl, {
     ...init,
     credentials: 'include',
@@ -69,8 +112,38 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
   }
 
   if (!res.ok) {
-    const errObj = json as { error?: string; code?: string; workerVersion?: string; hint?: string };
+    const errObj = json as {
+      error?: string;
+      code?: string;
+      workerVersion?: string;
+      hint?: string;
+      maintenance?: {
+        enabled?: boolean;
+        titleFa?: string;
+        titleEn?: string;
+        messageFa?: string;
+        messageEn?: string;
+        eta?: string;
+      };
+    };
     const rawMsg = errObj.error || `HTTP ${res.status}`;
+    if (res.status === 503 && errObj.code === 'SITE_MAINTENANCE') {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('dollarino:site-maintenance', {
+            detail: {
+              maintenance: true,
+              titleFa: errObj.maintenance?.titleFa,
+              titleEn: errObj.maintenance?.titleEn,
+              messageFa: errObj.maintenance?.messageFa,
+              messageEn: errObj.maintenance?.messageEn,
+              eta: errObj.maintenance?.eta,
+            },
+          })
+        );
+      }
+      throw new ApiError(rawMsg, 503, 'SITE_MAINTENANCE');
+    }
     if (res.status === 404 && /route not found/i.test(rawMsg)) {
       const serverBuild = errObj.workerVersion ? ` نسخه سرور: ${errObj.workerVersion} / نسخه رابط کاربری: ${APP_VERSION}.` : '';
       throw new ApiError(

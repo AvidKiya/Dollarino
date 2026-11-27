@@ -72,21 +72,18 @@ export function welcomeMessage(firstName: string, uiMode: 'simple' | 'pro' = 'si
   const cleanWeb = webAppUrl.replace(/\/$/, '') || 'https://dollarino.pages.dev';
   const modeSummary =
     uiMode === 'simple'
-      ? `🌱 **حالت ساده فعال است (هماهنگ با نسخه جدید سایت V11.7):** مدیریت سریع کل پلتفرم، سوئیچ آنی دمو/واقعی، انتخاب ۵ موتور ترید هم‌زمان، کارت‌های سود یکپارچه و تنظیم دقیق اعلان‌ها.`
-      : `⚡ **حالت حرفه‌ای (Quant Pro V11.7) فعال است:** دسترسی هم‌زمان به رادار زنده DexScreener + خرید مستقیم، کپی‌ترید هوشمند و سبد نهنگ‌ها، دُرنا V1، کارت‌های سود ۱۶:۹ و ۹:۱۶، ۲۵+ آلرت TradingView و اکستنشن کروم.`;
+      ? `🌱 **حالت ساده فعال است (همگام با نسخه V11.9.1 سایت):** محیطی تمیز و بدون شلوغی برای کنترل ۱-کلیکی ربات، سوئیچ دمو/واقعی، ۵ موتور همزمان، تراز ۵ بخش و اسنایپر.`
+      : `⚡ **حالت حرفه‌ای (Quant Pro V11.9.1) فعال است:** رادار زنده DexScreener + خرید مستقیم، کپی‌ترید هوشمند و سبد نهنگ‌ها، دُرنا V1، کارت‌های سود ۱۶:۹ و ۹:۱۶، ۲۵+ آلرت TradingView و اکستنشن کروم/فایرفاکس/اج.`;
   return (
-    `🚀 به **دلارینو V11.7** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
+    `🚀 به **دلارینو V11.9.1** خوش آمدید، ${firstName || 'دوست عزیز'}!\n\n` +
     `${modeSummary}\n\n` +
     `✨ **امکانات نسخه جدید حساب شما:**\n` +
-    `🧠 **هوش مصنوعی اختصاصی + تحلیل چارت + پیشنهاد صریح خرید/عدم خرید در DEX**\n` +
-    `🎯 **خرید مستقیم توکن‌های رادار داخل سایت با تنظیمات از پیش تعیین‌شده اسنایپر**\n` +
-    `🐋 **کپی‌ترید حرفه‌ای V2 با نمایش سبد ارزهای کیف‌پول هر تریدر و فیلتر هولدر/اسکلپر**\n` +
-    `🛡 **۱۰۰٪ غیرامانی با Trust Wallet** (۳ معامله سودده اول رایگان ۰٪، سپس فقط ۳٪ کارمزد از سود خالص · دمو رایگان قابل تنظیم)\n\n` +
-    `━━━━━━━━━━━━━━\n` +
-    `🌐 وب‌سایت رسمی دلارینو: ${cleanWeb}\n` +
-    `${CREATOR_ATTRIBUTION_FA}\n\n` +
-    `🛡 هیچ بازدهی تضمین‌شده‌ای یا ساختار پانزی وجود ندارد؛ کل سرمایه در کیف‌پول شخصی خودتان است.\n` +
-    `**دلارینو؛ هوشمندانه‌تر معامله کنید.**`
+    `• 🎛 **۵ موتور ترید همزمان** (پیش‌فرض خاموش برای ایمنی سرمایه)\n` +
+    `• 📊 **تراز یکپارچه ۵ بخش** (فیوچرز · اسپات · DEX · اسنایپر · کپی‌ترید)\n` +
+    `• 🧪 **دمو قابل تنظیم ($50–$10M)** یا **Trust Wallet غیرامانی** (۳ برد اول ۰٪، سپس ۳٪ از سود خالص)\n` +
+    `• 🧩 **اکستنشن کروم، فایرفاکس و اج V11.9.1** + **کپی‌ترید و اسنایپر زیر ۵ دقیقه**\n\n` +
+    `🌐 وب‌سایت رسمی: ${cleanWeb}\n` +
+    `${CREATOR_ATTRIBUTION_FA}`
   );
 }
 
@@ -95,28 +92,27 @@ export function mainMenuKeyboard(webAppUrl?: string, uiMode: 'simple' | 'pro' = 
   const rows: ReplyKeyboardButton[][] =
     uiMode === 'simple'
       ? [
-          [{ text: '🤖 شروع / توقف ربات' }, { text: '⚡️ شکار فوری AI' }],
-          [{ text: '🎛 ۵ موتور ترید همزمان' }, { text: '💰 حالت دمو/واقعی و بودجه' }],
-          [{ text: '📊 معاملات باز و پورتفوی' }, { text: '🏆 کپی‌ترید حرفه‌ای (V2)' }],
-          [{ text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🎯 اسنایپر زیر ۵ دقیقه' }],
-          [{ text: 'کارت سود دلارینو 📊' }, { text: 'اعلان‌ها 🔔' }, { text: '🧠 هوش مصنوعی من / چت AI' }],
-          [{ text: '🛡 Trust Wallet و کارمزد ۳٪' }, { text: '💬 پشتیبانی' }, { text: '⚡ حالت حرفه‌ای' }],
+          [{ text: '🏠 پنل ساده من' }, { text: '🤖 شروع / توقف ربات' }],
+          [{ text: '🎛 ۵ موتور ترید' }, { text: '💼 دمو / واقعی و بودجه' }],
+          [{ text: '📊 معاملات و تراز ۵ بخش' }, { text: '🎯 اسنایپر زیر ۵ دقیقه' }],
+          [{ text: 'کارت سود دلارینو 📊' }, { text: 'اعلان‌ها 🔔' }, { text: '🛡 Trust Wallet' }],
+          [{ text: '🛠 ابزارها و پشتیبانی' }, { text: '⚡ حالت حرفه‌ای' }],
         ]
       : [
           [{ text: '🟢 شروع خودکار ربات' }, { text: '⚡️ شکار فوری AI' }],
           [{ text: '🎛 انتخاب ۵ موتور ترید' }, { text: '💰 بودجه مجاز و اهرم' }],
           [{ text: '📈 معاملات باز و پورتفوی' }, { text: '🔍 رادار DEX & خرید مستقیم' }, { text: '🏆 کپی‌ترید حرفه‌ای (V2)' }],
           [{ text: '🧠 چت هوش مصنوعی (عکس چارت)' }, { text: '🤖 هوش مصنوعی من' }, { text: '🎯 اسنایپر و استراتژی' }],
-          [{ text: '🛡 اتصال Trust Wallet' }, { text: '📡 آلرت رایگان TradingView' }, { text: '🧩 اکستنشن کروم V11.7' }],
+          [{ text: '🛡 اتصال Trust Wallet' }, { text: '📡 آلرت رایگان TradingView' }, { text: '🧩 اکستنشن کروم/فایرفاکس/اج' }],
           [{ text: '💰 کارمزد ۳٪ سود (رایگان)' }, { text: 'کارت سود دلارینو 📊' }, { text: 'تنظیمات ⚙️' }],
           [{ text: '💬 پشتیبانی' }, { text: 'راهنما 📚' }, { text: '🌱 رفتن به حالت ساده' }],
         ];
   if (isAdmin && safeUrl) {
-    rows.push([{ text: 'پنل مدیریت 💼' }, { text: '🚀 باز کردن مینی‌اپ', web_app: { url: safeUrl } }]);
+    rows.push([{ text: 'پنل مدیریت 💼' }, { text: '🚀 مینی‌اپ ساده', web_app: { url: `${safeUrl.replace(/\/$/, '')}/?ui_mode=${uiMode}` } }]);
   } else if (isAdmin) {
     rows.push([{ text: 'پنل مدیریت 💼' }]);
   } else if (safeUrl) {
-    rows.push([{ text: '🚀 باز کردن مینی‌اپ دلارینو', web_app: { url: safeUrl } }]);
+    rows.push([{ text: uiMode === 'simple' ? '🚀 مینی‌اپ ساده' : '🚀 باز کردن مینی‌اپ دلارینو', web_app: { url: `${safeUrl.replace(/\/$/, '')}/?ui_mode=${uiMode}` } }]);
   }
   return rows;
 }
@@ -237,23 +233,163 @@ export function miniAppInlineKeyboard(
 
   if (openSection === 'tools') {
     rows.push([
-      { text: '📈 معاملات باز و بستن آنی', callback_data: 'tg_positions' },
+      { text: '📊 معاملات و تراز ۵ بخش', callback_data: 'tg_simple_positions', style: 'primary' },
       { text: '📡 آلرت رایگان TradingView', callback_data: 'tg_tv_alerts', style: 'success' },
     ]);
     rows.push([
-      { text: '🧩 اکستنشن کروم V11.7', callback_data: 'tg_ext_widgets' },
+      { text: '🧩 اکستنشن کروم / فایرفاکس / اج', callback_data: 'tg_ext_widgets' },
       { text: '📊 صدور کارت سود', callback_data: 'tg_profit_card' },
     ]);
     rows.push([
+      { text: '🛡 راهنمای ۵ بخش Trust Wallet', callback_data: 'tg_tw_playbook' },
       { text: '🌐 ورود سریع به سایت', callback_data: 'tg_web_login' },
-      ...(hasHttps ? [{ text: '⚙️ صفحه خدمات سایت', web_app: { url: `${base}/?tab=services` } }] : []),
     ]);
   }
 
   rows.push([
     ...(hasHttps ? [{ text: '🚀 باز کردن مینی‌اپ', web_app: { url: fullUrl }, style: 'success' as const }] : []),
-    { text: '🔙 بستن منو', callback_data: 'tg_acc:none' },
+    { text: uiMode === 'simple' ? '🔙 بازگشت به پنل ساده' : '🔙 بستن منو', callback_data: uiMode === 'simple' ? 'tg_simple_home' : 'tg_acc:none' },
   ]);
+
+  return rows;
+}
+
+export interface SimpleSiteDashboardInput {
+  isRunning: boolean;
+  tradingMode: 'PAPER' | 'LIVE';
+  execMode: 'AUTO' | 'MANUAL_CONFIRM';
+  balanceUsd: number;
+  tomanRate: number;
+  budgetMode: 'FULL_BALANCE' | 'FIXED_USD';
+  budgetUsd: number;
+  maxLeverage: number;
+  useSignalLeverage: boolean;
+  activeEngineLabels: string[];
+  freeTradesRemaining: number;
+  freeTradesLimit: number;
+  isFeeExempt: boolean;
+  onboardingDone: boolean;
+  modes: {
+    futures: { openCount: number; lockedMarginUsd: number; netUsd: number };
+    spot: { openCount: number; lockedMarginUsd: number; netUsd: number };
+    dex: { openCount: number; lockedMarginUsd: number; netUsd: number };
+    sniper: { openCount: number; lockedMarginUsd: number; netUsd: number };
+    copy: { openCount: number; lockedMarginUsd: number; netUsd: number };
+  };
+  totalOpenCount: number;
+  netPnlUsd: number;
+}
+
+export function formatSimpleSiteDashboard(p: SimpleSiteDashboardInput): string {
+  const statusLine = p.isRunning ? '🟢 **ربات روشن و فعال**' : '🔴 **ربات متوقف**';
+  const accountLine = p.tradingMode === 'LIVE' ? '🛡 **حساب واقعی (Trust Wallet)**' : '🧪 **حساب دمو آزمایشی**';
+  const execLine = p.execMode === 'AUTO' ? '⚡ خودکار ۲۴/۷' : '✋ قبلش بپرسه';
+  const budgetLine = p.budgetMode === 'FIXED_USD' && p.budgetUsd > 0 ? `$${p.budgetUsd.toLocaleString('en-US')}` : 'کل موجودی';
+  const levLine = p.useSignalLeverage ? 'پیشنهادی (هوشمند)' : `${p.maxLeverage}× دستی`;
+  const feeLine = p.isFeeExempt
+    ? '۰٪ کارمزد (حساب مدیریت ∞)'
+    : `${p.freeTradesRemaining}/${p.freeTradesLimit} برد اول ۰٪ · سپس ۳٪ از سود`;
+  const enginesLine = p.activeEngineLabels.length
+    ? `🟢 **${p.activeEngineLabels.length}/5 فعال:** ${p.activeEngineLabels.join(' · ')}`
+    : '⚪️ **0/5 موتور روشن** (پیش‌فرض خاموش — برای شروع از «🎛 ۵ موتور» انتخاب کنید)';
+  const pnlSign = p.netPnlUsd >= 0 ? '+' : '-';
+  const gateBanner = !p.onboardingDone
+    ? `\n⚠️ **گام الزامی اول:** پیش از اولین معامله، دکمه «✅ انتخاب حساب و تایید قوانین ریسک» را بزنید.\n`
+    : '';
+
+  return (
+    `🌱 **پنل ساده دلارینو (V11.9.1 · همگام با سایت)**\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `${statusLine}  |  ${accountLine}\n` +
+    `💵 **موجودی:** \`$${p.balanceUsd.toLocaleString('en-US', { minimumFractionDigits: p.balanceUsd < 100 ? 2 : 0, maximumFractionDigits: 2 })}\` (≈ **${formatToman(p.balanceUsd, p.tomanRate)} تومان**)\n` +
+    `⚙️ **اجرا:** ${execLine}  |  🎚 **بودجه / اهرم:** ${budgetLine} · ${levLine}\n` +
+    `🎁 **کارمزد:** ${feeLine}\n` +
+    `${enginesLine}\n` +
+    gateBanner +
+    `\n📊 **تراز یکپارچه ۵ موتور (${p.totalOpenCount} باز · خالص ${pnlSign}$${Math.abs(p.netPnlUsd).toFixed(2)}):**\n` +
+    `• فیوچرز: ${p.modes.futures.openCount} باز (\`$${p.modes.futures.lockedMarginUsd.toFixed(1)}\`)  |  اسپات: ${p.modes.spot.openCount} باز (\`$${p.modes.spot.lockedMarginUsd.toFixed(1)}\`)\n` +
+    `• DEX: ${p.modes.dex.openCount} باز (\`$${p.modes.dex.lockedMarginUsd.toFixed(1)}\`)  |  اسنایپر: ${p.modes.sniper.openCount} باز  |  کپی‌ترید: ${p.modes.copy.openCount} باز`
+  );
+}
+
+export function simpleSiteHomeInlineKeyboard(params: {
+  webAppUrl: string;
+  isBotRunning: boolean;
+  activeEnginesCount: number;
+  totalOpenCount: number;
+  onboardingDone: boolean;
+}): InlineKeyboardButton[][] {
+  const base = (params.webAppUrl || 'https://dollarino.pages.dev').replace(/\/$/, '');
+  const hasHttps = base.startsWith('https://');
+  const rows: InlineKeyboardButton[][] = [];
+
+  if (!params.onboardingDone) {
+    rows.push([
+      {
+        text: '✅ گام اول: انتخاب حساب و تایید قوانین ریسک',
+        callback_data: 'tg_onboard_prompt',
+        style: 'success',
+      },
+    ]);
+  }
+
+  rows.push([
+    {
+      text: params.isBotRunning ? '🔴 توقف ربات' : '🟢 روشن کردن ربات',
+      callback_data: 'tg_bot_toggle',
+      style: params.isBotRunning ? 'danger' : 'success',
+    },
+    {
+      text: '⚡️ شکار فوری AI',
+      callback_data: 'tg_instant_ai_trade',
+      style: 'primary',
+    },
+  ]);
+
+  rows.push([
+    {
+      text: `🎛 ۵ موتور (${params.activeEnginesCount}/5)`,
+      callback_data: 'tg_engines_menu',
+      style: 'primary',
+    },
+    {
+      text: '💼 دمو / واقعی و بودجه',
+      callback_data: 'tg_simple_wallet_mode',
+    },
+  ]);
+
+  rows.push([
+    {
+      text: `📊 معاملات (${params.totalOpenCount}) و تراز ۵ بخش`,
+      callback_data: 'tg_simple_positions',
+    },
+    {
+      text: '🎯 اسنایپر زیر ۵ دقیقه',
+      callback_data: 'tg_sniper_scan_5m',
+      style: 'success',
+    },
+  ]);
+
+  rows.push([
+    {
+      text: '🛠 ابزارها (تراست‌ولت · کپی · AI · اکستنشن)',
+      callback_data: 'tg_more_tools',
+    },
+    {
+      text: '🔄 تازه‌سازی',
+      callback_data: 'tg_simple_home',
+    },
+  ]);
+
+  if (hasHttps) {
+    rows.push([
+      {
+        text: '🚀 باز کردن حالت ساده در مینی‌اپ سایت',
+        web_app: { url: `${base}/?ui_mode=simple` },
+        style: 'success',
+      },
+    ]);
+  }
 
   return rows;
 }
@@ -603,3 +739,124 @@ export function formatAccountCard(params: {
     `${ANTI_SCAM_WARNING_FA}`
   );
 }
+
+/**
+ * Distinct, specialized signal card for Engine #5: Listing & Meme Sniper.
+ */
+export function formatSniperSignalCard(params: {
+  symbol: string;
+  name?: string;
+  chainId: string;
+  dexId: string;
+  source: 'CEX_NEW_LISTING' | 'DEX_BOOM_MEME' | string;
+  tokenAddress: string;
+  priceUsd: number;
+  tpUsd: number;
+  slUsd: number;
+  tpPct: number;
+  slPct: number;
+  safetyScore: number;
+  liquidityUsd: number;
+  mcapUsd?: number | null;
+  ageMinutes?: number | null;
+  change5mPct?: number;
+  change1hPct?: number;
+  buySellRatio1h?: number;
+  slippagePct?: number;
+  modeLabel?: string;
+  channelHandle?: string;
+}): string {
+  const srcLabel =
+    params.source === 'CEX_NEW_LISTING'
+      ? '🆕 لیستینگ جدید صرافی معتبر (CEX Listing)'
+      : '🔥 استخر انفجاری DEX / میم‌کوین ایمن';
+  const ageStr =
+    params.ageMinutes !== null && params.ageMinutes !== undefined
+      ? params.ageMinutes < 60
+        ? `${params.ageMinutes.toFixed(1)} دقیقه`
+        : `${(params.ageMinutes / 60).toFixed(1)} ساعت`
+      : 'جدید';
+  const safetyBadge =
+    params.safetyScore >= 85 ? '🛡 عالی (ایمن)' : params.safetyScore >= 75 ? '✅ تاییدشده' : '⚠️ ریسک متوسط';
+  const pxStr = params.priceUsd >= 1 ? params.priceUsd.toFixed(4) : params.priceUsd.toPrecision(4);
+  const tpStr = params.tpUsd >= 1 ? params.tpUsd.toFixed(4) : params.tpUsd.toPrecision(4);
+  const slStr = params.slUsd >= 1 ? params.slUsd.toFixed(4) : params.slUsd.toPrecision(4);
+
+  return (
+    `🎯 **سیگنال اختصاصی اسنایپر شکارچی (Sniper V2)**\n` +
+    `🏷 موتور: شکار لیستینگ و میم‌کوین${params.modeLabel ? ` · ${params.modeLabel}` : ''}\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `🪙 **${params.symbol}**${params.name ? ` (${params.name})` : ''} · 🌐 شبکه: **${params.chainId.toUpperCase()}**\n` +
+    `📡 منبع: ${srcLabel}\n` +
+    `🏛 صرافی DEX: \`${params.dexId.toUpperCase()}\` | ⏱ عمر استخر: **${ageStr}**\n` +
+    `📜 قرارداد (Contract):\n\`${params.tokenAddress}\`\n\n` +
+    `🔐 امنیت آن‌چین: **${params.safetyScore}/100** (${safetyBadge})\n` +
+    `💧 نقدینگی: **$${Math.round(params.liquidityUsd).toLocaleString('en-US')}**` +
+    (params.mcapUsd ? ` | 💎 MCap: **$${Math.round(params.mcapUsd).toLocaleString('en-US')}**` : '') +
+    `\n` +
+    (params.change5mPct !== undefined || params.change1hPct !== undefined
+      ? `📈 مومنتوم: 5m \`${(params.change5mPct ?? 0) >= 0 ? '+' : ''}${(params.change5mPct ?? 0).toFixed(1)}%\` | 1h \`${(params.change1hPct ?? 0) >= 0 ? '+' : ''}${(params.change1hPct ?? 0).toFixed(1)}%\`` +
+        (params.buySellRatio1h ? ` | نسبت خرید/فروش: **${params.buySellRatio1h}x**` : '') +
+        `\n\n`
+      : '\n') +
+    `📥 **قیمت ورود لحظه‌ای:** \`$${pxStr}\`\n` +
+    `🎯 **تارگت سود (+${params.tpPct}%):** \`$${tpStr}\`\n` +
+    `⛔️ **حد ضرر حفاظتی (-${params.slPct}%):** \`$${slStr}\`\n` +
+    (params.slippagePct ? `⚙️ اسلیپیج مجاز: ${params.slippagePct}%\n` : '') +
+    `🕒 زمان رصد: ${formatIranDateTime(new Date().toISOString())}` +
+    (params.channelHandle ? `\n🆔 ${params.channelHandle}` : '')
+  );
+}
+
+/**
+ * Distinct, specialized signal card for Engine #4: Copy-Trade & Smart Whale Wallets.
+ */
+export function formatCopyTradeSignalCard(params: {
+  traderName: string;
+  traderKind: 'SMART_WALLET' | 'SITE_TRADER' | 'COPY_TRADER' | string;
+  chainId?: string;
+  symbol: string;
+  direction: 'LONG' | 'SHORT' | 'BUY' | 'SELL' | string;
+  leverage?: number;
+  entryPrice: string | number;
+  stopLoss?: string | number | null;
+  tp1?: string | number | null;
+  traderWinRate?: number | null;
+  traderRoi30d?: number | null;
+  traderAmountUsd?: number | null;
+  userAllocUsd?: number | null;
+  actionNote?: string;
+  channelHandle?: string;
+}): string {
+  const dirUp = String(params.direction || 'BUY').toUpperCase();
+  const isLong = dirUp === 'LONG' || dirUp === 'BUY';
+  const dirText = isLong ? '🟢 ورود / خرید (LONG)' : '🔴 فروش / شورت (SHORT)';
+  const kindLabel =
+    params.traderKind === 'SMART_WALLET'
+      ? '🐋 ولت نهنگ هوشمند آن‌چین (Smart Wallet)'
+      : '🏆 تریدر حرفه‌ای تاییدشده دلارینو';
+
+  return (
+    `🏆 **سیگنال اختصاصی کپی‌ترید هوشمند (Copy-Trade)**\n` +
+    `⚙️ موتور: آینه‌سازی تریدرهای برتر و نهنگ‌ها\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `👤 مرجع سیگنال: **${params.traderName}**\n` +
+    `📡 منبع: ${kindLabel}${params.chainId ? ` · 🌐 شبکه: **${params.chainId.toUpperCase()}**` : ''}\n` +
+    (params.traderWinRate || params.traderRoi30d
+      ? `📊 سابقه تریدر: نرخ برد **${params.traderWinRate ?? '—'}%** · بازده ۳۰روزه **${(params.traderRoi30d ?? 0) >= 0 ? '+' : ''}${params.traderRoi30d ?? '—'}%**\n`
+      : '') +
+    `\n` +
+    `💲 نماد: **${params.symbol}** | جهت: ${dirText}` +
+    (params.leverage && params.leverage > 1 ? ` · اهرم **${params.leverage}x**` : '') +
+    `\n` +
+    `📥 **قیمت ورود تریدر:** \`$${params.entryPrice}\`\n` +
+    (params.stopLoss ? `⛔️ **حد ضرر پیشنهادی:** \`$${params.stopLoss}\`\n` : '') +
+    (params.tp1 ? `🎯 **تارگت سود ۱:** \`$${params.tp1}\`\n` : '') +
+    (params.traderAmountUsd ? `💼 حجم حرکت تریدر مرجع: **$${Math.round(params.traderAmountUsd).toLocaleString('en-US')}**\n` : '') +
+    (params.userAllocUsd ? `💰 سهم تخصیص کپی شما: **$${Number(params.userAllocUsd).toFixed(2)}**\n` : '') +
+    (params.actionNote ? `📝 توضیح: ${params.actionNote}\n` : '') +
+    `🕒 زمان ثبت: ${formatIranDateTime(new Date().toISOString())}` +
+    (params.channelHandle ? `\n🆔 ${params.channelHandle}` : '')
+  );
+}
+

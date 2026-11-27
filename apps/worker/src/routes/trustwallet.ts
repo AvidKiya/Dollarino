@@ -10,7 +10,10 @@ import {
   estimateSolPriceUsd,
 } from '../dex/smart-copy.js';
 import type { AuthUser, Env } from '../env.js';
+import { fetchIranUsdtRate } from '../exchanges/iran-rate.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
+import { isPaperDexTradeRow, isSniperDexTradeRow } from '../services/portfolio-accounting.js';
+import { fetchTrustWalletLivePortfolio } from '../services/trustwallet-universe.js';
 import { invalidateLiveTicksCache } from './trading.js';
 import { getBatchSystemSettings, getCachedSystemSetting } from '../services/settings-cache.js';
 
@@ -695,11 +698,13 @@ trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
   ).bind(id, user.id).first<{
     id: string;
     chain_id: string;
+    dex_id?: string | null;
     token_address: string;
     token_symbol: string;
     amount_usd: number;
     entry_price_usd: number;
     tx_hash: string | null;
+    note?: string | null;
     status: string;
     realized_pnl_usd: number;
     realized_pnl_pct: number;
@@ -742,15 +747,28 @@ trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
   const pnlPct = row.entry_price_usd > 0 ? ((exitPx - row.entry_price_usd) / row.entry_price_usd) * 100 : 0;
   const pnlUsd = (row.amount_usd * pnlPct) / 100;
 
-  await c.env.DB.prepare(
+  // Atomic status transition ensures concurrent double-close cannot credit paper_balance twice
+  const dexCloseRes = await c.env.DB.prepare(
     `UPDATE dex_trades
      SET status = 'CLOSED', exit_price_usd = ?, realized_pnl_usd = ?, realized_pnl_pct = ?,
          tx_hash = COALESCE(?, tx_hash), closed_at = datetime('now')
-     WHERE id = ? AND user_id = ?`
+     WHERE id = ? AND user_id = ? AND status NOT IN ('CLOSED', 'CANCELLED')`
   ).bind(exitPx, Number(pnlUsd.toFixed(2)), Number(pnlPct.toFixed(2)), body.txHash?.trim() || null, id, user.id).run();
 
+  if (!dexCloseRes.meta?.changes || dexCloseRes.meta.changes < 1) {
+    return c.json({
+      ok: true,
+      id,
+      status: 'CLOSED',
+      alreadyClosed: true,
+      exitPriceUsd: exitPx,
+      realizedPnlUsd: Number(pnlUsd.toFixed(2)),
+      realizedPnlPct: Number(pnlPct.toFixed(2)),
+    });
+  }
+
   let updatedPaperBalanceUsd: number | null = null;
-  const isPaper = Boolean(row.tx_hash && row.tx_hash.startsWith('PAPER_'));
+  const isPaper = isPaperDexTradeRow(row);
   if (isPaper) {
     const balRow = await c.env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
       .bind(user.id)
@@ -772,7 +790,7 @@ trustWalletRoutes.post('/dex-trades/:id/close', async (c) => {
       .run()
       .catch(() => {});
   } else {
-    const isSniper = Boolean(row.tx_hash === null || !row.tx_hash);
+    const isSniper = isSniperDexTradeRow(row);
     await recordProfitShareServerFee(c.env.DB, {
       userId: user.id,
       tradeId: id,
@@ -1240,4 +1258,208 @@ trustWalletRoutes.post('/build-solana-fund-tx', async (c) => {
     note: 'آدرس سولانای Trust Wallet متصل نیست؛ لینک مستقیم انتقال سولانا باز می‌شود.',
   });
 });
+
+trustWalletRoutes.get('/portfolio', async (c) => {
+  const user = c.get('user');
+  const u = await c.env.DB.prepare(
+    `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified, trust_wallet_connected_at
+     FROM users WHERE id = ? LIMIT 1`
+  )
+    .bind(user.id)
+    .first<{
+      trust_wallet_address: string | null;
+      trust_wallet_tron: string | null;
+      trust_wallet_solana: string | null;
+      trust_wallet_ton: string | null;
+      trust_wallet_verified: number;
+      trust_wallet_connected_at: string | null;
+    }>()
+    .catch(() => null);
+
+  const connected = Boolean(
+    u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana || u?.trust_wallet_ton
+  );
+
+  const [portfolio, iranRate] = await Promise.all([
+    connected
+      ? fetchTrustWalletLivePortfolio({
+          evmAddress: u?.trust_wallet_address,
+          tronAddress: u?.trust_wallet_tron,
+          solanaAddress: u?.trust_wallet_solana,
+          tonAddress: u?.trust_wallet_ton,
+        })
+      : Promise.resolve({ totalUsd: 0, holdings: [], fetchedAt: new Date().toISOString() }),
+    fetchIranUsdtRate().catch(() => ({ usdtIrt: 290000, source: 'fallback' })),
+  ]);
+
+  return c.json({
+    ok: true,
+    connected,
+    verified: Boolean(u?.trust_wallet_verified),
+    connectedAt: u?.trust_wallet_connected_at ?? null,
+    addresses: {
+      evmAddress: u?.trust_wallet_address ?? null,
+      tronAddress: u?.trust_wallet_tron ?? null,
+      solanaAddress: u?.trust_wallet_solana ?? null,
+      tonAddress: u?.trust_wallet_ton ?? null,
+    },
+    totalUsd: portfolio.totalUsd,
+    totalIrt: Math.round(portfolio.totalUsd * (iranRate.usdtIrt || 290000)),
+    usdtIrt: iranRate.usdtIrt || 290000,
+    holdings: portfolio.holdings,
+    fetchedAt: portfolio.fetchedAt,
+    priceSource: 'TRUST_WALLET_ALIGNED',
+  });
+});
+
+trustWalletRoutes.get('/playbook', async (c) => {
+  const user = c.get('user');
+  const [u, cfg, perpRow, vaultRow] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT trust_wallet_address, trust_wallet_tron, trust_wallet_solana, trust_wallet_ton, trust_wallet_verified
+       FROM users WHERE id = ? LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{
+        trust_wallet_address: string | null;
+        trust_wallet_tron: string | null;
+        trust_wallet_solana: string | null;
+        trust_wallet_ton: string | null;
+        trust_wallet_verified: number;
+      }>()
+      .catch(() => null),
+    c.env.DB.prepare(
+      `SELECT trading_mode, trade_execution_mode, paper_balance FROM bot_configs WHERE user_id = ? LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{ trading_mode: string; trade_execution_mode: string; paper_balance: string }>()
+      .catch(() => null),
+    c.env.DB.prepare(
+      `SELECT venue, master_address, agent_address, equity_usd, margin_available_usd, is_active
+       FROM perp_dex_connections WHERE user_id = ? AND is_active = 1 LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{
+        venue: string;
+        master_address: string;
+        agent_address: string | null;
+        equity_usd: number | null;
+        margin_available_usd: number | null;
+        is_active: number;
+      }>()
+      .catch(() => null),
+    c.env.DB.prepare(
+      `SELECT evm_address, solana_address, allowance_limit_usd FROM user_copy_vaults WHERE user_id = ? LIMIT 1`
+    )
+      .bind(user.id)
+      .first<{ evm_address: string; solana_address: string; allowance_limit_usd: number }>()
+      .catch(() => null),
+  ]);
+
+  const trustConnected = Boolean(
+    u?.trust_wallet_address || u?.trust_wallet_tron || u?.trust_wallet_solana || u?.trust_wallet_ton
+  );
+  const tradingMode: 'PAPER' | 'LIVE' = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+  const executionMode: 'AUTO' | 'MANUAL_CONFIRM' =
+    cfg?.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';
+  const perpConnected = Boolean(perpRow?.agent_address || perpRow?.master_address);
+  const vaultFunded = Boolean(vaultRow && Number(vaultRow.allowance_limit_usd || 0) > 0);
+
+  return c.json({
+    ok: true,
+    readiness: {
+      tradingMode,
+      executionMode,
+      trustConnected,
+      trustVerified: Boolean(u?.trust_wallet_verified),
+      perpConnected,
+      perpVenue: perpRow?.venue || null,
+      perpEquityUsd: Number(perpRow?.equity_usd || perpRow?.margin_available_usd || 0),
+      vaultReady: Boolean(vaultRow),
+      vaultFunded,
+      vaultAllowanceUsd: Number(vaultRow?.allowance_limit_usd || 0),
+      paperBalanceUsd: Number(cfg?.paper_balance ?? 10000),
+      addresses: {
+        evm: u?.trust_wallet_address || null,
+        solana: u?.trust_wallet_solana || null,
+        tron: u?.trust_wallet_tron || null,
+        ton: u?.trust_wallet_ton || null,
+      },
+    },
+    modes: [
+      {
+        id: 'FUTURES',
+        titleFa: 'فیوچرز غیرمتمرکز (Perp DEX · Hyperliquid / dYdX)',
+        titleEn: 'Perpetual Futures (Trust Wallet + Hyperliquid / dYdX)',
+        ready: tradingMode === 'PAPER' || perpConnected,
+        howItWorksFa:
+          'در حالت دمو تمام معاملات اهرم‌دار روی قیمت لحظه‌ای بدون ریسک شبیه‌سازی می‌شوند. در حالت واقعی، با اتصال Trust Wallet و فعال‌سازی کلید معامله‌گر غیرمتمرکز (Agent Key بدون دسترسی برداشت)، ربات ۲۴/۷ معاملات لانگ و شورت اهرم‌دار را مستقیم در صرافی غیرمتمرکز اجرا می‌کند.',
+        stepsFa: [
+          'کیف‌پول Trust Wallet خود را متصل کنید (افزونه مرورگر، WalletConnect یا وارد کردن آدرس).',
+          'در تب ترمینال یا کیف‌پول، اتصال Hyperliquid Agent یا dYdX را فعال کنید تا بدون نیاز به تایید هر معامله، ترید خودکار ۲۴/۷ انجام شود.',
+          'حداقل $10 مارجین آزاد در حساب Perp یا Trust Wallet داشته باشید و دکمه استارت موتور را بزنید.',
+        ],
+        ctaPath: '/dex-trust',
+        ctaLabelFa: 'اتصال Perp DEX و Trust Wallet',
+      },
+      {
+        id: 'SPOT',
+        titleFa: 'معاملات اسپات چندزنجیره‌ای (Spot Trading)',
+        titleEn: 'Multi-Chain Spot Trading',
+        ready: tradingMode === 'PAPER' || trustConnected,
+        howItWorksFa:
+          'ارزهای اصلی دنیای کریپتو (۱۳۰+ دارایی تراز اول منطبق با لیست قیمت Trust Wallet) با خرید و فروش مستقیم آن‌چین یا سوآپ خودکار اجرا می‌شوند. توکن‌ها مستقیماً داخل کیف‌پول غیرحضانتی خود شما نگهداری می‌شوند.',
+        stepsFa: [
+          'آدرس شبکه مقصد (BSC / Ethereum / Solana / Base / Arbitrum / TON / TRON) را در Trust Wallet متصل کنید.',
+          'برای خرید خودکار ۲۴/۷، خزانه کپی/اسپات را شارژ کنید یا روی حالت تایید ۱-کلیک بگذارید تا لینک مستقیم در اپلیکیشن Trust Wallet باز شود.',
+        ],
+        ctaPath: '/markets',
+        ctaLabelFa: 'مشاهده بازارهای اسپات',
+      },
+      {
+        id: 'DEX',
+        titleFa: 'ترید DEX Screener (PancakeSwap / Uniswap / Jupiter)',
+        titleEn: 'On-Chain DEX Screener Swaps',
+        ready: tradingMode === 'PAPER' || trustConnected,
+        howItWorksFa:
+          'هر توکن تازه‌متولدشده روی شبکه‌های Solana، BSC، Base، Ethereum، Arbitrum، Polygon و Optimism با امتیازدهی امنیتی واقعی و قیمت لحظه‌ای معامله می‌شود. در حالت دمو با کسر و برگشت دقیق از موجودی دمو؛ در حالت واقعی با امضای ۱-کلیک یا Vault.',
+        stepsFa: [
+          'در رادار DEX Screener توکن را بر اساس Alpha Score، نقدینگی و امنیت بررسی کنید.',
+          'در حالت دستی (MANUAL_CONFIRM)، یک دکمه «امضا در Trust Wallet» می‌گیرید؛ در حالت AUTO با خزانه ۲۴/۷ بدون تاخیر خرید و فروش می‌شود.',
+        ],
+        ctaPath: '/radar',
+        ctaLabelFa: 'ورود به رادار و DEX',
+      },
+      {
+        id: 'SNIPER',
+        titleFa: 'شکارچی لیستینگ جدید و میم‌کوین (Sniper Bot)',
+        titleEn: 'Ultra-Fresh Listing & Meme Sniper',
+        ready: tradingMode === 'PAPER' || trustConnected || vaultFunded,
+        howItWorksFa:
+          'موتور شکارچی هر ۵ دقیقه (و آنی با دکمه اسکن فوری) استخرهای زیر ۷ روز روی DEXها و لیستینگ‌های تازه CEX را اسکن کرده و فقط توکن‌هایی را که از فیلترهای نقدینگی، نسبت خرید/فروش و امنیت عبور کنند شکار می‌کند.',
+        stepsFa: [
+          'شبکه‌های هدف (Solana, BSC, Base, Ethereum, Arbitrum, Polygon, Optimism) و بودجه هر شکار را تنظیم کنید.',
+          'حد سود (TP) و حد ضرر (SL) را تعیین کنید؛ موتور باز کردن و بستن خودکار را در دمو و لایو مدیریت می‌کند.',
+        ],
+        ctaPath: '/radar',
+        ctaLabelFa: 'تنظیمات شکارچی خودکار',
+      },
+      {
+        id: 'COPY_TRADE',
+        titleFa: 'کپی‌ترید هوشمند (نهنگ‌های آن‌چین + تریدرهای سایت)',
+        titleEn: 'Smart Wallet & Site Trader Copy Trading',
+        ready: tradingMode === 'PAPER' || trustConnected || vaultFunded,
+        howItWorksFa:
+          'از تریدرهای تاییدشده سایت (فیوچرز/اسپات) و کیف‌پول نهنگ‌های اسمارت‌مانی (Solana و BSC/EVM) به‌صورت ۲۴/۷ کپی کنید. با TP1/TP2/TP3 پله‌ای، تریلینگ استاپ و توقف خودکار با فروش تریدر.',
+        stepsFa: [
+          'تریدر یا آدرس کیف‌پول نهنگ را انتخاب و سقف مارجین ایزوله و استاپ‌لاس روزانه را مشخص کنید.',
+          'حالت اجرا را بین «شبیه‌ساز دمو»، «خزانه ۲۴/۷ خودکار» یا «تایید ۱-کلیک Trust Wallet» برگزینید.',
+        ],
+        ctaPath: '/copy-trade',
+        ctaLabelFa: 'مدیریت کپی‌ترید ولت‌ها',
+      },
+    ],
+  });
+});
+
 

@@ -2,7 +2,12 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { decryptVaultJson, encryptVaultJson, randomId } from '../crypto.js';
-import { evaluateUserFeeStanding, isValidBlockchainTxHash, tryVerifyEvmReceiptOnchain } from './server-fee.js';
+import {
+  evaluateUserFeeStanding,
+  isValidBlockchainTxHash,
+  tryVerifyEvmReceiptOnchain,
+  verifyBlockchainTxOnchain,
+} from './server-fee.js';
 
 export type TreasuryNetwork = 'BEP20' | 'TRC20' | 'ERC20' | 'BASE' | 'ARBITRUM' | 'SOLANA' | 'TON';
 export type TreasuryAsset = 'USDT' | 'BNB' | 'ETH' | 'TRX' | 'SOL' | 'TON' | 'USDC';
@@ -926,7 +931,8 @@ export async function submitTreasuryDeposit(
     throw new Error('این کد تراکنش (TX Hash) قبلاً در سیستم ثبت شده و متعلق به یک تراکنش منحصربه‌فرد است.');
   }
 
-  const receiptState = spec.chainKind === 'EVM' ? await tryVerifyEvmReceiptOnchain(txHash) : 'UNAVAILABLE';
+  void tryVerifyEvmReceiptOnchain;
+  const receiptState = await verifyBlockchainTxOnchain(spec.network, txHash, receiverAddress);
   if (receiptState === 'FAILED') {
     throw new Error('تراکنش روی شبکه بلاکچین ناموفق (Reverted / Failed) گزارش شد.');
   }
@@ -1282,5 +1288,237 @@ export async function getAdminTreasurySummary(db: D1Database, masterEncryptionKe
       referralCreditsUsd: Number(feeAgg?.referral_credits_usd || 0),
     },
     deposits: depositRows.results,
+  };
+}
+
+export async function reconcilePendingFeeAndTreasuryTransactions(db: D1Database): Promise<{
+  checked: number;
+  confirmed: number;
+  rejected: number;
+  stillPending: number;
+}> {
+  const [pendingDeps, pendingFees] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, user_id, category, network, amount_usd, tx_hash
+         FROM treasury_deposits
+         WHERE status = 'PENDING_VERIFY' AND tx_hash IS NOT NULL AND tx_hash != ''
+         ORDER BY created_at ASC
+         LIMIT 25`
+      )
+      .all<{ id: string; user_id: string; category: string; network: string; amount_usd: number; tx_hash: string }>()
+      .catch(() => ({ results: [] })),
+    db
+      .prepare(
+        `SELECT id, user_id, source, fee_usd, tx_hash
+         FROM server_fee_ledger
+         WHERE status = 'PENDING_VERIFY' AND tx_hash IS NOT NULL AND tx_hash != ''
+         ORDER BY created_at ASC
+         LIMIT 25`
+      )
+      .all<{ id: string; user_id: string; source: string; fee_usd: number; tx_hash: string }>()
+      .catch(() => ({ results: [] })),
+  ]);
+
+  let checked = 0;
+  let confirmed = 0;
+  let rejected = 0;
+  let stillPending = 0;
+  const txVerdictCache = new Map<string, 'CONFIRMED' | 'FAILED' | 'UNAVAILABLE'>();
+  const touchedUsers = new Set<string>();
+
+  const checkOnce = async (network: string, txHash: string) => {
+    const k = `${network}:${txHash.toLowerCase()}`;
+    const hit = txVerdictCache.get(k);
+    if (hit) return hit;
+    const v = await verifyBlockchainTxOnchain(network, txHash).catch(() => 'UNAVAILABLE' as const);
+    txVerdictCache.set(k, v);
+    return v;
+  };
+
+  for (const dep of pendingDeps.results) {
+    checked++;
+    const verdict = await checkOnce(dep.network, dep.tx_hash);
+    if (verdict === 'CONFIRMED') {
+      await applyConfirmedTreasuryCredit(db, dep.id, 'تایید خودکار دوره‌ای آن‌چین').catch(() => {});
+      // Also synchronize any server_fee_ledger rows tied to the same tx_hash
+      await db
+        .prepare(
+          `UPDATE server_fee_ledger
+           SET status = CASE WHEN source = 'PREPAY_CREDIT' THEN 'SETTLED_PREPAID' ELSE 'SETTLED_ONCHAIN' END,
+               note = COALESCE(note, '') || ' [تایید خودکار بلاکچین]'
+           WHERE LOWER(tx_hash) = LOWER(?) AND status = 'PENDING_VERIFY'`
+        )
+        .bind(dep.tx_hash)
+        .run()
+        .catch(() => {});
+      touchedUsers.add(dep.user_id);
+      confirmed++;
+    } else if (verdict === 'FAILED') {
+      await db
+        .prepare(`UPDATE treasury_deposits SET status = 'REJECTED', admin_note = 'ناموفق (Reverted) در بلاکچین' WHERE id = ?`)
+        .bind(dep.id)
+        .run()
+        .catch(() => {});
+      await db
+        .prepare(`UPDATE server_fee_ledger SET status = 'REJECTED' WHERE LOWER(tx_hash) = LOWER(?) AND status = 'PENDING_VERIFY'`)
+        .bind(dep.tx_hash)
+        .run()
+        .catch(() => {});
+      touchedUsers.add(dep.user_id);
+      rejected++;
+    } else {
+      stillPending++;
+    }
+  }
+
+  // Handle standalone server_fee_ledger PENDING_VERIFY rows not matched above
+  for (const fl of pendingFees.results) {
+    const alreadyChecked = pendingDeps.results.some((d) => d.tx_hash.toLowerCase() === fl.tx_hash.toLowerCase());
+    if (alreadyChecked) continue;
+    checked++;
+    const guessedNet = /^0x[0-9a-fA-F]{64}$/.test(fl.tx_hash)
+      ? 'BEP20'
+      : /^[0-9a-fA-F]{64}$/.test(fl.tx_hash)
+        ? 'TRC20'
+        : 'SOLANA';
+    const verdict = await checkOnce(guessedNet, fl.tx_hash);
+    if (verdict === 'CONFIRMED') {
+      if (fl.source === 'PREPAY_CREDIT') {
+        const split = await settleDebtFirstThenCredit(db, fl.user_id, Number(fl.fee_usd || 0), fl.tx_hash, {
+          alsoCreditWalletBalance: false,
+        }).catch(() => ({ settledDebtUsd: 0, addedCreditUsd: 0, settledCount: 0 }));
+        await db
+          .prepare(
+            `UPDATE server_fee_ledger
+             SET status = 'SETTLED_PREPAID',
+                 fee_usd = ?,
+                 note = COALESCE(note, '') || ' [تایید خودکار بلاکچین]'
+             WHERE id = ?`
+          )
+          .bind(Number(split.addedCreditUsd || fl.fee_usd || 0), fl.id)
+          .run()
+          .catch(() => {});
+      } else {
+        await db
+          .prepare(
+            `UPDATE server_fee_ledger
+             SET status = 'SETTLED_ONCHAIN',
+                 note = COALESCE(note, '') || ' [تایید خودکار بلاکچین]'
+             WHERE id = ?`
+          )
+          .bind(fl.id)
+          .run()
+          .catch(() => {});
+      }
+      touchedUsers.add(fl.user_id);
+      confirmed++;
+    } else if (verdict === 'FAILED') {
+      await db
+        .prepare(`UPDATE server_fee_ledger SET status = 'ACCRUED', tx_hash = NULL, note = COALESCE(note, '') || ' [تراکنش ناموفق برگشت خورد]' WHERE id = ?`)
+        .bind(fl.id)
+        .run()
+        .catch(() => {});
+      touchedUsers.add(fl.user_id);
+      rejected++;
+    } else {
+      stillPending++;
+    }
+  }
+
+  for (const uid of touchedUsers) {
+    await evaluateUserFeeStanding(db, uid).catch(() => {});
+  }
+
+  return { checked, confirmed, rejected, stillPending };
+}
+
+export async function getAdminComprehensiveFeeReport(db: D1Database) {
+  const [userRows, ledgerRows, depositRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+           u.id AS user_id,
+           u.username,
+           u.email,
+           u.role,
+           u.telegram_id,
+           COALESCE(u.fee_prepaid_credit_usd, 0) AS prepaid_credit_usd,
+           COALESCE(u.fee_penalty_usd, 0) AS penalty_usd,
+           COALESCE(u.fee_lock_status, 'ACTIVE') AS lock_status,
+           u.fee_grace_deadline AS grace_deadline,
+           COALESCE(u.wallet_balance_usdt, 0) AS wallet_balance_usdt,
+           COALESCE(SUM(CASE WHEN l.status = 'ACCRUED' THEN l.fee_usd ELSE 0 END), 0) AS accrued_usd,
+           COALESCE(SUM(CASE WHEN l.status = 'PENDING_VERIFY' THEN l.fee_usd ELSE 0 END), 0) AS pending_verify_usd,
+           COALESCE(SUM(CASE WHEN l.status IN ('SETTLED_ONCHAIN', 'SETTLED_PREPAID') THEN l.fee_usd ELSE 0 END), 0) AS settled_usd,
+           COALESCE(SUM(CASE WHEN l.status = 'FREE_TRIAL' THEN 1 ELSE 0 END), 0) AS free_trials_used,
+           COALESCE(SUM(CASE WHEN l.source IN ('PERP_LIVE', 'COPY_V2_LIVE', 'DEX_LIVE', 'SNIPER_LIVE') THEN l.realized_pnl_usd ELSE 0 END), 0) AS profitable_pnl_usd,
+           MAX(l.created_at) AS last_fee_at
+         FROM users u
+         LEFT JOIN server_fee_ledger l ON l.user_id = u.id
+         GROUP BY u.id
+         HAVING accrued_usd > 0 OR pending_verify_usd > 0 OR settled_usd > 0 OR prepaid_credit_usd > 0 OR penalty_usd > 0 OR lock_status != 'ACTIVE' OR free_trials_used > 0
+         ORDER BY accrued_usd DESC, pending_verify_usd DESC, prepaid_credit_usd DESC
+         LIMIT 120`
+      )
+      .all<{
+        user_id: string;
+        username: string;
+        email: string;
+        role: string;
+        telegram_id: string | null;
+        prepaid_credit_usd: number;
+        penalty_usd: number;
+        lock_status: string;
+        grace_deadline: string | null;
+        wallet_balance_usdt: number;
+        accrued_usd: number;
+        pending_verify_usd: number;
+        settled_usd: number;
+        free_trials_used: number;
+        profitable_pnl_usd: number;
+        last_fee_at: string | null;
+      }>()
+      .catch(() => ({ results: [] })),
+    db
+      .prepare(
+        `SELECT l.*, u.username, u.email
+         FROM server_fee_ledger l
+         LEFT JOIN users u ON u.id = l.user_id
+         ORDER BY l.created_at DESC
+         LIMIT 150`
+      )
+      .all()
+      .catch(() => ({ results: [] })),
+    db
+      .prepare(
+        `SELECT td.*, u.username, u.email
+         FROM treasury_deposits td
+         LEFT JOIN users u ON u.id = td.user_id
+         ORDER BY td.created_at DESC
+         LIMIT 150`
+      )
+      .all()
+      .catch(() => ({ results: [] })),
+  ]);
+
+  const users = userRows.results || [];
+  const totals = {
+    totalUsersWithFeeActivity: users.length,
+    totalAccruedDebtUsd: Number(users.reduce((s, u) => s + Number(u.accrued_usd || 0), 0).toFixed(2)),
+    totalPendingVerifyUsd: Number(users.reduce((s, u) => s + Number(u.pending_verify_usd || 0), 0).toFixed(2)),
+    totalPenaltyUsd: Number(users.reduce((s, u) => s + Number(u.penalty_usd || 0), 0).toFixed(2)),
+    totalPrepaidCreditUsd: Number(users.reduce((s, u) => s + Number(u.prepaid_credit_usd || 0), 0).toFixed(2)),
+    totalSettledUsd: Number(users.reduce((s, u) => s + Number(u.settled_usd || 0), 0).toFixed(2)),
+    lockedUsersCount: users.filter((u) => u.lock_status === 'LOCKED').length,
+    warningUsersCount: users.filter((u) => u.lock_status === 'WARNING').length,
+  };
+
+  return {
+    ok: true,
+    totals,
+    users,
+    ledgerEntries: ledgerRows.results || [],
+    deposits: depositRows.results || [],
   };
 }

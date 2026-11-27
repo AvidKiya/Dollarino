@@ -1,4 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  Info,
+  LogIn,
+  RefreshCw,
+  ShieldAlert,
+  Sparkles,
+  Wrench,
+  X,
+} from 'lucide-react';
 import type { LookId } from './components/AppearanceModal';
 import { AppInlineTabLoader, AppSplashLoader } from './components/AppSplashLoader';
 import { FloatingAiChat } from './components/FloatingAiChat';
@@ -13,13 +26,21 @@ import { pushFloatingToast } from './lib/toast';
 import { APP_VERSION } from './lib/version';
 import { getTelegramWebApp, initTelegramMiniApp, isInsideTelegramMiniApp } from './lib/telegram';
 import {
+  getNativeBridge,
+  isAndroidNativeApp,
+  registerAndroidDeviceWithBackend,
+  startAndroidForegroundNotificationLoop,
+  syncNativeAuthSession,
+  triggerNativeHaptic,
+} from './lib/mobile-bridge';
+import {
   connectAndPersistAllTrustWallets,
   isMobileWalletPlatform,
   launchTrustWalletUrl,
   requestTrustWalletDappHandoff,
   type TrustWalletDappHandoff,
 } from './lib/trustwallet';
-import type { AuthUserInfo, DashboardPayload, NavTab } from './lib/types';
+import type { AuthUserInfo, DashboardPayload, NavTab, SiteMaintenanceInfo, UserPopupMessage } from './lib/types';
 
 const AuthPage = lazy(() => import('./pages/AuthPage').then((m) => ({ default: m.AuthPage })));
 const LandingPage = lazy(() => import('./pages/LandingPage').then((m) => ({ default: m.LandingPage })));
@@ -87,7 +108,7 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [publicScreen, setPublicScreen] = useState<'landing' | 'auth'>(() => {
     const qp = new URLSearchParams(window.location.search);
-    return qp.get('auth_screen') === '1' || qp.get('tw_signup') === '1' ? 'auth' : 'landing';
+    return qp.get('auth_screen') === '1' || qp.get('tw_signup') === '1' || qp.get('embed') === 'sidepanel' ? 'auth' : 'landing';
   });
   const [authMode, setAuthMode] = useState<'login' | 'register'>(() => {
     const qp = new URLSearchParams(window.location.search);
@@ -128,10 +149,74 @@ export function App() {
   });
   const [marketType, setMarketType] = useState<'SPOT' | 'FUTURES'>('FUTURES');
   const [terminalSymbol, setTerminalSymbol] = useState('BTCUSDT');
+  const [terminalTradeOverlay, setTerminalTradeOverlay] = useState<import('./lib/types').TerminalTradeOverlay | null>(null);
   const [marketFocusSymbol, setMarketFocusSymbol] = useState<string | null>(null);
   const [marketFocusNonce, setMarketFocusNonce] = useState(0);
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
   const [markets, setMarkets] = useState<ExchangeMarket[]>([]);
+  const [siteMaintenance, setSiteMaintenance] = useState<SiteMaintenanceInfo | null>(null);
+  const [maintenanceAdminBypass, setMaintenanceAdminBypass] = useState(false);
+  const [popupAckBusy, setPopupAckBusy] = useState(false);
+
+  const checkSiteStatus = useCallback(async () => {
+    try {
+      const res = await apiFetch<{ ok?: boolean; maintenance?: SiteMaintenanceInfo }>('/api/public/site-status');
+      if (res?.maintenance) {
+        setSiteMaintenance(res.maintenance);
+      }
+    } catch {
+      // ignore transient offline
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkSiteStatus();
+    const iv = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void checkSiteStatus();
+    }, 60_000);
+    const onMaintEvent = (ev: Event) => {
+      const detail = (ev as CustomEvent<Partial<SiteMaintenanceInfo> & { maintenance?: boolean }>).detail;
+      setSiteMaintenance((prev) => ({
+        enabled: true,
+        titleFa: detail?.titleFa || prev?.titleFa || 'سایت در حال بروزرسانی فنی است',
+        titleEn: detail?.titleEn || prev?.titleEn || 'Scheduled Platform Maintenance',
+        messageFa: detail?.messageFa || prev?.messageFa || 'پلتفرم دلارینو موقتاً در حال بروزرسانی است.',
+        messageEn: detail?.messageEn || prev?.messageEn || 'Dollarino is temporarily under maintenance.',
+        eta: detail?.eta ?? prev?.eta ?? '',
+        updatedAt: prev?.updatedAt ?? null,
+      }));
+    };
+    window.addEventListener('dollarino:site-maintenance', onMaintEvent);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener('dollarino:site-maintenance', onMaintEvent);
+    };
+  }, [checkSiteStatus]);
+
+  const acknowledgePopup = useCallback(async (popup: UserPopupMessage, targetRoute?: string | null) => {
+    setPopupAckBusy(true);
+    try {
+      await apiFetch(`/api/trading/popups/${popup.id}/ack`, { method: 'POST' }).catch(() => {});
+      setDashboard((prev) =>
+        prev
+          ? {
+              ...prev,
+              pendingPopups: (prev.pendingPopups || []).filter((p) => p.id !== popup.id),
+            }
+          : prev
+      );
+      if (targetRoute) {
+        const mapped = targetRoute === 'subscription' ? 'pricing' : targetRoute;
+        const allowed: NavTab[] = ['overview', 'aichat', 'myai', 'terminal', 'markets', 'dex', 'radar', 'copy', 'portfolio', 'services', 'card', 'pricing', 'faq', 'admin'];
+        if (allowed.includes(mapped as NavTab)) {
+          setActiveTab(mapped as NavTab);
+        }
+      }
+    } finally {
+      setPopupAckBusy(false);
+    }
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -143,11 +228,57 @@ export function App() {
 
   useEffect(() => {
     applyLookToRoot(look);
+    getNativeBridge()?.setStatusBarStyle?.(look !== 'paper');
   }, [look]);
 
   useEffect(() => {
     initTelegramMiniApp(look === 'paper' ? '#F3F7FF' : '#040917');
   }, [look]);
+
+  useEffect(() => {
+    if (!isAndroidNativeApp()) return;
+    const stopLoop = startAndroidForegroundNotificationLoop((tab) => {
+      setActiveTab(tab);
+    });
+    window.__dollarinoHandleAndroidBack = () => {
+      if (supportOpen) {
+        setSupportOpen(false);
+        return true;
+      }
+      if (academyOpen) {
+        setAcademyOpen(false);
+        return true;
+      }
+      if (installOpen) {
+        setInstallOpen(false);
+        return true;
+      }
+      if (twModalOpen) {
+        setTwModalOpen(false);
+        return true;
+      }
+      if (user && activeTab !== 'overview') {
+        setActiveTab('overview');
+        triggerNativeHaptic('light');
+        return true;
+      }
+      if (!user && publicScreen === 'auth') {
+        setPublicScreen('landing');
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      stopLoop();
+      delete window.__dollarinoHandleAndroidBack;
+    };
+  }, [supportOpen, academyOpen, installOpen, twModalOpen, user, activeTab, publicScreen]);
+
+  useEffect(() => {
+    if (!user || !isAndroidNativeApp()) return;
+    syncNativeAuthSession({ id: user.id, username: user.username });
+    void registerAndroidDeviceWithBackend();
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user || Boolean(user.must_change_credentials) || isSidePanelEmbed) return;
@@ -299,6 +430,9 @@ export function App() {
         return;
       }
       setUser(me.user);
+      if (me.user.role?.toLowerCase() !== 'owner' && me.user.role?.toLowerCase() !== 'admin') {
+        setMaintenanceAdminBypass(false);
+      }
       if ((me.user.role === 'owner' || me.user.role === 'admin') && Boolean(me.user.must_change_credentials)) {
         setDashboard(null);
         return;
@@ -343,6 +477,25 @@ export function App() {
 
   useEffect(() => {
     void loadSessionAndDashboard();
+  }, [loadSessionAndDashboard]);
+
+  useEffect(() => {
+    const onTokenUpdated = () => {
+      void loadSessionAndDashboard();
+    };
+    const on2faRequired = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ tempToken?: string }>).detail;
+      if (detail?.tempToken) {
+        setPending2faToken(detail.tempToken);
+        setPublicScreen('auth');
+      }
+    };
+    window.addEventListener('dollarino:auth-token-updated', onTokenUpdated);
+    window.addEventListener('dollarino:auth-2fa-required', on2faRequired);
+    return () => {
+      window.removeEventListener('dollarino:auth-token-updated', onTokenUpdated);
+      window.removeEventListener('dollarino:auth-2fa-required', on2faRequired);
+    };
   }, [loadSessionAndDashboard]);
 
   // Deploy-parity guard: the Pages frontend and the Worker API are deployed separately.
@@ -418,7 +571,7 @@ export function App() {
 
     const scheduleTick = () => {
       if (cancelled) return;
-      const delayMs = hasActivePositionsRef.current ? 10_000 : 45_000;
+      const delayMs = hasActivePositionsRef.current ? 12_000 : 60_000;
       tickTimer = setTimeout(() => {
         if (cancelled) return;
         if (tickInFlight || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) {
@@ -538,6 +691,24 @@ export function App() {
       }, 60);
       return;
     }
+    let parsedEngines: string[] = [];
+    try {
+      const raw = dashboard.config.active_engines_json ? JSON.parse(dashboard.config.active_engines_json) : [];
+      if (Array.isArray(raw)) parsedEngines = raw.filter((x) => typeof x === 'string');
+    } catch {
+      parsedEngines = [];
+    }
+    if (!running && parsedEngines.length === 0) {
+      setActiveTab('overview');
+      pushFloatingToast(
+        lang === 'fa'
+          ? 'همه موتورها به‌صورت پیش‌فرض خاموش هستند؛ لطفاً ابتدا در پیشخوان حداقل یک موتور را انتخاب و روشن کنید.'
+          : 'All engines start OFF by default. Please select and enable at least one engine in Overview first.',
+        'warn',
+        5000
+      );
+      return;
+    }
     const optimisticState = running ? 'STOPPED' : dashboard.config.trading_mode === 'LIVE' ? 'RUNNING_LIVE' : 'RUNNING_PAPER';
     setDashboard((cur) => (cur ? { ...cur, config: { ...cur.config, bot_state: optimisticState } } : cur));
     try {
@@ -548,7 +719,10 @@ export function App() {
           'warn'
         );
       } else {
-        await apiFetch('/api/trading/bot/start', { method: 'POST', body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET' }) });
+        await apiFetch('/api/trading/bot/start', {
+          method: 'POST',
+          body: JSON.stringify({ scanScope: dashboard.config.scan_scope || 'ALL_MARKET', activeEngines: parsedEngines }),
+        });
         pushFloatingToast(
           lang === 'fa' ? 'ربات معاملاتی با موفقیت روشن شد' : 'Trading bot is now active',
           'success'
@@ -683,8 +857,14 @@ export function App() {
     if (mkts.markets.length) setMarkets(mkts.markets);
   }, []);
 
-  const openTerminalWithSymbol = (sym?: string, mkt?: 'SPOT' | 'FUTURES') => {
+  const openTerminalWithSymbol = (
+    sym?: string,
+    mkt?: 'SPOT' | 'FUTURES',
+    overlay?: import('./lib/types').TerminalTradeOverlay | null
+  ) => {
     if (sym) setTerminalSymbol(sym);
+    if (overlay !== undefined) setTerminalTradeOverlay(overlay);
+    else if (sym) setTerminalTradeOverlay(null);
     if (mkt && mkt !== marketType) void handleChangeMarketType(mkt);
     setActiveTab('terminal');
   };
@@ -715,6 +895,89 @@ export function App() {
     return <AppSplashLoader lang={lang} stage="auth" />;
   }
 
+  const isAdminSession = Boolean(
+    user && (user.role?.toLowerCase() === 'owner' || user.role?.toLowerCase() === 'admin')
+  );
+  const maintenanceBlocked = Boolean(
+    siteMaintenance?.enabled && !isAdminSession && !maintenanceAdminBypass
+  );
+
+  if (maintenanceBlocked) {
+    const isFa = lang === 'fa';
+    return (
+      <div
+        dir={isFa ? 'rtl' : 'ltr'}
+        className="min-h-screen flex items-center justify-center p-4 sm:p-6 bg-canvas text-main relative overflow-hidden"
+      >
+        <div className="max-w-lg w-full panel rounded-3xl p-6 sm:p-8 border border-amber-500/35 shadow-2xl space-y-5 text-center relative z-10">
+          <div className="w-16 h-16 rounded-3xl bg-amber-500/15 border border-amber-500/35 text-amber-400 grid place-items-center mx-auto shadow-lg">
+            <Wrench className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/15 text-loss text-[11px] font-black border border-rose-500/30">
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>{isFa ? 'حالت تعمیرات و بروزرسانی' : 'Scheduled Maintenance Mode'}</span>
+            </span>
+            <h1 className="font-display font-black text-xl sm:text-2xl text-main">
+              {isFa ? siteMaintenance?.titleFa : siteMaintenance?.titleEn}
+            </h1>
+            <p className="text-xs sm:text-sm text-sub leading-relaxed whitespace-pre-line">
+              {isFa ? siteMaintenance?.messageFa : siteMaintenance?.messageEn}
+            </p>
+            {siteMaintenance?.eta && (
+              <div className="surface-soft rounded-2xl px-4 py-2.5 border hairline text-xs font-bold text-amber-400 inline-block">
+                {isFa ? 'زمان تخمینی بازگشت: ' : 'Estimated Return: '}
+                <span>{siteMaintenance.eta}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={async () => {
+                await checkSiteStatus();
+                await loadSessionAndDashboard();
+              }}
+              className="px-4 py-2.5 rounded-xl btn-cobalt text-xs font-black inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{isFa ? 'بررسی مجدد وضعیت سایت' : 'Check Status Again'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetLang(isFa ? 'en' : 'fa')}
+              className="px-3.5 py-2.5 rounded-xl surface-soft border hairline text-xs font-bold text-main"
+            >
+              {isFa ? 'English' : 'فارسی'}
+            </button>
+          </div>
+          <div className="pt-3 border-t hairline flex flex-wrap items-center justify-between gap-2 text-[11px] text-dim">
+            {user ? (
+              <button type="button" onClick={() => void handleLogout()} className="hover:text-loss font-bold">
+                {isFa ? `خروج از حساب (${user.username})` : `Sign out (${user.username})`}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setMaintenanceAdminBypass(true);
+                  setAuthMode('login');
+                  setPublicScreen('auth');
+                }}
+                className="inline-flex items-center gap-1 hover:text-brand font-bold"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{isFa ? 'ورود مدیر / ادمین' : 'Admin Sign In'}</span>
+              </button>
+            )}
+            <span dir="ltr" className="font-mono-num">Dollarino {APP_VERSION}</span>
+          </div>
+        </div>
+        <FloatingToastHost dir={isFa ? 'rtl' : 'ltr'} />
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <>
@@ -740,10 +1003,14 @@ export function App() {
             initialMode={authMode}
             initial2faToken={pending2faToken}
             externalError={authError}
-            onBack={() => {
-              setPending2faToken(null);
-              setPublicScreen('landing');
-            }}
+            onBack={
+              isSidePanelEmbed
+                ? undefined
+                : () => {
+                    setPending2faToken(null);
+                    setPublicScreen('landing');
+                  }
+            }
             onSuccess={() => {
               setPending2faToken(null);
               return loadSessionAndDashboard();
@@ -915,6 +1182,7 @@ export function App() {
           lang={lang}
           user={user}
           onUserRefresh={loadSessionAndDashboard}
+          onNavigate={setActiveTab}
         />
       )}
       {activeTab === 'terminal' && (
@@ -924,6 +1192,8 @@ export function App() {
           onToggleUiMode={isSidePanelEmbed ? undefined : handleSetUiMode}
           symbol={terminalSymbol}
           setSymbol={setTerminalSymbol}
+          tradeOverlay={terminalTradeOverlay}
+          onClearTradeOverlay={() => setTerminalTradeOverlay(null)}
           marketType={marketType}
           onChangeMarketType={handleChangeMarketType}
           data={dashboard}
@@ -1000,7 +1270,7 @@ export function App() {
         />
       )}
       {activeTab === 'pricing' && (
-        <SubscriptionPage lang={lang} onRefreshDashboard={loadSessionAndDashboard} onNavigate={setActiveTab} />
+        <SubscriptionPage lang={lang} user={user} onRefreshDashboard={loadSessionAndDashboard} onNavigate={setActiveTab} />
       )}
       {activeTab === 'faq' && <FaqPage lang={lang} />}
       {activeTab === 'admin' && (user.role.toUpperCase() === 'ADMIN' || user.role.toUpperCase() === 'OWNER') && (
@@ -1033,6 +1303,7 @@ export function App() {
       lang={lang}
       authenticated
       activeTab={activeTab}
+      currentSymbol={terminalSymbol}
       onNavigate={setActiveTab}
       onSelectSymbolForTerminal={(sym) => openTerminalWithSymbol(sym)}
     />
@@ -1100,6 +1371,130 @@ export function App() {
         />
       </Suspense>
     )}
+    {isAdminSession && siteMaintenance?.enabled && (
+      <div
+        dir={lang === 'fa' ? 'rtl' : 'ltr'}
+        className="fixed bottom-4 start-4 z-[95] max-w-sm rounded-2xl bg-rose-600 text-white px-3.5 py-2.5 shadow-xl border border-rose-300/40 flex items-center justify-between gap-3 text-xs"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Wrench className="w-4 h-4 shrink-0" />
+          <span className="font-black truncate">
+            {lang === 'fa' ? 'سایت در حالت تعمیرات است (فقط ادمین)' : 'Maintenance Mode Active (Admin Only)'}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('admin')}
+          className="px-2.5 py-1 rounded-xl bg-white/20 hover:bg-white/30 font-black shrink-0"
+        >
+          {lang === 'fa' ? 'مدیریت' : 'Manage'}
+        </button>
+      </div>
+    )}
+    {(() => {
+      const activePopup = dashboard?.pendingPopups?.[0];
+      if (!activePopup) return null;
+      const isFa = lang === 'fa';
+      const sev = String(activePopup.severity || 'INFO').toUpperCase();
+      const sevStyle =
+        sev === 'URGENT'
+          ? {
+              border: 'border-rose-500/45',
+              badge: 'bg-rose-500/20 text-rose-400 border-rose-500/35',
+              iconBg: 'bg-rose-500/15 text-rose-400',
+              Icon: ShieldAlert,
+            }
+          : sev === 'WARNING'
+            ? {
+                border: 'border-amber-500/45',
+                badge: 'bg-amber-500/20 text-amber-400 border-amber-500/35',
+                iconBg: 'bg-amber-500/15 text-amber-400',
+                Icon: AlertTriangle,
+              }
+            : sev === 'SUCCESS'
+              ? {
+                  border: 'border-emerald-500/45',
+                  badge: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/35',
+                  iconBg: 'bg-emerald-500/15 text-emerald-400',
+                  Icon: CheckCircle2,
+                }
+              : sev === 'MAINTENANCE'
+                ? {
+                    border: 'border-violet-500/45',
+                    badge: 'bg-violet-500/20 text-violet-300 border-violet-500/35',
+                    iconBg: 'bg-violet-500/15 text-violet-300',
+                    Icon: Wrench,
+                  }
+                : {
+                    border: 'border-sky-500/45',
+                    badge: 'bg-sky-500/20 text-sky-400 border-sky-500/35',
+                    iconBg: 'bg-sky-500/15 text-sky-400',
+                    Icon: Info,
+                  };
+      const PopupIcon = sevStyle.Icon;
+      const canDismiss = activePopup.dismissible !== 0;
+      const title = isFa ? activePopup.title_fa : activePopup.title_en || activePopup.title_fa;
+      const body = isFa ? activePopup.body_fa : activePopup.body_en || activePopup.body_fa;
+      return (
+        <div
+          dir={isFa ? 'rtl' : 'ltr'}
+          className="fixed inset-0 z-[115] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div className={`max-w-md w-full panel rounded-3xl p-5 sm:p-6 border ${sevStyle.border} shadow-2xl space-y-4 tab-enter`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-11 h-11 rounded-2xl ${sevStyle.iconBg} grid place-items-center shrink-0`}>
+                  <PopupIcon className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black border ${sevStyle.badge}`}>
+                    <Sparkles className="w-3 h-3" />
+                    <span>{sev}</span>
+                  </span>
+                  <h3 className="text-sm sm:text-base font-black text-main mt-1">{title}</h3>
+                </div>
+              </div>
+              {canDismiss && (
+                <button
+                  type="button"
+                  disabled={popupAckBusy}
+                  onClick={() => void acknowledgePopup(activePopup)}
+                  className="w-8 h-8 rounded-xl surface-soft border hairline grid place-items-center text-dim hover:text-main shrink-0"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <p className="text-xs sm:text-sm text-sub leading-relaxed whitespace-pre-line">{body}</p>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t hairline">
+              {activePopup.cta_label_fa && activePopup.cta_route && (
+                <button
+                  type="button"
+                  disabled={popupAckBusy}
+                  onClick={() => void acknowledgePopup(activePopup, activePopup.cta_route)}
+                  className="px-4 py-2 rounded-xl btn-cobalt text-xs font-black inline-flex items-center gap-1.5"
+                >
+                  <span>{activePopup.cta_label_fa}</span>
+                  {isFa ? <ArrowLeft className="w-3.5 h-3.5" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={popupAckBusy}
+                onClick={() => void acknowledgePopup(activePopup)}
+                className="px-4 py-2 rounded-xl btn-emerald text-xs font-black inline-flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{isFa ? 'متوجه شدم' : 'Got it'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
     <FloatingToastHost dir={lang === 'fa' ? 'rtl' : 'ltr'} />
     </>
   );

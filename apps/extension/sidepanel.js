@@ -1,110 +1,135 @@
-const DEFAULT_SITE_URL = 'https://dollarino.pages.dev';
+const DEFAULT_SITE = 'https://dollarino.pages.dev';
+const ext = typeof browser !== 'undefined' ? browser : typeof chrome !== 'undefined' ? chrome : null;
 
-const frameEl = document.getElementById('simpleFrame');
-const loadingEl = document.getElementById('loadingOverlay');
-const errorEl = document.getElementById('errorBanner');
-const errorDescEl = document.getElementById('errorDesc');
-const settingsDrawer = document.getElementById('settingsDrawer');
-const siteUrlInput = document.getElementById('siteUrlInput');
+const frame = document.getElementById('sp-frame');
+const loader = document.getElementById('sp-loader');
+const reloadBtn = document.getElementById('sp-reload');
+const openTabLink = document.getElementById('sp-open-tab');
+const hostInput = document.getElementById('sp-host-input');
+const hostSaveBtn = document.getElementById('sp-host-save');
+const hostBar = document.getElementById('sp-host-bar');
+const nativePane = document.getElementById('sp-native-pane');
+const embedPane = document.getElementById('sp-embed-pane');
+const modeNativeBtn = document.getElementById('sp-mode-native');
+const modeEmbedBtn = document.getElementById('sp-mode-embed');
 
-let currentBaseUrl = DEFAULT_SITE_URL;
-let loadTimer = null;
+let currentView = 'native';
 
-function sanitizeBaseUrl(raw) {
-  const cleaned = String(raw || '').trim().replace(/\/+$/, '');
-  if (/^https?:\/\/[a-zA-Z0-9._:-]+$/i.test(cleaned)) {
-    return cleaned;
-  }
-  return DEFAULT_SITE_URL;
-}
-
-function buildSimpleModeUrl(base) {
-  const url = new URL(base);
-  url.searchParams.set('ui_mode', 'simple');
-  url.searchParams.set('embed', 'sidepanel');
-  return url.toString();
-}
-
-function loadSimpleFrame(baseUrl) {
-  currentBaseUrl = sanitizeBaseUrl(baseUrl);
-  if (siteUrlInput) siteUrlInput.value = currentBaseUrl;
-
-  loadingEl?.classList.remove('hidden');
-  errorEl?.classList.add('hidden');
-  if (loadTimer) clearTimeout(loadTimer);
-
-  loadTimer = setTimeout(() => {
-    loadingEl?.classList.add('hidden');
-  }, 9000);
-
-  if (frameEl) {
-    frameEl.src = buildSimpleModeUrl(currentBaseUrl);
-  }
-}
-
-frameEl?.addEventListener('load', () => {
-  if (loadTimer) clearTimeout(loadTimer);
-  loadingEl?.classList.add('hidden');
-  errorEl?.classList.add('hidden');
-});
-
-frameEl?.addEventListener('error', () => {
-  if (loadTimer) clearTimeout(loadTimer);
-  loadingEl?.classList.add('hidden');
-  if (errorDescEl) {
-    errorDescEl.textContent = `بارگذاری آدرس ${currentBaseUrl} ناموفق بود. اتصال اینترنت یا آدرس سرور را بررسی کنید.`;
-  }
-  errorEl?.classList.remove('hidden');
-});
-
-document.getElementById('btnReload')?.addEventListener('click', () => {
-  loadSimpleFrame(currentBaseUrl);
-});
-
-document.getElementById('btnRetry')?.addEventListener('click', () => {
-  loadSimpleFrame(currentBaseUrl);
-});
-
-document.getElementById('btnSettings')?.addEventListener('click', () => {
-  settingsDrawer?.classList.toggle('hidden');
-});
-
-document.getElementById('btnOpenSettingsErr')?.addEventListener('click', () => {
-  settingsDrawer?.classList.remove('hidden');
-});
-
-document.getElementById('btnOpenTab')?.addEventListener('click', () => {
-  const fullUrl = `${currentBaseUrl}/?ui_mode=simple`;
-  if (chrome?.tabs?.create) {
-    chrome.tabs.create({ url: fullUrl });
-  } else {
-    window.open(fullUrl, '_blank', 'noopener,noreferrer');
-  }
-});
-
-document.getElementById('btnSaveUrl')?.addEventListener('click', async () => {
-  const next = sanitizeBaseUrl(siteUrlInput?.value || DEFAULT_SITE_URL);
-  await chrome?.storage?.local?.set?.({ siteOrigin: next, apiBase: next });
-  settingsDrawer?.classList.add('hidden');
-  loadSimpleFrame(next);
-});
-
-document.querySelectorAll('.sp-preset').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    const preset = sanitizeBaseUrl(btn.getAttribute('data-url') || DEFAULT_SITE_URL);
-    if (siteUrlInput) siteUrlInput.value = preset;
-    await chrome?.storage?.local?.set?.({ siteOrigin: preset, apiBase: preset });
-    settingsDrawer?.classList.add('hidden');
-    loadSimpleFrame(preset);
+function storageGet(keys) {
+  return new Promise((resolve) => {
+    try {
+      if (ext?.storage?.local) {
+        if (ext.storage.local.get.length <= 1) {
+          Promise.resolve(ext.storage.local.get(keys)).then((r) => resolve(r || {})).catch(() => resolve({}));
+        } else {
+          ext.storage.local.get(keys, (res) => resolve(res || {}));
+        }
+        return;
+      }
+    } catch { /* fallback */ }
+    const out = {};
+    for (const k of keys) {
+      const v = localStorage.getItem(`dlr_ext_store_${k}`);
+      if (v !== null) out[k] = v;
+    }
+    resolve(out);
   });
+}
+
+function storageSet(obj) {
+  return new Promise((resolve) => {
+    try {
+      if (ext?.storage?.local) {
+        if (ext.storage.local.set.length <= 1) {
+          Promise.resolve(ext.storage.local.set(obj)).then(resolve).catch(resolve);
+        } else {
+          ext.storage.local.set(obj, resolve);
+        }
+        return;
+      }
+    } catch { /* fallback */ }
+    for (const [k, v] of Object.entries(obj)) {
+      localStorage.setItem(`dlr_ext_store_${k}`, String(v ?? ''));
+    }
+    resolve();
+  });
+}
+
+function buildSimpleUrl(rawBase) {
+  const clean = (rawBase || DEFAULT_SITE).trim().replace(/\/+$/, '');
+  const u = new URL(clean.startsWith('http') ? clean : `https://${clean}`);
+  u.searchParams.set('ui_mode', 'simple');
+  u.searchParams.set('embed', 'sidepanel');
+  return u.toString();
+}
+
+function loadSite(rawBase) {
+  try {
+    const url = buildSimpleUrl(rawBase);
+    if (loader) loader.classList.remove('hidden');
+    if (frame) frame.src = url;
+    if (openTabLink) openTabLink.href = url.replace('&embed=sidepanel', '');
+    if (hostInput) hostInput.value = new URL(url).origin;
+  } catch {
+    if (loader) loader.classList.remove('hidden');
+    if (frame) frame.src = buildSimpleUrl(DEFAULT_SITE);
+  }
+}
+
+async function switchView(nextView) {
+  currentView = nextView === 'embed' ? 'embed' : 'native';
+  if (currentView === 'embed') {
+    nativePane?.classList.add('hidden');
+    embedPane?.classList.remove('hidden');
+    hostBar?.classList.remove('hidden');
+    modeNativeBtn?.classList.remove('active');
+    modeEmbedBtn?.classList.add('active');
+    if (frame && !frame.src) {
+      const stored = await storageGet(['apiBase']);
+      loadSite(stored.apiBase || DEFAULT_SITE);
+    }
+  } else {
+    embedPane?.classList.add('hidden');
+    hostBar?.classList.add('hidden');
+    nativePane?.classList.remove('hidden');
+    modeEmbedBtn?.classList.remove('active');
+    modeNativeBtn?.classList.add('active');
+  }
+}
+
+frame?.addEventListener('load', () => {
+  loader?.classList.add('hidden');
 });
 
-(async () => {
-  try {
-    const stored = await chrome?.storage?.local?.get?.(['siteOrigin', 'apiBase']);
-    const initialUrl = sanitizeBaseUrl(stored?.siteOrigin || stored?.apiBase || DEFAULT_SITE_URL);
-    loadSimpleFrame(initialUrl);
-  } catch {
-    loadSimpleFrame(DEFAULT_SITE_URL);
+modeNativeBtn?.addEventListener('click', () => {
+  void switchView('native');
+});
+
+modeEmbedBtn?.addEventListener('click', () => {
+  void switchView('embed');
+});
+
+reloadBtn?.addEventListener('click', () => {
+  if (currentView === 'embed') {
+    loadSite(hostInput?.value || DEFAULT_SITE);
+  } else {
+    document.querySelector('[data-action="refresh-all"]')?.click();
   }
-})();
+});
+
+hostSaveBtn?.addEventListener('click', async () => {
+  try {
+    const url = buildSimpleUrl(hostInput?.value || DEFAULT_SITE);
+    const origin = new URL(url).origin;
+    await storageSet({ apiBase: origin });
+    loadSite(origin);
+  } catch {
+    loadSite(DEFAULT_SITE);
+  }
+});
+
+void storageGet(['apiBase']).then((stored) => {
+  const origin = stored.apiBase || DEFAULT_SITE;
+  if (hostInput) hostInput.value = origin;
+  if (openTabLink) openTabLink.href = `${origin.replace(/\/$/, '')}/?ui_mode=simple`;
+});

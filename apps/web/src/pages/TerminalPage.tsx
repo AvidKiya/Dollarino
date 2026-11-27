@@ -44,12 +44,13 @@ import { SmoothSlider } from '../components/SmoothSlider';
 import { ConfirmTradeSheet, type PendingTradeConfirmation } from '../components/ConfirmTradeSheet';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { TpSlModeSwitch } from '../components/TpSlModeSwitch';
+import { TrustWalletTradePlaybook } from '../components/TrustWalletTradePlaybook';
 import { apiFetch } from '../lib/api';
 import { coinDisplayName, formatTomanEq } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import { calcPctFromPrice, calcPriceFromPct, calcRoePct, formatLevelPrice, type TpSlInputMode } from '../lib/tpsl';
-import type { DashboardPayload, OpenTradeRow } from '../lib/types';
+import type { DashboardPayload, OpenTradeRow, TerminalTradeOverlay } from '../lib/types';
 
 interface OverviewResponse {
   market24h: {
@@ -119,6 +120,8 @@ export function TerminalPage({
   onToggleUiMode,
   symbol,
   setSymbol,
+  tradeOverlay,
+  onClearTradeOverlay,
   marketType = 'FUTURES',
   onChangeMarketType,
   data,
@@ -130,6 +133,8 @@ export function TerminalPage({
   onToggleUiMode?: (m: 'simple' | 'pro') => void;
   symbol: string;
   setSymbol: (sym: string) => void;
+  tradeOverlay?: TerminalTradeOverlay | null;
+  onClearTradeOverlay?: () => void;
   marketType?: 'SPOT' | 'FUTURES';
   onChangeMarketType?: (next: 'SPOT' | 'FUTURES') => Promise<void>;
   data: DashboardPayload;
@@ -137,13 +142,20 @@ export function TerminalPage({
   onRefresh: () => Promise<void>;
 }) {
   const isFa = lang === 'fa';
-  const [tf, setTf] = useState<Timeframe>('15m');
+  const [tf, setTf] = useState<Timeframe>(() => tradeOverlay?.timeframe || '15m');
   const [showSimpleChart, setShowSimpleChart] = useState(false);
   const [rightIntel, setRightIntel] = useState<'positions' | 'ai' | 'book' | 'script' | 'tools'>('ai');
   const [snap, setSnap] = useState<OverviewResponse | null>(null);
   const [loadingSymbol, setLoadingSymbol] = useState(false);
-  const [showEma] = useState(true);
-  const [showKbos, setShowKbos] = useState(true);
+  const [showEma] = useState(false);
+  const [showKbos, setShowKbos] = useState(false);
+  const [showOverlaySignalText, setShowOverlaySignalText] = useState(false);
+
+  useEffect(() => {
+    if (tradeOverlay?.timeframe) {
+      setTf(tradeOverlay.timeframe);
+    }
+  }, [tradeOverlay?.id, tradeOverlay?.symbol, tradeOverlay?.timeframe]);
   const [layoutMode, setLayoutMode] = useState<'1x1' | '2x1' | '2x2'>('1x1');
   const [pineDockOpen, setPineDockOpen] = useState(false);
   const [pendingPineSample, setPendingPineSample] = useState<{
@@ -531,6 +543,7 @@ export function TerminalPage({
 
   const chartLevels: ChartLevels = useMemo(() => {
     const pos = data.openTrades.find((p) => p.symbol === symbol);
+    const activeOv = tradeOverlay && tradeOverlay.symbol === symbol ? tradeOverlay : null;
     if (aiAnalysis && (aiAnalysis.entry || aiAnalysis.stopLoss || aiAnalysis.tp1)) {
       return {
         entry: aiAnalysis.entry,
@@ -542,6 +555,15 @@ export function TerminalPage({
         resistances: aiAnalysis.resistances,
       };
     }
+    if (activeOv) {
+      return {
+        entry: activeOv.entryPrice ?? (pos ? Number(pos.entry_price) : undefined),
+        stopLoss: activeOv.stopLoss ?? (pos ? Number(pos.current_stop_loss) : undefined),
+        tp1: activeOv.tp1 ?? (pos ? Number(pos.tp1) : undefined),
+        tp2: activeOv.tp2 ?? (pos?.tp2 ? Number(pos.tp2) : undefined),
+        tp3: activeOv.tp3 ?? (pos?.tp3 ? Number(pos.tp3) : undefined),
+      };
+    }
     return {
       entry: pos ? Number(pos.entry_price) : undefined,
       stopLoss: pos ? Number(pos.current_stop_loss) : undefined,
@@ -549,7 +571,7 @@ export function TerminalPage({
       tp2: pos?.tp2 ? Number(pos.tp2) : undefined,
       tp3: pos?.tp3 ? Number(pos.tp3) : undefined,
     };
-  }, [aiAnalysis, data.openTrades, symbol]);
+  }, [aiAnalysis, data.openTrades, symbol, tradeOverlay]);
 
   const runPineSampleImmediate = async (sample: SampleCustomStrategy) => {
     const sName = isFa ? sample.nameFa : sample.nameEn;
@@ -1047,6 +1069,61 @@ export function TerminalPage({
         </div>
       </div>
 
+      {/* Trade & Signal Overlay Banner when jumped from an Active Position */}
+      {tradeOverlay && tradeOverlay.symbol === symbol && (
+        <div className="panel rounded-2xl px-4 py-3 border border-sky-500/35 bg-sky-500/8 space-y-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-0.5 rounded-lg bg-sky-500/20 text-brand font-black text-[10px]">
+                {tradeOverlay.sourceLabel || (isFa ? 'معامله فعال' : 'Active Trade')}
+              </span>
+              <strong className="text-main">{tradeOverlay.symbol}</strong>
+              {tradeOverlay.direction && (
+                <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${tradeOverlay.direction === 'LONG' ? 'bg-jade/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
+                  {tradeOverlay.direction}
+                </span>
+              )}
+              {tradeOverlay.timeframe && (
+                <span dir="ltr" className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 font-black text-[10px]">
+                  TF: {tradeOverlay.timeframe}
+                </span>
+              )}
+              <span dir="ltr" className="font-num text-[11px] text-dim">
+                Entry ${fmtPx(tradeOverlay.entryPrice)} · SL ${fmtPx(tradeOverlay.stopLoss)} · TP1 ${fmtPx(tradeOverlay.tp1)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {tradeOverlay.signalText && (
+                <button
+                  type="button"
+                  onClick={() => setShowOverlaySignalText((v) => !v)}
+                  className="px-2.5 py-1 rounded-lg surface-soft border hairline text-[10.5px] font-bold text-main hover:border-[var(--gold)]"
+                >
+                  {showOverlaySignalText
+                    ? isFa ? 'بستن متن سیگنال' : 'Hide Signal'
+                    : isFa ? 'متن و دلیل سیگنال' : 'Signal Thesis'}
+                </button>
+              )}
+              {onClearTradeOverlay && (
+                <button
+                  type="button"
+                  onClick={onClearTradeOverlay}
+                  className="p-1 rounded-lg btn-ghost text-dim hover:text-main"
+                  title={isFa ? 'بستن راهنمای معامله' : 'Dismiss'}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {showOverlaySignalText && tradeOverlay.signalText && (
+            <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-sub bg-[var(--soft)] rounded-xl p-3 border hairline max-h-48 overflow-y-auto">
+              {tradeOverlay.signalText}
+            </pre>
+          )}
+        </div>
+      )}
+
       {/* Main Equal-Height Pro Grid: 8 Columns TradingView Superchart + Pine Dock | 4 Columns Order Ticket */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
         {/* Left 8 Columns: TradingView Superchart / Multi-Chart Grid + Pine Dock + Live Bid/Ask Pulse */}
@@ -1090,10 +1167,10 @@ export function TerminalPage({
                 void askChartAI();
               }}
               onClearCustomOverlay={() => setCustomChartOverlay(null)}
-              height={520}
+              height={460}
             />
           ) : (
-            <div className="h-[540px] grid place-items-center text-xs text-dim">
+            <div className="h-[480px] grid place-items-center text-xs text-dim">
               <div className="flex flex-col items-center gap-2">
                 <RefreshCw className="w-5 h-5 animate-spin text-[var(--gold)]" />
                 <span>{isFa ? `در حال دریافت کندل‌های زنده ${symbol}...` : `Loading live ${symbol} chart...`}</span>
@@ -2090,6 +2167,8 @@ export function TerminalPage({
         onConfirm={placeOrder}
         onCancel={() => setPendingConfirm(null)}
       />
+
+      <TrustWalletTradePlaybook lang={lang} focusMode="FUTURES" compact />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import type { DollarinoSignal } from '@dollarino/core';
 import { Hono } from 'hono';
 import { requireAuth, type AppVariables } from '../auth.js';
 import { hmacSha256Hex, randomId, sha256Hex, verifyPassword } from '../crypto.js';
+import { enforceRateLimit } from '../security.js';
 import { fetchDexTrendingOverview, searchDexPairs } from '../dex/screener.js';
 import {
   baselineWalletTxIfEmpty,
@@ -462,7 +463,9 @@ copyTradeRoutes.post('/rules', async (c) => {
   }
 
   const executionMode =
-    body.executionMode === 'AUTO_COPY_VAULT' || body.executionMode === 'AUTO_EVM_ALLOWANCE'
+    body.executionMode === 'PAPER_SIMULATOR' ||
+    body.executionMode === 'AUTO_COPY_VAULT' ||
+    body.executionMode === 'AUTO_EVM_ALLOWANCE'
       ? body.executionMode
       : 'TRUST_ONE_CLICK';
 
@@ -722,6 +725,13 @@ copyTradeRoutes.get('/vault', async (c) => {
 
 copyTradeRoutes.post('/vault/request-pin', async (c) => {
   const user = c.get('user');
+  if (user.authMethod === 'extension_key') {
+    return c.json({ error: 'درخواست کد خزانه فقط با نشست اصلی وب/اپ مجاز است.', code: 'EXTENSION_KEY_SCOPE_RESTRICTED' }, 403);
+  }
+  const rl = await enforceRateLimit(c.env, `vaultpin_req:${user.id}`, 5, 300);
+  if (!rl.allowed) {
+    return c.json({ error: `تعداد درخواست کد تایید زیاد است. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   await ensureUserCopyVault(c.env, user.id);
   const pin = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0]! % 900000));
   const pinHash = await sha256Hex(`${user.id}:${pin}`);
@@ -844,6 +854,13 @@ copyTradeRoutes.get('/token-safety', async (c) => {
 
 copyTradeRoutes.post('/vault/export-keys', async (c) => {
   const user = c.get('user');
+  if (user.authMethod === 'extension_key') {
+    return c.json({ error: 'استخراج کلید خزانه با کلید اکستنشن مجاز نیست.', code: 'EXTENSION_KEY_SCOPE_RESTRICTED' }, 403);
+  }
+  const rl = await enforceRateLimit(c.env, `vault2fa:${user.id}`, 8, 300);
+  if (!rl.allowed) {
+    return c.json({ error: `تلاش بیش از حد برای تایید خزانه. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   const body = (await c.req.json().catch(() => ({}))) as {
     password?: string;
     pinCode?: string;
@@ -867,7 +884,15 @@ copyTradeRoutes.post('/vault/export-keys', async (c) => {
       Date.parse(`${vSec.vault_pin_expires_at.replace(' ', 'T')}Z`) > Date.now()
   );
 
-  if (body.requireVerification || pinActive || body.password || body.pinCode) {
+  const mustVerify = Boolean(
+    uSec?.has_custom_password === 1 ||
+      pinActive ||
+      body.requireVerification ||
+      body.password !== undefined ||
+      body.pinCode !== undefined
+  );
+
+  if (mustVerify) {
     let verified = false;
     if (body.pinCode && pinActive) {
       const candidateHash = await sha256Hex(`${user.id}:${String(body.pinCode).trim()}`);
@@ -914,6 +939,13 @@ copyTradeRoutes.post('/vault/export-keys', async (c) => {
 
 copyTradeRoutes.post('/vault/withdraw', async (c) => {
   const user = c.get('user');
+  if (user.authMethod === 'extension_key') {
+    return c.json({ error: 'برداشت از خزانه با کلید اکستنشن مجاز نیست.', code: 'EXTENSION_KEY_SCOPE_RESTRICTED' }, 403);
+  }
+  const rl = await enforceRateLimit(c.env, `vaultwd:${user.id}`, 8, 300);
+  if (!rl.allowed) {
+    return c.json({ error: `تلاش بیش از حد برای برداشت. لطفاً ${rl.retryAfterSec} ثانیه صبر کنید.` }, 429);
+  }
   const body = (await c.req.json().catch(() => ({}))) as {
     chainId?: string;
     toAddress?: string;

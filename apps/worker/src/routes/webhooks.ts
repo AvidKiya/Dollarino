@@ -12,6 +12,7 @@ import { decryptVaultJson, encryptVaultJson, maskSecret, randomId } from '../cry
 import { executeSignalForUser, logAudit, notifyUserTelegram } from '../engine/executor.js';
 import type { Env } from '../env.js';
 import { fetchPublicKlines } from '../exchanges/paper.js';
+import { timingSafeEqual } from '../security.js';
 import { TelegramBotClient } from '../telegram/client.js';
 import { handleTelegramUpdate } from '../telegram/handler.js';
 import { publishAlertToRadarChannel } from '../telegram/publisher.js';
@@ -131,8 +132,8 @@ webhookRoutes.post('/telegram', async (c) => {
   }
   const expectedSecret = await resolveTelegramWebhookSecret(c.env);
   if (expectedSecret) {
-    const hdr = c.req.header('X-Telegram-Bot-Api-Secret-Token');
-    if (hdr !== expectedSecret) {
+    const hdr = c.req.header('X-Telegram-Bot-Api-Secret-Token') || '';
+    if (!hdr || !(await timingSafeEqual(hdr, expectedSecret))) {
       return c.json({ error: 'Unauthorized webhook secret' }, 403);
     }
   }
@@ -151,8 +152,10 @@ webhookRoutes.post('/telegram/:botId', async (c) => {
   ).bind(botId).first<{ encrypted_bot_token: string; webhook_secret: string; is_active: number }>();
 
   if (!row || !row.is_active) return c.json({ error: 'Bot inactive or not found' }, 404);
-  const hdr = c.req.header('X-Telegram-Bot-Api-Secret-Token');
-  if (hdr && hdr !== row.webhook_secret) return c.json({ error: 'Forbidden' }, 403);
+  const hdr = c.req.header('X-Telegram-Bot-Api-Secret-Token') || '';
+  if (!row.webhook_secret || !hdr || !(await timingSafeEqual(hdr, row.webhook_secret))) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
 
   const { botToken } = await decryptVaultJson<{ botToken: string }>(row.encrypted_bot_token, c.env.MASTER_ENCRYPTION_KEY);
   if (!botToken) return c.json({ error: 'Invalid bot token vault' }, 500);

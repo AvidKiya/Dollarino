@@ -70,6 +70,8 @@ export function initTelegramMiniApp(bgColor?: string): TelegramWebAppApi | null 
 export function tgHaptic(style: 'light' | 'medium' | 'heavy' = 'light') {
   try {
     getTelegramWebApp()?.HapticFeedback?.impactOccurred?.(style);
+    const native = (window as unknown as { DollarinoNative?: { haptic?: (s: string) => void } }).DollarinoNative;
+    native?.haptic?.(style);
   } catch {
     /* ignore */
   }
@@ -78,6 +80,8 @@ export function tgHaptic(style: 'light' | 'medium' | 'heavy' = 'light') {
 export function tgNotifyHaptic(type: 'success' | 'error' | 'warning') {
   try {
     getTelegramWebApp()?.HapticFeedback?.notificationOccurred?.(type);
+    const native = (window as unknown as { DollarinoNative?: { haptic?: (s: string) => void } }).DollarinoNative;
+    native?.haptic?.(type);
   } catch {
     /* ignore */
   }

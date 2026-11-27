@@ -62,6 +62,7 @@ import {
   getUserServerFeeSummary,
   SERVER_PROFIT_FEE_PCT,
 } from '../services/server-fee.js';
+import { computeUnifiedPortfolioAccounting } from '../services/portfolio-accounting.js';
 import { getFounderProfile } from '../services/founder-profile.js';
 import { syncAutoTopSiteTraders } from '../services/site-traders.js';
 import {
@@ -89,12 +90,14 @@ import {
   exchangeSelectionKeyboard,
   formatAccountCard,
   formatBalanceCard,
+  formatSimpleSiteDashboard,
   formatToman,
   mainMenuKeyboard,
   miniAppInlineKeyboard,
   OFFICIAL_BOT_HANDLE,
   preAuthIntroMessage,
   settingsKeyboard,
+  simpleSiteHomeInlineKeyboard,
   welcomeMessage,
 } from './formatter.js';
 import {
@@ -1278,25 +1281,32 @@ async function showExtensionWidgetsMenu(
   }
   const base = webAppUrl.startsWith('https://') ? webAppUrl : 'https://dollarino.pages.dev';
   const msg =
-    `🧩 **اکستنشن مرورگر و ویجت‌های سریع موبایل دلارینو**\n\n` +
-    `🔑 **کلید اتصال امن اکستنشن کروم/اج شما:**\n` +
+    `🧩 **اکستنشن مرورگر V11.9.1 و ویجت‌های موبایل دلارینو**\n\n` +
+    `✨ نسخه V11.9.1 اکستنشن برای **Chrome**، **Firefox** و **Edge** شامل حالت ساده کامل، ثبت‌نام/ورود، ۵ موتور همزمان و تراز ۵ بخش آماده نصب است!\n\n` +
+    `🔑 **کلید اتصال امن اکستنشن شما:**\n` +
     `\`${extKey}\`\n` +
-    `(این کلید را در افزونه Dollarino Companion وارد کنید تا ربات را از هر تب مرورگر روشن/خاموش کنید، توکن‌های داغ DexScreener را ببینید و Kill Switch بزنید.)\n\n` +
-    `📱 **لینک ویجت‌های سریع موبایل (PWA Add to Home Screen):**\n` +
-    `• کنترل سریع روشن/خاموش ربات: ${base}/?quick=bot-toggle\n` +
-    `• گزارش لحظه‌ای سود و موجودی: ${base}/?quick=report\n` +
+    `(هم از طریق نام کاربری/رمز عبور و هم با کلید بالا می‌توانید مستقیم داخل اکستنشن وارد شوید.)\n\n` +
+    `📱 **لینک ویجت‌های سریع موبایل (PWA):**\n` +
+    `• کنترل سریع ربات: ${base}/?quick=bot-toggle\n` +
+    `• گزارش لحظه‌ای و تراز ۵ بخش: ${base}/?quick=report\n` +
     `• رادار توکن داغ DexScreener: ${base}/?quick=dex\n` +
-    `• دکمه توقف اضطراری (Kill Switch): ${base}/?quick=kill-switch`;
+    `• توقف اضطراری (Kill Switch): ${base}/?quick=kill-switch`;
 
   const kb: InlineKeyboardButton[][] = [
     [{ text: '🔄 تولید کلید جدید اکستنشن', callback_data: 'tg_ext_rotate', style: 'primary' }],
     ...(webAppUrl.startsWith('https://')
       ? [
-          [{ text: '📱 باز کردن داشبورد ویجت‌های موبایل', web_app: { url: `${base}/?quick=bot-toggle` }, style: 'success' as const }],
-          [{ text: '📦 دانلود فایل اکستنشن کروم (ZIP)', url: `${base}/downloads/dollarino-extension.zip` }],
+          [
+            { text: '📦 اکستنشن کروم (Chrome)', url: `${base}/downloads/dollarino-extension.zip`, style: 'primary' as const },
+            { text: '🦊 اکستنشن فایرفاکس (Firefox)', url: `${base}/downloads/dollarino-extension-firefox.zip`, style: 'success' as const },
+          ],
+          [
+            { text: '🌐 اکستنشن اج (Edge)', url: `${base}/downloads/dollarino-extension-edge.zip` },
+            { text: '📱 ویجت‌های موبایل', web_app: { url: `${base}/?quick=bot-toggle` } },
+          ],
         ]
       : []),
-    [{ text: '🔙 بازگشت به منوی سریع', callback_data: 'tg_acc:tools' }],
+    [{ text: getUserUiMode(user) === 'simple' ? '🔙 بازگشت به پنل ساده' : '🔙 بازگشت به منوی سریع', callback_data: getUserUiMode(user) === 'simple' ? 'tg_simple_home' : 'tg_acc:tools' }],
   ];
 
   if (editMsgId) await bot.editMessageText(chatId, editMsgId, msg, kb).catch(() => bot.sendMessage(chatId, msg, { inlineKeyboard: kb }));
@@ -1435,7 +1445,397 @@ async function showEnginesToggleMenu(
       { text: isRunning ? '🔴 توقف ربات' : '🟢 روشن کردن ربات با موتورهای بالا', callback_data: isRunning ? 'toggle_auto_off' : 'toggle_auto_on', style: isRunning ? 'danger' : 'success' },
       { text: '💰 بودجه مجاز و اهرم', callback_data: 'tg_trade_quantities', style: 'primary' },
     ],
+    [{ text: '🔙 بازگشت به پنل ساده', callback_data: 'tg_simple_home' }],
   ];
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
+async function showSimpleSiteHome(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  tgId: string,
+  webAppUrl: string,
+  editMsgId?: number
+) {
+  const [cfg, engState, feeSummary, iranRate, entitlement, gate] = await Promise.all([
+    env.DB.prepare('SELECT * FROM bot_configs WHERE user_id = ?').bind(user.id).first<UserBotConfigRow>().catch(() => null),
+    getActiveEngineState(env.DB, user.id),
+    getUserServerFeeSummary(env.DB, user.id),
+    fetchIranUsdtRate(),
+    resolveUserEntitlement(env.DB, {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      role: (user.role as AuthUser['role']) || 'user',
+      telegramId: tgId,
+    }),
+    checkPreTradeOnboardingGate(env.DB, user.id),
+  ]);
+
+  const tradingMode: 'PAPER' | 'LIVE' = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+  const execMode: 'AUTO' | 'MANUAL_CONFIRM' = cfg?.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';
+  const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+
+  let balanceUsd = Number(cfg?.paper_balance ?? 10000);
+  if (tradingMode === 'LIVE') {
+    const { adapter } = await resolveUserExchangeAdapter(env, user.id, undefined).catch(() => ({ adapter: null }));
+    if (adapter) {
+      const bal = await adapter.getBalance(cfg?.market_type ?? 'FUTURES').catch(() => null);
+      if (bal && Number.isFinite(Number(bal.total))) balanceUsd = Number(bal.total);
+    }
+  }
+
+  const pb = await computeUnifiedPortfolioAccounting(env, user.id, {
+    tradingMode,
+    freeBalanceUsd: balanceUsd,
+    botBudgetMode: cfg?.bot_budget_mode,
+    botBudgetUsd: cfg?.bot_budget_usd,
+  }).catch(() => null);
+  const modes = pb?.modes || {
+    futures: { openCount: 0, lockedMarginUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0 },
+    spot: { openCount: 0, lockedMarginUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0 },
+    dex: { openCount: 0, lockedMarginUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0 },
+    sniper: { openCount: 0, lockedMarginUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0 },
+    copy: { openCount: 0, lockedMarginUsd: 0, realizedPnlUsd: 0, unrealizedPnlUsd: 0 },
+  };
+  const totalOpenCount =
+    Number(modes.futures.openCount || 0) +
+    Number(modes.spot.openCount || 0) +
+    Number(modes.dex.openCount || 0) +
+    Number(modes.sniper.openCount || 0) +
+    Number(modes.copy.openCount || 0);
+  const netPnlUsd = pb ? Number(pb.realizedPnlUsd + pb.unrealizedPnlUsd) : 0;
+
+  const ENGINE_SHORT: Record<string, string> = {
+    CENTRAL_AI: 'AI مرکزی',
+    STRATEGY: 'دُرنا V1',
+    MY_AI: 'هوش من',
+    COPY_TRADE: 'کپی‌ترید',
+    LISTING_SNIPER: 'اسنایپر',
+  };
+  const activeLabels = engState.activeEngines.map((e) => ENGINE_SHORT[e] || e);
+
+  const text = formatSimpleSiteDashboard({
+    isRunning,
+    tradingMode,
+    execMode,
+    balanceUsd: pb ? pb.totalEquityUsd : balanceUsd,
+    tomanRate: iranRate.usdtIrt,
+    budgetMode: cfg?.bot_budget_mode === 'FIXED_USD' ? 'FIXED_USD' : 'FULL_BALANCE',
+    budgetUsd: Number(cfg?.bot_budget_usd ?? 0),
+    maxLeverage: Number(cfg?.max_leverage ?? 10),
+    useSignalLeverage: Boolean(cfg?.use_signal_leverage ?? 1),
+    activeEngineLabels: activeLabels,
+    freeTradesRemaining: feeSummary.freeTradesRemaining,
+    freeTradesLimit: feeSummary.freeTradesLimit,
+    isFeeExempt: Boolean(feeSummary.feeExempt),
+    onboardingDone: gate.ok,
+    modes: {
+      futures: { openCount: modes.futures.openCount, lockedMarginUsd: modes.futures.lockedMarginUsd, netUsd: modes.futures.realizedPnlUsd + modes.futures.unrealizedPnlUsd },
+      spot: { openCount: modes.spot.openCount, lockedMarginUsd: modes.spot.lockedMarginUsd, netUsd: modes.spot.realizedPnlUsd + modes.spot.unrealizedPnlUsd },
+      dex: { openCount: modes.dex.openCount, lockedMarginUsd: modes.dex.lockedMarginUsd, netUsd: modes.dex.realizedPnlUsd + modes.dex.unrealizedPnlUsd },
+      sniper: { openCount: modes.sniper.openCount, lockedMarginUsd: modes.sniper.lockedMarginUsd, netUsd: modes.sniper.realizedPnlUsd + modes.sniper.unrealizedPnlUsd },
+      copy: { openCount: modes.copy.openCount, lockedMarginUsd: modes.copy.lockedMarginUsd, netUsd: modes.copy.realizedPnlUsd + modes.copy.unrealizedPnlUsd },
+    },
+    totalOpenCount,
+    netPnlUsd,
+  });
+
+  const kb = simpleSiteHomeInlineKeyboard({
+    webAppUrl,
+    isBotRunning: isRunning,
+    activeEnginesCount: engState.activeEngines.length,
+    totalOpenCount,
+    onboardingDone: gate.ok,
+  });
+
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
+async function showSimpleWalletAndBudgetSheet(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  editMsgId?: number
+) {
+  const [cfg, iranRate] = await Promise.all([
+    env.DB.prepare('SELECT trading_mode, trade_execution_mode, paper_balance, bot_budget_mode, bot_budget_usd, max_leverage, use_signal_leverage FROM bot_configs WHERE user_id = ?')
+      .bind(user.id)
+      .first<{
+        trading_mode?: string;
+        trade_execution_mode?: string;
+        paper_balance?: string;
+        bot_budget_mode?: string;
+        bot_budget_usd?: number;
+        max_leverage?: number;
+        use_signal_leverage?: number;
+      }>()
+      .catch(() => null),
+    fetchIranUsdtRate(),
+  ]);
+  const isLive = cfg?.trading_mode === 'LIVE';
+  const isManual = cfg?.trade_execution_mode === 'MANUAL_CONFIRM';
+  const demoBal = Number(cfg?.paper_balance ?? 10000);
+  const budgetTxt = cfg?.bot_budget_mode === 'FIXED_USD' && Number(cfg?.bot_budget_usd || 0) > 0
+    ? `$${Number(cfg.bot_budget_usd).toLocaleString('en-US')}`
+    : 'کل موجودی';
+  const levTxt = cfg?.use_signal_leverage ? 'پیشنهادی مدیریت سرمایه' : `${Number(cfg?.max_leverage || 10)}× دستی`;
+
+  const text =
+    `💼 **مدیریت حساب دمو / واقعی و بودجه (حالت ساده)**\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `• حساب فعال فعلی: ${isLive ? '🛡 **واقعی (Trust Wallet)**' : `🧪 **دمو آزمایشی ($${demoBal.toLocaleString('en-US')} ≈ ${formatToman(demoBal, iranRate.usdtIrt)} ت)**`}\n` +
+    `• روش اجرا: ${isManual ? '✋ قبل از باز شدن بپرسه (تایید دستی)' : '⚡ خودکار ۲۴ ساعته'}\n` +
+    `• بودجه مجاز ربات: **${budgetTxt}** | اهرم: **${levTxt}**\n` +
+    `• کیف‌پول Trust Wallet: \`${user.trust_wallet_address || 'هنوز متصل نشده'}\`\n\n` +
+    `از دکمه‌های شیشه‌ای زیر هر تغییر را با ۱ لمس اعمال کنید:`;
+
+  const kb: InlineKeyboardButton[][] = [
+    [
+      { text: `${!isLive ? '✅ ' : ''}🧪 حساب دمو`, callback_data: 'tg_simple_set_mode:PAPER', style: !isLive ? 'success' : undefined },
+      { text: `${isLive ? '✅ ' : ''}🛡 واقعی Trust Wallet`, callback_data: 'tg_simple_set_mode:LIVE', style: isLive ? 'success' : 'primary' },
+    ],
+    [
+      { text: `${!isManual ? '✅ ' : ''}⚡ خودکار ۲۴/۷`, callback_data: 'tg_simple_exec:AUTO', style: !isManual ? 'primary' : undefined },
+      { text: `${isManual ? '✅ ' : ''}✋ قبلش بپرسه`, callback_data: 'tg_simple_exec:MANUAL_CONFIRM', style: isManual ? 'primary' : undefined },
+    ],
+    [
+      { text: '💵 تنظیم موجودی دمو ($50–$10M)', callback_data: 'tg_simple_demo_bal' },
+      { text: '🎚 بودجه و اهرم ربات', callback_data: 'tg_trade_quantities', style: 'primary' },
+    ],
+    [
+      { text: '🛡 اتصال/ویرایش Trust Wallet', callback_data: 'tg_tw_menu' },
+      { text: '🔙 بازگشت به پنل ساده', callback_data: 'tg_simple_home' },
+    ],
+  ];
+
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
+async function showSimplePositionsAndAccounting(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  webAppUrl: string,
+  editMsgId?: number
+) {
+  const cfg = await env.DB.prepare('SELECT trading_mode, paper_balance FROM bot_configs WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ trading_mode?: string; paper_balance?: string }>()
+    .catch(() => null);
+  const mode: 'PAPER' | 'LIVE' = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
+  const [pb, openCex, openDex, openCopy] = await Promise.all([
+    computeUnifiedPortfolioAccounting(env, user.id, {
+      tradingMode: mode,
+      freeBalanceUsd: Number(cfg?.paper_balance ?? 10000),
+    }).catch(() => null),
+    env.DB.prepare(
+      `SELECT id, symbol, direction, market_type, entry_price, leverage, margin_used FROM trades WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 6`
+    ).bind(user.id).all<{ id: string; symbol: string; direction: string; market_type?: string; entry_price: string; leverage: number; margin_used: string }>().catch(() => ({ results: [] })),
+    env.DB.prepare(
+      `SELECT id, token_symbol, chain_id, amount_usd FROM dex_trades WHERE user_id = ? AND status = 'OPEN' ORDER BY created_at DESC LIMIT 4`
+    ).bind(user.id).all<{ id: string; token_symbol: string; chain_id: string; amount_usd: number }>().catch(() => ({ results: [] })),
+    env.DB.prepare(
+      `SELECT id, token_symbol, trader_label, execution_mode, entry_amount_usd FROM copy_positions_v2 WHERE user_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 4`
+    ).bind(user.id).all<{ id: string; token_symbol: string; trader_label: string; execution_mode: string; entry_amount_usd: number }>().catch(() => ({ results: [] })),
+  ]);
+
+  const modes = pb?.modes;
+  const totalNetUsd = pb ? pb.realizedPnlUsd + pb.unrealizedPnlUsd : 0;
+  const acctLines = modes && pb
+    ? `📊 **تراز یکپارچه ۵ موتور (${pb.reconciliationOk ? 'تطبیق دقیق ✓' : 'در حال محاسبه'}):**\n` +
+      `• آزاد: \`$${pb.freeBalanceUsd.toFixed(2)}\` | درگیر: \`$${pb.lockedMarginUsd.toFixed(2)}\` | خالص: \`${totalNetUsd >= 0 ? '+' : '-'}$${Math.abs(totalNetUsd).toFixed(2)}\`\n` +
+      `1️⃣ فیوچرز: ${modes.futures.openCount} باز / ${modes.futures.closedCount} بسته (WR ${modes.futures.winRatePct.toFixed(0)}%)\n` +
+      `2️⃣ اسپات: ${modes.spot.openCount} باز / ${modes.spot.closedCount} بسته\n` +
+      `3️⃣ DEX: ${modes.dex.openCount} باز / ${modes.dex.closedCount} بسته\n` +
+      `4️⃣ اسنایپر: ${modes.sniper.openCount} باز / ${modes.sniper.closedCount} بسته\n` +
+      `5️⃣ کپی‌ترید: ${modes.copy.openCount} باز / ${modes.copy.closedCount} بسته\n`
+    : '';
+
+  const openLines: string[] = [];
+  for (const t of openCex.results) {
+    openLines.push(`• [CEX] **${t.symbol}** (${t.direction} ${t.leverage}x) — مارجین $${Number(t.margin_used || 0).toFixed(1)}`);
+  }
+  for (const t of openDex.results) {
+    openLines.push(`• [DEX] **${t.token_symbol}** (${t.chain_id}) — $${Number(t.amount_usd || 0).toFixed(1)}`);
+  }
+  for (const t of openCopy.results) {
+    openLines.push(`• [COPY] **${t.token_symbol}** (${t.trader_label}${t.execution_mode === 'PAPER_SIMULATOR' ? ' · دمو' : ''}) — $${Number(t.entry_amount_usd || 0).toFixed(1)}`);
+  }
+
+  const text =
+    `${acctLines}\n` +
+    (openLines.length
+      ? `📈 **معاملات باز فعلی (${openLines.length}):**\n${openLines.join('\n')}`
+      : `📭 در حال حاضر معامله بازی در حساب ${mode === 'LIVE' ? 'واقعی' : 'دمو'} ندارید.`);
+
+  const kb: InlineKeyboardButton[][] = openCex.results.slice(0, 4).map((t) => [
+    { text: `❌ بستن ${t.symbol} (${t.direction})`, callback_data: `close_pos:${t.id}`, style: 'danger' as const },
+  ]);
+  if (openCex.results.length > 0) {
+    kb.push([{ text: '🛑 بستن همه معاملات باز (CEX)', callback_data: 'tg_close_all_confirm', style: 'danger' }]);
+  }
+  kb.push([
+    { text: '📊 صدور کارت سود', callback_data: 'tg_profit_card', style: 'primary' },
+    { text: '🔄 تازه‌سازی', callback_data: 'tg_simple_positions' },
+  ]);
+  if (webAppUrl.startsWith('https://')) {
+    kb.push([
+      { text: '🚀 مشاهده کامل در مینی‌اپ', web_app: { url: `${webAppUrl.replace(/\/$/, '')}/?tab=portfolio` }, style: 'success' },
+      { text: '🔙 بازگشت به پنل ساده', callback_data: 'tg_simple_home' },
+    ]);
+  } else {
+    kb.push([{ text: '🔙 بازگشت به پنل ساده', callback_data: 'tg_simple_home' }]);
+  }
+
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
+async function showSimpleMoreToolsSheet(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  webAppUrl: string,
+  editMsgId?: number
+) {
+  const uiMode = getUserUiMode(user);
+  const text =
+    `🛠 **ابزارها و امکانات دلارینو V11.9.1**\n\n` +
+    `تمام بخش‌های زیر با حساب وب و اکستنشن شما همگام هستند؛ ابزار دلخواه را انتخاب کنید:`;
+  const kb: InlineKeyboardButton[][] = [
+    [
+      { text: '🧠 چت AI و تحلیل عکس چارت', callback_data: 'tg_ai_chat', style: 'primary' },
+      { text: '🤖 هوش مصنوعی شخصی من', callback_data: 'tg_myai', style: 'success' },
+    ],
+    [
+      { text: '🏆 کپی‌ترید و سبد نهنگ‌ها (V2)', callback_data: 'tg_copy_smart_v2', style: 'primary' },
+      { text: '🔍 رادار DEX & خرید مستقیم', callback_data: 'tg_dex_trending', style: 'success' },
+    ],
+    [
+      { text: '🛡 راهنمای ۵ بخش Trust Wallet', callback_data: 'tg_tw_playbook' },
+      { text: '💰 کارمزد ۳٪ و رایگان‌ها', callback_data: 'tg_open_sub' },
+    ],
+    [
+      { text: '🧩 اکستنشن کروم / فایرفاکس / اج', callback_data: 'tg_ext_widgets' },
+      { text: '📡 آلرت رایگان TradingView', callback_data: 'tg_tv_alerts' },
+    ],
+    [
+      { text: '💬 پشتیبانی آنلاین (AI + مدیر)', callback_data: 'tg_support_open' },
+      { text: uiMode === 'simple' ? '⚡ رفتن به حالت حرفه‌ای' : '🌱 رفتن به حالت ساده', callback_data: 'tg_toggle_ui_mode' },
+    ],
+    [
+      { text: '🌐 ورود یک‌کلیکی به سایت', callback_data: 'tg_web_login', style: 'primary' },
+      { text: '🔙 بازگشت به پنل ساده', callback_data: 'tg_simple_home' },
+    ],
+  ];
+  void env;
+  void webAppUrl;
+
+  if (editMsgId) {
+    await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
+  } else {
+    await bot.sendMessage(chatId, text, { inlineKeyboard: kb });
+  }
+}
+
+async function showTrustWalletPlaybookTelegram(
+  env: Env,
+  bot: TelegramBotClient,
+  chatId: string | number,
+  user: ProvisionedUserRow,
+  focusMode: 'FUTURES' | 'SPOT' | 'DEX' | 'SNIPER' | 'COPY_TRADE' = 'FUTURES',
+  editMsgId?: number
+) {
+  const cfg = await env.DB.prepare('SELECT trading_mode, paper_balance FROM bot_configs WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ trading_mode?: string; paper_balance?: string }>()
+    .catch(() => null);
+  const trustConnected = Boolean(user.trust_wallet_address || user.trust_wallet_solana || user.trust_wallet_tron || user.trust_wallet_ton);
+  const isLive = cfg?.trading_mode === 'LIVE';
+
+  const PLAYBOOK_COPY: Record<'FUTURES' | 'SPOT' | 'DEX' | 'SNIPER' | 'COPY_TRADE', { title: string; steps: string[] }> = {
+    FUTURES: {
+      title: '📈 فیوچرز غیرمتمرکز (Perp DEX)',
+      steps: [
+        '• در حالت دمو: با اعتبار مجازی و قیمت لحظه‌ای بدون نیاز به ولت واقعی اجرا می‌شود.',
+        '• در حالت واقعی: کافی است آدرس EVM خود را متصل و Agent کیف‌پول را روی Hyperliquid/Aster تایید کنید.',
+      ],
+    },
+    SPOT: {
+      title: '🪙 اسپات چندزنجیره (Multi-Chain Spot)',
+      steps: [
+        '• پوشش ۸۲۰+ ارز هم‌تراز با Trust Wallet روی شبکه‌های BSC، Ethereum، Solana، Base، TON و TRON.',
+        '• تسویه مستقیم روی ولت شخصی یا شبیه‌ساز ۱× اسپات در حالت دمو.',
+      ],
+    },
+    DEX: {
+      title: '⚡ سوآپ مستقیم DEX (بدون صرافی متمرکز)',
+      steps: [
+        '• اسکن لحظه‌ای توکن‌های داغ DexScreener و تحلیل AI قبل از خرید.',
+        '• تایید تراکنش مستقیم در DApp مرورگر Trust Wallet یا اجرای آنی در دمو.',
+      ],
+    },
+    SNIPER: {
+      title: '🎯 اسنایپر لیستینگ و میم‌کوین (70/$15k/5)',
+      steps: [
+        '• پیش‌فرض ایمن: امتیاز امنیت ≥۷۰، نقدینگی ≥$۱۵k و حداکثر ۵ پوزیشن همزمان.',
+        '• شکار زیر ۵ دقیقه استخرهای تازه با TP/SL و حدضرر محافظتی.',
+      ],
+    },
+    COPY_TRADE: {
+      title: '🏆 کپی‌ترید تریدرها و نهنگ‌ها (PAPER_SIMULATOR + Vault)',
+      steps: [
+        '• در حالت دمو یا PAPER_SIMULATOR کاملاً رایگان و متصل به تراز حساب دمو عمل می‌کند.',
+        '• در حالت واقعی با تایید ۱-کلیکی یا Copy Vault اختصاصی اجرا می‌شود.',
+      ],
+    },
+  };
+
+  const entry = PLAYBOOK_COPY[focusMode] || PLAYBOOK_COPY.FUTURES;
+  const text =
+    `🛡 **راهنمای جامع ترید با Trust Wallet و دمو (۵ بخش)**\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `• وضعیت فعلی: ${isLive ? '🛡 واقعی' : `🧪 دمو ($${Number(cfg?.paper_balance ?? 10000).toLocaleString('en-US')})`} | اتصال Trust Wallet: ${trustConnected ? '🟢 متصل' : '⚪️ ثبت‌نشده'}\n\n` +
+    `**${entry.title}**\n` +
+    `${entry.steps.join('\n')}`;
+
+  const kb: InlineKeyboardButton[][] = [
+    [
+      { text: '📈 فیوچرز', callback_data: 'tg_tw_playbook:FUTURES', style: focusMode === 'FUTURES' ? 'success' : undefined },
+      { text: '🪙 اسپات', callback_data: 'tg_tw_playbook:SPOT', style: focusMode === 'SPOT' ? 'success' : undefined },
+      { text: '⚡ DEX', callback_data: 'tg_tw_playbook:DEX', style: focusMode === 'DEX' ? 'success' : undefined },
+    ],
+    [
+      { text: '🎯 اسنایپر', callback_data: 'tg_tw_playbook:SNIPER', style: focusMode === 'SNIPER' ? 'success' : undefined },
+      { text: '🏆 کپی‌ترید', callback_data: 'tg_tw_playbook:COPY_TRADE', style: focusMode === 'COPY_TRADE' ? 'success' : undefined },
+    ],
+    [
+      { text: '✏️ اتصال / ویرایش آدرس ولت', callback_data: 'tg_tw_menu', style: 'primary' },
+      { text: '🔙 بازگشت به پنل ساده', callback_data: 'tg_simple_home' },
+    ],
+  ];
+
   if (editMsgId) {
     await bot.editMessageText(chatId, editMsgId, text, kb).catch(() => bot.sendMessage(chatId, text, { inlineKeyboard: kb }));
   } else {
@@ -2475,12 +2875,156 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       return { ok: true };
     }
 
+    if (data === 'tg_simple_home') {
+      await bot.answerCallbackQuery(cq.id);
+      await showSimpleSiteHome(env, bot, chatId, user, tgId, webAppUrl, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_simple_wallet_mode') {
+      await bot.answerCallbackQuery(cq.id);
+      await showSimpleWalletAndBudgetSheet(env, bot, chatId, user, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_simple_set_mode:')) {
+      const nextMode = data.endsWith(':LIVE') ? 'LIVE' : 'PAPER';
+      if (nextMode === 'LIVE') {
+        const hasTw = Boolean(user.trust_wallet_address || user.trust_wallet_solana || user.trust_wallet_tron || user.trust_wallet_ton);
+        if (!hasTw) {
+          await bot.answerCallbackQuery(cq.id, 'ابتدا یک آدرس Trust Wallet متصل کنید 🛡', true);
+          await showTrustWalletMenu(env, bot, chatId, user, webAppUrl, msgId);
+          return { ok: true };
+        }
+      }
+      await env.DB.prepare(
+        `UPDATE bot_configs SET trading_mode = ?, trading_mode_selected = 1, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(nextMode, user.id).run();
+      await bot.answerCallbackQuery(cq.id, nextMode === 'LIVE' ? 'حساب واقعی Trust Wallet فعال شد 🛡' : 'حساب دمو آزمایشی فعال شد 🧪');
+      await showSimpleWalletAndBudgetSheet(env, bot, chatId, user, msgId);
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_simple_exec:')) {
+      const nextExec = data.endsWith(':MANUAL_CONFIRM') ? 'MANUAL_CONFIRM' : 'AUTO';
+      await env.DB.prepare(
+        `UPDATE bot_configs SET trade_execution_mode = ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(nextExec, user.id).run();
+      await bot.answerCallbackQuery(cq.id, nextExec === 'AUTO' ? 'اجرای خودکار ۲۴/۷ فعال شد ⚡' : 'حالت تایید دستی فعال شد ✋');
+      await showSimpleWalletAndBudgetSheet(env, bot, chatId, user, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_simple_demo_bal') {
+      await bot.answerCallbackQuery(cq.id);
+      const kb: InlineKeyboardButton[][] = [
+        [
+          { text: '$100', callback_data: 'tg_simple_set_demo:100' },
+          { text: '$1,000', callback_data: 'tg_simple_set_demo:1000', style: 'primary' },
+        ],
+        [
+          { text: '$10,000 (پیش‌فرض)', callback_data: 'tg_simple_set_demo:10000', style: 'success' },
+          { text: '$100,000', callback_data: 'tg_simple_set_demo:100000' },
+        ],
+        [{ text: '🔙 بازگشت به حساب و بودجه', callback_data: 'tg_simple_wallet_mode' }],
+      ];
+      const txt = '💵 **انتخاب سریع موجودی حساب دمو آزمایشی (کاملاً رایگان):**\nیکی از مبالغ زیر را انتخاب کنید (در سایت تا $10M قابل تنظیم است):';
+      if (msgId) await bot.editMessageText(chatId, msgId, txt, kb).catch(() => bot.sendMessage(chatId, txt, { inlineKeyboard: kb }));
+      else await bot.sendMessage(chatId, txt, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data.startsWith('tg_simple_set_demo:')) {
+      const amt = Math.max(50, Math.min(10_000_000, Number(data.split(':')[1] || 10000)));
+      await env.DB.prepare(
+        `UPDATE bot_configs SET trading_mode = 'PAPER', trading_mode_selected = 1, paper_balance = ?, custom_paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`
+      ).bind(amt.toFixed(2), amt, user.id).run();
+      await bot.answerCallbackQuery(cq.id, `موجودی دمو روی $${amt.toLocaleString('en-US')} تنظیم شد ✅`);
+      await showSimpleWalletAndBudgetSheet(env, bot, chatId, user, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_simple_positions') {
+      await bot.answerCallbackQuery(cq.id);
+      await showSimplePositionsAndAccounting(env, bot, chatId, user, webAppUrl, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_close_all_confirm') {
+      await bot.answerCallbackQuery(cq.id);
+      const kb: InlineKeyboardButton[][] = [
+        [
+          { text: '🛑 بله، همه معاملات باز بسته شوند', callback_data: 'tg_close_all_exec', style: 'danger' },
+          { text: 'انصراف 🔙', callback_data: 'tg_simple_positions' },
+        ],
+      ];
+      const txt = '⚠️ آیا مطمئن هستید که می‌خواهید ربات را متوقف و تمام معاملات باز CEX را با قیمت لحظه‌ای بازار تسویه کنید؟';
+      if (msgId) await bot.editMessageText(chatId, msgId, txt, kb).catch(() => bot.sendMessage(chatId, txt, { inlineKeyboard: kb }));
+      else await bot.sendMessage(chatId, txt, { inlineKeyboard: kb });
+      return { ok: true };
+    }
+
+    if (data === 'tg_close_all_exec') {
+      const openRows = await env.DB.prepare(`SELECT id, mode, market_type, symbol, direction, entry_price, initial_quantity, remaining_quantity, margin_used, realized_pnl FROM trades WHERE user_id = ? AND status = 'OPEN'`)
+        .bind(user.id)
+        .all<{ id: string; mode: string; market_type?: 'SPOT' | 'FUTURES'; symbol: string; direction: 'LONG' | 'SHORT'; entry_price: string; initial_quantity: string; remaining_quantity: string; margin_used: string; realized_pnl: string }>();
+      let closedCount = 0;
+      for (const t of openRows.results) {
+        const { adapter } = await resolveUserExchangeAdapter(env, user.id, t.mode === 'PAPER' ? 'paper' : undefined);
+        const cls = await adapter.closePositionPartialOrFull(t.symbol, t.direction, t.remaining_quantity, `tg_closeall_${Date.now()}`, t.market_type ?? 'FUTURES').catch(() => null);
+        if (!cls) continue;
+        const exitPx = Number(cls.filledPrice);
+        const entryPx = Number(t.entry_price);
+        const qty = Number(t.remaining_quantity);
+        const pnl = t.direction === 'LONG' ? (exitPx - entryPx) * qty : (entryPx - exitPx) * qty;
+        const totalRealized = Number(t.realized_pnl || 0) + pnl - Number(cls.fee || 0);
+        if (t.mode === 'PAPER') {
+          const curCfg = await env.DB.prepare('SELECT paper_balance FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ paper_balance: string }>();
+          const remMargin = Number(t.margin_used) * (qty / Math.max(1e-9, Number(t.initial_quantity)));
+          const restored = Number(curCfg?.paper_balance ?? 0) + remMargin + pnl - Number(cls.fee || 0);
+          await env.DB.prepare('UPDATE bot_configs SET paper_balance = ? WHERE user_id = ?').bind(restored.toFixed(2), user.id).run();
+        }
+        await env.DB.prepare(`UPDATE trades SET status = 'CLOSED', remaining_quantity = '0', exit_price = ?, realized_pnl = ?, exit_reason = 'TG_CLOSE_ALL', closed_at = datetime('now') WHERE id = ?`)
+          .bind(cls.filledPrice, totalRealized.toFixed(4), t.id).run();
+        closedCount++;
+      }
+      await env.DB.prepare(`UPDATE bot_configs SET bot_state = 'STOPPED', updated_at = datetime('now') WHERE user_id = ?`).bind(user.id).run();
+      await bot.answerCallbackQuery(cq.id, `${closedCount} معامله بسته شد ✅`);
+      await showSimplePositionsAndAccounting(env, bot, chatId, user, webAppUrl, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_more_tools') {
+      await bot.answerCallbackQuery(cq.id);
+      await showSimpleMoreToolsSheet(env, bot, chatId, user, webAppUrl, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_tw_playbook' || data.startsWith('tg_tw_playbook:')) {
+      const m = (data.split(':')[1] || 'FUTURES') as 'FUTURES' | 'SPOT' | 'DEX' | 'SNIPER' | 'COPY_TRADE';
+      await bot.answerCallbackQuery(cq.id);
+      await showTrustWalletPlaybookTelegram(env, bot, chatId, user, m, msgId);
+      return { ok: true };
+    }
+
+    if (data === 'tg_onboard_prompt') {
+      await bot.answerCallbackQuery(cq.id);
+      const gp = await buildTelegramOnboardingGatePayload(env, user.id);
+      if (msgId) await bot.editMessageText(chatId, msgId, gp.text, gp.inlineKeyboard).catch(() => bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard }));
+      else await bot.sendMessage(chatId, gp.text, { inlineKeyboard: gp.inlineKeyboard });
+      return { ok: true };
+    }
+
     if (data.startsWith('tg_acc:')) {
       const sec = (data.slice('tg_acc:'.length) || 'none') as CollapsibleMenuSection;
       const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
       const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
       const uiMode = getUserUiMode(user);
       await bot.answerCallbackQuery(cq.id);
+      if (sec === 'none' && uiMode === 'simple') {
+        await showSimpleSiteHome(env, bot, chatId, user, tgId, webAppUrl, msgId);
+        return { ok: true };
+      }
       if (msgId) {
         await bot.editMessageText(
           chatId,
@@ -2499,11 +3043,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
       const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
       await bot.answerCallbackQuery(cq.id, nextMode === 'pro' ? 'حالت حرفه‌ای فعال شد ⚡' : 'حالت ساده فعال شد 🌱');
-      if (msgId) {
+      if (nextMode === 'simple') {
+        await showSimpleSiteHome(env, bot, chatId, user, tgId, webAppUrl, msgId);
+      } else if (msgId) {
         await bot.editMessageText(
           chatId,
           msgId,
-          `🎛 حالت رابط کاربری روی **${nextMode === 'pro' ? 'حرفه‌ای (Quant Pro ⚡)' : 'ساده (۴ گامه 🌱)'}** تنظیم شد (همگام با وب و موبایل):`,
+          `🎛 حالت رابط کاربری روی **حرفه‌ای (Quant Pro ⚡)** تنظیم شد (همگام با وب و موبایل):`,
           miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, nextMode)
         ).catch(() => {});
       }
@@ -4018,17 +4564,25 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await applyReferralIfPresent(env, user.id, payload || null, user.phone_number);
   }
 
-  if (text === '/start' || text === '/menu' || text === 'بازگشت به صفحه قبل 🔙') {
+  if (text === '/start' || text === '/menu' || text === 'بازگشت به صفحه قبل 🔙' || text === '🏠 پنل ساده من') {
     await applyReferralIfPresent(env, user.id, null, user.phone_number);
     await clearState();
     const cfg = await env.DB.prepare('SELECT bot_state FROM bot_configs WHERE user_id = ?').bind(user.id).first<{ bot_state: string }>();
     const isRunning = cfg?.bot_state === 'RUNNING_PAPER' || cfg?.bot_state === 'RUNNING_LIVE';
+    if (text === '🏠 پنل ساده من') {
+      await showSimpleSiteHome(env, bot, chatId, user, tgId, webAppUrl);
+      return { ok: true };
+    }
     await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, uiMode, webAppUrl), {
       replyKeyboard: mainMenuKeyboard(webAppUrl, uiMode, admin),
     });
-    await bot.sendMessage(chatId, '🎛 کنترل سریع ربات:', {
-      inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, uiMode),
-    });
+    if (uiMode === 'simple') {
+      await showSimpleSiteHome(env, bot, chatId, user, tgId, webAppUrl);
+    } else {
+      await bot.sendMessage(chatId, '🎛 کنترل سریع ربات:', {
+        inlineKeyboard: miniAppInlineKeyboard(webAppUrl, '', 'none', isRunning, uiMode),
+      });
+    }
     return { ok: true };
   }
 
@@ -4075,6 +4629,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     '/about',
   ]);
   const MAIN_MENU_PREFIXES = [
+    '🏠 پنل ساده من',
+    '🎛 ۵ موتور ترید',
+    '💼 دمو / واقعی و بودجه',
+    '📊 معاملات و تراز ۵ بخش',
+    '🛡 Trust Wallet',
+    '🛠 ابزارها و پشتیبانی',
     '🧠 چت هوش مصنوعی',
     '🧠 هوش مصنوعی من',
     '🤖 شروع ربات هوشمند AI',
@@ -4567,6 +5127,15 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     await bot.sendMessage(chatId, welcomeMessage(msg.from.first_name ?? user.username, nextMode, webAppUrl), {
       replyKeyboard: mainMenuKeyboard(webAppUrl, nextMode, admin),
     });
+    if (nextMode === 'simple') {
+      await showSimpleSiteHome(env, bot, chatId, user, tgId, webAppUrl);
+    }
+    return { ok: true };
+  }
+
+  if (text === '🛠 ابزارها و پشتیبانی') {
+    await clearState();
+    await showSimpleMoreToolsSheet(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
 
@@ -4628,12 +5197,13 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     return { ok: true };
   }
 
-  if (text === '🧩 اکستنشن و ویجت موبایل' || text === '🧩 اکستنشن کروم V11.7' || text === '🧩 اکستنشن کروم V11.6') {
+  if (text === '🧩 اکستنشن و ویجت موبایل' || text === '🧩 اکستنشن کروم V11.7' || text === '🧩 اکستنشن کروم V11.6' || text === '🧩 اکستنشن کروم/فایرفاکس/اج') {
     await showExtensionWidgetsMenu(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
 
   if (
+    text === '🛡 Trust Wallet' ||
     text === '🛡 اتصال Trust Wallet' ||
     text === '🛡 اتصال Trust Wallet و دمو' ||
     text === '🛡 مدیریت Trust Wallet' ||
@@ -4643,18 +5213,26 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
     text === '🦊 کیف‌پول Trust Wallet' ||
     text === '/wallet'
   ) {
+    if (text === '🛡 Trust Wallet') {
+      await showTrustWalletPlaybookTelegram(env, bot, chatId, user, 'FUTURES');
+      return { ok: true };
+    }
     await showTrustWalletMenu(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
 
-  if (text === '🎛 انتخاب ۵ موتور ترید' || text === '🎛 ۵ موتور ترید همزمان' || text === '/engines') {
+  if (text === '🎛 ۵ موتور ترید' || text === '🎛 انتخاب ۵ موتور ترید' || text === '🎛 ۵ موتور ترید همزمان' || text === '/engines') {
     await clearState();
     await showEnginesToggleMenu(env, bot, chatId, user.id);
     return { ok: true };
   }
 
-  if (text === '💰 بودجه مجاز و پیشنهاد پویا' || text === '💰 بودجه مجاز و اهرم' || text === '💰 حالت دمو/واقعی و بودجه' || text === '/budget') {
+  if (text === '💼 دمو / واقعی و بودجه' || text === '💰 بودجه مجاز و پیشنهاد پویا' || text === '💰 بودجه مجاز و اهرم' || text === '💰 حالت دمو/واقعی و بودجه' || text === '/budget') {
     await clearState();
+    if (text === '💼 دمو / واقعی و بودجه') {
+      await showSimpleWalletAndBudgetSheet(env, bot, chatId, user);
+      return { ok: true };
+    }
     await showTradeQuantitiesMenu(env, bot, chatId, user.id);
     return { ok: true };
   }
@@ -4728,6 +5306,12 @@ export async function handleTelegramUpdate(env: Env, botToken: string, update: T
       `🔔 تنظیمات پیشرفته اعلان‌ها و واحد نمایش دلارینو:\n\nتمام تنظیمات زیر همزمان با پنل وب سایت همگام هستند:`,
       { inlineKeyboard: buildNotifSettingsKeyboard(enabled, prefs, currency) }
     );
+    return { ok: true };
+  }
+
+  if (text === '📊 معاملات و تراز ۵ بخش') {
+    await clearState();
+    await showSimplePositionsAndAccounting(env, bot, chatId, user, webAppUrl);
     return { ok: true };
   }
 

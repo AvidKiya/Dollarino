@@ -1,7 +1,8 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { apiFetch } from './api';
+import { apiFetch, getApiBase } from './api';
 import { getTelegramWebApp, isInsideTelegramMiniApp } from './telegram';
+import { isAndroidNativeApp, openNativeOrBrowserUrl } from './mobile-bridge';
 
 export interface Eip1193Provider {
   isTrust?: boolean;
@@ -529,10 +530,16 @@ export interface TrustWalletDappHandoff {
 }
 
 export async function requestTrustWalletDappHandoff(coinId = 20000714): Promise<TrustWalletDappHandoff> {
+  const origin =
+    typeof window !== 'undefined'
+      ? isAndroidNativeApp()
+        ? getApiBase() || 'https://dollarino.pages.dev'
+        : window.location.origin
+      : undefined;
   return apiFetch<TrustWalletDappHandoff>('/api/trustwallet/dapp-handoff', {
     method: 'POST',
     body: JSON.stringify({
-      origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+      origin,
       coinId,
     }),
   });
@@ -540,6 +547,9 @@ export async function requestTrustWalletDappHandoff(coinId = 20000714): Promise<
 
 export function launchTrustWalletUrl(universalLink: string, deepLink?: string): void {
   if (typeof window === 'undefined') return;
+  if (isAndroidNativeApp() && openNativeOrBrowserUrl(deepLink || universalLink)) {
+    return;
+  }
   const tg = getTelegramWebApp();
   if (isInsideTelegramMiniApp() && tg?.openLink) {
     tg.openLink(universalLink, { try_instant_view: false });

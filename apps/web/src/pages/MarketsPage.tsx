@@ -22,6 +22,7 @@ import type { ExchangeMarket } from '../components/SymbolPickerModal';
 import { CoinIcon } from '../components/CoinIcon';
 import { Sparkline } from '../components/DollarinoViz';
 import { PerpDexPanel } from '../components/PerpDexPanel';
+import { TrustWalletTradePlaybook } from '../components/TrustWalletTradePlaybook';
 
 function fmtPx(px: number): string {
   if (!Number.isFinite(px) || px <= 0) return '—';
@@ -63,7 +64,7 @@ export function MarketsPage({
   const isFa = lang === 'fa';
   const [section, setSection] = useState<'markets' | 'perp'>('markets');
   const [q, setQ] = useState('');
-  const [category, setCategory] = useState<'all' | 'favs' | 'layer1' | 'meme'>('all');
+  const [category, setCategory] = useState<'all' | 'favs' | 'MAJOR' | 'L1' | 'DEFI' | 'AI' | 'MEME' | 'GAMING' | 'RWA'>('all');
   const [sortBy, setSortBy] = useState<'volume' | 'gainers' | 'losers'>('volume');
   const [simpleViewMode, setSimpleViewMode] = useState<'list' | 'grid'>('list');
   const [visibleCount, setVisibleCount] = useState(60);
@@ -135,10 +136,19 @@ export function MarketsPage({
     const query = q.trim().toUpperCase();
     let arr = [...markets];
     if (category === 'favs') arr = arr.filter((m) => favs.includes(m.symbol));
-    else if (category === 'layer1') arr = arr.filter((m) => MAJOR_BASES.has(m.base));
-    else if (category === 'meme') arr = arr.filter((m) => MEME_BASES.has(m.base));
+    else if (category === 'MAJOR') arr = arr.filter((m) => m.category === 'MAJOR' || MAJOR_BASES.has(m.base));
+    else if (category === 'L1') arr = arr.filter((m) => m.category === 'L1' || MAJOR_BASES.has(m.base));
+    else if (category === 'MEME') arr = arr.filter((m) => m.category === 'MEME' || MEME_BASES.has(m.base));
+    else if (category !== 'all') arr = arr.filter((m) => m.category === category);
     if (query) {
-      arr = arr.filter((m) => m.symbol.includes(query) || m.base.includes(query) || m.exchangeSymbol.toUpperCase().includes(query));
+      arr = arr.filter(
+        (m) =>
+          m.symbol.includes(query) ||
+          m.base.includes(query) ||
+          m.exchangeSymbol.toUpperCase().includes(query) ||
+          (m.nameEn && m.nameEn.toUpperCase().includes(query)) ||
+          (m.nameFa && m.nameFa.includes(query))
+      );
     }
     if (sortBy === 'gainers') arr.sort((a, b) => Number(b.changePct24h) - Number(a.changePct24h));
     else if (sortBy === 'losers') arr.sort((a, b) => Number(a.changePct24h) - Number(b.changePct24h));
@@ -358,13 +368,13 @@ export function MarketsPage({
             {[
               { id: 'favs', sort: 'volume', lbl: isFa ? 'علاقه‌مندی' : 'Favorites' },
               { id: 'all', sort: 'volume', lbl: isFa ? 'محبوب‌ترین' : 'Popular' },
-              { id: 'layer1', sort: 'volume', lbl: isFa ? 'ارزهای برتر' : 'Top Majors' },
+              { id: 'L1', sort: 'volume', lbl: isFa ? 'ارزهای برتر' : 'Top Majors' },
               { id: 'all_gain', sort: 'gainers', lbl: isFa ? 'بیشترین سود' : 'Top Gainers' },
               { id: 'all_loss', sort: 'losers', lbl: isFa ? 'بیشترین ضرر' : 'Top Losers' },
             ].map((t) => {
               const active =
                 (t.id === 'favs' && category === 'favs') ||
-                (t.id === 'layer1' && category === 'layer1') ||
+                (t.id === 'L1' && category === 'L1') ||
                 (t.id === 'all' && category === 'all' && sortBy === 'volume') ||
                 (t.id === 'all_gain' && category === 'all' && sortBy === 'gainers') ||
                 (t.id === 'all_loss' && category === 'all' && sortBy === 'losers');
@@ -376,8 +386,8 @@ export function MarketsPage({
                     if (t.id === 'favs') {
                       setCategory('favs');
                       setSortBy('volume');
-                    } else if (t.id === 'layer1') {
-                      setCategory('layer1');
+                    } else if (t.id === 'L1') {
+                      setCategory('L1');
                       setSortBy('volume');
                     } else {
                       setCategory('all');
@@ -675,13 +685,18 @@ export function MarketsPage({
         </div>
       </div>
 
-      {/* Category Filter Pills */}
+      {/* Trust Wallet Unified Category Filter Pills */}
       <div className="flex flex-wrap gap-2">
         {[
-          { id: 'all', lbl: isFa ? 'همه ارزها' : 'All Pairs' },
+          { id: 'all', lbl: isFa ? 'همه ارزهای Trust Wallet' : 'All Trust Wallet Assets' },
           { id: 'favs', lbl: isFa ? 'علاقه‌مندی‌ها' : 'Favorites', star: true },
-          { id: 'layer1', lbl: isFa ? 'برترین‌های لایه ۱' : 'Layer 1 Majors' },
-          { id: 'meme', lbl: isFa ? 'میم‌کوین‌ها' : 'Meme Coins' },
+          { id: 'MAJOR', lbl: isFa ? 'اصلی و برتر' : 'Major' },
+          { id: 'L1', lbl: isFa ? 'لایه ۱ (L1)' : 'Layer 1' },
+          { id: 'DEFI', lbl: isFa ? 'دیفای (DeFi)' : 'DeFi' },
+          { id: 'AI', lbl: isFa ? 'هوش مصنوعی (AI)' : 'AI Coins' },
+          { id: 'MEME', lbl: isFa ? 'میم‌کوین‌ها' : 'Meme Coins' },
+          { id: 'GAMING', lbl: isFa ? 'گیمینگ و متاورس' : 'Gaming' },
+          { id: 'RWA', lbl: 'RWA' },
         ].map((item) => (
           <button
             key={item.id}
@@ -733,11 +748,17 @@ export function MarketsPage({
                 <div className="flex items-center gap-3 min-w-0">
                   <CoinIcon symbol={c.symbol} size={34} />
                   <div className="min-w-0">
-                    <p className="font-bold text-sm text-main truncate">
-                      {c.base}
-                      <span className="text-dim text-[10px]"> /{c.quote || 'USDT'}</span>
+                    <p className="font-bold text-sm text-main truncate flex items-center gap-1.5">
+                      <span>{c.base}</span>
+                      <span className="text-dim text-[10px]">/{c.quote || 'USDT'}</span>
+                      {c.category && (
+                        <span className="px-1.5 py-0.2 rounded bg-sky-500/12 text-brand text-[9px] font-black">
+                          {c.category}
+                        </span>
+                      )}
                     </p>
-                    <p dir="ltr" className="text-[10px] text-dim tabular">
+                    <p dir="ltr" className="text-[10px] text-dim tabular truncate">
+                      {(isFa ? c.nameFa || c.nameEn : c.nameEn) ? `${isFa ? c.nameFa || c.nameEn : c.nameEn} · ` : ''}
                       {marketType === 'SPOT' ? 'Spot 1×' : `Max ${c.maxLeverage}×`}
                     </p>
                   </div>
@@ -830,6 +851,8 @@ export function MarketsPage({
           </button>
         </div>
       )}
+
+      <TrustWalletTradePlaybook lang={lang} focusMode={marketType === 'SPOT' ? 'SPOT' : 'FUTURES'} compact />
     </div>
   );
 }

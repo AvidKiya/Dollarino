@@ -18,6 +18,13 @@ export interface Env {
   HILINKUP_TEST_API_KEY?: string;
   HILINKUP_BASE_URL?: string;
   HILINKUP_MODEL?: string;
+  ARENA_API_KEY?: string;
+  ARENA_BASE_URL?: string;
+  ARENA_MODEL?: string;
+  FCM_PROJECT_ID?: string;
+  FCM_CLIENT_EMAIL?: string;
+  FCM_PRIVATE_KEY?: string;
+  FCM_SERVER_KEY?: string;
   AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
 
@@ -28,4 +35,5 @@ export interface AuthUser {
   role: 'owner' | 'admin' | 'user';
   telegramId: string | null;
   mustChangeCredentials?: boolean;
+  authMethod?: 'jwt' | 'extension_key';
 }

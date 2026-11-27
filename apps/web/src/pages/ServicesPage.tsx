@@ -45,6 +45,13 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { apiFetch, setStoredToken } from '../lib/api';
+import {
+  getAndroidBridgeInfo,
+  getNativeBridge,
+  isAndroidNativeApp,
+  sendAndroidTestNotification,
+} from '../lib/mobile-bridge';
+import { pushFloatingToast } from '../lib/toast';
 import type { Lang } from '../lib/i18n';
 import type { AuthUserInfo, DashboardPayload, NavTab } from '../lib/types';
 import type { LookId } from '../components/AppearanceModal';
@@ -185,18 +192,52 @@ export function ServicesPage({
       .catch(() => {});
   }, []);
 
+  const parseSignalDeliveryObject = (sd: Record<string, unknown>) => {
+    const rawSe = sd.signalEngines;
+    const isArr = Array.isArray(rawSe);
+    const seSet = isArr ? new Set((rawSe as unknown[]).map((x) => String(x))) : null;
+    const seObj = (!isArr && rawSe && typeof rawSe === 'object' ? rawSe : {}) as Record<string, unknown>;
+    return {
+      signalEngines: {
+        CENTRAL_AI: seSet ? seSet.has('CENTRAL_AI') : typeof seObj.CENTRAL_AI === 'boolean' ? seObj.CENTRAL_AI : true,
+        MY_AI: seSet ? seSet.has('MY_AI') : typeof seObj.MY_AI === 'boolean' ? seObj.MY_AI : true,
+        STRATEGY: seSet ? seSet.has('STRATEGY') : typeof seObj.STRATEGY === 'boolean' ? seObj.STRATEGY : true,
+        COPY_TRADE: seSet ? seSet.has('COPY_TRADE') : typeof seObj.COPY_TRADE === 'boolean' ? seObj.COPY_TRADE : true,
+        LISTING_SNIPER: seSet ? seSet.has('LISTING_SNIPER') : typeof seObj.LISTING_SNIPER === 'boolean' ? seObj.LISTING_SNIPER : true,
+      },
+      channels: {
+        telegramBot: true,
+        inApp: true,
+        channelSignals: true,
+      },
+      minConfidence: Number(sd.minConfidence ?? 68) || 68,
+      minSniperSafety: Number(sd.minSniperSafety ?? 70) || 70,
+      directionFilter: (sd.directionFilter as 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY') || 'BOTH',
+      quietHoursEnabled: Boolean(sd.quietHoursEnabled),
+    };
+  };
+
   const parsedNotifPrefs = (() => {
     try {
       const p = data.config.notification_prefs_json ? JSON.parse(data.config.notification_prefs_json) : {};
+      const sd = (p.signalDelivery && typeof p.signalDelivery === 'object' ? p.signalDelivery : {}) as Record<string, unknown>;
       return {
-        tradeOpen: Boolean(p.tradeOpen),
-        tpSlHit: Boolean(p.tpSlHit),
-        aiSignals: Boolean(p.aiSignals),
-        whaleCopy: Boolean(p.whaleCopy),
-        dailyDigest: Boolean(p.dailyDigest),
+        open_close: Boolean(p.open_close ?? p.tradeOpen),
+        tp_sl: Boolean(p.tp_sl ?? p.tpSlHit),
+        signals: Boolean(p.signals ?? p.aiSignals),
+        dex_sniper: Boolean(p.dex_sniper ?? p.whaleCopy),
+        cards_reports: Boolean(p.cards_reports ?? p.dailyDigest),
+        signalDelivery: parseSignalDeliveryObject(sd),
       };
     } catch {
-      return { tradeOpen: false, tpSlHit: false, aiSignals: false, whaleCopy: false, dailyDigest: false };
+      return {
+        open_close: false,
+        tp_sl: false,
+        signals: false,
+        dex_sniper: false,
+        cards_reports: false,
+        signalDelivery: parseSignalDeliveryObject({}),
+      };
     }
   })();
 
@@ -229,12 +270,14 @@ export function ServicesPage({
     setPrefPaperBalance(String(data.config.custom_paper_balance ?? 10000));
     try {
       const p = data.config.notification_prefs_json ? JSON.parse(data.config.notification_prefs_json) : {};
+      const sd = (p.signalDelivery && typeof p.signalDelivery === 'object' ? p.signalDelivery : {}) as Record<string, unknown>;
       setPrefNotifs({
-        tradeOpen: Boolean(p.tradeOpen),
-        tpSlHit: Boolean(p.tpSlHit),
-        aiSignals: Boolean(p.aiSignals),
-        whaleCopy: Boolean(p.whaleCopy),
-        dailyDigest: Boolean(p.dailyDigest),
+        open_close: Boolean(p.open_close ?? p.tradeOpen),
+        tp_sl: Boolean(p.tp_sl ?? p.tpSlHit),
+        signals: Boolean(p.signals ?? p.aiSignals),
+        dex_sniper: Boolean(p.dex_sniper ?? p.whaleCopy),
+        cards_reports: Boolean(p.cards_reports ?? p.dailyDigest),
+        signalDelivery: parseSignalDeliveryObject(sd),
       });
     } catch { /* ignore */ }
   }, [data.config]);
@@ -245,12 +288,27 @@ export function ServicesPage({
     setPrefsMsg(null);
     try {
       const paperNum = Math.max(50, Math.min(10_000_000, Number(prefPaperBalance) || 10000));
+      const serializedPrefs = {
+        // Canonical backend keys used by publisher.ts & telegram/handler.ts
+        open_close: prefNotifs.open_close,
+        tp_sl: prefNotifs.tp_sl,
+        signals: prefNotifs.signals,
+        dex_sniper: prefNotifs.dex_sniper,
+        cards_reports: prefNotifs.cards_reports,
+        // Legacy aliases kept synced
+        tradeOpen: prefNotifs.open_close,
+        tpSlHit: prefNotifs.tp_sl,
+        aiSignals: prefNotifs.signals,
+        whaleCopy: prefNotifs.dex_sniper,
+        dailyDigest: prefNotifs.cards_reports,
+        signalDelivery: prefNotifs.signalDelivery,
+      };
       await apiFetch('/api/trading/config', {
         method: 'PATCH',
         body: JSON.stringify({
           display_currency: prefCurrency,
           notifications_enabled: prefNotifMaster ? 1 : 0,
-          notification_prefs_json: JSON.stringify(prefNotifs),
+          notification_prefs_json: JSON.stringify(serializedPrefs),
           trade_execution_mode: prefExecMode,
           market_type: prefMarketType,
           direction_mode: prefMarketType === 'SPOT' && prefDirection === 'SHORT_ONLY' ? 'LONG_ONLY' : prefDirection,
@@ -1097,7 +1155,7 @@ export function ServicesPage({
             <div className="flex items-center justify-between gap-2">
               <span className="font-black text-main inline-flex items-center gap-2">
                 <Bell className="w-4 h-4 text-[var(--gold)]" />
-                {isFa ? 'اعلانات لحظه‌ای تلگرام و سایت (Master Switch)' : 'Instant Telegram & App Notifications'}
+                {isFa ? 'اعلانات لحظه‌ای تلگرام و سایت + فیلتر ارسال سیگنال' : 'Notifications & Per-Engine Signal Delivery'}
               </span>
               <input
                 type="checkbox"
@@ -1105,8 +1163,14 @@ export function ServicesPage({
                 onChange={(ev) => {
                   const next = ev.target.checked;
                   setPrefNotifMaster(next);
-                  if (next && !Object.values(prefNotifs).some(Boolean)) {
-                    setPrefNotifs({ tradeOpen: true, tpSlHit: true, aiSignals: true, whaleCopy: true, dailyDigest: false });
+                  if (next && !prefNotifs.open_close && !prefNotifs.tp_sl && !prefNotifs.signals) {
+                    setPrefNotifs((p) => ({
+                      ...p,
+                      open_close: true,
+                      tp_sl: true,
+                      signals: true,
+                      dex_sniper: true,
+                    }));
                   }
                 }}
                 className="w-4 h-4 accent-[#10d9a3] cursor-pointer"
@@ -1114,11 +1178,11 @@ export function ServicesPage({
             </div>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {[
-                { k: 'tradeOpen' as const, fa: 'باز/بسته شدن معاملات', en: 'Trade Open & Close' },
-                { k: 'tpSlHit' as const, fa: 'رسیدن به TP1/2/3 و حد ضرر', en: 'TP / SL Hit Alerts' },
-                { k: 'aiSignals' as const, fa: 'سیگنال‌های مدل AI دلارینو', en: 'AI Signal Alerts' },
-                { k: 'whaleCopy' as const, fa: 'تراکنش نهنگ‌های کپی‌ترید', en: 'Whale Copy Activity' },
-                { k: 'dailyDigest' as const, fa: 'گزارش خلاصه سود روزانه', en: 'Daily PnL Digest' },
+                { k: 'open_close' as const, fa: 'باز/بسته شدن معاملات', en: 'Trade Open & Close' },
+                { k: 'tp_sl' as const, fa: 'رسیدن به TP1/2/3 و حد ضرر', en: 'TP / SL Hit Alerts' },
+                { k: 'signals' as const, fa: 'سیگنال‌های AI و استراتژی', en: 'AI & Strategy Signals' },
+                { k: 'dex_sniper' as const, fa: 'اسنایپر لیستینگ و کپی‌ترید', en: 'Sniper & Copy Alerts' },
+                { k: 'cards_reports' as const, fa: 'کارت سود و گزارش روزانه', en: 'Weekly Cards & Reports' },
               ].map((item) => (
                 <label key={item.k} className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[var(--bg)]/50 cursor-pointer">
                   <span className="text-[11px] font-semibold text-sub">{isFa ? item.fa : item.en}</span>
@@ -1132,6 +1196,162 @@ export function ServicesPage({
                 </label>
               ))}
             </div>
+
+            {/* Per-Engine Signal Delivery Filters */}
+            {prefNotifMaster && (
+              <div className="pt-3 border-t hairline space-y-3">
+                <p className="text-[11px] font-black text-main">
+                  {isFa ? 'فیلتر هوشمند ارسال سیگنال به تفکیک موتور، اطمینان و جهت:' : 'Per-Engine Signal Delivery Filter:'}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'CENTRAL_AI' as const, fa: 'هوش مصنوعی مرکزی', en: 'Central AI' },
+                    { id: 'MY_AI' as const, fa: 'هوش مصنوعی من', en: 'My AI' },
+                    { id: 'STRATEGY' as const, fa: 'استراتژی و Pine', en: 'Strategy / Pine' },
+                    { id: 'COPY_TRADE' as const, fa: 'کپی‌ترید', en: 'Copy-Trade' },
+                    { id: 'LISTING_SNIPER' as const, fa: 'اسنایپر لیستینگ', en: 'Listing Sniper' },
+                  ].map((eng) => {
+                    const active = prefNotifs.signalDelivery.signalEngines[eng.id];
+                    return (
+                      <button
+                        key={eng.id}
+                        type="button"
+                        onClick={() =>
+                          setPrefNotifs((p) => ({
+                            ...p,
+                            signalDelivery: {
+                              ...p.signalDelivery,
+                              signalEngines: {
+                                ...p.signalDelivery.signalEngines,
+                                [eng.id]: !p.signalDelivery.signalEngines[eng.id],
+                              },
+                            },
+                          }))
+                        }
+                        className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold border transition ${
+                          active
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-jade'
+                            : 'bg-[var(--bg)]/50 hairline text-dim'
+                        }`}
+                      >
+                        {isFa ? eng.fa : eng.en}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="grid sm:grid-cols-4 gap-2 text-[11px]">
+                  <label className="rounded-xl bg-[var(--bg)]/50 px-3 py-2 flex items-center justify-between gap-2">
+                    <span className="text-dim">{isFa ? 'حداقل اطمینان %' : 'Min Conf %'}</span>
+                    <input
+                      dir="ltr"
+                      type="number"
+                      min={40}
+                      max={98}
+                      value={prefNotifs.signalDelivery.minConfidence}
+                      onChange={(e) =>
+                        setPrefNotifs((p) => ({
+                          ...p,
+                          signalDelivery: { ...p.signalDelivery, minConfidence: Math.max(40, Math.min(98, Number(e.target.value) || 68)) },
+                        }))
+                      }
+                      className="field w-14 py-1 text-center text-[11px] font-num"
+                    />
+                  </label>
+                  <label className="rounded-xl bg-[var(--bg)]/50 px-3 py-2 flex items-center justify-between gap-2">
+                    <span className="text-dim">{isFa ? 'امنیت اسنایپر' : 'Min Safety'}</span>
+                    <input
+                      dir="ltr"
+                      type="number"
+                      min={40}
+                      max={99}
+                      value={prefNotifs.signalDelivery.minSniperSafety}
+                      onChange={(e) =>
+                        setPrefNotifs((p) => ({
+                          ...p,
+                          signalDelivery: { ...p.signalDelivery, minSniperSafety: Math.max(40, Math.min(99, Number(e.target.value) || 70)) },
+                        }))
+                      }
+                      className="field w-14 py-1 text-center text-[11px] font-num"
+                    />
+                  </label>
+                  <select
+                    value={prefNotifs.signalDelivery.directionFilter}
+                    onChange={(e) =>
+                      setPrefNotifs((p) => ({
+                        ...p,
+                        signalDelivery: {
+                          ...p.signalDelivery,
+                          directionFilter: (e.target.value as 'BOTH' | 'LONG_ONLY' | 'SHORT_ONLY') || 'BOTH',
+                        },
+                      }))
+                    }
+                    className="field py-1.5 text-[11px] font-bold"
+                  >
+                    <option value="BOTH">{isFa ? 'همه (Long + Short)' : 'All Directions'}</option>
+                    <option value="LONG_ONLY">{isFa ? 'فقط Long' : 'Long Only'}</option>
+                    <option value="SHORT_ONLY">{isFa ? 'فقط Short' : 'Short Only'}</option>
+                  </select>
+                  <label className="rounded-xl bg-[var(--bg)]/50 px-3 py-2 flex items-center justify-between gap-2 cursor-pointer">
+                    <span className="text-dim">{isFa ? 'ساعت سکوت شبانه' : 'Quiet Hours'}</span>
+                    <input
+                      type="checkbox"
+                      checked={prefNotifs.signalDelivery.quietHoursEnabled}
+                      onChange={(e) =>
+                        setPrefNotifs((p) => ({
+                          ...p,
+                          signalDelivery: { ...p.signalDelivery, quietHoursEnabled: e.target.checked },
+                        }))
+                      }
+                      className="w-3.5 h-3.5 accent-[#10d9a3]"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {isAndroidNativeApp() && (
+              <div className="pt-3 border-t hairline flex flex-wrap items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <div className="text-[11px] font-black text-jade inline-flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5" />
+                    {isFa ? 'اپلیکیشن نیتیو اندروید دلارینو متصل است' : 'Native Android App Connected'}
+                  </div>
+                  <p className="text-[10.5px] text-dim">
+                    {isFa
+                      ? `همگام‌سازی خودکار اعلان‌های پس‌زمینه و کانال‌های سیگنال، معامله، اسنایپر و امنیت فعال است (${getAndroidBridgeInfo()?.deviceModel || 'Android'}).`
+                      : `Background WorkManager & notification channels active (${getAndroidBridgeInfo()?.deviceModel || 'Android'}).`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      getNativeBridge()?.requestNotificationPermission?.();
+                    }}
+                    className="btn btn-secondary text-[10.5px] px-3 py-1.5"
+                  >
+                    {isFa ? 'دسترسی اعلان گوشی' : 'Notification Permission'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const res = await sendAndroidTestNotification();
+                      if (res.ok) {
+                        pushFloatingToast(
+                          isFa ? 'اعلان آزمایشی به گوشی و سرور ارسال شد.' : 'Test notification queued to Android.',
+                          'success'
+                        );
+                      } else {
+                        pushFloatingToast(res.error || 'Failed', 'error');
+                      }
+                    }}
+                    className="btn btn-primary text-[10.5px] px-3 py-1.5"
+                  >
+                    {isFa ? 'تست اعلان موبایل' : 'Test Push'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid sm:grid-cols-3 gap-2.5 text-xs">
@@ -1665,23 +1885,46 @@ export function ServicesPage({
             <Arrow className="w-4 h-4 text-dim shrink-0" />
           </button>
 
-          <a
-            href="/downloads/dollarino-extension.zip"
-            download="dollarino-extension.zip"
-            className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-[var(--soft)] transition text-start"
-          >
-            <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA] grid place-items-center shrink-0">
-              <Download className="w-5 h-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome / Edge / Brave)' : 'Browser Extension (V11.7 ZIP)'}</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">V11.7 گرافیکی</span>
+          <div className="w-full px-4 py-3.5 flex flex-col sm:flex-row sm:items-center gap-3 text-start">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <span className="w-10 h-10 rounded-2xl bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA] grid place-items-center shrink-0">
+                <Download className="w-5 h-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs sm:text-sm font-extrabold text-main">{isFa ? 'اکستنشن مرورگر (Chrome · Firefox · Edge)' : 'Browser Extension (Chrome · Firefox · Edge)'}</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-[#1652F0]/15 text-[#1652F0] dark:text-[#60A5FA]">V11.9.1</span>
+                </div>
+                <span className="text-[11px] text-dim block">{isFa ? 'حالت ساده V11.9.1 + ورود/ثبت‌نام + ۵ موتور همزمان و تراز ۵ بخش' : 'V11.9.1 Simple Mode + Login/Register + 5 Engines & 5-Mode Ledger'}</span>
               </div>
-              <span className="text-[11px] text-dim block">{isFa ? 'طراحی Liquid Glass هم‌شکل سایت · کنترل ربات، بازارها و رادار DEX' : 'Liquid Glass UI matching web app · Bot, Markets & DEX radar'}</span>
             </div>
-            <ExternalLink className="w-4 h-4 text-dim shrink-0" />
-          </a>
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <a
+                href="/downloads/dollarino-extension.zip"
+                download="dollarino-extension-chrome-v11.9.1.zip"
+                className="btn-cobalt px-3 py-1.5 rounded-xl text-[11px] font-black inline-flex items-center gap-1"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Chrome</span>
+              </a>
+              <a
+                href="/downloads/dollarino-extension-firefox.zip"
+                download="dollarino-extension-firefox-v11.9.1.zip"
+                className="surface-soft border hairline px-3 py-1.5 rounded-xl text-[11px] font-black text-main hover:border-[#1652F0]/40 inline-flex items-center gap-1"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Firefox</span>
+              </a>
+              <a
+                href="/downloads/dollarino-extension-edge.zip"
+                download="dollarino-extension-edge-v11.9.1.zip"
+                className="surface-soft border hairline px-3 py-1.5 rounded-xl text-[11px] font-black text-main hover:border-[#1652F0]/40 inline-flex items-center gap-1"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Edge</span>
+              </a>
+            </div>
+          </div>
 
           {onOpenSupport && (
             <button

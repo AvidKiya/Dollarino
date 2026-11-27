@@ -22,6 +22,9 @@ import { resolveTelegramBotToken } from '../telegram/token.js';
 import { formatTradeOpenedCard } from '../telegram/formatter.js';
 import { maybePromptCopyTraderOnNewTrade, publishSignalClosedCard, publishSystemLogEvent, publishTransactionEvent } from '../telegram/publisher.js';
 import { checkLiveFeeEnforcement, recordProfitShareServerFee } from '../services/server-fee.js';
+import { getDexTokenPools } from '../dex/screener.js';
+import { dispatchMobileNotification, enqueueMobileInboxNotification, type MobileNotificationCategory } from '../services/mobile-push.js';
+import { isPaperCopyPositionRow, isPaperDexTradeRow, isSniperDexTradeRow, round2 } from '../services/portfolio-accounting.js';
 import { checkPreTradeOnboardingGate } from './onboarding-gate.js';
 
 export interface UserBotConfigRow {
@@ -175,33 +178,52 @@ export async function notifyUserTelegram(
   options?: { bypassNotificationsPref?: boolean }
 ) {
   try {
-    const user = await env.DB.prepare('SELECT telegram_id FROM users WHERE id = ?')
-      .bind(userId).first<{ telegram_id: string | null }>();
-    if (!user?.telegram_id) return;
-
     if (!options?.bypassNotificationsPref) {
       const cfg = await env.DB.prepare('SELECT notifications_enabled FROM bot_configs WHERE user_id = ?')
         .bind(userId).first<{ notifications_enabled: number }>();
       if (cfg && !cfg.notifications_enabled) return;
     }
 
-    // Prefer user's own active bot token; fallback to instance global bot
-    const botRow = await env.DB.prepare(
-      'SELECT encrypted_bot_token FROM telegram_bots WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1'
-    ).bind(userId).first<{ encrypted_bot_token: string }>();
+    const user = await env.DB.prepare('SELECT telegram_id FROM users WHERE id = ?')
+      .bind(userId).first<{ telegram_id: string | null }>();
 
-    let token = '';
-    if (botRow?.encrypted_bot_token) {
-      const dec = await decryptVaultJson<{ botToken?: string }>(botRow.encrypted_bot_token, env.MASTER_ENCRYPTION_KEY);
-      if (dec.botToken) token = dec.botToken;
+    if (user?.telegram_id) {
+      // Prefer user's own active bot token; fallback to instance global bot
+      const botRow = await env.DB.prepare(
+        'SELECT encrypted_bot_token FROM telegram_bots WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1'
+      ).bind(userId).first<{ encrypted_bot_token: string }>();
+
+      let token = '';
+      if (botRow?.encrypted_bot_token) {
+        const dec = await decryptVaultJson<{ botToken?: string }>(botRow.encrypted_bot_token, env.MASTER_ENCRYPTION_KEY);
+        if (dec.botToken) token = dec.botToken;
+      }
+      if (!token) token = await resolveTelegramBotToken(env);
+      if (token) {
+        const client = new TelegramBotClient(token);
+        await client.sendMessage(user.telegram_id, text, inlineKeyboard ? { inlineKeyboard } : undefined);
+      }
     }
-    if (!token) token = await resolveTelegramBotToken(env);
-    if (!token) return;
-
-    const client = new TelegramBotClient(token);
-    await client.sendMessage(user.telegram_id, text, inlineKeyboard ? { inlineKeyboard } : undefined);
   } catch {
     // Non-fatal notification failure
+  }
+
+  // Mirror critical Telegram alerts to native Android push inbox / FCM
+  try {
+    const cleanText = String(text || '').replace(/<[^>]+>/g, '').trim();
+    if (cleanText) {
+      const firstLine = cleanText.split('\n')[0]?.trim().slice(0, 120) || 'دلارینو';
+      const rest = cleanText.slice(firstLine.length).trim().slice(0, 420) || cleanText.slice(0, 420);
+      await dispatchMobileNotification(env, {
+        userId,
+        category: 'TRADE',
+        title: firstLine,
+        body: rest,
+        bypassPref: Boolean(options?.bypassNotificationsPref),
+      });
+    }
+  } catch {
+    // Non-fatal
   }
 }
 
@@ -216,6 +238,12 @@ export async function pushNotification(
     await db.prepare(
       `INSERT INTO notifications (id, user_id, category, title, body, is_read) VALUES (?, ?, ?, ?, ?, 0)`
     ).bind(randomId('ntf'), userId, category, title, body).run();
+    await enqueueMobileInboxNotification(db, {
+      userId,
+      category: category as MobileNotificationCategory,
+      title,
+      body,
+    });
   } catch {
     // Non-fatal if migration not yet applied
   }
@@ -645,8 +673,6 @@ export async function reconcileOpenPositionsForUser(
     `SELECT * FROM trades WHERE user_id = ? AND status = 'OPEN'`
   ).bind(userId).all<OpenTradeRow>();
 
-  if (!openTrades.results.length) return processed;
-
   for (const t of openTrades.results) {
     const tradeMarketType: MarketType = t.market_type ?? 'FUTURES';
     const forceProvider = t.mode === 'PAPER' ? 'paper' : undefined;
@@ -887,6 +913,113 @@ export async function reconcileOpenPositionsForUser(
     }
   }
 
+  // Reconcile OPEN DEX & Sniper positions against live DexScreener prices (TP1 / Stop-Loss)
+  interface OpenDexRow {
+    id: string;
+    chain_id: string;
+    dex_id: string | null;
+    token_address: string;
+    token_symbol: string;
+    amount_usd: number;
+    entry_price_usd: number;
+    stop_loss_usd: number | null;
+    tp1_usd: number | null;
+    tx_hash: string | null;
+    note: string | null;
+  }
+  const openDex = await env.DB.prepare(
+    `SELECT id, chain_id, dex_id, token_address, token_symbol, amount_usd, entry_price_usd, stop_loss_usd, tp1_usd, tx_hash, note
+     FROM dex_trades WHERE user_id = ? AND status = 'OPEN' LIMIT 25`
+  )
+    .bind(userId)
+    .all<OpenDexRow>()
+    .catch(() => ({ results: [] as OpenDexRow[] }));
+
+  if (openDex.results.length > 0) {
+    const tokenPriceCache = new Map<string, number>();
+    const uniqueTokens: Array<{ chain: string; addr: string }> = [];
+    for (const d of openDex.results) {
+      const k = `${String(d.chain_id || '').toLowerCase()}:${String(d.token_address || '').toLowerCase()}`;
+      if (!tokenPriceCache.has(k) && uniqueTokens.length < 15) {
+        tokenPriceCache.set(k, 0);
+        uniqueTokens.push({ chain: d.chain_id, addr: d.token_address });
+      }
+    }
+    await Promise.allSettled(
+      uniqueTokens.map(async (u) => {
+        const pools = await getDexTokenPools(u.chain, u.addr).catch(() => []);
+        const px = Number(pools[0]?.priceUsd || 0);
+        if (px > 0) tokenPriceCache.set(`${u.chain.toLowerCase()}:${u.addr.toLowerCase()}`, px);
+      })
+    );
+
+    for (const d of openDex.results) {
+      const key = `${String(d.chain_id || '').toLowerCase()}:${String(d.token_address || '').toLowerCase()}`;
+      const livePx = tokenPriceCache.get(key) || 0;
+      if (livePx <= 0 || !(d.entry_price_usd > 0)) continue;
+
+      const hitTp1 = Boolean(d.tp1_usd && d.tp1_usd > 0 && livePx >= d.tp1_usd);
+      const hitSl = Boolean(d.stop_loss_usd && d.stop_loss_usd > 0 && livePx <= d.stop_loss_usd);
+      if (!hitTp1 && !hitSl) continue;
+
+      const reason = hitTp1 ? 'DEX_TP1' : 'DEX_SL';
+      const pnlPct = ((livePx - d.entry_price_usd) / d.entry_price_usd) * 100;
+      const pnlUsd = round2((Number(d.amount_usd || 0) * pnlPct) / 100);
+
+      await env.DB.prepare(
+        `UPDATE dex_trades
+         SET status = 'CLOSED', exit_price_usd = ?, realized_pnl_usd = ?, realized_pnl_pct = ?,
+             note = COALESCE(note, '') || ' | ' || ?, closed_at = datetime('now')
+         WHERE id = ? AND user_id = ? AND status = 'OPEN'`
+      )
+        .bind(livePx, pnlUsd, round2(pnlPct), hitTp1 ? 'تارگت خودکار TP1' : 'حد ضرر خودکار SL', d.id, userId)
+        .run();
+
+      const isPaper = isPaperDexTradeRow(d);
+      if (isPaper) {
+        const balRow = await env.DB.prepare(`SELECT paper_balance FROM bot_configs WHERE user_id = ?`)
+          .bind(userId)
+          .first<{ paper_balance: string }>()
+          .catch(() => null);
+        const curBal = Number(balRow?.paper_balance ?? 0);
+        const returnUsd = Math.max(0, Number(d.amount_usd || 0) + pnlUsd);
+        const nextBal = round2(curBal + returnUsd);
+        await env.DB.prepare(`UPDATE bot_configs SET paper_balance = ?, updated_at = datetime('now') WHERE user_id = ?`)
+          .bind(String(nextBal), userId)
+          .run()
+          .catch(() => {});
+        await env.DB.prepare(
+          `INSERT INTO wallet_ledger (id, user_id, mode, event_type, amount_usd, balance_after, note)
+           VALUES (?, ?, 'PAPER', 'DEX_CLOSE', ?, ?, ?)`
+        )
+          .bind(randomId('wl'), userId, pnlUsd, nextBal, `${reason} ${d.token_symbol} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`)
+          .run()
+          .catch(() => {});
+      } else {
+        await recordProfitShareServerFee(env.DB, {
+          userId,
+          tradeId: d.id,
+          source: isSniperDexTradeRow(d) ? 'SNIPER_LIVE' : 'DEX_LIVE',
+          symbol: d.token_symbol,
+          mode: 'LIVE',
+          realizedPnlUsd: pnlUsd,
+          tradeAmountUsd: Number(d.amount_usd || 0),
+          note: `بستن خودکار ${reason} برای ${d.token_symbol}`,
+        }).catch(() => {});
+      }
+
+      await pushNotification(
+        env.DB,
+        userId,
+        'TP_SL',
+        `${pnlUsd >= 0 ? 'WIN' : 'LOSS'} · ${d.token_symbol} (${reason})`,
+        `PnL: ${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(2)} (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)`
+      );
+      await logAudit(env.DB, userId, 'ORDER', 'INFO', `${reason} triggered for ${d.token_symbol} @ $${livePx} (PnL $${pnlUsd.toFixed(2)})`, d.token_symbol);
+      processed++;
+    }
+  }
+
   return processed;
 }
 
@@ -912,10 +1045,10 @@ export async function resolveUserCapitalSummary(
 ): Promise<UserCapitalSummary> {
   const mode = cfg?.trading_mode === 'LIVE' ? 'LIVE' : 'PAPER';
   let usedTrades = prefetched?.usedTradesMarginUsd;
-  let usedSniper = prefetched?.usedSniperUsd;
+  let usedDexOrCopy = prefetched?.usedSniperUsd;
 
-  if (usedTrades === undefined || (mode === 'PAPER' && usedSniper === undefined)) {
-    const [openMarginRow, openSniperRow] = await Promise.all([
+  if (usedTrades === undefined || usedDexOrCopy === undefined) {
+    const [openMarginRow, openDexRows, openCopyRows] = await Promise.all([
       usedTrades === undefined
         ? db
             .prepare(
@@ -926,27 +1059,50 @@ export async function resolveUserCapitalSummary(
             .first<{ used_margin: number }>()
             .catch(() => ({ used_margin: 0 }))
         : Promise.resolve({ used_margin: usedTrades }),
-      mode === 'PAPER' && usedSniper === undefined
+      usedDexOrCopy === undefined
         ? db
-            .prepare(
-              `SELECT COALESCE(SUM(CAST(amount_usd AS REAL)), 0) AS sniper_used
-               FROM dex_trades WHERE user_id = ? AND status = 'OPEN' AND note LIKE '%شکارچی دمو%'`
-            )
+            .prepare(`SELECT amount_usd, tx_hash, note FROM dex_trades WHERE user_id = ? AND status = 'OPEN'`)
             .bind(userId)
-            .first<{ sniper_used: number }>()
-            .catch(() => ({ sniper_used: 0 }))
-        : Promise.resolve({ sniper_used: usedSniper ?? 0 }),
+            .all<{ amount_usd: number; tx_hash: string | null; note: string | null }>()
+            .catch(() => ({ results: [] }))
+        : Promise.resolve({ results: [] }),
+      usedDexOrCopy === undefined
+        ? db
+            .prepare(`SELECT margin_usd, remaining_pct, execution_mode, tx_hash FROM copy_positions_v2 WHERE user_id = ? AND status = 'OPEN'`)
+            .bind(userId)
+            .all<{ margin_usd: number; remaining_pct: number; execution_mode: string; tx_hash: string | null }>()
+            .catch(() => ({ results: [] }))
+        : Promise.resolve({ results: [] }),
     ]);
+
     usedTrades = Math.max(0, Number(openMarginRow?.used_margin ?? 0));
-    usedSniper = mode === 'PAPER' ? Math.max(0, Number(openSniperRow?.sniper_used ?? 0)) : 0;
+    if (usedDexOrCopy === undefined) {
+      let dexSum = 0;
+      for (const d of openDexRows.results || []) {
+        const isPaper = isPaperDexTradeRow(d);
+        if ((mode === 'PAPER' && isPaper) || (mode === 'LIVE' && !isPaper)) {
+          dexSum += Math.max(0, Number(d.amount_usd || 0));
+        }
+      }
+      for (const cp of openCopyRows.results || []) {
+        const isPaper = isPaperCopyPositionRow(cp);
+        if ((mode === 'PAPER' && isPaper) || (mode === 'LIVE' && !isPaper)) {
+          const remRatio = Math.max(0, Math.min(100, Number(cp.remaining_pct ?? 100))) / 100;
+          dexSum += Math.max(0, Number(cp.margin_usd || 0) * remRatio);
+        }
+      }
+      usedDexOrCopy = dexSum;
+    }
   }
 
-  const usedMarginUsd = Math.round((Math.max(0, usedTrades) + (mode === 'PAPER' ? Math.max(0, usedSniper ?? 0) : 0)) * 100) / 100;
+  const usedMarginUsd = round2(Math.max(0, usedTrades) + Math.max(0, usedDexOrCopy ?? 0));
 
   const fallbackFree = mode === 'LIVE' ? 0 : (Number(cfg?.paper_balance ?? 10000) || 10000);
   const hasExplicitFree = balance?.free !== undefined && balance?.free !== null;
-  const walletFreeUsd = Math.max(0, Number(hasExplicitFree ? balance!.free : fallbackFree) || 0);
-  const walletTotalUsd = Math.round(Math.max(walletFreeUsd + usedMarginUsd, Number(balance?.total ?? walletFreeUsd + usedMarginUsd) || 0) * 100) / 100;
+  const walletFreeUsd = round2(Math.max(0, Number(hasExplicitFree ? balance!.free : fallbackFree) || 0));
+  const computedTotal = round2(walletFreeUsd + usedMarginUsd);
+  const explicitTotal = Number(balance?.total ?? 0);
+  const walletTotalUsd = round2(explicitTotal > 0 ? Math.max(computedTotal, explicitTotal) : computedTotal);
 
   const cap = resolveEffectiveBotCapital({
     walletBalanceUsd: walletTotalUsd,
@@ -963,15 +1119,15 @@ export async function resolveUserCapitalSummary(
     }
   } catch { /* balanced */ }
 
-  const remainingBudgetUsd = Math.max(0, Math.round((cap.effectiveCapitalUsd - usedMarginUsd) * 100) / 100);
+  const remainingBudgetUsd = round2(Math.max(0, Math.min(walletFreeUsd, cap.effectiveCapitalUsd - usedMarginUsd)));
 
   return {
     walletTotalUsd,
-    walletFreeUsd: Math.round(walletFreeUsd * 100) / 100,
+    walletFreeUsd,
     budgetMode: cap.budgetMode,
     budgetUsd: Math.max(0, Number(cfg?.bot_budget_usd ?? 0)),
     budgetPct: Math.max(5, Math.min(100, Number(cfg?.bot_budget_pct ?? 100))),
-    effectiveCapitalUsd: cap.effectiveCapitalUsd,
+    effectiveCapitalUsd: round2(cap.effectiveCapitalUsd),
     usedMarginUsd,
     remainingBudgetUsd,
     isCapped: cap.isCapped,

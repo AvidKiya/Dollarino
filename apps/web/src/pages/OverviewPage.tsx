@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Bot,
   BrainCircuit,
+  CandlestickChart,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -19,6 +20,7 @@ import {
   Globe,
   GraduationCap,
   Hand,
+  HelpCircle,
   KeyRound,
   Layers,
   Lock,
@@ -52,7 +54,7 @@ import { formatTomanEq, getLiveUsdtIrt } from '../lib/format';
 import type { Lang } from '../lib/i18n';
 import { tgHaptic, tgNotifyHaptic } from '../lib/telegram';
 import { pushFloatingToast } from '../lib/toast';
-import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow, TradingEngineChoice } from '../lib/types';
+import type { AuthUserInfo, DashboardPayload, NavTab, OpenTradeRow, TerminalTradeOverlay, TradingEngineChoice } from '../lib/types';
 import { ChainLogo, WalletLogo } from '../components/BrandLogos';
 import { CoinIcon } from '../components/CoinIcon';
 import { AnimatedNumber, AreaChart, ConsensusGauge, LiveDot, Sparkline } from '../components/DollarinoViz';
@@ -62,6 +64,7 @@ import { PromoBannerCarousel } from '../components/PromoBannerCarousel';
 import { SetupWizardModal } from '../components/SetupWizardModal';
 import { SymbolPicker, type ExchangeMarket } from '../components/SymbolPickerModal';
 import { TrustWalletConnectInline } from '../components/TrustWalletConnectInline';
+import { TrustWalletTradePlaybook } from '../components/TrustWalletTradePlaybook';
 import { TpSlModeSwitch } from '../components/TpSlModeSwitch';
 import { calcPctFromPrice, calcPriceFromPct, calcRoePct, formatLevelPrice, type TpSlInputMode } from '../lib/tpsl';
 import { WeeklyCardPage } from './WeeklyCardPage';
@@ -135,7 +138,7 @@ export function OverviewPage({
   data: DashboardPayload;
   markets: ExchangeMarket[];
   onNavigate: (tab: NavTab) => void;
-  onSelectTerminalSymbol: (sym: string) => void;
+  onSelectTerminalSymbol: (sym: string, mkt?: 'SPOT' | 'FUTURES', overlay?: TerminalTradeOverlay | null) => void;
   onRefresh: () => Promise<void>;
   onOpenAcademy?: () => void;
   onUpgradeUser?: (u: AuthUserInfo) => void;
@@ -147,6 +150,15 @@ export function OverviewPage({
   const [busy, setBusy] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
+  const [guideEngine, setGuideEngine] = useState<TradingEngineChoice | null>(null);
+  const [localSeenGuides, setLocalSeenGuides] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('dollarino_seen_engine_guides_v1');
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // V11.0 / V11.4: Unified Pre-Trade Onboarding Gate (Mode + Risk Terms), Custom Paper Balance, Multi-Engine & Sniper Workbench
   const [riskModalOpen, setRiskModalOpen] = useState(false);
@@ -316,9 +328,10 @@ export function OverviewPage({
     }
   };
 
-  const freeBal = Number(data.balance.free || 0);
-  const usedBal = Number(data.balance.used || 0);
-  const totalEq = Number(data.balance.total ?? freeBal + usedBal);
+  const pb = data.portfolioBreakdown ?? null;
+  const freeBal = pb ? pb.freeBalanceUsd : Number(data.balance.free || 0);
+  const usedBal = pb ? pb.lockedMarginUsd : Number(data.balance.used || 0);
+  const totalEq = pb ? pb.totalEquityUsd : Number(data.balance.total ?? freeBal + usedBal);
   const demoBalDisplay = Number(
     data.walletSummary?.demoBalanceUsd ??
       (data.config.trading_mode === 'PAPER' ? totalEq : Number(data.config.custom_paper_balance || data.config.paper_balance || 10000))
@@ -416,8 +429,9 @@ export function OverviewPage({
     () => (data.perpOrders || []).filter((o) => o.status !== 'CLOSED' && o.status !== 'CANCELLED'),
     [data.perpOrders]
   );
-  const totalOpenPositionsCount =
-    data.openTrades.length + openDexTrades.length + openSmartCopy.length + openPerpOrders.length;
+  const totalOpenPositionsCount = pb
+    ? pb.totalOpenCount
+    : data.openTrades.length + openDexTrades.length + openSmartCopy.length + openPerpOrders.length;
 
   const openPnlBreakdown = useMemo(() => {
     let profitableCount = 0;
@@ -452,21 +466,53 @@ export function OverviewPage({
     return { profitableCount, losingCount, totalUnrealized };
   }, [data.openTrades, openDexTrades, openSmartCopy, openPerpOrders]);
 
-  const unrealized = data.stats.unrealizedPnl ?? openPnlBreakdown.totalUnrealized;
-  const todayPnl = Number(data.stats.todayPnl ?? data.stats.totalPnl ?? 0) + unrealized;
+  const unrealized = pb ? pb.unrealizedPnlUsd : (data.stats.unrealizedPnl ?? openPnlBreakdown.totalUnrealized);
+  const todayPnl = pb ? pb.todayTotalPnlUsd : Number(data.stats.todayPnl ?? data.stats.totalPnl ?? 0) + unrealized;
   const activeStrategy = data.config.strategy_key || 'dollarino_v01';
   const scanScope = data.config.scan_scope || 'ALL_MARKET';
   const execMode = data.config.trade_execution_mode === 'MANUAL_CONFIRM' ? 'MANUAL_CONFIRM' : 'AUTO';
   const activeEngines: TradingEngineChoice[] = useMemo(() => {
-    if (data.activeEngine?.activeEngines?.length) return data.activeEngine.activeEngines;
+    if (Array.isArray(data.activeEngine?.activeEngines)) {
+      return data.activeEngine.activeEngines;
+    }
     const list: TradingEngineChoice[] = [];
-    if (activeStrategy === 'ai_autonomous_agent') list.push('CENTRAL_AI');
-    else if (activeStrategy === 'my_custom_ai') list.push('MY_AI');
-    else if (activeStrategy === 'copy_trade') list.push('COPY_TRADE');
-    else list.push('STRATEGY');
+    if (isRunning) {
+      if (activeStrategy === 'ai_autonomous_agent') list.push('CENTRAL_AI');
+      else if (activeStrategy === 'my_custom_ai') list.push('MY_AI');
+      else if (activeStrategy === 'copy_trade') list.push('COPY_TRADE');
+      else list.push('STRATEGY');
+    }
     if (data.config.sniper_enabled) list.push('LISTING_SNIPER');
     return list;
-  }, [data.activeEngine?.activeEngines, activeStrategy, data.config.sniper_enabled]);
+  }, [data.activeEngine?.activeEngines, activeStrategy, data.config.sniper_enabled, isRunning]);
+
+  const seenEngineGuides = useMemo(() => {
+    const serverList: string[] = [];
+    try {
+      if (data.config.risk_profile_json) {
+        const parsed = JSON.parse(data.config.risk_profile_json) as { seenEngineGuides?: unknown };
+        if (Array.isArray(parsed.seenEngineGuides)) {
+          for (const g of parsed.seenEngineGuides) serverList.push(String(g));
+        }
+      }
+    } catch { /* ignore */ }
+    return new Set([...localSeenGuides, ...serverList]);
+  }, [data.config.risk_profile_json, localSeenGuides]);
+
+  const dismissEngineGuide = (engine: TradingEngineChoice) => {
+    setGuideEngine(null);
+    setLocalSeenGuides((prev) => {
+      const next = prev.includes(engine) ? prev : [...prev, engine];
+      try {
+        localStorage.setItem('dollarino_seen_engine_guides_v1', JSON.stringify(next));
+      } catch { /* ignore */ }
+      return next;
+    });
+    void apiFetch('/api/trading/engines/guide-seen', {
+      method: 'POST',
+      body: JSON.stringify({ engine }),
+    }).catch(() => {});
+  };
   const hasSelectedMode =
     data.tradingModeSelected === true || Number(data.config.trading_mode_selected ?? 0) === 1;
   const hasAcceptedRisk = Boolean(data.riskTermsAcceptedAt || user.risk_terms_accepted_at);
@@ -519,6 +565,9 @@ export function OverviewPage({
           ? `${nextOn ? 'موتور فعال شد' : 'موتور غیرفعال شد'} (${count} موتور آماده/فعال همزمان)`
           : `${nextOn ? 'Engine enabled' : 'Engine disabled'} (${count} active)`
       );
+      if (nextOn && !seenEngineGuides.has(engine)) {
+        setGuideEngine(engine);
+      }
       await onRefresh();
     } catch (e) {
       toastMsg(e instanceof Error ? e.message : 'Engine toggle failed', true);
@@ -783,6 +832,15 @@ export function OverviewPage({
       setStopConfirmOpen(true);
       return;
     }
+    if (activeEngines.length === 0) {
+      toastMsg(
+        isFa
+          ? 'لطفاً ابتدا حداقل یک موتور معاملاتی (مثل هوش مصنوعی یا اسنایپر) را روشن کنید.'
+          : 'Please turn ON at least one trading engine first.',
+        true
+      );
+      return;
+    }
     runWithRiskCheck(async () => {
       setBusy(true);
       try {
@@ -790,7 +848,7 @@ export function OverviewPage({
           method: 'POST',
           body: JSON.stringify({
             scanScope,
-            activeEngines: activeEngines.length > 0 ? activeEngines : ['CENTRAL_AI'],
+            activeEngines,
             acceptRiskTerms: true,
           }),
         });
@@ -1015,17 +1073,17 @@ export function OverviewPage({
                 <span>
                   {isFa ? 'بودجه مجاز ربات:' : 'Bot Budget Cap:'}{' '}
                   <span dir="ltr" className={isGlass ? 'text-emerald-300 font-num' : 'text-[#059669] dark:text-[#34D399] font-num'}>
-                    ${capTotal.toLocaleString('en-US')}
+                    ${capTotal.toLocaleString('en-US', { minimumFractionDigits: capTotal < 1000 ? 2 : 0, maximumFractionDigits: 2 })}
                   </span>
                 </span>
                 {activeCapitalRes.isCapped && (
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isGlass ? 'bg-amber-400/20 text-amber-200' : 'bg-amber-500/15 text-[#D97706]'}`}>
                     {isFa ? (
                       <>
-                        از کل <span dir="ltr" className="inline-block font-num" style={{ unicodeBidi: 'isolate' }}>${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}</span>
+                        از کل <span dir="ltr" className="inline-block font-num" style={{ unicodeBidi: 'isolate' }}>${activeCapitalRes.walletTotalUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
                       </>
                     ) : (
-                      `of $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US')}`
+                      `of $${activeCapitalRes.walletTotalUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
                     )}
                   </span>
                 )}
@@ -1033,11 +1091,11 @@ export function OverviewPage({
               <p className={`text-[10.5px] font-num ${isGlass ? 'text-white/75' : 'text-dim'}`}>
                 {isFa ? (
                   <>
-                    درگیر: <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${used.toFixed(0)}</span> · باقی‌مانده مجاز:{' '}
-                    <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${rem.toFixed(0)}</span>
+                    درگیر: <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${used.toFixed(2)}</span> · باقی‌مانده مجاز:{' '}
+                    <span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${rem.toFixed(2)}</span>
                   </>
                 ) : (
-                  `In Use: $${used.toFixed(0)} · Remaining: $${rem.toFixed(0)}`
+                  `In Use: $${used.toFixed(2)} · Remaining: $${rem.toFixed(2)}`
                 )}
               </p>
             </div>
@@ -1212,6 +1270,96 @@ export function OverviewPage({
           </div>
         )}
       </div>
+    );
+  };
+
+  const renderUnified5ModeBreakdown = () => {
+    if (!pb) return null;
+    const modeEntries = [
+      { key: 'futures' as const, badgeCls: 'bg-sky-500/15 text-sky-400', target: 'terminal' as NavTab },
+      { key: 'spot' as const, badgeCls: 'bg-emerald-500/15 text-jade', target: 'markets' as NavTab },
+      { key: 'dex' as const, badgeCls: 'bg-indigo-500/15 text-indigo-400', target: 'radar' as NavTab },
+      { key: 'sniper' as const, badgeCls: 'bg-amber-500/15 text-amber-400', target: 'radar' as NavTab },
+      { key: 'copy' as const, badgeCls: 'bg-violet-500/15 text-violet-400', target: 'copy' as NavTab },
+    ];
+    return (
+      <section className="panel rounded-3xl p-4 sm:p-5 border hairline space-y-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-[var(--gold)]" />
+            <h3 className="font-display font-bold text-sm sm:text-base text-main">
+              {isFa ? 'تراز یکپارچه ۵ موتور سرمایه‌گذاری' : 'Unified 5-Mode Portfolio Accounting'}
+            </h3>
+            {pb.isReconciled && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/15 text-jade inline-flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>{isFa ? 'تطبیق دقیق حسابداری ✓' : 'Reconciled ✓'}</span>
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-[11px] font-num" dir="ltr">
+            <span className="text-dim">
+              {isFa ? 'آزاد:' : 'Free:'} <strong className="text-main">${pb.freeBalanceUsd.toFixed(2)}</strong>
+            </span>
+            <span className="text-dim">+</span>
+            <span className="text-dim">
+              {isFa ? 'درگیر:' : 'Locked:'} <strong className="text-amber-400">${pb.lockedMarginUsd.toFixed(2)}</strong>
+            </span>
+            <span className="text-dim">+</span>
+            <span className="text-dim">
+              {isFa ? 'باز:' : 'uPnL:'}{' '}
+              <strong className={pb.unrealizedPnlUsd >= 0 ? 'text-jade' : 'text-loss'}>
+                {pb.unrealizedPnlUsd >= 0 ? '+' : '-'}${Math.abs(pb.unrealizedPnlUsd).toFixed(2)}
+              </strong>
+            </span>
+            <span className="text-dim">=</span>
+            <span className="px-2 py-0.5 rounded-lg surface-soft border hairline font-black text-main">
+              ${pb.totalEquityUsd.toFixed(2)}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+          {modeEntries.map(({ key, badgeCls, target }) => {
+            const b = pb.modes[key];
+            if (!b) return null;
+            const totalNet = b.realizedPnlUsd + b.unrealizedPnlUsd;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onNavigate(target)}
+                className="surface-soft hover:border-[var(--line-strong)] rounded-2xl p-3 border hairline text-start transition space-y-2"
+              >
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${badgeCls}`}>
+                    {isFa ? b.labelFa : b.labelEn}
+                  </span>
+                  <span dir="ltr" className="text-[10px] font-num font-bold text-dim">
+                    {b.openCount} {isFa ? 'باز' : 'open'}
+                  </span>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-dim">{isFa ? 'درگیر:' : 'Margin:'}</span>
+                    <strong dir="ltr" className="font-num text-main">${b.lockedMarginUsd.toFixed(2)}</strong>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-dim">{isFa ? 'سود/زیان:' : 'Net PnL:'}</span>
+                    <strong dir="ltr" className={`font-num ${totalNet >= 0 ? 'text-jade' : 'text-loss'}`}>
+                      {totalNet >= 0 ? '+' : '-'}${Math.abs(totalNet).toFixed(2)}
+                    </strong>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-dim pt-0.5">
+                    <span>{isFa ? 'بسته:' : 'Closed:'} {b.closedCount}</span>
+                    <span dir="ltr" className="font-num">WR {b.winRatePct.toFixed(0)}%</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
     );
   };
 
@@ -1626,6 +1774,125 @@ export function OverviewPage({
           </div>,
           document.body
         )}
+
+      {guideEngine &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div dir={isFa ? 'rtl' : 'ltr'} className="fixed inset-0 z-[210] bg-black/75 backdrop-blur-sm grid place-items-center p-4" onClick={() => dismissEngineGuide(guideEngine)}>
+            <div className="pop-in panel rounded-[26px] w-full max-w-md p-6 space-y-4 border border-emerald-500/35" onClick={(e) => e.stopPropagation()}>
+              {(() => {
+                const guideCopy: Record<TradingEngineChoice, { titleFa: string; titleEn: string; bulletsFa: string[]; bulletsEn: string[] }> = {
+                  CENTRAL_AI: {
+                    titleFa: 'راهنمای موتور هوش مصنوعی مرکزی دلارینو',
+                    titleEn: 'Dollarino Central AI Guide',
+                    bulletsFa: [
+                      'ساختار بازار و روند چند تایم‌فریمی را به‌صورت ۲۴ ساعته تحلیل می‌کند.',
+                      'تنها زمانی معامله باز می‌کند که اجماع مدل‌های هوش مصنوعی بالاتر از آستانه اطمینان باشد.',
+                      'مدیریت خودکار حد ضرر (SL)، تریلینگ و تقسیم سود در ۳ تارگت (TP1/TP2/TP3) دارد.',
+                    ],
+                    bulletsEn: [
+                      'Analyzes multi-timeframe market structure 24/7 via consensus LLMs.',
+                      'Only executes when confidence passes your configured threshold.',
+                      'Manages SL, risk-free trailing stop, and TP1/TP2/TP3 automatically.',
+                    ],
+                  },
+                  MY_AI: {
+                    titleFa: 'راهنمای هوش مصنوعی شخصی من (My AI)',
+                    titleEn: 'My Personal AI Agent Guide',
+                    bulletsFa: [
+                      'قوانین و سبک معاملاتی خودتان را در صفحه «هوش مصنوعی من» به فارسی آموزش می‌دهید.',
+                      'ربات قوانین استخراج‌شده شما را به‌صورت مستقل و همزمان با سایر موتورها اجرا می‌کند.',
+                      'می‌توانید برای این موتور مدل دلخواه و قوانین ریسک اختصاصی تعیین کنید.',
+                    ],
+                    bulletsEn: [
+                      'Train your personal trading rules in plain language on the My AI page.',
+                      'Executes independently alongside other active engines.',
+                      'Customize entries, invalidation rules, and risk guards.',
+                    ],
+                  },
+                  STRATEGY: {
+                    titleFa: 'راهنمای موتور استراتژی شکار (دُرنا، KBOS، شخصی)',
+                    titleEn: 'Hunting & Pine Strategy Engine Guide',
+                    bulletsFa: [
+                      'شامل استراتژی‌های کوانت آماده (Dorna V1, KBOS v11, Signal Mixer) و کدهای Pine/Python شما.',
+                      'اسکن مستمر بازار با اندیکاتورها، شکست ساختار و شکست تاییدشده کندل بسته.',
+                      'از صفحه «رادار و استراتژی شخصی» می‌توانید بک‌تست بگیرید و اسکریپت بسازید.',
+                    ],
+                    bulletsEn: [
+                      'Runs quant strategies (Dorna V1, KBOS v11, Signal Mixer) or custom Pine/Python scripts.',
+                      'Evaluates confirmed candle closes only — zero repainting.',
+                      'Includes full backtester and TradingView Superchart overlay.',
+                    ],
+                  },
+                  COPY_TRADE: {
+                    titleFa: 'راهنمای موتور کپی‌ترید تاییدشده و نهنگ‌ها',
+                    titleEn: 'Verified Copy-Trade & Whale Engine Guide',
+                    bulletsFa: [
+                      'معاملات تریدرهای تاییدشده سایت و کیف‌پول‌های نهنگ Solana/EVM را دنبال می‌کند.',
+                      'در باکس مارجین ایزوله، فیلتر ضدراگ خودکار توکن‌ها را قبل از هر خرید بررسی می‌کند.',
+                      'در حالت اتوترید آن‌چین یا تایید تک‌کلیکی Trust Wallet قابل استفاده است.',
+                    ],
+                    bulletsEn: [
+                      'Mirrors verified site traders and on-chain smart-money whale wallets.',
+                      'Runs automated anti-rug/honeypot safety checks before every copy.',
+                      'Supports 24/7 Vault auto-copy or 1-tap Trust Wallet confirmation.',
+                    ],
+                  },
+                  LISTING_SNIPER: {
+                    titleFa: 'راهنمای موتور اسنایپر لیستینگ و میم‌کوین',
+                    titleEn: 'New Listing & Meme Sniper Guide',
+                    bulletsFa: [
+                      'لیستینگ‌های جدید صرافی‌ها و استخرهای تازه‌متولدشده DEX در زنجیره‌های Solana/BSC/Base/TON را رصد می‌کند.',
+                      'فقط توکن‌هایی که حداقل امتیاز امنیت، نقدینگی و نسبت خرید/فروش شما را پاس کنند شکار می‌شوند.',
+                      'هر شکار با تارگت و حد ضرر خودکار به‌عنوان سیگنال اختصاصی اسنایپر ثبت می‌شود.',
+                    ],
+                    bulletsEn: [
+                      'Scans fresh exchange listings and ultra-fresh DEX pools across Solana/BSC/Base/TON.',
+                      'Strictly enforces your min safety score, liquidity, age, and buy/sell ratio filters.',
+                      'Logs every pick as a dedicated Sniper signal with automatic TP/SL.',
+                    ],
+                  },
+                };
+                const g = guideCopy[guideEngine];
+                const list = isFa ? g.bulletsFa : g.bulletsEn;
+                return (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display font-bold text-base text-main flex items-center gap-2">
+                        <HelpCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                        <span>{isFa ? g.titleFa : g.titleEn}</span>
+                      </h3>
+                      <button type="button" onClick={() => dismissEngineGuide(guideEngine)} className="btn-ghost p-1.5 rounded-xl">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <p className="text-[11px] font-bold text-dim">
+                      {isFa
+                        ? 'این راهنما فقط یک‌بار هنگام اولین فعال‌سازی نمایش داده می‌شود (هر زمان با دکمه ? قابل بازبینی است):'
+                        : 'This guide only auto-opens once on first activation (reopen anytime via ?):'}
+                    </p>
+                    <ul className="space-y-2 text-xs text-main">
+                      {list.map((b, idx) => (
+                        <li key={idx} className="surface-soft rounded-xl p-2.5 border hairline flex items-start gap-2 leading-relaxed">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => dismissEngineGuide(guideEngine)}
+                      className="btn-emerald w-full py-2.5 rounded-xl text-xs font-black"
+                    >
+                      {isFa ? 'متوجه شدم (نمایش نده)' : 'Got It (Do Not Auto-Show Again)'}
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          </div>,
+          document.body
+        )}
     </>
   );
 
@@ -1971,10 +2238,10 @@ export function OverviewPage({
                     {isFa ? (
                       <span className="inline-flex items-center gap-1.5">
                         <Gamepad2 className="w-3.5 h-3.5" />
-                        <span>کیف‌پول دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${Math.round(demoBalDisplay).toLocaleString('en-US')}</span>)</span>
+                        <span>کیف‌پول دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${demoBalDisplay.toLocaleString('en-US', { minimumFractionDigits: demoBalDisplay < 1000 ? 2 : 0, maximumFractionDigits: 2 })}</span>)</span>
                       </span>
                     ) : (
-                      `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`
+                      `Demo ($${demoBalDisplay.toLocaleString('en-US', { minimumFractionDigits: demoBalDisplay < 1000 ? 2 : 0, maximumFractionDigits: 2 })})`
                     )}
                   </button>
                   <button
@@ -2027,7 +2294,7 @@ export function OverviewPage({
               <div className="grid grid-cols-2 gap-2">
                 <div className="ios-glass-stat rounded-2xl p-3 text-center">
                   <p className="text-[11px] text-white/75 font-bold">{isFa ? 'معاملات در حال انجام' : 'Active Trades'}</p>
-                  <p dir="ltr" className="font-num font-black text-base text-white mt-0.5">{data.openTrades.length}</p>
+                  <p dir="ltr" className="font-num font-black text-base text-white mt-0.5">{totalOpenPositionsCount}</p>
                 </div>
                 <div className="ios-glass-stat rounded-2xl p-3 text-center">
                   <p className="text-[11px] text-white/75 font-bold">{isFa ? 'سود امروز' : 'Today'}</p>
@@ -2046,22 +2313,29 @@ export function OverviewPage({
                     setStopConfirmOpen(true);
                     return;
                   }
+                  if (activeEngines.length === 0) {
+                    toastMsg(
+                      isFa
+                        ? 'لطفاً ابتدا حداقل یک موتور معاملاتی را از «قدم ۱» روشن کنید.'
+                        : 'Please enable at least one engine in Step 1 first.',
+                      true
+                    );
+                    return;
+                  }
                   runWithRiskCheck(async () => {
                     setBusy(true);
                     try {
-                      const nextEngines: TradingEngineChoice[] =
-                        activeEngines.length > 0 ? activeEngines : ['CENTRAL_AI'];
                       await apiFetch('/api/trading/bot/start', {
                         method: 'POST',
                         body: JSON.stringify({
-                          activeEngines: nextEngines,
+                          activeEngines,
                           scanScope: 'ALL_MARKET',
                           tradeExecutionMode: execMode,
                           acceptRiskTerms: true,
                         }),
                       });
                       tgNotifyHaptic('success');
-                      toastMsg(isFa ? `عالی! ربات با ${nextEngines.length} موتور فعال روشن شد` : 'Bot started');
+                      toastMsg(isFa ? `عالی! ربات با ${activeEngines.length} موتور فعال روشن شد` : 'Bot started');
                       await onRefresh();
                     } catch (e) {
                       toastMsg(e instanceof Error ? e.message : 'Start failed', true);
@@ -2230,9 +2504,19 @@ export function OverviewPage({
                   <div className="space-y-2.5 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <img src={item.img} alt={item.title} className="w-12 h-12 object-contain shrink-0" />
-                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA] shrink-0">
-                        {item.badge}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0" onClick={(ev) => ev.stopPropagation()}>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-[#0D47A1] dark:text-[#60A5FA]">
+                          {item.badge}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setGuideEngine(item.engine)}
+                          title={isFa ? 'راهنمای موتور' : 'Engine Guide'}
+                          className="h-6 w-6 rounded-full surface-card border hairline grid place-items-center text-dim hover:text-main transition"
+                        >
+                          <HelpCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     <p className="text-sm font-black text-main leading-snug">{item.title}</p>
                     <p className="text-[11.5px] text-dim leading-relaxed">{item.desc}</p>
@@ -2515,35 +2799,72 @@ export function OverviewPage({
                 const pnl = Number(pos.unrealized_pnl || 0);
                 const isProfit = pnl >= 0;
                 const srcLabel = isFa ? pos.source_label_fa || 'ربات خودکار' : pos.source_label_en || 'Auto Bot';
+                const openChartWithOverlay = () => {
+                  onSelectTerminalSymbol(pos.symbol, pos.market_type, {
+                    id: pos.id,
+                    symbol: pos.symbol,
+                    direction: pos.direction,
+                    timeframe: (pos.signal_timeframe as Timeframe) || data.config.entry_timeframe || '15m',
+                    entryPrice: Number(pos.entry_price),
+                    stopLoss: Number(pos.current_stop_loss),
+                    tp1: Number(pos.tp1),
+                    tp2: pos.tp2 ? Number(pos.tp2) : null,
+                    tp3: pos.tp3 ? Number(pos.tp3) : null,
+                    sourceLabel: srcLabel,
+                    signalText: pos.signal_raw_text || undefined,
+                  });
+                };
                 return (
-                  <div key={pos.id} className="surface-soft rounded-2xl p-3.5 flex items-center justify-between gap-2 border hairline">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <CoinIcon symbol={pos.symbol} size={34} />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-black text-xs text-main truncate">
-                            {pos.symbol.replace('USDT', '')} · {pos.direction === 'LONG' ? (isFa ? 'خرید' : 'Long') : isFa ? 'فروش' : 'Short'}
+                  <div key={pos.id} className="surface-soft rounded-2xl p-3.5 flex flex-col gap-2.5 border hairline">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={openChartWithOverlay}
+                        className="flex items-center gap-2.5 min-w-0 text-start hover:opacity-90 transition"
+                      >
+                        <CoinIcon symbol={pos.symbol} size={34} />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-black text-xs text-main truncate">
+                              {pos.symbol.replace('USDT', '')} · {pos.direction === 'LONG' ? (isFa ? 'خرید' : 'Long') : isFa ? 'فروش' : 'Short'}
+                            </p>
+                            <span className="px-1.5 py-0.5 rounded bg-sky-500/12 text-brand text-[9.5px] font-bold shrink-0">
+                              {srcLabel}
+                            </span>
+                            {pos.signal_timeframe && (
+                              <span dir="ltr" className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-black shrink-0">
+                                {pos.signal_timeframe}
+                              </span>
+                            )}
+                          </div>
+                          <p dir="ltr" className={`text-xs font-black font-num ${isProfit ? 'text-[#059669] dark:text-[#34D399]' : 'text-loss'}`}>
+                            {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}{' '}
+                            <span className="text-[10px] text-dim font-normal">({formatTomanEq(Math.abs(pnl), liveIranIrt)} ت)</span>
                           </p>
-                          <span className="px-1.5 py-0.5 rounded bg-sky-500/12 text-brand text-[9.5px] font-bold shrink-0">
-                            {srcLabel}
-                          </span>
                         </div>
-                        <p dir="ltr" className={`text-xs font-black font-num ${isProfit ? 'text-[#059669] dark:text-[#34D399]' : 'text-loss'}`}>
-                          {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}{' '}
-                          <span className="text-[10px] text-dim font-normal">({formatTomanEq(Math.abs(pnl), liveIranIrt)} ت)</span>
-                        </p>
+                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={openChartWithOverlay}
+                          title={isFa ? 'مشاهده روی سوپرچارت با نقاط ورود و حد سود/ضرر' : 'View on Superchart'}
+                          className="px-2.5 py-2 rounded-xl surface-card border hairline text-[11px] font-black text-brand hover:border-sky-500/40 inline-flex items-center gap-1"
+                        >
+                          <CandlestickChart className="w-3.5 h-3.5" />
+                          <span>{isFa ? 'نمودار' : 'Chart'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void closePosition(pos.id)}
+                          className={`px-3 py-2 rounded-xl text-xs font-black shrink-0 ${
+                            isProfit ? 'bg-[#059669] hover:bg-[#047857] text-white' : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
+                          }`}
+                        >
+                          {isProfit ? (isFa ? 'برداشت سود' : 'Take Profit') : isFa ? 'بستن معامله' : 'Close'}
+                        </button>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void closePosition(pos.id)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-black shrink-0 ${
-                        isProfit ? 'bg-[#059669] hover:bg-[#047857] text-white' : 'bg-[#DC2626] hover:bg-[#B91C1C] text-white'
-                      }`}
-                    >
-                      {isProfit ? (isFa ? 'برداشت سود' : 'Take Profit') : isFa ? 'بستن معامله' : 'Close'}
-                    </button>
                   </div>
                 );
               })}
@@ -2672,7 +2993,9 @@ export function OverviewPage({
           )}
         </section>
 
-        {/* 4. PROMO BANNERS & QUICK UPGRADE TO PRO */}
+        {/* 4. UNIFIED 5-MODE PORTFOLIO + PLAYBOOK + PROMO BANNERS */}
+        {renderUnified5ModeBreakdown()}
+        <TrustWalletTradePlaybook lang={lang} compact onNavigate={onNavigate} />
         <PromoBannerCarousel lang={lang} placement="DASHBOARD" onNavigateTab={onNavigate} />
 
         {onToggleUiMode && (
@@ -2799,7 +3122,7 @@ export function OverviewPage({
           <div className="mt-7 grid grid-cols-4 gap-2 max-w-lg">
             {[
               { v: `${markets.length || '800+'}`, l: isFa ? 'جفت‌ارز زنده' : 'Pairs' },
-              { v: String(data.openTrades.length), l: isFa ? 'معامله باز' : 'Open Now' },
+              { v: String(totalOpenPositionsCount), l: isFa ? 'معامله باز' : 'Open Now' },
               { v: `${data.stats.winRate.toFixed(0)}%`, l: isFa ? 'وین‌ریت' : 'Win Rate' },
               { v: `${data.config.max_leverage}×`, l: isFa ? 'سقف اهرم' : 'Max Lev' },
             ].map((s) => (
@@ -2835,10 +3158,10 @@ export function OverviewPage({
                   >
                     {isFa ? (
                       <>
-                        دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${Math.round(demoBalDisplay).toLocaleString('en-US')}</span>)
+                        دمو (<span dir="ltr" className="inline-block" style={{ unicodeBidi: 'isolate' }}>${demoBalDisplay.toLocaleString('en-US', { minimumFractionDigits: demoBalDisplay < 1000 ? 2 : 0, maximumFractionDigits: 2 })}</span>)
                       </>
                     ) : (
-                      `Demo ($${Math.round(demoBalDisplay).toLocaleString('en-US')})`
+                      `Demo ($${demoBalDisplay.toLocaleString('en-US', { minimumFractionDigits: demoBalDisplay < 1000 ? 2 : 0, maximumFractionDigits: 2 })})`
                     )}
                   </button>
                   <button
@@ -2972,8 +3295,8 @@ export function OverviewPage({
 
             <div className="grid grid-cols-3 gap-2.5">
               {[
-                { icon: Wallet, l: isFa ? 'موجودی آزاد' : 'Free Cash', v: hideBal ? '•••' : `$${freeBal.toLocaleString('en-US', { maximumFractionDigits: 0 })}`, cls: 'text-emerald-300' },
-                { icon: Trophy, l: isFa ? 'سود کل' : 'Total PnL', v: data.stats.totalPnl >= 0 ? `+$${data.stats.totalPnl.toFixed(0)}` : `-$${Math.abs(data.stats.totalPnl).toFixed(0)}`, cls: 'text-amber-300' },
+                { icon: Wallet, l: isFa ? 'موجودی آزاد' : 'Free Cash', v: hideBal ? '•••' : `$${freeBal.toLocaleString('en-US', { minimumFractionDigits: freeBal < 1000 ? 2 : 0, maximumFractionDigits: 2 })}`, cls: 'text-emerald-300' },
+                { icon: Trophy, l: isFa ? 'سود کل' : 'Total PnL', v: data.stats.totalPnl >= 0 ? `+$${data.stats.totalPnl.toFixed(2)}` : `-$${Math.abs(data.stats.totalPnl).toFixed(2)}`, cls: 'text-amber-300' },
                 { icon: ShieldCheck, l: isFa ? 'اهرم فعلی' : 'Max Lev', v: `${data.config.max_leverage}×`, cls: 'text-sky-300' },
               ].map((c) => {
                 const Icon = c.icon;
@@ -3009,7 +3332,9 @@ export function OverviewPage({
         </div>
       </section>
 
-      {/* Promotional Banners strictly BELOW Hero Balance Card */}
+      {/* Unified 5-Mode Accounting + Trust Wallet Playbook + Promotional Banners strictly BELOW Hero Balance Card */}
+      {renderUnified5ModeBreakdown()}
+      <TrustWalletTradePlaybook lang={lang} compact onNavigate={onNavigate} />
       <PromoBannerCarousel lang={lang} placement="DASHBOARD" onNavigateTab={onNavigate} />
 
       {/* 2. Autonomous Trading Team + Full Strategy & Timeframe Selector */}
@@ -3148,10 +3473,20 @@ export function OverviewPage({
                   ) : (
                     <img src={e.img} alt={e.title} className="w-12 h-12 object-contain shrink-0" />
                   )}
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full" style={{ background: `${e.color}1c`, color: e.color }}>
-                      {e.code}
-                    </span>
+                  <div className="flex flex-col items-end gap-1 shrink-0" onClick={(ev) => ev.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full" style={{ background: `${e.color}1c`, color: e.color }}>
+                        {e.code}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setGuideEngine(e.engine)}
+                        title={isFa ? 'راهنمای موتور' : 'Engine Guide'}
+                        className="h-6 w-6 rounded-full surface-card border hairline grid place-items-center text-dim hover:text-main transition"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full surface-soft border hairline text-dim font-num">
                       {isFa ? `نرخ برد ${e.win}%` : `${e.win}% WR`}
                     </span>
@@ -3559,13 +3894,28 @@ export function OverviewPage({
                 const uPnl = Number(pos.unrealized_pnl || 0);
                 const up = uPnl >= 0;
                 const srcLabel = isFa ? pos.source_label_fa || 'ربات استراتژی' : pos.source_label_en || 'Strategy Bot';
+                const openProTradeChart = () => {
+                  onSelectTerminalSymbol(pos.symbol, pos.market_type, {
+                    id: pos.id,
+                    symbol: pos.symbol,
+                    direction: pos.direction,
+                    timeframe: (pos.signal_timeframe as Timeframe) || data.config.entry_timeframe || '15m',
+                    entryPrice: Number(pos.entry_price),
+                    stopLoss: Number(pos.current_stop_loss),
+                    tp1: Number(pos.tp1),
+                    tp2: pos.tp2 ? Number(pos.tp2) : null,
+                    tp3: pos.tp3 ? Number(pos.tp3) : null,
+                    sourceLabel: srcLabel,
+                    signalText: pos.signal_raw_text || undefined,
+                  });
+                };
                 return (
                   <div key={pos.id} className="rounded-2xl border hairline bg-[var(--soft)] p-3.5 flex flex-wrap items-center gap-3">
                     <CoinIcon symbol={pos.symbol} size={32} />
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <button type="button" onClick={() => { onSelectTerminalSymbol(pos.symbol); onNavigate('terminal'); }} className="font-bold text-sm text-main hover:underline">
-                          {pos.symbol}
+                        <button type="button" onClick={openProTradeChart} className="font-bold text-sm text-main hover:underline inline-flex items-center gap-1">
+                          <span>{pos.symbol}</span>
                         </button>
                         <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ${pos.direction === 'LONG' ? 'bg-jade/15 text-jade' : 'bg-rose-500/15 text-loss'}`}>
                           {pos.direction} {pos.leverage}×
@@ -3573,6 +3923,11 @@ export function OverviewPage({
                         <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-sky-500/12 text-brand">
                           {srcLabel}
                         </span>
+                        {pos.signal_timeframe && (
+                          <span dir="ltr" className="text-[10px] px-2 py-0.5 rounded-md font-black bg-amber-500/15 text-amber-500">
+                            {pos.signal_timeframe}
+                          </span>
+                        )}
                       </div>
                       <p dir="ltr" className="text-[11px] text-dim tabular mt-0.5">
                         Entry ${pos.entry_price} · SL ${pos.current_stop_loss} · TP1 ${pos.tp1}
@@ -3590,6 +3945,15 @@ export function OverviewPage({
                         {up ? `+$${uPnl.toFixed(2)}` : `-$${Math.abs(uPnl).toFixed(2)}`}
                       </p>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={openProTradeChart}
+                      className="px-2.5 py-1.5 rounded-xl bg-sky-500/12 hover:bg-sky-500/20 text-brand text-[11px] font-black inline-flex items-center gap-1 transition"
+                    >
+                      <CandlestickChart className="w-3.5 h-3.5" />
+                      <span>{isFa ? 'نمودار و سیگنال' : 'Chart & Signal'}</span>
+                    </button>
 
                     <button
                       type="button"

@@ -539,35 +539,79 @@ export async function runAlwaysOnAiIntel(
     return { published: true, kind: 'ALERT', usersNotified: res.usersNotified, channelMessageId: res.channelMessageId };
   }
 
-  // 2) Priority 2: Crypto News Summary EVERY 30 MINUTES (low-token lightweight AI summary)
+  // 2) Priority 2: High-Impact Crypto News ONLY (strict relevance & deduplication filter + 240m cadence)
   const minsNews = minsFromIso(aiSettings['intel_last_news_at']);
-  if (fk === 'NEWS' || (!fk && minsNews >= 30)) {
-    const headlines = await fetchPublicCryptoHeadlines();
+  const NEWS_CADENCE_MINS = 240;
+  if (fk === 'NEWS' || (!fk && minsNews >= NEWS_CADENCE_MINS)) {
+    const rawHeadlines = await fetchPublicCryptoHeadlines();
+    const scoreNewsImportance = (title: string): number => {
+      const t = title.toLowerCase();
+      let score = 0;
+      const criticalTerms = [
+        'sec ', 'etf', 'fed ', 'fomc', 'cpi', 'inflation', 'interest rate', 'rate cut', 'rate hike',
+        'powell', 'hack', 'exploit', 'breach', 'stolen', 'bankrupt', 'insolven', 'liquidation',
+        'blackrock', 'fidelity', 'binance', 'coinbase', 'tether', 'usdt', 'blackstone',
+        'halving', 'all-time high', 'ath', 'approval', 'approved', 'rejected', 'lawsuit',
+        'sanction', 'ban ', 'trump', 'treasury', 'tariff', 'upgrade', 'mainnet', 'airdrop',
+        'recession', 'bill ', 'regulation', 'mica', 'delist', 'listing', 'acquisition', 'merger',
+      ];
+      for (const kw of criticalTerms) {
+        if (t.includes(kw)) score += 2;
+      }
+      if (/\b(bitcoin|btc|ethereum|eth|solana|sol|crypto)\b/.test(t)) score += 1;
+      return score;
+    };
+
+    const prevTitlesJson = await getSettingsMap(env.DB, ['intel_last_news_titles']);
+    let sentTitles: string[] = [];
+    try {
+      sentTitles = JSON.parse(prevTitlesJson['intel_last_news_titles'] || '[]') as string[];
+      if (!Array.isArray(sentTitles)) sentTitles = [];
+    } catch {
+      sentTitles = [];
+    }
+    const sentSet = new Set(sentTitles.map((s) => s.toLowerCase().trim()));
+
+    const importantHeadlines = rawHeadlines
+      .map((h) => ({ ...h, importance: scoreNewsImportance(h.title) }))
+      .filter((h) => !sentSet.has(h.title.toLowerCase().trim()) && h.importance >= 3)
+      .sort((a, b) => b.importance - a.importance)
+      .slice(0, 4);
+
+    // Unless manually triggered by admin (fk === 'NEWS'), skip sending low-impact/routine chatter!
+    if (!fk && importantHeadlines.length === 0) {
+      await setSetting(env.DB, 'intel_last_news_at', new Date().toISOString());
+      return { published: false, reason: 'no_important_news' };
+    }
+
+    const headlines = importantHeadlines.length > 0 ? importantHeadlines : rawHeadlines.slice(0, 3);
     const headlineTxt = headlines.map((h, i) => `${i + 1}. [${h.source}] ${h.title}`).join('\n');
     const aiText = await generateAiPersianPost(
       env,
-      'شما خبرنگار و تحلیلگر اقتصادی هوش مصنوعی دلارینو هستید. تیترهای خبری و قیمت‌های لحظه‌ای را در ۴ تا ۶ خط خلاصه به فارسی روان بنویسید و تاثیر کوتاه‌مدت آن روی بیت‌کوین و بازار را بگویید.',
-      `${headlineTxt ? `تازه‌ترین اخبار کریپتو:\n${headlineTxt}\n\n` : ''}نبض لحظه‌ای قیمت‌ها:\n${summaryLines}`,
+      'شما تحلیلگر ارشد اقتصاد کلان و کریپتو دلارینو هستید. فقط اخبار بسیار مهم و اثرگذار زیر را در ۴ تا ۶ خط دقیق و حرفه‌ای به فارسی خلاصه کنید و اثر مستقیم آن روی بازار را بگویید.',
+      `${headlineTxt ? `اخبار مهم و اثرگذار تاییدشده:\n${headlineTxt}\n\n` : ''}نبض لحظه‌ای قیمت‌ها:\n${summaryLines}`,
       420
     );
 
     const body =
       aiText ||
       (headlines.length
-        ? `🗞 مهم‌ترین اخبار نیم‌ساعت اخیر بازار:\n` +
+        ? `🚨 **اخبار مهم و اثرگذار بازار کریپتو:**\n` +
           headlines.map((h) => `• ${h.title} (${h.source})`).join('\n') +
           `\n\n📊 نبض بازار: ${summaryLines || 'رصد ۲۴ ساعته فعال است'}\n\n` +
-          `🤖 رادار سیگنال دلارینو فقط فرصت‌های باکیفیت و تاییدشده را ارسال می‌کند.`
-        : `📊 خلاصه نبض ۳۰ دقیقه‌ای بازار:\n${summaryLines}\n\n` +
-          `بیشترین تمرکز نقدینگی روی جفت‌ارزهای اصلی و توکن‌های پرشتاب DEX دیده می‌شود.`);
+          `🤖 رادار دلارینو فقط رویدادهای مهم و تاییدشده را اطلاع‌رسانی می‌کند.`
+        : `📊 خلاصه تحولات مهم بازار:\n${summaryLines}\n\n` +
+          `تمرکز نقدینگی روی دارایی‌های اصلی و جفت‌ارزهای پرتراکنش است.`);
 
     const res = await publishChannelNews(env, {
       category: 'NEWS',
-      title: 'بسته خبری نیم‌ساعته و نبض لحظه‌ای بازار کریپتو',
+      title: 'گزارش اخبار مهم و اثرگذار بازار کریپتو',
       body,
       notifyBotUsers: true,
       createdBy: 'ai_intel_daemon',
     });
+    const nextSent = Array.from(new Set([...headlines.map((h) => h.title), ...sentTitles])).slice(0, 25);
+    await setSetting(env.DB, 'intel_last_news_titles', JSON.stringify(nextSent));
     await setSetting(env.DB, 'intel_last_news_at', new Date().toISOString());
     return { published: true, kind: 'NEWS', usersNotified: res.usersNotified, channelMessageId: res.channelMessageId };
   }
