@@ -13,6 +13,17 @@ name: Build Dollarino Android APK
 
 on:
   workflow_dispatch:
+  # Also validate pull requests: the APK build must never be broken by a merge, and CI
+  # feedback belongs on the PR rather than after it lands on main.
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/android/**'
+      - 'apps/web/**'
+      - 'packages/core/**'
+      - 'scripts/build-android.mjs'
+      - 'scripts/cf-step.sh'
+      - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
     paths:
