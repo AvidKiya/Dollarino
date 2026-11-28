@@ -35,12 +35,31 @@ collapse() {
   printf '%s' "$text"
 }
 
+# Picks the lines that actually explain a failure instead of the trailing stack frames.
+# A 40-line tail of a Gradle crash is ~35 lines of `at org.gradle...` noise, which hid
+# the real cause (e.g. "Could not resolve all dependencies" / "SDK location not found").
+summarize_failure() {
+  local file="$1"
+  local picked
+  picked="$(sed 's/\x1b\[[0-9;]*m//g' "$file" 2>/dev/null \
+    | grep -vE '^[[:space:]]*(at |\.\.\. [0-9]+ more)' \
+    | grep -E 'FAILURE|What went wrong|error:|Error:|ERROR|Exception|Caused by|not found|Could not|Failed|failed|> Task .*FAILED|RangeError|TypeError|Missing|Unsupported|denied' \
+    | head -n 25)"
+  if [ -z "$picked" ]; then
+    picked="$(tail -n 25 "$file" 2>/dev/null)"
+  fi
+  printf '%s' "$picked"
+}
+
 set +e
 "$@" 2>&1 | tee "$TMP_OUT"
 STATUS="${PIPESTATUS[0]}"
 set -e
 
 HUMAN_TAIL="$(tail -n 40 "$TMP_OUT" 2>/dev/null | collapse)"
+if [ "$STATUS" -ne 0 ]; then
+  HUMAN_TAIL="$(summarize_failure "$TMP_OUT" | collapse)"
+fi
 
 # D1 free-tier quota exhaustion: every query is rejected until 00:00 UTC, so nothing
 # downstream can succeed. Report it distinctly so the retry schedule makes sense.

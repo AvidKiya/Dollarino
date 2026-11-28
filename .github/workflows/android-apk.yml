@@ -13,6 +13,17 @@ name: Build Dollarino Android APK
 
 on:
   workflow_dispatch:
+  # Also validate pull requests: the APK build must never be broken by a merge, and CI
+  # feedback belongs on the PR rather than after it lands on main.
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/android/**'
+      - 'apps/web/**'
+      - 'packages/core/**'
+      - 'scripts/build-android.mjs'
+      - 'scripts/cf-step.sh'
+      - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
     paths:
@@ -71,9 +82,25 @@ jobs:
       - name: Bundle web UI assets into Android APK
         run: bash scripts/cf-step.sh "Bundle web assets" npm run build:android
 
+      - name: Show Gradle environment
+        working-directory: apps/android
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null || true
+          gradle --version 2>&1 | head -12
+
       - name: Compile Android Debug & Unsigned Release APK
         working-directory: apps/android
         run: bash ../../scripts/cf-step.sh "Gradle assemble" gradle --no-daemon --stacktrace assembleDebug assembleRelease
+
+      # When Gradle fails, the annotation only carries the distilled error lines. This
+      # step adds `gradle help` output (configuration-phase errors: missing plugin,
+      # unresolvable dependency, bad SDK/NDK path) without the stack-frame noise.
+      - name: Diagnose Gradle configuration
+        if: failure()
+        working-directory: apps/android
+        run: gradle --no-daemon help 2>&1 | grep -vE '^[[:space:]]*(at |\.\.\. )' | tail -70 || true
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
