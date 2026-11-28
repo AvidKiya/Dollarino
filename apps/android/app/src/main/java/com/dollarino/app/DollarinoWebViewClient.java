@@ -37,31 +37,42 @@ public final class DollarinoWebViewClient extends WebViewClient {
     ) {
         this.activity = activity;
         this.onFirstPageFinished = onFirstPageFinished;
-        // WebViewAssetLoader.AssetsPathHandler only exposes a (Context) constructor and maps
-        // "/" straight onto the APK's assets/ root. There is no (Context, String) overload
-        // and no subdirectory argument - passing one does not compile:
+        // WebViewAssetLoader.AssetsPathHandler is a *final* class with a single
+        // (Context) constructor and no subdirectory argument, so neither
+        // `new AssetsPathHandler(ctx, "public")` nor subclassing it compiles:
         //   error: no suitable constructor found for AssetsPathHandler(Context,String)
-        // We therefore load from assets/public/index.html to keep the web bundle out of the
-        // assets/ root, so the path handler gets its own loader rooted at "public".
+        //   error: cannot inherit from final AssetsPathHandler
+        // We therefore implement PathHandler ourselves and serve from the `public/`
+        // prefix, which is where scripts/build-android.mjs syncs the SPA bundle.
         this.assetLoader = new WebViewAssetLoader.Builder()
                 .setDomain(LOCAL_ASSET_HOST)
-                .addPathHandler(
-                        "/",
-                        new WebViewAssetLoader.AssetsPathHandler(context.getApplicationContext()) {
-                            @Override
-                            public WebResourceResponse handle(@NonNull String path) {
-                                try {
-                                    InputStream is = context.getApplicationContext()
-                                            .getAssets()
-                                            .open("public/" + (path.startsWith("/") ? path.substring(1) : path));
-                                    return new WebResourceResponse(guessMimeType(path), null, is);
-                                } catch (IOException e) {
-                                    return null;
-                                }
-                            }
-                        }
-                )
+                .addPathHandler("/", new PublicAssetsPathHandler(context.getApplicationContext()))
                 .build();
+    }
+
+    /**
+     * Serves `assets/public/**` for WebViewAssetLoader. Implemented directly because
+     * AssetsPathHandler is final and always rooted at the assets/ root.
+     */
+    private static final class PublicAssetsPathHandler implements WebViewAssetLoader.PathHandler {
+        private final Context appContext;
+
+        PublicAssetsPathHandler(@NonNull Context appContext) {
+            this.appContext = appContext;
+        }
+
+        @Nullable
+        @Override
+        public WebResourceResponse handle(@NonNull String path) {
+            String relative = path.startsWith("/") ? path.substring(1) : path;
+            try {
+                InputStream is = appContext.getAssets().open("public/" + relative);
+                return new WebResourceResponse(guessMimeType(relative), null, is);
+            } catch (IOException e) {
+                // Returning null lets the WebView (and our SPA fallback) handle the miss.
+                return null;
+            }
+        }
     }
 
     /**
