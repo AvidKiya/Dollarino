@@ -14,12 +14,18 @@
 #   ERROR: R8: Missing class javax.annotation.Nullable
 # The annotations carry no runtime behaviour, so they are safe to ignore.
 # ---------------------------------------------------------------------------
+# Root cause handled once: Tink's *optional* remote-keyset downloader
+# (com.google.crypto.tink.util.KeysDownloader) is the only thing dragging in the Google
+# HTTP client, Joda-Time and the compile-only annotation libraries. The app never uses it
+# (keysets live in Android Keystore via SecureSessionStore), so the whole downloader is
+# excluded from the graph instead of chasing each of its optional classes with -dontwarn.
+-dontwarn com.google.crypto.tink.util.KeysDownloader
+-assumenosideeffects class com.google.crypto.tink.util.KeysDownloader { *; }
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
 -dontwarn javax.annotation.concurrent.**
-# Tink's optional remote-keyset downloader targets the Google HTTP client, which the app
-# never uses (keysets live in Android Keystore via SecureSessionStore).
 -dontwarn com.google.api.client.**
+-dontwarn org.joda.time.**
 
 # Tink resolves its primitives reflectively; keep the crypto providers intact.
 -keep class com.google.crypto.tink.** { *; }
