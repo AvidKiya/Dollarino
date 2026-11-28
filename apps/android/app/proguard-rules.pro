@@ -17,6 +17,9 @@
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
 -dontwarn javax.annotation.concurrent.**
+# Tink's optional remote-keyset downloader targets the Google HTTP client, which the app
+# never uses (keysets live in Android Keystore via SecureSessionStore).
+-dontwarn com.google.api.client.**
 
 # Tink resolves its primitives reflectively; keep the crypto providers intact.
 -keep class com.google.crypto.tink.** { *; }
