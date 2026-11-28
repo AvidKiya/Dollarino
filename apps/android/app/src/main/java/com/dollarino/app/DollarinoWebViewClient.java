@@ -13,6 +13,7 @@ import androidx.annotation.Nullable;
 import androidx.webkit.WebViewAssetLoader;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 
 /**
@@ -36,10 +37,52 @@ public final class DollarinoWebViewClient extends WebViewClient {
     ) {
         this.activity = activity;
         this.onFirstPageFinished = onFirstPageFinished;
+        // WebViewAssetLoader.AssetsPathHandler only exposes a (Context) constructor and maps
+        // "/" straight onto the APK's assets/ root. There is no (Context, String) overload
+        // and no subdirectory argument - passing one does not compile:
+        //   error: no suitable constructor found for AssetsPathHandler(Context,String)
+        // We therefore load from assets/public/index.html to keep the web bundle out of the
+        // assets/ root, so the path handler gets its own loader rooted at "public".
         this.assetLoader = new WebViewAssetLoader.Builder()
                 .setDomain(LOCAL_ASSET_HOST)
-                .addPathHandler("/", new WebViewAssetLoader.AssetsPathHandler(context.getApplicationContext(), "public"))
+                .addPathHandler(
+                        "/",
+                        new WebViewAssetLoader.AssetsPathHandler(context.getApplicationContext()) {
+                            @Override
+                            public WebResourceResponse handle(@NonNull String path) {
+                                try {
+                                    InputStream is = context.getApplicationContext()
+                                            .getAssets()
+                                            .open("public/" + (path.startsWith("/") ? path.substring(1) : path));
+                                    return new WebResourceResponse(guessMimeType(path), null, is);
+                                } catch (IOException e) {
+                                    return null;
+                                }
+                            }
+                        }
+                )
                 .build();
+    }
+
+    /**
+     * Minimal MIME table for the bundled SPA assets. Returning null lets WebView sniff,
+     * which is wrong for JS/CSS, so the common extensions are mapped explicitly.
+     */
+    private static String guessMimeType(@NonNull String path) {
+        String lower = path.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+        if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "application/javascript";
+        if (lower.endsWith(".css")) return "text/css";
+        if (lower.endsWith(".json") || lower.endsWith(".webmanifest")) return "application/json";
+        if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".woff2")) return "font/woff2";
+        if (lower.endsWith(".woff")) return "font/woff";
+        if (lower.endsWith(".ttf")) return "font/ttf";
+        if (lower.endsWith(".ico")) return "image/x-icon";
+        return null;
     }
 
     @Nullable
